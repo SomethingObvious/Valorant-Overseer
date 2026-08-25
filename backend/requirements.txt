@@ -1,0 +1,73 @@
+# Pinned to the exact versions this release was built and tested against, and
+# to the SHA-256 of each artifact, so a fresh install can never pull a newer
+# package OR a same-version artifact that has been republished. pip is run
+# with --require-hashes, which fails the install if any pin here lacks a
+# hash or any download does not match. Regenerate with:
+#   pip download -r backend/requirements.txt -d w --only-binary :all:
+#   then sha256 each artifact in w. Re-test install.bat on a clean machine.
+
+# --- direct dependencies ---
+Flask==3.1.3 \
+    --hash=sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c
+flask-cors==6.0.3 \
+    --hash=sha256:f49be9b367355a1ad3a871be5cfd1c4ef97100c81b2078b2cea1db8cd4e42389
+requests==2.34.2 \
+    --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+python-dotenv==1.2.2 \
+    --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a
+urllib3==2.7.0 \
+    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+rich==15.0.0 \
+    --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
+# Discord Rich Presence (optional; degrades if Discord/lib absent)
+pypresence==4.6.1 \
+    --hash=sha256:33d4549fcdf4102f81935df4ba587bacb22193e0c50c541d1ab9329b21df33cd
+# local WebSocket bridge for the hosted frontend
+websockets==13.1 \
+    --hash=sha256:38377f8b0cdeee97c552d20cf1865695fcd56aba155ad1b4ca8779a5b6ef4ac3
+# local Riot client API (career/match-history endpoints)
+valclient==2.28 \
+    --hash=sha256:fb0b26eb81e2c24d5dd12e4867f3b2e9973749eb692b0ccd31dac1d31e124c3d
+# offline-mode: convert Deceive's PKCS#12 chat cert -> PEM
+cryptography==50.0.0 \
+    --hash=sha256:bd1c592e4d5974f0d08d4888e432157adba757c66da0246918e43677fafa2d30
+# Windows ships no tz database; zoneinfo needs this one
+tzdata==2026.3 \
+    --hash=sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931
+
+# --- transitive dependencies ---
+# pip installs these anyway; pinned so the resolver can't swap in a new version
+# underneath us. This file doubles as the constraints file for run.py's
+# on-demand installs, so every version lives here and nowhere else.
+blinker==1.9.0 \
+    --hash=sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc
+certifi==2026.5.20 \
+    --hash=sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897
+# via cryptography
+cffi==2.0.0 \
+    --hash=sha256:da68248800ad6320861f129cd9c1bf96ca849a2771a59e0344e88681905916f5
+charset-normalizer==3.4.7 \
+    --hash=sha256:5ed6ab538499c8644b8a3e18debabcd7ce684f3fa91cf867521a7a0279cab2d6
+click==8.4.1 \
+    --hash=sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2
+colorama==0.4.6 \
+    --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
+# via cffi
+pycparser==2.22 \
+    --hash=sha256:c3702b6d3dd8c7abc1afa565d7e63d53a1d0bd86cdc24edd75470f4de499cfcc
+idna==3.18 \
+    --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2
+itsdangerous==2.2.0 \
+    --hash=sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef
+Jinja2==3.1.6 \
+    --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+markdown-it-py==4.2.0 \
+    --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
+MarkupSafe==3.0.3 \
+    --hash=sha256:26a5784ded40c9e318cfc2bdb30fe164bdb8665ded9cd64d500a34fb42067b1c
+mdurl==0.1.2 \
+    --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
+Pygments==2.20.0 \
+    --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
+Werkzeug==3.1.8 \
+    --hash=sha256:63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50

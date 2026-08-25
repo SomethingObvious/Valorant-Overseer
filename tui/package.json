@@ -1,0 +1,26 @@
+{
+  "name": "overseer-tui",
+  "private": true,
+  "version": "2.18.0",
+  "type": "module",
+  "description": "Terminal UI for Valorant Overseer. Reads the local bridge; never talks to Riot itself.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "keycheck": "node keycheck.mjs",
+    "stories": "node preview.mjs"
+  },
+  "dependencies": {
+    "ink": "7.1.1",
+    "react": "19.2.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.10",
+    "@types/node": "^24.13.3",
+    "@types/react": "19.2.18",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

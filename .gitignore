@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 backend/.env
 .env
-frontend/.env.local
 .env.local
 
 # Local data (encounter ledger, etc.)
@@ -25,10 +24,7 @@ backend/data/
 /launch-offline.bat
 /_run_offline.py
 
-# Node / Next
-frontend/node_modules/
-frontend/.next/
-frontend/out/
+# Node
 npm-debug.log*
 
 # Reference clones (logic already integrated into backend/)

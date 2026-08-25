@@ -2,8 +2,6 @@ import importlib
 import sys
 
 REQUIRED = [
-    "flask",
-    "flask_cors",
     "requests",
     "dotenv",
     "urllib3",

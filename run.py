@@ -11,17 +11,15 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.request
 from ctypes import wintypes
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, NoReturn
+from typing import IO, TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / "backend"
-FRONTEND = ROOT / "frontend"
 OVERSEER_DIR = ROOT / ".overseer"
 
 sys.path.insert(0, str(BACKEND))
@@ -36,15 +34,6 @@ except Exception:
 
     LOG = logging.getLogger("launcher")
     LOG.addHandler(logging.NullHandler())
-
-
-def has_local_frontend() -> bool:
-    requested = "--local-frontend" in sys.argv or os.environ.get(
-        "OVERSEER_LOCAL_FRONTEND", ""
-    ).strip().lower() in ("1", "true", "yes")
-    if requested and not (FRONTEND / "package.json").exists():
-        die("VG-FRONTEND-001", "Local frontend mode was requested, but frontend/ is not bundled.")
-    return requested
 
 
 for _stream in (sys.stdout, sys.stderr):
@@ -131,7 +120,7 @@ def resolve_python() -> str:
         return str(py)
     if (
         subprocess.run(
-            [sys.executable, "-c", "import flask"],
+            [sys.executable, "-c", "import websockets"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -284,7 +273,7 @@ def release_instance_lock() -> None:
         _INSTANCE_LOCK = None
 
 
-def write_runtime_state(backend_port: int, ws_port: int, frontend_port: str) -> None:
+def write_runtime_state(ws_port: int) -> None:
     try:
         OVERSEER_DIR.mkdir(exist_ok=True)
         path = OVERSEER_DIR / "runtime-state.json"
@@ -293,9 +282,7 @@ def write_runtime_state(backend_port: int, ws_port: int, frontend_port: str) -> 
             json.dumps(
                 {
                     "pid": os.getpid(),
-                    "backendPort": int(backend_port),
                     "wsPort": int(ws_port),
-                    "frontendPort": int(frontend_port),
                     "startedAt": int(time.time()),
                 }
             ),
@@ -455,25 +442,21 @@ def _kill_our_stale(port: int) -> bool:
     return killed
 
 
-def choose_port(preferred: str | int, label: str, reserved: Iterable[int] = ()) -> int:
+def choose_port(preferred: str | int, label: str) -> int:
     preferred = int(preferred)
-    reserved = {int(port) for port in reserved}
-    if preferred not in reserved and _port_free(preferred):
+    if _port_free(preferred):
         return preferred
-    if preferred not in reserved and _kill_our_stale(preferred):
+    if _kill_our_stale(preferred):
         for _ in range(20):
             if _port_free(preferred):
                 return preferred
             time.sleep(0.25)
     holder = ""
-    if preferred in reserved:
-        holder = "another Valorant Overseer service"
-    else:
-        for pid in _port_pids(preferred):
-            holder = _pid_exe(pid) or f"PID {pid}"
-            break
+    for pid in _port_pids(preferred):
+        holder = _pid_exe(pid) or f"PID {pid}"
+        break
     for alt in range(preferred + 1, preferred + 21):
-        if alt not in reserved and _port_free(alt):
+        if _port_free(alt):
             warn(
                 f"Port {preferred} ({label}) is in use by "
                 f"{holder or 'another program'}, using port {alt} instead."
@@ -490,20 +473,27 @@ def choose_port(preferred: str | int, label: str, reserved: Iterable[int] = ()) 
         "VG-PORT-001",
         f"Ports {preferred}-{preferred + 20} ({label}) are all in use "
         f"(first held by {holder or 'another program'}). Close it, or set "
-        f"BACKEND_PORT / WS_PORT in backend\\.env to a free port.",
+        f"WS_PORT in backend\\.env to a free port.",
     )
 
 
-def wait_http(url: str, timeout: float, label: str) -> bool:
+def wait_bridge(pid: int, timeout: float) -> bool:
+    """Wait for the backend to publish .overseer/bridge.json for this launch.
+
+    The pid check matters: the file survives from the previous run, so its
+    mere existence proves nothing about the process just started.
+    """
+    bridge = OVERSEER_DIR / "bridge.json"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as r:
-                if r.status < 500:
-                    return True
+            data = json.loads(bridge.read_text(encoding="utf-8"))
+            if int(data.get("pid", 0)) == pid and int(data.get("wsPort", 0)) > 0:
+                return True
         except Exception:
-            time.sleep(0.6)
-    warn(f"{label} did not respond at {url} within {int(timeout)}s.")
+            pass
+        time.sleep(0.6)
+    warn(f"Backend did not publish {bridge} within {int(timeout)}s.")
     return False
 
 
@@ -525,8 +515,8 @@ def node_cmd() -> str:
             raise ValueError(version)
     except Exception:
         die(
-            "VG-FRONTEND-001",
-            "The local frontend requires Node.js 18.17 or newer. Upgrade Node.js and retry.",
+            "VG-TUI-001",
+            "The scoreboard requires Node.js 18.17 or newer. Upgrade Node.js and retry.",
         )
     return executable
 
@@ -574,9 +564,7 @@ def tui_args() -> list[str]:
             "from a source tree run: cd tui && npm install && npm run build",
         )
     node = node_cmd()
-    extra = [
-        a for a in sys.argv[1:] if a not in ("--cli", "--no-cli", "--prod", "--local-frontend")
-    ]
+    extra = [a for a in sys.argv[1:] if a not in ("--cli", "--no-cli", "--prod")]
     return [node, str(TUI_BUNDLE), "--root", str(ROOT), *extra]
 
 
@@ -585,14 +573,6 @@ def run_cli() -> None:
     validate_runtime(py)
     say("Launching the scoreboard…", C_OK)
     subprocess.run(tui_args(), check=False)
-
-
-def _hidden_window() -> dict[str, Any]:
-    return {
-        "creationflags": subprocess.CREATE_NO_WINDOW,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
 
 
 def spawn_cli_window(py: str) -> subprocess.Popen[bytes] | None:
@@ -739,59 +719,16 @@ def main() -> None:
                 procs.append(cli_proc)
                 roles[cli_proc] = "scoreboard"
 
-        backend_port = choose_port(os.environ.get("BACKEND_PORT", "5000"), "backend")
-        ws_port = choose_port(
-            os.environ.get("WS_PORT", "7878"), "WebSocket bridge", reserved={backend_port}
-        )
-        frontend_port = os.environ.get("FRONTEND_PORT", "3000")
-
-        local_frontend = has_local_frontend()
-        node = None
-        if local_frontend:
-            node = node_cmd()
-            if not (FRONTEND / "node_modules").exists():
-                die(
-                    "VG-FRONTEND-001",
-                    "frontend/node_modules is missing. Run install.bat -Frontend "
-                    "to set up the local frontend first.",
-                )
-            frontend_port = str(
-                choose_port(frontend_port, "frontend", reserved={backend_port, ws_port})
-            )
-            frontend_url = (
-                os.environ.get("LOCAL_FRONTEND_URL", "").strip()
-                or f"http://localhost:{frontend_port}"
-            ).rstrip("/")
-        else:
-            # Opt-in, not default. A hosted dashboard is somebody else's
-            # JavaScript talking to the token-authenticated bridge on this
-            # machine. Set FRONTEND_URL only for a host you control.
-            frontend_url = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
-            if frontend_url:
-                say(f"Dashboard host: {frontend_url}", C_WARN)
-                say("That host's page can drive this machine's bridge.", C_WARN)
-            else:
-                say("Terminal scoreboard only, no web dashboard.", C_OK)
-                say("Set FRONTEND_URL to a host you control to enable one.", C_DIM)
+        ws_port = choose_port(os.environ.get("WS_PORT", "7878"), "WebSocket bridge")
 
         child_env = os.environ.copy()
-        child_env["BACKEND_PORT"] = str(backend_port)
         child_env["WS_PORT"] = str(ws_port)
-        child_env["FRONTEND_PORT"] = str(frontend_port)
-        child_env["PORT"] = str(frontend_port)
-        child_env["FRONTEND_URL"] = frontend_url
 
-        LOG.info(
-            "starting stack: backend=%s ws=%s frontend=%s (%s)",
-            backend_port,
-            ws_port,
-            frontend_port,
-            "local frontend" if local_frontend else "hosted",
-        )
+        LOG.info("starting stack: ws=%s", ws_port)
 
         backend_log_fh = backend_output(prod)
-        write_runtime_state(backend_port, ws_port, frontend_port)
-        say(f"Starting backend → http://127.0.0.1:{backend_port}")
+        write_runtime_state(ws_port)
+        say(f"Starting backend → ws://127.0.0.1:{ws_port}")
         # Its own process group, so shutdown() can send CTRL_BREAK to the
         # backend without it reaching this console as well.
         backend_proc = subprocess.Popen(
@@ -808,7 +745,7 @@ def main() -> None:
         _CTRL_KILL_PIDS.append(backend_proc.pid)
         _install_console_close_handler()
 
-        if not wait_http(f"http://127.0.0.1:{backend_port}/api/health", 40, "Backend"):
+        if not wait_bridge(backend_proc.pid, 40):
             tail = tail_backend_log()
             LOG.error("VG-BACKEND-001 backend did not become healthy; last output:\n%s", tail)
             die(
@@ -816,58 +753,8 @@ def main() -> None:
                 "The backend did not start. See .overseer\\backend-console.log for details.",
             )
 
-        if local_frontend:
-            if prod:
-                if not (FRONTEND / ".next").exists():
-                    die(
-                        "VG-FRONTEND-001",
-                        "frontend/.next is missing. Run install.bat -Frontend "
-                        "to build the local frontend first.",
-                    )
-                say(f"Starting frontend (production) → http://localhost:{frontend_port}")
-                frontend_mode = "start"
-            else:
-                say(f"Starting frontend → http://localhost:{frontend_port}")
-                frontend_mode = "dev"
-            next_cli = FRONTEND / "node_modules" / "next" / "dist" / "bin" / "next"
-            if not next_cli.exists():
-                die(
-                    "VG-FRONTEND-001",
-                    "The local Next.js runtime is incomplete. "
-                    "Run install.bat -Frontend to repair it.",
-                )
-            frontend_args = [
-                node or "node.exe",
-                str(next_cli),
-                frontend_mode,
-                "-H",
-                "127.0.0.1",
-            ]
-            frontend_opts = _hidden_window()
-            frontend_opts["creationflags"] = (
-                frontend_opts["creationflags"] | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-            frontend_proc = subprocess.Popen(
-                frontend_args, cwd=str(FRONTEND), env=child_env, shell=False, **frontend_opts
-            )
-            procs.append(frontend_proc)
-            roles[frontend_proc] = "frontend"
-            grouped.add(frontend_proc)
-            if not wait_http(f"http://127.0.0.1:{frontend_port}", 120, "Frontend"):
-                die(
-                    "VG-FRONTEND-001",
-                    "The local frontend did not start. Run diagnostics.bat for details.",
-                )
-
-        # With no dashboard configured this used to print a bare "/dashboard",
-        # which reads like a broken link rather than a feature nobody enabled.
-        if frontend_url:
-            say(f"Dashboard will open at {frontend_url}/dashboard", C_OK)
-            if not local_frontend:
-                say("Your browser may ask to allow local-network access, click Allow.", C_WARN)
-
         if not ATTACHED:
-            print(f"\n{C_OK}Web app + terminal scoreboard running. Press Ctrl+C to stop.{C_END}\n")
+            print(f"\n{C_OK}Terminal scoreboard running. Press Ctrl+C to stop.{C_END}\n")
         stop = False
         while not stop:
             time.sleep(0.5)
@@ -890,11 +777,6 @@ def main() -> None:
                         "VG-BACKEND-001",
                         f"The backend stopped unexpectedly (exit {p.returncode}). "
                         "See .overseer\\backend-console.log for details.",
-                    )
-                if role == "frontend":
-                    die(
-                        "VG-FRONTEND-001",
-                        f"The local frontend stopped unexpectedly (exit {p.returncode}).",
                     )
                 if role == "scoreboard":
                     say("Scoreboard closed, shutting down.", C_WARN)

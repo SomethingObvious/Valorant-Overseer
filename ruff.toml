@@ -109,9 +109,9 @@ ignore = [
   # `except OSError: pass` is clearer than importing contextlib to say it.
   "SIM105",
 
-  # live_match reaches into LiveMatch internals from app.py's /api/state. That
-  # is one call, and moving it would mean a public method that exists for one
-  # caller.
+  # A handful of sites reach into a sibling module's internals (the reveal
+  # pipeline, the offline proxy's connection list). Each is one call, and a
+  # public method that exists for one caller is not an improvement.
   "SLF001",
 
   # Logging with an f-string loses lazy formatting; the call sites here are in

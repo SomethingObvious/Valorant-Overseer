@@ -282,11 +282,7 @@ $AllowedHosts = @(
     'registry\.npmjs\.org',
     # The $schema line in tui/biome.json, which only an editor ever reads.
     'biomejs\.dev',
-    'localhost', '127\.0\.0\.1',
-    # Not a destination: app.py's self-check sends this as an Origin it
-    # expects to be refused. .example is reserved by RFC 2606 and cannot
-    # resolve to anything.
-    'evil\.example'
+    'localhost', '127\.0\.0\.1'
 )
 
 function Test-NoNewHosts {
@@ -471,8 +467,7 @@ function Invoke-Mypy {
 
 # Dead code, at 80% confidence. It found an unused parameter on
 # get_all_accounts that two call sites were still passing. Below 80 it starts
-# guessing about the Flask views, which look unreferenced because a decorator
-# is what calls them.
+# guessing.
 function Invoke-Vulture {
     if (-not (Test-Tool "vulture")) { return $false }
     Push-Location $Root
@@ -573,9 +568,9 @@ $SelfChecks = @("backend\encounter_log.py", "backend\history.py", "backend\inven
     "backend\party_detector.py",
     "backend\overseerlog.py")
 
-# app.py starts a web server when it is run, so its self-check needs the
-# flag. It is the regression guard on the local API needing a token, which
-# is the one finding here that a browser tab could reach.
+# app.py starts the WebSocket bridge when it is run, so its self-check needs
+# the flag. It is the guard that the bridge's request router keeps answering
+# in demo mode -- the whole data surface, now that the HTTP API is deleted.
 $SelfCheckArgs = @{ "backend\app.py" = @("--self-check") }
 
 # The scoreboard's own guard: it renders every board shape a missing Riot

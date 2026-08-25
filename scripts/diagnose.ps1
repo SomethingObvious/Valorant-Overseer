@@ -137,10 +137,8 @@ function Get-PortOwner([int]$port) {
     }
     return "free"
 }
-$backendPort = 5000; $wsPort = 7878
+$wsPort = 7878
 if (Test-Path $EnvFile) {
-    $bp = Get-Content $EnvFile -Encoding UTF8 | Select-String '^\s*BACKEND_PORT\s*=\s*(\d+)'
-    if ($bp) { $backendPort = [int]$bp.Matches[0].Groups[1].Value }
     $wp = Get-Content $EnvFile -Encoding UTF8 | Select-String '^\s*WS_PORT\s*=\s*(\d+)'
     if ($wp) { $wsPort = [int]$wp.Matches[0].Groups[1].Value }
 }
@@ -153,9 +151,8 @@ if (Test-Path $runtimeState) {
         $rootLower = $Root.ToLowerInvariant()
 
         if ($identity -eq $rootLower -or $identity.Contains($rootLower + '\')) {
-            $backendPort = [int]$rs.backendPort
             $wsPort = [int]$rs.wsPort
-            DiagLine "active launcher selected backend=$backendPort, websocket=$wsPort"
+            DiagLine "active launcher selected websocket=$wsPort"
         }
         else {
             DiagLine "runtime-state.json is stale (PID now belongs to another program)"
@@ -163,24 +160,27 @@ if (Test-Path $runtimeState) {
     }
     catch { DiagLine "runtime-state.json is stale (launcher is not running)" }
 }
-DiagLine "backend port $backendPort`: $(Get-PortOwner $backendPort)"
 DiagLine "websocket port $wsPort`: $(Get-PortOwner $wsPort)"
 
 
 RSection "Running app"
-try {
-    $h = Invoke-RestMethod -Uri "http://127.0.0.1:$backendPort/api/health" -TimeoutSec 3
-    if ($h.service -ne "overseer") {
-        Bad "port $backendPort answered, but it is not Valorant Overseer"
+$bridgeFile = Join-Path $OverseerDir "bridge.json"
+$bridgeReported = $false
+if (Test-Path $bridgeFile) {
+    try {
+        $b = Get-Content $bridgeFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $null = Get-CimInstance Win32_Process -Filter "ProcessId=$($b.pid)" -ErrorAction Stop
+        if ((Get-PortOwner ([int]$b.wsPort)) -like "ours*") {
+            Good "backend bridge healthy (protocol $($b.protocol), ws $($b.wsPort), PID $($b.pid))"
+        }
+        else {
+            Bad "bridge.json names port $($b.wsPort), but no Valorant Overseer process is listening there"
+        }
+        $bridgeReported = $true
     }
-    elseif (-not $h.wsReady -or [int]$h.wsPort -ne $wsPort) {
-        Bad "backend is up but its authenticated WebSocket self-check is not ready"
-    }
-    else {
-        Good "backend + authenticated WebSocket healthy (v$($h.appVersion), protocol $($h.protocol), ws $($h.wsPort), client: $($h.clientStatus))"
-    }
+    catch { }
 }
-catch { DiagLine "backend: not running (start it with start.bat)" }
+if (-not $bridgeReported) { DiagLine "backend: not running (start it with start.bat)" }
 
 
 RSection "Riot & Discord"
@@ -201,22 +201,6 @@ else {
 $discord = $false
 foreach ($i in 0..3) { if (Test-Path "\\.\pipe\discord-ipc-$i") { $discord = $true; break } }
 DiagLine "Discord desktop: $(if ($discord) { 'running (Rich Presence possible)' } else { 'not detected (Rich Presence off)' })"
-
-
-RSection "Network"
-$frontend = ""
-if (Test-Path $EnvFile) {
-    $fu = Get-Content $EnvFile -Encoding UTF8 | Select-String '^\s*FRONTEND_URL\s*=\s*(\S+)'
-    if ($fu) { $frontend = $fu.Matches[0].Groups[1].Value }
-}
-if ($frontend) {
-    try {
-        $r = Invoke-WebRequest -Uri $frontend -UseBasicParsing -TimeoutSec 8 -Method Head
-        Good "dashboard reachable ($frontend)"
-    }
-    catch { Bad "dashboard NOT reachable ($frontend): $($_.Exception.Message)" }
-}
-else { DiagLine "dashboard: none configured (terminal scoreboard only)" }
 
 
 RSection "Recent errors (sanitized)"

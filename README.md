@@ -1,9 +1,11 @@
 # Valorant Overseer
 
+![Valorant Overseer banner](docs/banner.svg)
+
 Live in-match VALORANT intelligence, read from the game client on this PC and
 rendered in the terminal. Ranks, peaks, parties, K/D, win rate, smurf risk,
 skins, RR history, an encounter log across sessions, appear-offline and
-Discord Rich Presence. 
+Discord Rich Presence.
 
 Private build. It does not update itself, it does not report anything about you
 anywhere, and it answers to nobody but the person at this keyboard.
@@ -23,9 +25,11 @@ This is the point of it, so it is the first section.
   by default. That code is deleted, not disabled.
 - **It accepts no remote control.** The phone/remote-pairing channel is gone.
   Nothing outside this machine can drive the local bridge.
-- **It serves no web dashboard by default.** A hosted dashboard is somebody
-  else's JavaScript talking to a bridge on this machine. Set `FRONTEND_URL`
-  only if you run the page yourself.
+- **It has no web anything.** The dashboard, the CORS layer and the HTTP API
+  that served it are deleted, not disabled. The only client is the terminal
+  scoreboard in this repository, over a token-authenticated local WebSocket
+  that refuses any connection carrying an `Origin` header — which is to say,
+  any browser.
 - **It never acts on the game.** No instalock, no auto-dodge, no queue
   control. Every route that did anything to a live match is deleted, and the
   command router will not accept the words either. It reads your client and
@@ -143,11 +147,10 @@ committed one, so the shipped bundle is always exactly what `tui/src` and
 | --- | --- | --- |
 | `RIOT_REGION` | asked at install | `na`, `eu`, `ap`, `kr`, `latam`, `br` |
 | `DATA_SOURCE` | `auto` | `demo` shows sample players instead of waiting |
-| `FRONTEND_URL` | unset | A dashboard you host yourself. Unset means terminal only. |
-| `BACKEND_PORT` / `WS_PORT` | `5000` / `7878` | |
+| `WS_PORT` | `7878` | |
 
-The local API needs a per-launch token, published in `.overseer/bridge.json`.
-Only `/api/health` is open, so that the launcher can wait on it.
+The bridge needs a per-launch token, published in `.overseer/bridge.json`;
+the launcher waits for that file before opening the scoreboard.
 
 ## Working on it
 

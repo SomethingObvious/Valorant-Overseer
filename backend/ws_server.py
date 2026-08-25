@@ -7,11 +7,7 @@ import json
 import os
 import secrets
 import threading
-import time
-import urllib.request
-import webbrowser
 from http import HTTPStatus
-from urllib.parse import urlparse
 
 from common import console_logger
 from overseer_commands import ACK_FIELDS
@@ -37,7 +33,7 @@ LOG = overseerlog.get_logger("ws", "websocket")
 
 PROTOCOL_VERSION = 1
 SUPPORTED_PROTOCOLS = {1}
-CAPABILITIES = ["state", "commands", "requests", "remote"]
+CAPABILITIES = ["state", "commands", "requests"]
 
 CLOSE_AUTH = 4401
 CLOSE_ORIGIN = 4403
@@ -50,30 +46,10 @@ _log = console_logger("ws", quiet_aware=False, also=LOG)
 
 SESSION_TOKEN: str = ""
 
-ALLOWED_ORIGINS: set[str] = set()
-_FRONTEND_URL = "http://localhost:3000"
-
 _CLIENTS: set[Any] = set()
 _LOOP: asyncio.AbstractEventLoop | None = None
 _READY = threading.Event()
 _WS_PORT: int | None = None
-
-
-def _build_allowed_origins(frontend_url: str) -> set[str]:
-    frontend_url = (frontend_url or "http://localhost:3000").rstrip("/")
-    origins = {
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        frontend_url,
-    }
-    parsed = urlparse(frontend_url)
-    if parsed.scheme == "https" and parsed.hostname and not parsed.hostname.startswith("www."):
-        origins.add(f"https://www.{parsed.hostname}")
-    return origins
-
-
-def dashboard_url(frontend_url: str, ws_port: int) -> str:
-    return f"{frontend_url.rstrip('/')}/dashboard?mode=local&port={ws_port}&s={SESSION_TOKEN}"
 
 
 async def _process_request(path: str, request_headers: Any) -> Any:
@@ -82,42 +58,19 @@ async def _process_request(path: str, request_headers: Any) -> Any:
     except AttributeError:
         return None
 
+    # Only a browser sends an Origin header, and there is no browser client
+    # any more: the web dashboard is deleted. Whatever page is asking, the
+    # answer is no.
     origin = get("Origin")
-    if origin is not None and origin not in ALLOWED_ORIGINS:
-        _log(f"rejected origin: {origin}")
+    if origin is not None:
+        _log(f"rejected browser origin: {origin}")
         return (
             HTTPStatus.FORBIDDEN,
             [("Content-Type", "text/plain"), ("Content-Length", "16")],
             b"Forbidden origin",
         )
 
-    if get("Access-Control-Request-Private-Network"):
-        if origin is None:
-            return (
-                HTTPStatus.FORBIDDEN,
-                [("Content-Type", "text/plain"), ("Content-Length", "16")],
-                b"Forbidden origin",
-            )
-        headers = [
-            ("Access-Control-Allow-Origin", origin),
-            ("Access-Control-Allow-Private-Network", "true"),
-            ("Access-Control-Allow-Headers", "*"),
-            ("Access-Control-Allow-Methods", "GET, OPTIONS"),
-            ("Content-Length", "0"),
-        ]
-        return (HTTPStatus.OK, headers, b"")
-
     return None
-
-
-def handshake_headers(path: str, request_headers: Any) -> Any:
-    origin = request_headers.get("Origin")
-    if origin in ALLOWED_ORIGINS:
-        return [
-            ("Access-Control-Allow-Origin", origin),
-            ("Access-Control-Allow-Private-Network", "true"),
-        ]
-    return []
 
 
 def is_ready() -> bool:
@@ -172,20 +125,15 @@ def start(
     *,
     board_provider: Callable[[], dict[str, Any]],
     command_router: Any,
-    frontend_url: str,
     ws_port: int,
     request_handler: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     poll_interval: float | None = None,
-    open_dashboard: bool = True,
-    backend_port: int | None = None,
 ) -> str:
-    global SESSION_TOKEN, ALLOWED_ORIGINS, _FRONTEND_URL, _WS_PORT
+    global SESSION_TOKEN, _WS_PORT
 
     _READY.clear()
     _WS_PORT = None
     SESSION_TOKEN = secrets.token_urlsafe(32)
-    _FRONTEND_URL = (frontend_url or "http://localhost:3000").rstrip("/")
-    ALLOWED_ORIGINS = _build_allowed_origins(_FRONTEND_URL)
     interval = float(
         poll_interval if poll_interval is not None else os.getenv("WS_STATE_POLL", "4.0")
     )
@@ -202,7 +150,7 @@ def start(
         async def handler(websocket: Any) -> None:
 
             origin = websocket.request_headers.get("Origin")
-            if origin is not None and origin not in ALLOWED_ORIGINS:
+            if origin is not None:
                 await websocket.close(code=CLOSE_ORIGIN, reason="Forbidden origin")
                 return
 
@@ -244,8 +192,8 @@ def start(
                         "code": "incompatible_protocol",
                         "supported": sorted(SUPPORTED_PROTOCOLS),
                         "appVersion": APP_VERSION,
-                        "message": "This dashboard is not compatible with the installed "
-                        "Valorant Overseer version. Run UPDATE.bat to update the app.",
+                        "message": "This scoreboard does not match the installed "
+                        "Valorant Overseer version. Reinstall the app.",
                     },
                 )
                 await websocket.close(code=CLOSE_PROTOCOL, reason="Incompatible protocol")
@@ -348,14 +296,12 @@ def start(
                 "127.0.0.1",
                 ws_port,
                 process_request=_process_request,
-                extra_headers=handshake_headers,
                 ping_interval=None,
                 max_queue=16,
             ):
                 _log(
                     f"listening on ws://127.0.0.1:{ws_port} "
-                    f"(protocol {PROTOCOL_VERSION}, "
-                    f"origins: {', '.join(sorted(ALLOWED_ORIGINS))})"
+                    f"(protocol {PROTOCOL_VERSION}, local clients only)"
                 )
                 ready.set()
                 await asyncio.gather(_broadcast_loop(), _heartbeat_loop())
@@ -389,60 +335,4 @@ def start(
 
     _WS_PORT = ws_port
     _READY.set()
-    # No FRONTEND_URL means no dashboard, so there is nothing to open and no
-    # browser to launch. The bridge still runs, for the terminal scoreboard.
-    if not (frontend_url or "").strip():
-        LOG.info("no FRONTEND_URL set; bridge is local-only, not opening a browser")
-        return SESSION_TOKEN
-    url = dashboard_url(_FRONTEND_URL, ws_port)
-    print("\n[overseer] Dashboard authentication ready; opening your browser.\n", flush=True)
-    if open_dashboard and os.getenv("OVERSEER_NO_BROWSER", "").strip() not in ("1", "true"):
-        _spawn_opener(_FRONTEND_URL, url, backend_port)
-
     return SESSION_TOKEN
-
-
-def _spawn_opener(frontend_url: str, url: str, backend_port: int | None) -> None:
-    def _show_fallback() -> None:
-        try:
-            import ctypes
-
-            ctypes.windll.user32.MessageBoxW(
-                None,
-                "Valorant Overseer couldn't open your default browser.\n\n"
-                "Copy this private one-time dashboard URL (Ctrl+C copies this dialog):\n\n" + url,
-                "Valorant Overseer",
-                0x30,
-            )
-        except Exception:
-            _log("couldn't open your browser automatically; set a default browser and restart")
-
-    def _wait(target: str, deadline: float) -> bool:
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(target, timeout=2) as r:
-                    if r.status < 500:
-                        return True
-            except Exception:
-                time.sleep(1.0)
-        return False
-
-    def _wait_and_open() -> None:
-        if backend_port and not _wait(
-            f"http://127.0.0.1:{backend_port}/api/health", time.time() + 60
-        ):
-            LOG.warning("backend health not confirmed before opening dashboard")
-        opened = _wait(frontend_url.rstrip("/") + "/", time.time() + 90)
-        try:
-            if not webbrowser.open(url):
-                raise RuntimeError("webbrowser.open returned False")
-        except Exception:
-            LOG.warning("VG-BROWSER-001 couldn't open a browser automatically")
-            _show_fallback()
-        if not opened:
-            _log(
-                "opened dashboard (frontend health unconfirmed, "
-                "if the page errors, retry once it's up)."
-            )
-
-    threading.Thread(target=_wait_and_open, daemon=True, name="overseer-open").start()

@@ -20,7 +20,7 @@ def load_env(*paths: Path) -> None:
 
     setdefault, not assignment: a variable already set by start.ps1 or by the
     user's shell outranks the file, which is what lets the launcher pass
-    BACKEND_PORT down to a child that also reads the same .env.
+    WS_PORT down to a child that also reads the same .env.
     """
     for path in paths:
         if not path.exists():

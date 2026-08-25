@@ -1,12 +1,13 @@
 # AGENTS.md
 
 Valorant Overseer reads the VALORANT client running on this PC and renders the lobby it
-finds: ranks, peaks, parties, K/D, smurf risk, skins. A Flask backend, a Rich
-terminal scoreboard, a Discord presence, and a local WebSocket bridge.
+finds: ranks, peaks, parties, K/D, smurf risk, skins. A Python backend, an Ink
+terminal scoreboard, a Discord presence, and the local WebSocket bridge that
+connects them.
 
 This is a private, hardened build. It does not update itself, sends no
-telemetry, accepts no remote control, and serves no dashboard unless you point
-it at one you host. Those are not settings, they are deleted code, and
+telemetry, accepts no remote control, and serves no web page at all — the
+dashboard and the HTTP API behind it are gone. Those are not settings, they are deleted code, and
 `lint.ps1` has two checks whose only job is keeping it that way. Read the
 "Isolation" section before adding anything that opens a socket.
 
@@ -138,10 +139,10 @@ run or trusted* — the CPython installer and the offline-mode certificate — a
 both pinned by SHA-256 before use. Adding a host means writing down why, in
 that file, where a diff shows it.
 
-**The dashboard is opt-in.** `FRONTEND_URL` unset means the terminal
-scoreboard and nothing else: no page, no browser, no origin allowed. Whoever
-serves that page can drive a bridge that instalocks, dodges and controls the
-queue, so the default is nobody.
+**There is no web surface.** The dashboard, its CORS layer and the HTTP API
+that served it are deleted code, not a setting. The bridge answers 127.0.0.1,
+needs a per-launch token from `.overseer/bridge.json`, and refuses any
+connection that carries an `Origin` header — a browser has no business here.
 
 ## Rules that are not negotiable
 
@@ -179,7 +180,7 @@ ignores were dead and both rules had never run once. An ignore whose rule is
 not selected is not an exception, it is a comment.
 
 **Everything is annotated.** mypy runs at `strict = True` over every file, with
-three relaxations argued in `mypy.ini`. That is the check that makes a wrong
+two relaxations argued in `mypy.ini`. That is the check that makes a wrong
 type a lint failure instead of a runtime surprise, and it is worth more than it
 looks: annotating the signatures was a review of what they actually return, and
 `_current_players` turned out to return a 4-tuple, `kd_hs` five values, and
@@ -216,10 +217,10 @@ a comment can never be the thing that breaks a release.
 
 ## Constraints that shape design decisions
 
-- **Nothing about a match leaves the machine.** The hosted dashboard is only a
-  UI; it connects back over a local token-authenticated WebSocket. There is no
-  server-side store, no account and no telemetry beyond `sync.py`'s opt-in
-  ping. Anything that would send match data somewhere does not ship.
+- **Nothing about a match leaves the machine.** The only client is the
+  terminal scoreboard, over a local token-authenticated WebSocket. There is no
+  server-side store, no account and no telemetry. Anything that would send
+  match data somewhere does not ship.
 - **Riot's local API is undocumented and moves with every patch.** A failing
   call is a supported state, never a crash: the board holds its last good copy
   for `_HOLD_SECS` and shows a notice. This is why `except Exception` is
@@ -240,8 +241,8 @@ a comment can never be the thing that breaks a release.
   match. A range is a different program on somebody else's PC.
 - **`tzdata` is a real dependency on Windows.** Windows ships no tz database,
   so `zoneinfo.ZoneInfo("UTC")` raises `ModuleNotFoundError` — not
-  `ZoneInfoNotFoundError` — when the package is absent. Without it
-  `/api/insights` and `/api/performance` return 500 on every clean install.
+  `ZoneInfoNotFoundError` — when the package is absent. Without it the
+  `insights` and `performance` bridge requests fail on every clean install.
   It is pinned, `import_smoke.py` checks it, and `_valid_timezone` falls back
   to `datetime.UTC` anyway.
 
@@ -252,22 +253,21 @@ exercises the whole render path with a generated lobby:
 
 ```powershell
 $env:DATA_SOURCE = "demo"
-python cli.py --once            # one frame, ten players, both teams
+python run.py --cli             # the scoreboard, ten sample players, both teams
 ```
 
-For the backend, start it and walk the endpoints — every one of these answers
-with VALORANT closed:
+For the backend, the self-check drives the bridge's request router — the whole
+data surface — with no port, no game and no network:
 
 ```powershell
-$env:DATA_SOURCE = "demo"; $env:OVERSEER_NO_BROWSER = "1"
-python backend\app.py
-# /api/health /api/live /api/agents /api/recap /api/insights
-# /api/performance /api/settings /api/queue
+$env:DATA_SOURCE = "demo"
+python backend\app.py --self-check
+python backend\app.py           # or start the bridge and connect the scoreboard
 ```
 
-`/api/insights` and `/api/performance` are the two worth checking by hand after
-any dependency change: they are the only endpoints that reach for the tz
-database, and they are the ones that were returning 500.
+The `insights` and `performance` requests are the two worth checking by hand
+after any dependency change: they are the only ones that reach for the tz
+database, and they are the ones that used to fail without it.
 
 Then the release pipeline, which is its own kind of test — it strips, scans and
 byte-compiles the whole tree:

@@ -1,6 +1,5 @@
 ﻿param(
-    [string]$Region = "",
-    [switch]$Frontend
+    [string]$Region = ""
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -17,7 +16,7 @@ try {
     $maintenanceMutex = New-OverseerMutex "Maintenance" "Another Valorant Overseer install/update operation is already running. Wait for it to finish and retry."
     Stop-RunningApp "install" | Out-Null
     $appMutex = New-OverseerMutex "App" "Valorant Overseer is still running and couldn't be closed automatically. Close the scoreboard window, then run install.bat again."
-    Write-OverseerLog -Log install -Message "install/repair started (v$(Get-LocalVersion), tree=$(if ($HasFrontend) { 'full' } else { 'slim' }))"
+    Write-OverseerLog -Log install -Message "install/repair started (v$(Get-LocalVersion))"
 
     Step "Checking this PC ..."
     $problems = Test-Preflight
@@ -41,20 +40,6 @@ try {
 
         Repair-Venv $py
         Install-PyDeps
-    }
-
-    if ($HasFrontend) {
-        if ($Frontend) {
-            if (-not (Find-Node)) { throw "Node.js 18.17+ LTS is required for the local frontend. Install it from nodejs.org and re-run with -Frontend." }
-            Install-NodeDeps
-            Invoke-FrontendBuild
-        }
-        else {
-            Note "Developer tree detected - skipping frontend (run install.bat with -Frontend to build it)."
-        }
-    }
-    else {
-        Note "Slim install - no local frontend bundled; the app uses the hosted dashboard."
     }
 
     $saved = Get-SavedRegion

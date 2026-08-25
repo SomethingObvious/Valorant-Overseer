@@ -89,8 +89,8 @@ def _valid_timezone(name: str | None) -> tuple[str, tzinfo]:
     # Windows carries no tz database, so zoneinfo reads it out of the tzdata
     # package -- and ZoneInfo("UTC") raises ModuleNotFoundError, not
     # ZoneInfoNotFoundError, when that package is absent. requirements.txt pins
-    # it now; this keeps /api/insights and /api/performance answering with UTC
-    # instead of returning 500 if it ever goes missing again.
+    # it now; this keeps the insights and performance requests answering with
+    # UTC instead of failing if it ever goes missing again.
     try:
         return "UTC", ZoneInfo("UTC")
     except Exception:

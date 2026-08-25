@@ -9,8 +9,6 @@ $VenvPy = Join-Path $VenvDir "Scripts\python.exe"
 $OverseerDir = Join-Path $Root ".overseer"
 $EnvFile = Join-Path $Root "backend\.env"
 
-$Script:HasFrontend = Test-Path (Join-Path $Root "frontend\package.json")
-
 $MarkerSchemaVersion = 2
 
 function Step($m) { Write-Host ""; Write-Host "==> $m" -ForegroundColor Cyan }
@@ -666,7 +664,6 @@ function Save-DepHashes {
     if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
     $deps = @{
         requirements = (HashOf "backend\requirements.txt")
-        packageLock  = (HashOf "frontend\package-lock.json")
     } | ConvertTo-Json
     Write-FileNoBom (Join-Path $OverseerDir "deps.json") $deps
 }
@@ -731,41 +728,4 @@ function New-DesktopShortcut {
         Ok "Desktop shortcut ready - you can drag it onto your taskbar to pin it."
     }
     catch { Warn2 "Couldn't create the desktop shortcut ($($_.Exception.Message))." }
-}
-
-
-
-
-function Find-Node {
-    if (Test-Cmd "node") {
-        try {
-            $v = (& node -v) -replace '^v', ''
-            if ([version]$v -ge [version]"18.17.0") { return $true }
-        }
-        catch {}
-    }
-    return $false
-}
-
-function Invoke-Npm([string[]]$npmArgs) {
-    Push-Location (Join-Path $Root "frontend")
-    try {
-        cmd /c ("npm " + ($npmArgs -join " ") + " 2>&1") | Out-Host
-        return $LASTEXITCODE
-    }
-    finally { Pop-Location }
-}
-
-function Install-NodeDeps {
-    Step "Installing frontend packages (npm ci) ..."
-    if ((Invoke-Npm @("ci", "--no-fund", "--no-audit")) -ne 0) {
-        throw "npm ci failed (check your internet connection and Node version, then retry)."
-    }
-    Ok "Frontend packages installed."
-}
-
-function Invoke-FrontendBuild {
-    Step "Building the website (npm run build) ... (first build can take a minute)"
-    if ((Invoke-Npm @("run", "build")) -ne 0) { throw "npm run build failed" }
-    Ok "Website built."
 }

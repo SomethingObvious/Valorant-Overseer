@@ -40,6 +40,6 @@
     live recon · ranks · smurf radar · encounter log · ascii art
   </text>
   <text x="272" y="228" font-family="'Segoe UI',Arial,sans-serif" font-size="16" letter-spacing="1" fill="#5C5C63">
-    Flask + Next.js + Rich CLI — reads the local VALORANT client
+    Python bridge + Ink terminal scoreboard — reads the local VALORANT client
   </text>
 </svg>

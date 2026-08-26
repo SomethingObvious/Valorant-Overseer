@@ -553,6 +553,9 @@ function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactE
   const fd = num(p.firstDeaths) ?? 0;
   const clutch = num(p.clutches) ?? 0;
   const spike = (num(p.plants) ?? 0) + (num(p.defuses) ?? 0);
+  // How many of those actually won the round. A plant that loses is not
+  // the same as one that holds, and the total alone cannot say which.
+  const spikeWon = (num(p.plantsWon) ?? 0) + (num(p.defusesWon) ?? 0);
   // Every multikill, not one number per size: a 2k and a 4k both count here.
   const multi = Object.values(p.multiKills ?? {}).reduce((n, v) => n + (num(v) ?? 0), 0);
   return (
@@ -586,7 +589,9 @@ function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactE
           <Text color={clutch ? C.gold : C.faint}>
             {pad(clutch ? `${clutch}/${clutch + (num(p.clutchesLost) ?? 0)}` : NONE, 8, "right")}
           </Text>
-          <Text color={C.faint}>{pad(spike ? String(spike) : NONE, 7, "right")}</Text>
+          <Text color={spike && spikeWon === spike ? C.ally : C.faint}>
+            {pad(spike ? `${spikeWon}/${spike}` : NONE, 7, "right")}
+          </Text>
           <Text color={C.ice}>{pad(`  ${p.topWeapon?.name ?? ""}`, 11)}</Text>
         </>
       ) : null}

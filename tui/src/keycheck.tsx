@@ -338,6 +338,23 @@ async function main(): Promise<void> {
         failures.push(`${name} lost the key hints at ${rows} rows`);
       }
     }
+    // Every section of the detail panel, at every height. The panel holds the
+    // densest data in the app and the window is the one thing it cannot
+    // negotiate with, so a four figure number or a long name must shorten
+    // rather than push the footer off the bottom.
+    stdin.push("1");
+    await settle();
+    for (const section of ["stats", "form", "arsenal", "seen"]) {
+      stdin.push("e");
+      await settle();
+      const lines = latest().split(String.fromCharCode(10)).length;
+      if (lines > rows) {
+        failures.push(`panel ${section} is ${lines} lines in a ${rows}-row window`);
+      }
+      if (!latest().includes("Quit")) {
+        failures.push(`panel ${section} lost the key hints at ${rows} rows`);
+      }
+    }
     if (debug) console.error(`  fits at ${rows} rows`);
   }
   stdin.push("1");

@@ -38989,6 +38989,7 @@ function RecapRow({ p, width }) {
   const fd = num(p.firstDeaths) ?? 0;
   const clutch = num(p.clutches) ?? 0;
   const spike = (num(p.plants) ?? 0) + (num(p.defuses) ?? 0);
+  const spikeWon = (num(p.plantsWon) ?? 0) + (num(p.defusesWon) ?? 0);
   const multi = Object.values(p.multiKills ?? {}).reduce((n, v) => n + (num(v) ?? 0), 0);
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: p.team === "Blue" ? C.ally : C.enemy, children: "\u258E" }),
@@ -39007,7 +39008,7 @@ function RecapRow({ p, width }) {
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > fd ? C.ally : fd > fb ? C.loss : C.faint, children: pad(fb || fd ? `${fb}/${fd}` : NONE, 7, "right") }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: multi ? C.gold : C.faint, children: pad(multi ? String(multi) : NONE, 5, "right") }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: clutch ? C.gold : C.faint, children: pad(clutch ? `${clutch}/${clutch + (num(p.clutchesLost) ?? 0)}` : NONE, 8, "right") }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(spike ? String(spike) : NONE, 7, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: spike && spikeWon === spike ? C.ally : C.faint, children: pad(spike ? `${spikeWon}/${spike}` : NONE, 7, "right") }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(`  ${p.topWeapon?.name ?? ""}`, 11) })
     ] }) : null
   ] });
@@ -39439,7 +39440,8 @@ var STACK_NAME = {
   4: "four stack",
   5: "five stack"
 };
-function Detail({ p }) {
+var PANEL_TABS = ["stats", "form", "arsenal", "seen"];
+function Detail({ p, tab: tab2 }) {
   if (!p) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { borderStyle: "round", borderColor: C.line, paddingX: 1, width: SIDEBAR, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "No player selected." }) });
   }
@@ -39462,6 +39464,15 @@ function Detail({ p }) {
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          Text,
+          {
+            bold: name === tab2,
+            color: name === tab2 ? C.bone : C.line,
+            children: `${name === tab2 ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
+          },
+          name
+        )) }),
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39474,44 +39485,53 @@ function Detail({ p }) {
         isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}${p.peakAct ? ` \xB7 ${p.peakAct}` : ""}` }),
         p.previousRank ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `Last act ${p.previousRank}` }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "K/D   " }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: kdColor(p.kd), children: `${dash(p.kd)} ${bar(num(p.kd), 2, 8)}` })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Win   " }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: (num(p.winRate) ?? 0) >= 50 ? C.ally : C.text, children: `${dash(p.winRate, "%")} over ${num(p.games) ?? 0}` })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "HS    " }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: dash(p.hsPct, "%") }),
-          mapWr && (num(mapWr.games) ?? 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            Text,
-            {
-              wrap: "truncate",
-              color: C.dim,
-              children: `   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`
-            }
-          ) : null
-        ] }),
-        formPips(p).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
+        tab2 === "stats" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "K/D   " }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              Text,
+              {
+                wrap: "truncate",
+                color: kdColor(p.kd),
+                children: `${dash(p.kd)} ${bar(num(p.kd), 2, 8)}`
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Win   " }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: (num(p.winRate) ?? 0) >= 50 ? C.ally : C.text, children: `${dash(p.winRate, "%")} over ${num(p.games) ?? 0}` })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "HS    " }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: dash(p.hsPct, "%") }),
+            mapWr && (num(mapWr.games) ?? 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              Text,
+              {
+                wrap: "truncate",
+                color: C.dim,
+                children: `   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`
+              }
+            ) : null
+          ] })
+        ] }) : null,
+        tab2 === "form" && formPips(p).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Form  " }),
           formPips(p).map((pip) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: outcomeColor(pip.result), children: `${pip.result} ` }, pip.key)),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: streakText(p) })
         ] }) : null,
-        arr(p.topAgents).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+        tab2 === "form" && arr(p.topAgents).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Mains " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
-        arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+        tab2 === "arsenal" && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
         ] }) : null,
-        p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        tab2 === "seen" && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(p.stackGuess.same) ?? 0}/${num(p.stackGuess.shared) ?? 0} same side, ${num(p.stackGuess.confidence) ?? 0}% sure` })
         ] }) : null,
-        seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        tab2 === "seen" && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before` }),
           num(p.encounter?.withCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.withCount)} on your team, ${num(p.encounter?.winsWith) ?? 0}W-${num(p.encounter?.lossesWith) ?? 0}L${num(p.encounter?.drawsWith) ? `-${num(p.encounter?.drawsWith)}D` : ""}` }) : null,
           num(p.encounter?.againstCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.againstCount)} against you, ${num(p.encounter?.winsAgainst) ?? 0}W-${num(p.encounter?.lossesAgainst) ?? 0}L${num(p.encounter?.drawsAgainst) ? `-${num(p.encounter?.drawsAgainst)}D` : ""}` }) : null
@@ -39715,7 +39735,8 @@ var HELP_SECTIONS = [
       ["s", "Sort: party, rank, K/D, win rate, level"],
       ["/", "Filter by name, Esc clears it"],
       ["r", "Ask the backend again for this view"],
-      ["d", "Detail panel on and off"]
+      ["d", "Detail panel on and off"],
+      ["e", "Next section of the detail panel"]
     ]
   ],
   [
@@ -39818,6 +39839,7 @@ function App2({
   const [sort, setSort] = (0, import_react35.useState)(previewSort ?? "party");
   const [offset, setOffset] = (0, import_react35.useState)(0);
   const [refreshedAt, setRefreshedAt] = (0, import_react35.useState)(0);
+  const [panelTab, setPanelTab] = (0, import_react35.useState)("stats");
   const pendingMouse = (0, import_react35.useRef)("");
   const [hoverPlayer, setHoverPlayer] = (0, import_react35.useState)(null);
   const [hoverTab, setHoverTab] = (0, import_react35.useState)(null);
@@ -40061,6 +40083,10 @@ function App2({
       setRefreshedAt((n) => n + 1);
       return;
     }
+    if (input === "e") {
+      setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length] ?? t);
+      return;
+    }
     if (input === "s") {
       setSort((current2) => {
         const at = SORT_MODES.indexOf(current2);
@@ -40249,7 +40275,7 @@ function App2({
       ] }),
       wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
         current.state === "PREGAME" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TeamComp, { players: arrange(arr(teams[selfTeam]), sort), board: current }) : null,
-        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Detail, { p: player }) : null,
+        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Detail, { p: player, tab: panelTab }) : null,
         settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null
       ] }) : null
     ] }),

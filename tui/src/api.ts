@@ -105,6 +105,8 @@ export interface RecapPlayer {
   clutchesLost?: number | null | undefined;
   plants?: number | null | undefined;
   defuses?: number | null | undefined;
+  plantsWon?: number | null | undefined;
+  defusesWon?: number | null | undefined;
   shots?: number | null | undefined;
 }
 

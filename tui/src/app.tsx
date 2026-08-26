@@ -640,7 +640,11 @@ const STACK_NAME: Record<number, string> = {
   5: "five stack",
 };
 
-function Detail({ p }: { p: Player | null }) {
+/** The panel's sections. One opens at a time, so nothing is ever cut off. */
+export const PANEL_TABS = ["stats", "form", "arsenal", "seen"] as const;
+export type PanelTab = (typeof PANEL_TABS)[number];
+
+function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
   if (!p) {
     return (
       <Box borderStyle="round" borderColor={C.line} paddingX={1} width={SIDEBAR}>
@@ -670,6 +674,18 @@ function Detail({ p }: { p: Player | null }) {
         {`Level ${num(p.level) ?? NONE}`}
         {p.role ? ` · ${p.role}` : ""}
       </Text>
+
+      {/* One section at a time, because the panel is 38 columns and the data
+          is not. Everything is reachable and nothing is cut off halfway. */}
+      <Box marginTop={1}>
+        {PANEL_TABS.map((name) => (
+          <Text
+            key={name}
+            bold={name === tab}
+            color={name === tab ? C.bone : C.line}
+          >{`${name === tab ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
+        ))}
+      </Box>
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
@@ -707,36 +723,43 @@ function Detail({ p }: { p: Player | null }) {
         <Text wrap="truncate" color={C.faint}>{`Last act ${p.previousRank}`}</Text>
       ) : null}
 
-      <Box marginTop={1}>
-        <Text wrap="truncate" color={C.dim}>
-          {"K/D   "}
-        </Text>
-        <Text wrap="truncate" color={kdColor(p.kd)}>{`${dash(p.kd)} ${bar(num(p.kd), 2, 8)}`}</Text>
-      </Box>
-      <Box>
-        <Text wrap="truncate" color={C.dim}>
-          {"Win   "}
-        </Text>
-        <Text wrap="truncate" color={(num(p.winRate) ?? 0) >= 50 ? C.ally : C.text}>
-          {`${dash(p.winRate, "%")} over ${num(p.games) ?? 0}`}
-        </Text>
-      </Box>
-      <Box>
-        <Text wrap="truncate" color={C.dim}>
-          {"HS    "}
-        </Text>
-        <Text wrap="truncate" color={C.text}>
-          {dash(p.hsPct, "%")}
-        </Text>
-        {mapWr && (num(mapWr.games) ?? 0) > 0 ? (
-          <Text
-            wrap="truncate"
-            color={C.dim}
-          >{`   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`}</Text>
-        ) : null}
-      </Box>
+      {tab === "stats" ? (
+        <>
+          <Box marginTop={1}>
+            <Text wrap="truncate" color={C.dim}>
+              {"K/D   "}
+            </Text>
+            <Text
+              wrap="truncate"
+              color={kdColor(p.kd)}
+            >{`${dash(p.kd)} ${bar(num(p.kd), 2, 8)}`}</Text>
+          </Box>
+          <Box>
+            <Text wrap="truncate" color={C.dim}>
+              {"Win   "}
+            </Text>
+            <Text wrap="truncate" color={(num(p.winRate) ?? 0) >= 50 ? C.ally : C.text}>
+              {`${dash(p.winRate, "%")} over ${num(p.games) ?? 0}`}
+            </Text>
+          </Box>
+          <Box>
+            <Text wrap="truncate" color={C.dim}>
+              {"HS    "}
+            </Text>
+            <Text wrap="truncate" color={C.text}>
+              {dash(p.hsPct, "%")}
+            </Text>
+            {mapWr && (num(mapWr.games) ?? 0) > 0 ? (
+              <Text
+                wrap="truncate"
+                color={C.dim}
+              >{`   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`}</Text>
+            ) : null}
+          </Box>
+        </>
+      ) : null}
 
-      {formPips(p).length ? (
+      {tab === "form" && formPips(p).length ? (
         <Box marginTop={1}>
           <Text wrap="truncate" color={C.dim}>
             {"Form  "}
@@ -752,7 +775,7 @@ function Detail({ p }: { p: Player | null }) {
         </Box>
       ) : null}
 
-      {arr(p.topAgents).length ? (
+      {tab === "form" && arr(p.topAgents).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
             {"Mains "}
@@ -765,7 +788,7 @@ function Detail({ p }: { p: Player | null }) {
         </Box>
       ) : null}
 
-      {arr(p.weapons).length ? (
+      {tab === "arsenal" && arr(p.weapons).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
             {"Skins "}
@@ -779,7 +802,7 @@ function Detail({ p }: { p: Player | null }) {
         </Box>
       ) : null}
 
-      {p.stackGuess && !p.party ? (
+      {tab === "seen" && p.stackGuess && !p.party ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}`}
@@ -791,7 +814,7 @@ function Detail({ p }: { p: Player | null }) {
         </Box>
       ) : null}
 
-      {seenCount(p) ? (
+      {tab === "seen" && seenCount(p) ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before`}
@@ -1128,6 +1151,7 @@ const HELP_SECTIONS: Array<[string, Array<[string, string]>]> = [
       ["/", "Filter by name, Esc clears it"],
       ["r", "Ask the backend again for this view"],
       ["d", "Detail panel on and off"],
+      ["e", "Next section of the detail panel"],
     ],
   ],
   [
@@ -1269,6 +1293,9 @@ export function App({
   // Bumped by r. It rides along in the request key, so asking again is the
   // same code path as opening the view for the first time.
   const [refreshedAt, setRefreshedAt] = useState(0);
+  // Which section of the detail panel is open. One at a time, so a long
+  // name or a four figure number can never push the rest off the bottom.
+  const [panelTab, setPanelTab] = useState<PanelTab>("stats");
   // Half of a mouse report, held over until the rest of it arrives.
   const pendingMouse = useRef("");
   const [hoverPlayer, setHoverPlayer] = useState<string | null>(null);
@@ -1590,6 +1617,10 @@ export function App({
       setRefreshedAt((n) => n + 1);
       return;
     }
+    if (input === "e") {
+      setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length] ?? t);
+      return;
+    }
     if (input === "s") {
       // Cycle the board order. The team header says which one is active,
       // because a reordered scoreboard with no label is just confusing.
@@ -1801,7 +1832,7 @@ export function App({
             {current.state === "PREGAME" ? (
               <TeamComp players={arrange(arr(teams[selfTeam]), sort)} board={current} />
             ) : null}
-            {settings.detail ? <Detail p={player} /> : null}
+            {settings.detail ? <Detail p={player} tab={panelTab} /> : null}
             {settings.session ? <Session board={current} /> : null}
           </Box>
         ) : null}

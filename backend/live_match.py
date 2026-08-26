@@ -273,7 +273,9 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 "bodyshots": 0,
                 "legshots": 0,
                 "plants": 0,
+                "plantsWon": 0,
                 "defuses": 0,
+                "defusesWon": 0,
                 "clutches": 0,
                 "clutchesLost": 0,
                 "multiKills": {2: 0, 3: 0, 4: 0, 5: 0},
@@ -327,18 +329,24 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 if item:
                     entry["weapons"][item] = entry["weapons"].get(item, 0) + 1
 
-        # Who touched the spike. Both are named on the round itself.
+        # Who touched the spike, and whether it went their way afterwards. A
+        # plant that loses the round is a different thing from one that wins it.
+        won_by = rr.get("winningTeam")
         planter = rr.get("bombPlanter")
         if planter:
             slot(planter)["plants"] += 1
+            if won_by and teams.get(planter) == won_by:
+                slot(planter)["plantsWon"] += 1
         defuser = rr.get("bombDefuser")
         if defuser:
             slot(defuser)["defuses"] += 1
+            if won_by and teams.get(defuser) == won_by:
+                slot(defuser)["defusesWon"] += 1
 
         # Clutches. The last player standing on their side, with at least one
         # opponent still alive, and then the round goes their way. This needs
         # the sides, which the round does not carry, so they come from the match.
-        winner = rr.get("winningTeam")
+        winner = won_by
         if teams:
             order = sorted(kills, key=lambda k: k["at"])
             standing: dict[str, set[str]] = {side: set() for side in set(teams.values())}
@@ -1571,6 +1579,8 @@ class LiveMatch:
                     "clutchesLost": (detail.get(sub) or {}).get("clutchesLost"),
                     "plants": (detail.get(sub) or {}).get("plants"),
                     "defuses": (detail.get(sub) or {}).get("defuses"),
+                    "plantsWon": (detail.get(sub) or {}).get("plantsWon"),
+                    "defusesWon": (detail.get(sub) or {}).get("defusesWon"),
                     "shots": (detail.get(sub) or {}).get("shots"),
                     "rankTier": rank_meta["tier"],
                     "rank": rank_meta["name"],
@@ -1961,6 +1971,10 @@ def _self_check() -> None:
     # The spike. Both ends are named on the round itself.
     assert stats["A"]["plants"] == 1, stats["A"]
     assert stats["D"]["defuses"] == 1, stats["D"]
+    # A's plant held; D defused and still lost the round, which is worth
+    # telling apart from a defuse that won it.
+    assert stats["A"]["plantsWon"] == 1, stats["A"]
+    assert stats["D"]["defusesWon"] == 0, stats["D"]
 
     # Clutches. In round 2 C is left alone against B and D and wins it. D is
     # last alive in both rounds and loses both, which is not a clutch and is

@@ -99,6 +99,13 @@ export interface RecapPlayer {
   firstDeaths?: number | null | undefined;
   multiKills?: Record<string, number> | undefined;
   topWeapon?: TopWeapon | null | undefined;
+  /** The rest of what the round data yields, all of it free. */
+  weaponKills?: TopWeapon[] | undefined;
+  clutches?: number | null | undefined;
+  clutchesLost?: number | null | undefined;
+  plants?: number | null | undefined;
+  defuses?: number | null | undefined;
+  shots?: number | null | undefined;
 }
 
 export interface Recap {

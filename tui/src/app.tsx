@@ -670,11 +670,30 @@ function Detail({ p }: { p: Player | null }) {
         {`Level ${num(p.level) ?? NONE}`}
         {p.role ? ` · ${p.role}` : ""}
       </Text>
+      {/* The flags come first. They used to sit under the form and the map
+          record, which is below the fold on any terminal that is not enormous:
+          the one thing you want shouting at you was the one thing clipped. */}
+      {reasons.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color={C.gold}>
+            ⚑ Smurf
+          </Text>
+          {reasons.map((r) => (
+            <Text key={r} color={C.gold}>
+              {`  ${r}`}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+
       <Box marginTop={1}>
         <Text wrap="truncate" color={p.rankColor ?? C.text}>
           {p.rank ?? NONE}
         </Text>
         {isRanked(p) ? <Text wrap="truncate" color={C.dim}>{`  ${num(p.rr) ?? 0} RR`}</Text> : null}
+        {num(p.leaderboard) ? (
+          <Text wrap="truncate" bold color={C.gold}>{`  #${num(p.leaderboard)}`}</Text>
+        ) : null}
       </Box>
       {isRanked(p) ? (
         <Text wrap="truncate" color={C.ice}>
@@ -757,19 +776,6 @@ function Detail({ p }: { p: Player | null }) {
               .map((w) => w.skin?.name ?? NONE)
               .join("  ")}`}
           </Text>
-        </Box>
-      ) : null}
-
-      {reasons.length ? (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold color={C.gold}>
-            ⚑ Smurf
-          </Text>
-          {reasons.map((r) => (
-            <Text key={r} color={C.gold}>
-              {`  ${r}`}
-            </Text>
-          ))}
         </Box>
       ) : null}
 

@@ -255,6 +255,11 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
     shipped rounds with no playerStats at all.
     """
     out: dict[str, dict[str, Any]] = {}
+    # Which side each account played, for the clutch check below.
+    teams: dict[str, str] = {}
+    for player in md.get("players") or []:
+        if isinstance(player, dict) and player.get("subject") and player.get("teamId"):
+            teams[str(player["subject"])] = str(player["teamId"])
 
     def slot(puuid: str) -> dict[str, Any]:
         if puuid not in out:
@@ -264,6 +269,13 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 "kast": 0,
                 "firstBloods": 0,
                 "firstDeaths": 0,
+                "headshots": 0,
+                "bodyshots": 0,
+                "legshots": 0,
+                "plants": 0,
+                "defuses": 0,
+                "clutches": 0,
+                "clutchesLost": 0,
                 "multiKills": {2: 0, 3: 0, 4: 0, 5: 0},
                 "weapons": {},
             }
@@ -276,6 +288,7 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
 
         # Everything the round needs, gathered in one pass.
         kills: list[dict[str, Any]] = []
+        clutched: set[str] = set()
         alive: set[str] = set()
         assisted: set[str] = set()
         killed_by: dict[str, str] = {}
@@ -291,6 +304,10 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
 
             for dmg in ps.get("damage") or []:
                 entry["damage"] += int(dmg.get("damage") or 0)
+                # Riot counts where every bullet landed and nothing read it.
+                entry["headshots"] += int(dmg.get("headshots") or 0)
+                entry["bodyshots"] += int(dmg.get("bodyshots") or 0)
+                entry["legshots"] += int(dmg.get("legshots") or 0)
 
             econ = ps.get("economy") or {}
             entry["spent"] += int(econ.get("spent") or 0)
@@ -309,6 +326,38 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 item = (kill.get("finishingDamage") or {}).get("damageItem") or ""
                 if item:
                     entry["weapons"][item] = entry["weapons"].get(item, 0) + 1
+
+        # Who touched the spike. Both are named on the round itself.
+        planter = rr.get("bombPlanter")
+        if planter:
+            slot(planter)["plants"] += 1
+        defuser = rr.get("bombDefuser")
+        if defuser:
+            slot(defuser)["defuses"] += 1
+
+        # Clutches. The last player standing on their side, with at least one
+        # opponent still alive, and then the round goes their way. This needs
+        # the sides, which the round does not carry, so they come from the match.
+        winner = rr.get("winningTeam")
+        if teams:
+            order = sorted(kills, key=lambda k: k["at"])
+            standing: dict[str, set[str]] = {side: set() for side in set(teams.values())}
+            for puuid, side in teams.items():
+                standing[side].add(puuid)
+            for kill in order:
+                victim = str(kill.get("victim") or "")
+                fell = teams.get(victim)
+                if fell:
+                    standing[fell].discard(victim)
+                for side_name, members in standing.items():
+                    if len(members) != 1:
+                        continue
+                    alone = next(iter(members))
+                    others = sum(len(m) for name, m in standing.items() if name != side_name and m)
+                    if others >= 1 and alone not in clutched:
+                        clutched.add(alone)
+                        key = "clutches" if winner == side_name else "clutchesLost"
+                        slot(alone)[key] += 1
 
         # The opening duel of the round.
         if kills:
@@ -340,13 +389,16 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
         entry["kastPct"] = round(entry["kast"] / span * 100)
         # Riot's own econ rating is damage per 1000 credits spent.
         entry["econ"] = round(entry["damage"] / entry["spent"] * 1000) if entry["spent"] else None
-        entry["topWeapon"] = None
-        if entry["weapons"]:
-            best = max(entry["weapons"].items(), key=lambda kv: kv[1])
-            entry["topWeapon"] = {
-                "name": valapi.weapon_name(best[0]) or "Ability",
-                "kills": best[1],
-            }
+        shots = entry["headshots"] + entry["bodyshots"] + entry["legshots"]
+        entry["hsPct"] = round(100 * entry["headshots"] / shots) if shots else None
+        entry["shots"] = shots
+        ranked_weapons = sorted(entry["weapons"].items(), key=lambda kv: (-kv[1], str(kv[0])))
+        # The whole loadout, not just the favourite. It was being thrown away.
+        entry["weaponKills"] = [
+            {"name": valapi.weapon_name(item) or "Ability", "kills": count}
+            for item, count in ranked_weapons[:6]
+        ]
+        entry["topWeapon"] = entry["weaponKills"][0] if entry["weaponKills"] else None
         entry["multiKills"] = {str(k): v for k, v in entry["multiKills"].items() if v}
         entry.pop("weapons", None)
         entry.pop("kast", None)
@@ -1512,6 +1564,14 @@ class LiveMatch:
                     "firstDeaths": (detail.get(sub) or {}).get("firstDeaths"),
                     "multiKills": (detail.get(sub) or {}).get("multiKills") or {},
                     "topWeapon": (detail.get(sub) or {}).get("topWeapon"),
+                    # The rest of what the rounds already told us. Every one of
+                    # these was computed and then left behind here.
+                    "weaponKills": (detail.get(sub) or {}).get("weaponKills") or [],
+                    "clutches": (detail.get(sub) or {}).get("clutches"),
+                    "clutchesLost": (detail.get(sub) or {}).get("clutchesLost"),
+                    "plants": (detail.get(sub) or {}).get("plants"),
+                    "defuses": (detail.get(sub) or {}).get("defuses"),
+                    "shots": (detail.get(sub) or {}).get("shots"),
                     "rankTier": rank_meta["tier"],
                     "rank": rank_meta["name"],
                     "rankColor": rank_meta["color"],
@@ -1814,7 +1874,7 @@ def _self_check() -> None:
                 "playerStats": [
                     {
                         "subject": "A",
-                        "damage": [{"damage": 150}],
+                        "damage": [{"damage": 150, "headshots": 3, "bodyshots": 2}],
                         "economy": {"spent": 3900},
                         "kills": [
                             {
@@ -1828,11 +1888,17 @@ def _self_check() -> None:
                     {"subject": "B", "damage": [{"damage": 40}], "economy": {"spent": 2900}},
                     {"subject": "C", "damage": [{"damage": 10}], "economy": {"spent": 800}},
                     {"subject": "D", "damage": [], "economy": {"spent": 0}},
-                ]
+                ],
+                "winningTeam": "Blue",
+                "bombPlanter": "A",
             },
             {
                 "playerStats": [
-                    {"subject": "A", "damage": [{"damage": 100}], "economy": {"spent": 2900}},
+                    {
+                        "subject": "A",
+                        "damage": [{"damage": 100, "headshots": 1, "bodyshots": 4}],
+                        "economy": {"spent": 2900},
+                    },
                     {
                         "subject": "B",
                         "damage": [{"damage": 120}],
@@ -1863,9 +1929,19 @@ def _self_check() -> None:
                         ],
                     },
                     {"subject": "D", "damage": [{"damage": 30}], "economy": {"spent": 2400}},
-                ]
+                ],
+                "winningTeam": "Blue",
+                "bombDefuser": "D",
             },
-        ]
+        ],
+        # A and C hold one side, B and D the other. The rounds cannot say who
+        # clutched without this, because a round does not carry the sides.
+        "players": [
+            {"subject": "A", "teamId": "Blue"},
+            {"subject": "C", "teamId": "Blue"},
+            {"subject": "B", "teamId": "Red"},
+            {"subject": "D", "teamId": "Red"},
+        ],
     }
 
     stats = _round_stats(match, 2)
@@ -1875,6 +1951,28 @@ def _self_check() -> None:
     assert stats["A"]["kastPct"] == 100, f"A should be traded in round 2: {stats['A']}"
     assert stats["A"]["adr"] == 125, stats["A"]
     assert stats["A"]["econ"] == round(250 / 6800 * 1000), stats["A"]
+
+    # Where the bullets landed. Riot counts every one and nothing read them:
+    # A hit 4 heads out of 10 shots across the two rounds.
+    assert stats["A"]["hsPct"] == 40, stats["A"]
+    assert stats["A"]["shots"] == 10, stats["A"]
+    assert stats["D"]["hsPct"] is None, stats["D"]
+
+    # The spike. Both ends are named on the round itself.
+    assert stats["A"]["plants"] == 1, stats["A"]
+    assert stats["D"]["defuses"] == 1, stats["D"]
+
+    # Clutches. In round 2 C is left alone against B and D and wins it. D is
+    # last alive in both rounds and loses both, which is not a clutch and is
+    # worth counting separately rather than not at all.
+    assert stats["C"]["clutches"] == 1, stats["C"]
+    assert stats["C"]["clutchesLost"] == 0, stats["C"]
+    assert stats["D"]["clutches"] == 0, stats["D"]
+    assert stats["D"]["clutchesLost"] == 2, stats["D"]
+
+    # The whole loadout, not just the favourite.
+    assert stats["C"]["weaponKills"][0]["kills"] == 2, stats["C"]
+    assert stats["C"]["topWeapon"]["kills"] == 2, stats["C"]
 
     assert stats["B"]["firstBloods"] == 1, stats["B"]
     assert stats["B"]["firstDeaths"] == 1, stats["B"]

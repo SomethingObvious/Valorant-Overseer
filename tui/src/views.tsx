@@ -509,6 +509,12 @@ export function SessionView({
 // rail + agent + rank + K/D/A + kd + acs + adr + kast + hs + fb. The name gets
 // whatever is left, so a row can never outgrow the panel and wrap.
 const RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
+// Everything the round data yields beyond the usual scoreboard: economy,
+// opening duels both ways, multikills, clutches, the spike, and the gun. It
+// costs nothing to compute and needs 46 more columns to show, so it appears
+// when there is room and stays out of the way when there is not.
+const RECAP_RICH = 6 + 7 + 5 + 8 + 7 + 11;
+const richAt = (width: number): boolean => width >= RECAP_FIXED + RECAP_RICH + 24;
 const RECAP_NAME_MAX = 22;
 
 function RecapHead({ width }: { width: number }): React.ReactElement {
@@ -526,6 +532,16 @@ function RecapHead({ width }: { width: number }): React.ReactElement {
         {pad("KAST", 6, "right")}
         {pad("HS", 5, "right")}
         {pad("FB", 5, "right")}
+        {richAt(width) ? (
+          <>
+            {pad("ECON", 6, "right")}
+            {pad("DUELS", 7, "right")}
+            {pad("MK", 5, "right")}
+            {pad("CLUTCH", 8, "right")}
+            {pad("SPIKE", 7, "right")}
+            {pad("  WEAPON", 11)}
+          </>
+        ) : null}
       </Text>
     </Box>
   );
@@ -534,6 +550,11 @@ function RecapHead({ width }: { width: number }): React.ReactElement {
 function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactElement {
   const kast = num(p.kast);
   const fb = num(p.firstBloods) ?? 0;
+  const fd = num(p.firstDeaths) ?? 0;
+  const clutch = num(p.clutches) ?? 0;
+  const spike = (num(p.plants) ?? 0) + (num(p.defuses) ?? 0);
+  // Every multikill, not one number per size: a 2k and a 4k both count here.
+  const multi = Object.values(p.multiKills ?? {}).reduce((n, v) => n + (num(v) ?? 0), 0);
   return (
     <Box>
       <Text color={p.team === "Blue" ? C.ally : C.enemy}>{"▎"}</Text>
@@ -553,6 +574,22 @@ function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactE
       </Text>
       <Text color={C.faint}>{pad(dash(p.hsPct, "%"), 5, "right")}</Text>
       <Text color={fb > 0 ? C.gold : C.faint}>{pad(fb ? String(fb) : NONE, 5, "right")}</Text>
+      {richAt(width) ? (
+        <>
+          <Text color={C.faint}>{pad(dash(p.econ), 6, "right")}</Text>
+          <Text color={fb > fd ? C.ally : fd > fb ? C.loss : C.faint}>
+            {pad(fb || fd ? `${fb}/${fd}` : NONE, 7, "right")}
+          </Text>
+          <Text color={multi ? C.gold : C.faint}>
+            {pad(multi ? String(multi) : NONE, 5, "right")}
+          </Text>
+          <Text color={clutch ? C.gold : C.faint}>
+            {pad(clutch ? `${clutch}/${clutch + (num(p.clutchesLost) ?? 0)}` : NONE, 8, "right")}
+          </Text>
+          <Text color={C.faint}>{pad(spike ? String(spike) : NONE, 7, "right")}</Text>
+          <Text color={C.ice}>{pad(`  ${p.topWeapon?.name ?? ""}`, 11)}</Text>
+        </>
+      ) : null}
     </Box>
   );
 }
@@ -575,7 +612,11 @@ export function RecapView({
         const rrDelta = num(recap.rrDelta);
         const you = recap.you;
         const won = (recap.result ?? "").toLowerCase().startsWith("v");
-        const panel = Math.min(width - 2, RECAP_FIXED + RECAP_NAME_MAX + 6);
+        // The panel takes what the extra columns need when the terminal has
+        // it, and stops at the plain scoreboard when it does not, rather than
+        // stretching a short row across a wide screen.
+        const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2) ? RECAP_RICH : 0);
+        const panel = Math.min(width - 2, want);
         return (
           <Box flexDirection="column">
             <Box paddingX={1}>

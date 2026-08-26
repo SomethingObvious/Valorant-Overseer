@@ -29,6 +29,17 @@ function board(over: Partial<Board>): Board {
 
 const ALLY = SAMPLE_BOARD.teams?.Blue ?? [];
 
+/** Marks whoever the board calls you as a flagged account, for the panel. */
+const flagSelf = (p: Player): Player =>
+  p.isSelf
+    ? {
+        ...p,
+        smurf: true,
+        smurfReasons: ["Lvl 41, peak Immortal 1", "88% win over 17 games"],
+        leaderboard: 412,
+      }
+    : p;
+
 /** Fields Riot drops on hidden accounts and players with no comp history. */
 const SPARSE: Player[] = ALLY.map((p, i) => {
   if (i === 0) return { name: "OnlyAName#000", team: "Blue" };
@@ -138,6 +149,21 @@ export const STORIES: Story[] = [
       players: ALLY,
     }),
     width: 70,
+  },
+  {
+    // The panel shows the selected player, which starts as you, so its flags
+    // only draw when you are the flagged one. They used to sit below the form
+    // and the map record, off the bottom of the panel on any ordinary window.
+    name: "detail-flagged",
+    summary: "Detail panel for a flagged account: smurf, leaderboard, stack",
+    board: board({
+      players: (SAMPLE_BOARD.players ?? []).map(flagSelf),
+      teams: {
+        Blue: (SAMPLE_BOARD.teams?.Blue ?? []).map(flagSelf),
+        Red: SAMPLE_BOARD.teams?.Red ?? [],
+      },
+    }),
+    width: 150,
   },
   {
     // Riot's JSON does not honour the types declared for it: a match score
@@ -328,9 +354,9 @@ export const STORIES: Story[] = [
   },
   {
     name: "recap",
-    summary: "Last match: full scoreboard with ACS and headshot rate",
+    summary: "Last match: every round-derived stat, on a wide terminal",
     board: SAMPLE_BOARD,
-    width: 130,
+    width: 190,
     view: "recap",
     api: { recap: RECAP },
   },

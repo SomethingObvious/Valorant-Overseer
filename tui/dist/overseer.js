@@ -38955,6 +38955,8 @@ function SessionView({
   } });
 }
 var RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
+var RECAP_RICH = 6 + 7 + 5 + 8 + 7 + 11;
+var richAt = (width) => width >= RECAP_FIXED + RECAP_RICH + 24;
 var RECAP_NAME_MAX = 22;
 function RecapHead({ width }) {
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { children: [
@@ -38969,13 +38971,25 @@ function RecapHead({ width }) {
       pad("ADR", 6, "right"),
       pad("KAST", 6, "right"),
       pad("HS", 5, "right"),
-      pad("FB", 5, "right")
+      pad("FB", 5, "right"),
+      richAt(width) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+        pad("ECON", 6, "right"),
+        pad("DUELS", 7, "right"),
+        pad("MK", 5, "right"),
+        pad("CLUTCH", 8, "right"),
+        pad("SPIKE", 7, "right"),
+        pad("  WEAPON", 11)
+      ] }) : null
     ] })
   ] });
 }
 function RecapRow({ p, width }) {
   const kast = num(p.kast);
   const fb = num(p.firstBloods) ?? 0;
+  const fd = num(p.firstDeaths) ?? 0;
+  const clutch = num(p.clutches) ?? 0;
+  const spike = (num(p.plants) ?? 0) + (num(p.defuses) ?? 0);
+  const multi = Object.values(p.multiKills ?? {}).reduce((n, v) => n + (num(v) ?? 0), 0);
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: p.team === "Blue" ? C.ally : C.enemy, children: "\u258E" }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(p.agent ?? NONE, 10) }),
@@ -38987,7 +39001,15 @@ function RecapRow({ p, width }) {
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(dash(p.adr), 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: kast !== null && kast >= 70 ? C.ally : C.dim, children: pad(kast === null ? NONE : `${kast}%`, 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.hsPct, "%"), 5, "right") }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > 0 ? C.gold : C.faint, children: pad(fb ? String(fb) : NONE, 5, "right") })
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > 0 ? C.gold : C.faint, children: pad(fb ? String(fb) : NONE, 5, "right") }),
+    richAt(width) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.econ), 6, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > fd ? C.ally : fd > fb ? C.loss : C.faint, children: pad(fb || fd ? `${fb}/${fd}` : NONE, 7, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: multi ? C.gold : C.faint, children: pad(multi ? String(multi) : NONE, 5, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: clutch ? C.gold : C.faint, children: pad(clutch ? `${clutch}/${clutch + (num(p.clutchesLost) ?? 0)}` : NONE, 8, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(spike ? String(spike) : NONE, 7, "right") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(`  ${p.topWeapon?.name ?? ""}`, 11) })
+    ] }) : null
   ] });
 }
 function RecapView({
@@ -39002,7 +39024,8 @@ function RecapView({
     const rrDelta = num(recap.rrDelta);
     const you = recap.you;
     const won = (recap.result ?? "").toLowerCase().startsWith("v");
-    const panel = Math.min(width - 2, RECAP_FIXED + RECAP_NAME_MAX + 6);
+    const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2) ? RECAP_RICH : 0);
+    const panel = Math.min(width - 2, want);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { flexDirection: "column", children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { paddingX: 1, children: [
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { bold: true, color: won ? C.ally : C.loss, children: won ? "VICTORY" : (recap.result ?? NONE).toUpperCase() }),
@@ -39439,9 +39462,14 @@ function Detail({ p }) {
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
+        reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
+          reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
+        ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: p.rankColor ?? C.text, children: p.rank ?? NONE }),
-          isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: `  ${num(p.rr) ?? 0} RR` }) : null
+          isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: `  ${num(p.rr) ?? 0} RR` }) : null,
+          num(p.leaderboard) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: C.gold, children: `  #${num(p.leaderboard)}` }) : null
         ] }),
         isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}${p.peakAct ? ` \xB7 ${p.peakAct}` : ""}` }),
@@ -39478,10 +39506,6 @@ function Detail({ p }) {
         arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
-        ] }) : null,
-        reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
-          reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
         ] }) : null,
         p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),

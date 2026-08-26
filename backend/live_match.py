@@ -397,9 +397,10 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
         entry["kastPct"] = round(entry["kast"] / span * 100)
         # Riot's own econ rating is damage per 1000 credits spent.
         entry["econ"] = round(entry["damage"] / entry["spent"] * 1000) if entry["spent"] else None
-        shots = entry["headshots"] + entry["bodyshots"] + entry["legshots"]
-        entry["hsPct"] = round(100 * entry["headshots"] / shots) if shots else None
-        entry["shots"] = shots
+        # Shots landed, across every victim the entries name. The headshot
+        # rate itself is computed where the match detail is built, from the
+        # same three counters; computing it twice was asking for two answers.
+        entry["shots"] = entry["headshots"] + entry["bodyshots"] + entry["legshots"]
         ranked_weapons = sorted(entry["weapons"].items(), key=lambda kv: (-kv[1], str(kv[0])))
         # The whole loadout, not just the favourite. It was being thrown away.
         entry["weaponKills"] = [
@@ -1963,10 +1964,11 @@ def _self_check() -> None:
     assert stats["A"]["econ"] == round(250 / 6800 * 1000), stats["A"]
 
     # Where the bullets landed. Riot counts every one and nothing read them:
-    # A hit 4 heads out of 10 shots across the two rounds.
-    assert stats["A"]["hsPct"] == 40, stats["A"]
+    # A landed 10 shots across the two rounds, 4 of them heads. The rate is
+    # worked out where the match detail is assembled, from these counters.
     assert stats["A"]["shots"] == 10, stats["A"]
-    assert stats["D"]["hsPct"] is None, stats["D"]
+    assert stats["A"]["headshots"] == 4, stats["A"]
+    assert stats["D"]["shots"] == 0, stats["D"]
 
     # The spike. Both ends are named on the round itself.
     assert stats["A"]["plants"] == 1, stats["A"]

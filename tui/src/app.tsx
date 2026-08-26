@@ -123,10 +123,21 @@ export function columnWidths(keys: string[], width: number): Record<string, numb
 }
 const ORDER = COLUMN_KEYS;
 
-export function visibleColumns(width: number): string[] {
+export function visibleColumns(width: number, settings?: prefs.Settings): string[] {
   // Drop one column at a time, lowest priority and rightmost first, so a
   // terminal loses LVL before it loses AGENT. prio 0 never goes.
-  const keep = new Set(ORDER);
+  //
+  // A column switched off in settings goes before any of that, so its width
+  // returns to the budget rather than being hidden while still squeezing
+  // everything else off the row.
+  const keep = new Set(
+    settings
+      ? ORDER.filter((k) => {
+          const flag = prefs.COLUMN_SETTING[k];
+          return flag === undefined || settings[flag];
+        })
+      : ORDER,
+  );
   // 2 panel border + 1 panel padding + 2 selection prefix + 5 trailing flag
   // column. Get this wrong and the rows overflow and Ink wraps every one of
   // them to two lines, which is subtle enough to ship twice.
@@ -544,6 +555,7 @@ function TeamBlock({
   hovered,
   width,
   sort,
+  stacks,
 }: {
   label: string;
   color: string;
@@ -554,6 +566,7 @@ function TeamBlock({
   hovered: string | null;
   width: number;
   sort: SortMode;
+  stacks: boolean;
 }) {
   const widths = columnWidths(cols, width);
   const title = (
@@ -618,7 +631,7 @@ function TeamBlock({
         <PlayerRow
           key={p.puuid ?? i}
           p={p}
-          rail={railFor(players, i, sort === "party")}
+          rail={railFor(players, i, sort === "party", stacks)}
           cols={cols}
           widths={widths}
           teamColor={color}
@@ -640,11 +653,47 @@ const STACK_NAME: Record<number, string> = {
   5: "five stack",
 };
 
-/** The panel's sections. One opens at a time, so nothing is ever cut off. */
+/** The panel's sections, and roughly how many lines each one draws. */
 export const PANEL_TABS = ["stats", "form", "arsenal", "seen"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
+const PANEL_COST: Record<PanelTab, number> = { stats: 4, form: 5, arsenal: 3, seen: 6 };
+// Name, level, the section line, the rank block and the border.
+const PANEL_CHROME_LINES = 14;
 
-function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
+/**
+ * Which sections to draw, starting from the one that is open.
+ *
+ * Collapsing to one section was the fix for a panel that ran off the bottom of
+ * the window, and on a tall terminal it was a downgrade: there was room for all
+ * of it and only a quarter was drawn. So take what fits, beginning with the
+ * open one, and collapse only when the window really is too short.
+ */
+export function panelSections(tab: PanelTab, height: number): PanelTab[] {
+  let left = height - PANEL_CHROME_LINES;
+  const from = PANEL_TABS.indexOf(tab);
+  const out: PanelTab[] = [];
+  for (let i = 0; i < PANEL_TABS.length; i += 1) {
+    const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
+    if (!name) continue;
+    const cost = PANEL_COST[name];
+    if (out.length && cost > left) break;
+    out.push(name);
+    left -= cost;
+  }
+  return out;
+}
+
+function Detail({
+  p,
+  tab,
+  height,
+  settings,
+}: {
+  p: Player | null;
+  tab: PanelTab;
+  height: number;
+  settings: prefs.Settings;
+}) {
   if (!p) {
     return (
       <Box borderStyle="round" borderColor={C.line} paddingX={1} width={SIDEBAR}>
@@ -655,7 +704,11 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
     );
   }
   const mapWr = p.mapWinRate;
-  const reasons = arr(p.smurfReasons);
+  // Both of these are guesses rather than measurements, and either can be
+  // switched off by someone who would rather not be told.
+  const reasons = settings.smurf ? arr(p.smurfReasons) : [];
+  const open = panelSections(tab, height);
+  const shows = (name: PanelTab): boolean => open.includes(name);
   return (
     <Box
       flexDirection="column"
@@ -682,8 +735,8 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
           <Text
             key={name}
             bold={name === tab}
-            color={name === tab ? C.bone : C.line}
-          >{`${name === tab ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
+            color={open.includes(name) ? C.bone : C.line}
+          >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
         ))}
       </Box>
       {/* The flags come first. They used to sit under the form and the map
@@ -723,7 +776,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         <Text wrap="truncate" color={C.faint}>{`Last act ${p.previousRank}`}</Text>
       ) : null}
 
-      {tab === "stats" ? (
+      {shows("stats") ? (
         <>
           <Box marginTop={1}>
             <Text wrap="truncate" color={C.dim}>
@@ -759,7 +812,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         </>
       ) : null}
 
-      {tab === "form" && formPips(p).length ? (
+      {shows("form") && formPips(p).length ? (
         <Box marginTop={1}>
           <Text wrap="truncate" color={C.dim}>
             {"Form  "}
@@ -775,7 +828,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         </Box>
       ) : null}
 
-      {tab === "form" && arr(p.topAgents).length ? (
+      {shows("form") && arr(p.topAgents).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
             {"Mains "}
@@ -788,7 +841,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         </Box>
       ) : null}
 
-      {tab === "arsenal" && arr(p.weapons).length ? (
+      {shows("arsenal") && arr(p.weapons).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
             {"Skins "}
@@ -802,7 +855,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         </Box>
       ) : null}
 
-      {tab === "seen" && p.stackGuess && !p.party ? (
+      {shows("seen") && settings.stacks && p.stackGuess && !p.party ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}`}
@@ -814,7 +867,7 @@ function Detail({ p, tab }: { p: Player | null; tab: PanelTab }) {
         </Box>
       ) : null}
 
-      {tab === "seen" && seenCount(p) ? (
+      {shows("seen") && seenCount(p) ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before`}
@@ -985,34 +1038,59 @@ function Session({ board }: { board: Board }) {
 
 // --- settings --------------------------------------------------------------
 
-function SettingsView({ settings, cursor }: { settings: prefs.Settings; cursor: number }) {
+function SettingsView({
+  settings,
+  cursor,
+  height,
+}: {
+  settings: prefs.Settings;
+  cursor: number;
+  height: number;
+}) {
+  // The list is longer than a short window, and a settings screen that runs
+  // off the bottom is worse than most: the option you cannot see is the one
+  // you came to change. Show a run of it around the cursor instead.
+  const room = Math.max(4, height - 8);
+  const first = Math.max(0, Math.min(cursor - Math.floor(room / 2), prefs.OPTIONS.length - room));
+  const shown = prefs.OPTIONS.slice(first, first + room);
+  let heading = first > 0 ? (prefs.OPTIONS[first - 1]?.group ?? "") : "";
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.red} paddingX={2} paddingY={1}>
       <Text bold color={C.bone}>
         Settings
       </Text>
       <Text wrap="truncate" color={C.faint}>
-        {"Stored in .overseer/tui.json."}
+        {`Stored in .overseer/tui.json.  ${cursor + 1} of ${prefs.OPTIONS.length}`}
       </Text>
       <Box height={1} />
-      {prefs.OPTIONS.map((opt, i) => {
+      {shown.map((opt, at) => {
+        const i = first + at;
         const active = i === cursor;
+        const head = opt.group === heading ? null : opt.group;
+        heading = opt.group;
         const value = settings[opt.key];
         const shown = value ? "on" : "off";
         return (
-          <Box key={opt.key}>
-            <Text wrap="truncate" color={active ? C.red : C.faint}>
-              {active ? "▸ " : "  "}
-            </Text>
-            <Text wrap="truncate" bold={active} color={active ? C.bone : C.text}>
-              {pad(opt.label, 16)}
-            </Text>
-            <Text bold color={value ? C.ally : C.faint}>
-              {pad(shown, 6)}
-            </Text>
-            <Text wrap="truncate" color={C.faint}>
-              {opt.hint}
-            </Text>
+          <Box key={opt.key} flexDirection="column">
+            {head ? (
+              <Text bold color={C.line}>
+                {head.toUpperCase()}
+              </Text>
+            ) : null}
+            <Box>
+              <Text wrap="truncate" color={active ? C.red : C.faint}>
+                {active ? "▸ " : "  "}
+              </Text>
+              <Text wrap="truncate" bold={active} color={active ? C.bone : C.text}>
+                {pad(opt.label, 16)}
+              </Text>
+              <Text bold color={value ? C.ally : C.faint}>
+                {pad(shown, 6)}
+              </Text>
+              <Text wrap="truncate" color={C.faint}>
+                {opt.hint}
+              </Text>
+            </Box>
           </Box>
         );
       })}
@@ -1693,7 +1771,7 @@ export function App({
     return (
       <>
         {keys}
-        <SettingsView settings={settings} cursor={cursor} />
+        <SettingsView settings={settings} cursor={cursor} height={height} />
       </>
     );
   }
@@ -1718,7 +1796,7 @@ export function App({
   }
 
   const bodyWidth = wide ? width - SIDEBAR - 3 : width - 2;
-  const cols = visibleColumns(bodyWidth);
+  const cols = visibleColumns(bodyWidth, settings);
   // Window minus the header, the tab strip, its rule and the footer.
   const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
@@ -1757,7 +1835,12 @@ export function App({
             <SessionView state={canned("performance", perf)} width={width} height={viewHeight} />
           ) : null}
           {view === "recap" ? (
-            <RecapView state={canned("recap", recap)} width={width} height={viewHeight} />
+            <RecapView
+              state={canned("recap", recap)}
+              width={width}
+              height={viewHeight}
+              rich={settings.richRecap}
+            />
           ) : null}
           {view === "encounters" ? (
             <EncountersView
@@ -1812,6 +1895,7 @@ export function App({
             hovered={hoverPlayer}
             width={bodyWidth}
             sort={sort}
+            stacks={settings.stacks}
           />
           {settings.enemies && current.state === "INGAME" && other ? (
             <TeamBlock
@@ -1824,6 +1908,7 @@ export function App({
               hovered={hoverPlayer}
               width={bodyWidth}
               sort={sort}
+              stacks={settings.stacks}
             />
           ) : null}
         </Box>
@@ -1832,7 +1917,9 @@ export function App({
             {current.state === "PREGAME" ? (
               <TeamComp players={arrange(arr(teams[selfTeam]), sort)} board={current} />
             ) : null}
-            {settings.detail ? <Detail p={player} tab={panelTab} /> : null}
+            {settings.detail ? (
+              <Detail p={player} tab={panelTab} height={height} settings={settings} />
+            ) : null}
             {settings.session ? <Session board={current} /> : null}
           </Box>
         ) : null}

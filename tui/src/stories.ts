@@ -151,6 +151,15 @@ export const STORIES: Story[] = [
     width: 70,
   },
   {
+    // Columns switched off give their width back rather than being hidden
+    // while still squeezing the row, so the ones that are left get more room.
+    name: "columns-off",
+    summary: "Peak, games, headshots and last five switched off in settings",
+    board: SAMPLE_BOARD,
+    width: 150,
+    settings: { colPeak: false, colGames: false, colHs: false, colForm: false, stacks: false },
+  },
+  {
     // The panel shows the selected player, which starts as you, so its flags
     // only draw when you are the flagged one. They used to sit below the form
     // and the map record, off the bottom of the panel on any ordinary window.

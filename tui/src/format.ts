@@ -200,11 +200,11 @@ export function arrange(players: Player[], mode: SortMode = "party"): Player[] {
  * "these two are queued together", without drawing a bracket around players
  * who are not next to each other.
  */
-export function railFor(players: Player[], index: number, grouped = true): string {
+export function railFor(players: Player[], index: number, grouped = true, stacks = true): string {
   // A party Riot confirmed outranks one the app guessed at, so a player who
-  // has both is drawn as confirmed.
+  // has both is drawn as confirmed. A guess can be switched off entirely.
   const groupOf = (p: Player | undefined): string | undefined =>
-    p?.party?.id ?? p?.stackGuess?.id ?? undefined;
+    p?.party?.id ?? (stacks ? p?.stackGuess?.id : undefined) ?? undefined;
   if (!grouped) return groupOf(players[index]) ? (players[index]?.party ? "*" : "?") : " ";
   const id = groupOf(players[index]);
   if (!id) return " ";

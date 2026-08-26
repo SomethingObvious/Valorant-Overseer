@@ -514,10 +514,11 @@ const RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
 // costs nothing to compute and needs 46 more columns to show, so it appears
 // when there is room and stays out of the way when there is not.
 const RECAP_RICH = 6 + 7 + 5 + 8 + 7 + 11;
-const richAt = (width: number): boolean => width >= RECAP_FIXED + RECAP_RICH + 24;
+const richAt = (width: number, rich: boolean): boolean =>
+  rich && width >= RECAP_FIXED + RECAP_RICH + 24;
 const RECAP_NAME_MAX = 22;
 
-function RecapHead({ width }: { width: number }): React.ReactElement {
+function RecapHead({ width, rich }: { width: number; rich: boolean }): React.ReactElement {
   return (
     <Box>
       <Text color={C.faint}> </Text>
@@ -532,7 +533,7 @@ function RecapHead({ width }: { width: number }): React.ReactElement {
         {pad("KAST", 6, "right")}
         {pad("HS", 5, "right")}
         {pad("FB", 5, "right")}
-        {richAt(width) ? (
+        {richAt(width, rich) ? (
           <>
             {pad("ECON", 6, "right")}
             {pad("DUELS", 7, "right")}
@@ -547,7 +548,15 @@ function RecapHead({ width }: { width: number }): React.ReactElement {
   );
 }
 
-function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactElement {
+function RecapRow({
+  p,
+  width,
+  rich,
+}: {
+  p: RecapPlayer;
+  width: number;
+  rich: boolean;
+}): React.ReactElement {
   const kast = num(p.kast);
   const fb = num(p.firstBloods) ?? 0;
   const fd = num(p.firstDeaths) ?? 0;
@@ -577,7 +586,7 @@ function RecapRow({ p, width }: { p: RecapPlayer; width: number }): React.ReactE
       </Text>
       <Text color={C.faint}>{pad(dash(p.hsPct, "%"), 5, "right")}</Text>
       <Text color={fb > 0 ? C.gold : C.faint}>{pad(fb ? String(fb) : NONE, 5, "right")}</Text>
-      {richAt(width) ? (
+      {richAt(width, rich) ? (
         <>
           <Text color={C.faint}>{pad(dash(p.econ), 6, "right")}</Text>
           <Text color={fb > fd ? C.ally : fd > fb ? C.loss : C.faint}>
@@ -603,7 +612,9 @@ export function RecapView({
   state,
   width,
   height,
+  rich = true,
 }: {
+  rich?: boolean | undefined;
   state: Fetched<Recap>;
   width: number;
   height: number;
@@ -620,7 +631,7 @@ export function RecapView({
         // The panel takes what the extra columns need when the terminal has
         // it, and stops at the plain scoreboard when it does not, rather than
         // stretching a short row across a wide screen.
-        const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2) ? RECAP_RICH : 0);
+        const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2, rich) ? RECAP_RICH : 0);
         const panel = Math.min(width - 2, want);
         return (
           <Box flexDirection="column">
@@ -676,13 +687,13 @@ export function RecapView({
             ) : null}
             {players.length ? (
               <Panel title="SCOREBOARD" width={panel}>
-                <RecapHead width={panel - 4} />
+                <RecapHead width={panel - 4} rich={rich} />
                 {players.map((p, i) => (
                   <Box key={p.puuid ?? i} flexDirection="column">
                     {i > 0 && p.team !== players[i - 1]?.team ? (
                       <Text color={C.line}>{"\u2500".repeat(Math.max(1, panel - 4))}</Text>
                     ) : null}
-                    <RecapRow p={p} width={panel - 4} />
+                    <RecapRow p={p} width={panel - 4} rich={rich} />
                   </Box>
                 ))}
               </Panel>

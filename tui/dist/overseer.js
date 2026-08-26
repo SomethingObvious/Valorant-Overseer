@@ -38380,8 +38380,8 @@ function arrange(players, mode = "party") {
   };
   return list.sort((a, b) => key(b) - key(a));
 }
-function railFor(players, index, grouped = true) {
-  const groupOf = (p) => p?.party?.id ?? p?.stackGuess?.id ?? void 0;
+function railFor(players, index, grouped = true, stacks = true) {
+  const groupOf = (p) => p?.party?.id ?? (stacks ? p?.stackGuess?.id : void 0) ?? void 0;
   if (!grouped) return groupOf(players[index]) ? players[index]?.party ? "*" : "?" : " ";
   const id = groupOf(players[index]);
   if (!id) return " ";
@@ -38525,7 +38525,36 @@ import path2 from "node:path";
 var DEFAULTS = {
   detail: true,
   session: true,
-  enemies: true
+  enemies: true,
+  colAgent: true,
+  colRank: true,
+  colRr: true,
+  colPeak: true,
+  colKd: true,
+  colWr: true,
+  colGames: true,
+  colHs: true,
+  colMap: true,
+  colSeen: true,
+  colLvl: true,
+  colForm: true,
+  smurf: true,
+  stacks: true,
+  richRecap: true
+};
+var COLUMN_SETTING = {
+  agent: "colAgent",
+  rank: "colRank",
+  rr: "colRr",
+  peak: "colPeak",
+  kd: "colKd",
+  wr: "colWr",
+  games: "colGames",
+  hs: "colHs",
+  map: "colMap",
+  seen: "colSeen",
+  lvl: "colLvl",
+  form: "colForm"
 };
 function file(root2) {
   return path2.join(root2, ".overseer", "tui.json");
@@ -38548,9 +38577,34 @@ function save(root2, settings) {
   }
 }
 var OPTIONS = [
-  { key: "detail", label: "Detail panel", hint: "Career card for the selected player" },
-  { key: "session", label: "Session panel", hint: "RR gained and lost this session" },
-  { key: "enemies", label: "Enemy team", hint: "Show the other team once a match starts" }
+  { group: "Panels", key: "detail", label: "Detail panel", hint: "The selected player, in full" },
+  { group: "Panels", key: "session", label: "Session panel", hint: "RR gained and lost today" },
+  { group: "Panels", key: "enemies", label: "Enemy team", hint: "The other side, once in game" },
+  { group: "Columns", key: "colAgent", label: "Agent", hint: "Who they are playing" },
+  { group: "Columns", key: "colRank", label: "Rank", hint: "Current rank" },
+  { group: "Columns", key: "colRr", label: "RR", hint: "Rank rating and the last change" },
+  { group: "Columns", key: "colPeak", label: "Peak", hint: "Highest rank reached" },
+  { group: "Columns", key: "colKd", label: "K/D", hint: "Kills over deaths" },
+  { group: "Columns", key: "colWr", label: "Win rate", hint: "Share of matches won" },
+  { group: "Columns", key: "colGames", label: "Games", hint: "Matches behind the numbers" },
+  { group: "Columns", key: "colHs", label: "Headshot rate", hint: "Share of shots on the head" },
+  { group: "Columns", key: "colMap", label: "Map record", hint: "How they do on this map" },
+  { group: "Columns", key: "colSeen", label: "Met before", hint: "Times you have met them" },
+  { group: "Columns", key: "colLvl", label: "Account level", hint: "The smurf tell" },
+  { group: "Columns", key: "colForm", label: "Last five", hint: "Recent wins and losses" },
+  { group: "Judgements", key: "smurf", label: "Smurf flags", hint: "A guess, from level and peak" },
+  {
+    group: "Judgements",
+    key: "stacks",
+    label: "Stack guesses",
+    hint: "A guess, from who shares a side"
+  },
+  {
+    group: "Last match",
+    key: "richRecap",
+    label: "Round detail",
+    hint: "Econ, duels, clutches, spike"
+  }
 ];
 
 // src/shimmer.tsx
@@ -38956,9 +39010,9 @@ function SessionView({
 }
 var RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
 var RECAP_RICH = 6 + 7 + 5 + 8 + 7 + 11;
-var richAt = (width) => width >= RECAP_FIXED + RECAP_RICH + 24;
+var richAt = (width, rich) => rich && width >= RECAP_FIXED + RECAP_RICH + 24;
 var RECAP_NAME_MAX = 22;
-function RecapHead({ width }) {
+function RecapHead({ width, rich }) {
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: " " }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Text, { bold: true, color: C.faint, children: [
@@ -38972,7 +39026,7 @@ function RecapHead({ width }) {
       pad("KAST", 6, "right"),
       pad("HS", 5, "right"),
       pad("FB", 5, "right"),
-      richAt(width) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      richAt(width, rich) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
         pad("ECON", 6, "right"),
         pad("DUELS", 7, "right"),
         pad("MK", 5, "right"),
@@ -38983,7 +39037,11 @@ function RecapHead({ width }) {
     ] })
   ] });
 }
-function RecapRow({ p, width }) {
+function RecapRow({
+  p,
+  width,
+  rich
+}) {
   const kast = num(p.kast);
   const fb = num(p.firstBloods) ?? 0;
   const fd = num(p.firstDeaths) ?? 0;
@@ -39003,7 +39061,7 @@ function RecapRow({ p, width }) {
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: kast !== null && kast >= 70 ? C.ally : C.dim, children: pad(kast === null ? NONE : `${kast}%`, 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.hsPct, "%"), 5, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > 0 ? C.gold : C.faint, children: pad(fb ? String(fb) : NONE, 5, "right") }),
-    richAt(width) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+    richAt(width, rich) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.econ), 6, "right") }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > fd ? C.ally : fd > fb ? C.loss : C.faint, children: pad(fb || fd ? `${fb}/${fd}` : NONE, 7, "right") }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: multi ? C.gold : C.faint, children: pad(multi ? String(multi) : NONE, 5, "right") }),
@@ -39016,7 +39074,8 @@ function RecapRow({ p, width }) {
 function RecapView({
   state,
   width,
-  height
+  height,
+  rich = true
 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Status, { state, empty: "No completed match to recap yet.", children: (recap) => {
     const players = arr(recap.players);
@@ -39025,7 +39084,7 @@ function RecapView({
     const rrDelta = num(recap.rrDelta);
     const you = recap.you;
     const won = (recap.result ?? "").toLowerCase().startsWith("v");
-    const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2) ? RECAP_RICH : 0);
+    const want = RECAP_FIXED + RECAP_NAME_MAX + 6 + (richAt(width - 2, rich) ? RECAP_RICH : 0);
     const panel = Math.min(width - 2, want);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { flexDirection: "column", children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { paddingX: 1, children: [
@@ -39057,10 +39116,10 @@ function RecapView({
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: `  ${recap.mvp.agent ?? ""}  ${dash(recap.mvp.acs)} ACS` })
       ] }) : null,
       players.length ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Panel, { title: "SCOREBOARD", width: panel, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RecapHead, { width: panel - 4 }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RecapHead, { width: panel - 4, rich }),
         players.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { flexDirection: "column", children: [
           i > 0 && p.team !== players[i - 1]?.team ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.line, children: "\u2500".repeat(Math.max(1, panel - 4)) }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RecapRow, { p, width: panel - 4 })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RecapRow, { p, width: panel - 4, rich })
         ] }, p.puuid ?? i))
       ] }) : null
     ] });
@@ -39145,8 +39204,13 @@ function columnWidths(keys, width) {
   return out;
 }
 var ORDER = COLUMN_KEYS;
-function visibleColumns(width) {
-  const keep = new Set(ORDER);
+function visibleColumns(width, settings) {
+  const keep = new Set(
+    settings ? ORDER.filter((k) => {
+      const flag = COLUMN_SETTING[k];
+      return flag === void 0 || settings[flag];
+    }) : ORDER
+  );
   const cost = () => [...keep].reduce((n, k) => n + (COLUMNS[k]?.width ?? 0) + 1, ROW_CHROME);
   const order = [...ORDER].map((k, i) => ({ k, i, prio: COLUMNS[k]?.prio ?? 0 })).sort((a, b) => b.prio - a.prio || b.i - a.i);
   for (const { k, prio } of order) {
@@ -39377,7 +39441,8 @@ function TeamBlock({
   selected,
   hovered,
   width,
-  sort
+  sort,
+  stacks
 }) {
   const widths = columnWidths(cols, width);
   const title = /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { children: [
@@ -39421,7 +39486,7 @@ function TeamBlock({
           PlayerRow,
           {
             p,
-            rail: railFor(players, i, sort === "party"),
+            rail: railFor(players, i, sort === "party", stacks),
             cols,
             widths,
             teamColor: color,
@@ -39441,12 +39506,35 @@ var STACK_NAME = {
   5: "five stack"
 };
 var PANEL_TABS = ["stats", "form", "arsenal", "seen"];
-function Detail({ p, tab: tab2 }) {
+var PANEL_COST = { stats: 4, form: 5, arsenal: 3, seen: 6 };
+var PANEL_CHROME_LINES = 14;
+function panelSections(tab2, height) {
+  let left = height - PANEL_CHROME_LINES;
+  const from = PANEL_TABS.indexOf(tab2);
+  const out = [];
+  for (let i = 0; i < PANEL_TABS.length; i += 1) {
+    const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
+    if (!name) continue;
+    const cost = PANEL_COST[name];
+    if (out.length && cost > left) break;
+    out.push(name);
+    left -= cost;
+  }
+  return out;
+}
+function Detail({
+  p,
+  tab: tab2,
+  height,
+  settings
+}) {
   if (!p) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { borderStyle: "round", borderColor: C.line, paddingX: 1, width: SIDEBAR, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "No player selected." }) });
   }
   const mapWr = p.mapWinRate;
-  const reasons = arr(p.smurfReasons);
+  const reasons = settings.smurf ? arr(p.smurfReasons) : [];
+  const open = panelSections(tab2, height);
+  const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     Box_default,
     {
@@ -39468,8 +39556,8 @@ function Detail({ p, tab: tab2 }) {
           Text,
           {
             bold: name === tab2,
-            color: name === tab2 ? C.bone : C.line,
-            children: `${name === tab2 ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
+            color: open.includes(name) ? C.bone : C.line,
+            children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
           },
           name
         )) }),
@@ -39485,7 +39573,7 @@ function Detail({ p, tab: tab2 }) {
         isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}${p.peakAct ? ` \xB7 ${p.peakAct}` : ""}` }),
         p.previousRank ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `Last act ${p.previousRank}` }) : null,
-        tab2 === "stats" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+        shows("stats") ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "K/D   " }),
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -39514,24 +39602,24 @@ function Detail({ p, tab: tab2 }) {
             ) : null
           ] })
         ] }) : null,
-        tab2 === "form" && formPips(p).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
+        shows("form") && formPips(p).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Form  " }),
           formPips(p).map((pip) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: outcomeColor(pip.result), children: `${pip.result} ` }, pip.key)),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: streakText(p) })
         ] }) : null,
-        tab2 === "form" && arr(p.topAgents).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+        shows("form") && arr(p.topAgents).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Mains " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
-        tab2 === "arsenal" && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+        shows("arsenal") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
         ] }) : null,
-        tab2 === "seen" && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        shows("seen") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(p.stackGuess.same) ?? 0}/${num(p.stackGuess.shared) ?? 0} same side, ${num(p.stackGuess.confidence) ?? 0}% sure` })
         ] }) : null,
-        tab2 === "seen" && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        shows("seen") && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before` }),
           num(p.encounter?.withCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.withCount)} on your team, ${num(p.encounter?.winsWith) ?? 0}W-${num(p.encounter?.lossesWith) ?? 0}L${num(p.encounter?.drawsWith) ? `-${num(p.encounter?.drawsWith)}D` : ""}` }) : null,
           num(p.encounter?.againstCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.againstCount)} against you, ${num(p.encounter?.winsAgainst) ?? 0}W-${num(p.encounter?.lossesAgainst) ?? 0}L${num(p.encounter?.drawsAgainst) ? `-${num(p.encounter?.drawsAgainst)}D` : ""}` }) : null
@@ -39630,20 +39718,34 @@ function Session({ board }) {
     }
   );
 }
-function SettingsView({ settings, cursor }) {
+function SettingsView({
+  settings,
+  cursor,
+  height
+}) {
+  const room = Math.max(4, height - 8);
+  const first = Math.max(0, Math.min(cursor - Math.floor(room / 2), OPTIONS.length - room));
+  const shown = OPTIONS.slice(first, first + room);
+  let heading = first > 0 ? OPTIONS[first - 1]?.group ?? "" : "";
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", borderStyle: "round", borderColor: C.red, paddingX: 2, paddingY: 1, children: [
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.bone, children: "Settings" }),
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "Stored in .overseer/tui.json." }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `Stored in .overseer/tui.json.  ${cursor + 1} of ${OPTIONS.length}` }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
-    OPTIONS.map((opt, i) => {
+    shown.map((opt, at) => {
+      const i = first + at;
       const active2 = i === cursor;
+      const head = opt.group === heading ? null : opt.group;
+      heading = opt.group;
       const value = settings[opt.key];
-      const shown = value ? "on" : "off";
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: active2 ? C.red : C.faint, children: active2 ? "\u25B8 " : "  " }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: active2, color: active2 ? C.bone : C.text, children: pad(opt.label, 16) }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: value ? C.ally : C.faint, children: pad(shown, 6) }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: opt.hint })
+      const shown2 = value ? "on" : "off";
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
+        head ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.line, children: head.toUpperCase() }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: active2 ? C.red : C.faint, children: active2 ? "\u25B8 " : "  " }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: active2, color: active2 ? C.bone : C.text, children: pad(opt.label, 16) }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: value ? C.ally : C.faint, children: pad(shown2, 6) }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: opt.hint })
+        ] })
       ] }, opt.key);
     }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
@@ -40141,7 +40243,7 @@ function App2({
   if (showSettings) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
       keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(SettingsView, { settings, cursor })
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(SettingsView, { settings, cursor, height })
     ] });
   }
   const current = board ?? {};
@@ -40164,7 +40266,7 @@ function App2({
     ] });
   }
   const bodyWidth = wide ? width - SIDEBAR - 3 : width - 2;
-  const cols = visibleColumns(bodyWidth);
+  const cols = visibleColumns(bodyWidth, settings);
   const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
   const teams = current.teams ?? {};
@@ -40200,7 +40302,15 @@ function App2({
           }
         ) : null,
         view === "session" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(SessionView, { state: canned("performance", perf), width, height: viewHeight }) : null,
-        view === "recap" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(RecapView, { state: canned("recap", recap), width, height: viewHeight }) : null,
+        view === "recap" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          RecapView,
+          {
+            state: canned("recap", recap),
+            width,
+            height: viewHeight,
+            rich: settings.richRecap
+          }
+        ) : null,
         view === "encounters" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           EncountersView,
           {
@@ -40255,7 +40365,8 @@ function App2({
             selected,
             hovered: hoverPlayer,
             width: bodyWidth,
-            sort
+            sort,
+            stacks: settings.stacks
           }
         ),
         settings.enemies && current.state === "INGAME" && other ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -40269,13 +40380,14 @@ function App2({
             selected,
             hovered: hoverPlayer,
             width: bodyWidth,
-            sort
+            sort,
+            stacks: settings.stacks
           }
         ) : null
       ] }),
       wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
         current.state === "PREGAME" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TeamComp, { players: arrange(arr(teams[selfTeam]), sort), board: current }) : null,
-        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Detail, { p: player, tab: panelTab }) : null,
+        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Detail, { p: player, tab: panelTab, height, settings }) : null,
         settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null
       ] }) : null
     ] }),

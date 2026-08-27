@@ -894,6 +894,10 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     _env["WS_PORT"] = str(_spare)
     _env["OVERSEER_LAUNCH_ID"] = _launch
     _env["DISCORD_RPC"] = "false"
+    # This spawns a real backend. Without this it reads the local client and
+    # talks to Riot, which a test has no business doing. Under the gate it
+    # inherited demo mode by luck; run by hand it did not.
+    _env["DATA_SOURCE"] = "demo"
     _proc = subprocess.Popen(
         [resolve_python(), "app.py"],
         cwd=str(BACKEND),

@@ -365,7 +365,11 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 victim = str(kill.get("victim") or "")
                 fell = teams.get(victim)
                 if fell:
-                    standing[fell].discard(victim)
+                    # `standing` holds only the sides that played this round,
+                    # so a victim from any other side is simply not in it.
+                    # Indexing raised instead, and took the whole match detail
+                    # down with it.
+                    standing.get(fell, set()).discard(victim)
                 for side_name, members in standing.items():
                     if len(members) != 1:
                         continue

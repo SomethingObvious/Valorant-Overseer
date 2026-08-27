@@ -468,7 +468,7 @@ export function cell(
     case "hs":
       return (
         <Text wrap="truncate" color={C.faint}>
-          {pad(p.hsPct === null || p.hsPct === undefined ? NONE : `${num(p.hsPct)}`, w, align)}
+          {pad(pct1(p.hsPct), w, align)}
         </Text>
       );
     case "lvl":
@@ -657,29 +657,63 @@ const STACK_NAME: Record<number, string> = {
 /** The panel's sections, and roughly how many lines each one draws. */
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
-const PANEL_COST: Record<PanelTab, number> = { stats: 9, form: 5, guns: 6, met: 6 };
-// Name, level, the section line, the rank block and the border.
-const PANEL_CHROME_LINES = 14;
+// What each section draws at most, counted from the JSX rather than guessed.
+// stats is the tall one: three stat rows, the map line, and a five line last
+// match block when there is a last match.
+const PANEL_COST: Record<PanelTab, number> = { stats: 10, form: 4, guns: 6, met: 8 };
+
+/**
+ * Lines the panel spends before a single section is drawn.
+ *
+ * This was a flat 14 and it was wrong in both directions, which is how the
+ * rank line came to be deleted: Ink does not clip an over-full box, it shrinks
+ * every child and drops lines out of the middle, so a budget that is too
+ * generous does not overflow the screen, it quietly removes content.
+ */
+function panelChrome(p: Player, reasons: number, bar: boolean): number {
+  return (
+    2 + // the border
+    1 + // the name
+    1 + // the blank line under it
+    1 + // level, title and role
+    (bar ? 2 : 0) + // the section bar, when anything is shut
+    (reasons ? reasons + 2 : 0) + // the smurf block
+    1 + // rank, RR and leaderboard
+    (isRanked(p) ? 1 : 0) + // the RR meter
+    1 + // peak
+    (p.previousRank ? 1 : 0) + // last act
+    2 // the blank line and the Enter hint
+  );
+}
 
 /**
  * Which sections to draw, starting from the one that is open.
  *
- * Collapsing to one section was the fix for a panel that ran off the bottom of
- * the window, and on a tall terminal it was a downgrade: there was room for all
- * of it and only a quarter was drawn. So take what fits, beginning with the
- * open one, and collapse only when the window really is too short.
+ * One at a time, unless the window is tall enough that the rest are free.
+ *
+ * Opening several was an attempt to use a tall terminal properly and it was a
+ * bad trade. Ink does not clip an over-full box: it shrinks the children and
+ * drops lines out of the MIDDLE, so a budget that is a line too generous does
+ * not spill off the screen where you would see it, it silently deletes the
+ * player's rank. Predicting the rendered height of four variable sections
+ * exactly, forever, is not a thing this code can do, and being wrong is
+ * invisible. So it only opens more when there is room to be wrong by a lot.
  */
-export function panelSections(tab: PanelTab, height: number): PanelTab[] {
-  let left = height - PANEL_CHROME_LINES;
+export function panelSections(tab: PanelTab, height: number, chrome: number): PanelTab[] {
   const from = PANEL_TABS.indexOf(tab);
-  const out: PanelTab[] = [];
-  for (let i = 0; i < PANEL_TABS.length; i += 1) {
-    const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
-    if (!name) continue;
-    const cost = PANEL_COST[name];
-    if (out.length && cost > left) break;
-    out.push(name);
-    left -= cost;
+  const first = PANEL_TABS[from] ?? "stats";
+  // Even one section has to fit. It used to be included unconditionally, so a
+  // short panel drew a section it had no room for and Ink paid for it out of
+  // the rank line.
+  if (height < chrome + PANEL_COST[first]) return [];
+  const out: PanelTab[] = [first];
+  // Every section at its worst, plus the chrome, plus a margin for being wrong.
+  const all = Object.values(PANEL_COST).reduce((n, c) => n + c, 0);
+  if (height >= chrome + all + 4) {
+    for (let i = 1; i < PANEL_TABS.length; i += 1) {
+      const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
+      if (name) out.push(name);
+    }
   }
   return out;
 }
@@ -710,7 +744,14 @@ function Detail({
   // Both of these are guesses rather than measurements, and either can be
   // switched off by someone who would rather not be told.
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const open = panelSections(tab, height);
+  // Costed twice: the bar only exists when something is shut, and whether
+  // anything is shut depends on the budget. Ask without it, then again
+  // with it if the first answer left a section out.
+  const bare = panelSections(tab, height, panelChrome(p, reasons.length, false));
+  const open =
+    bare.length === PANEL_TABS.length
+      ? bare
+      : panelSections(tab, height, panelChrome(p, reasons.length, true));
   const shows = (name: PanelTab): boolean => open.includes(name);
   return (
     <Box
@@ -1113,7 +1154,12 @@ function SettingsView({
   // Budget in LINES, not options. A group heading is a line too, and counting
   // only the options put 28 lines in a 24 row window, which is what running
   // off the bottom looks like from the outside.
-  const lines = Math.max(3, height - 7);
+  // Nine lines go before a single option is drawn: two of border, two of
+  // padding, the title, the subtitle, a blank, a blank and the key hints.
+  // Budgeting seven of them left the box two lines longer than the space at
+  // every size, and Ink pays that back by deleting rows out of the middle:
+  // the option under the cursor vanished and two hints ran into each other.
+  const lines = Math.max(3, height - 9);
   const fits = (from: number): number => {
     let used = 0;
     let last = from > 0 ? (prefs.OPTIONS[from - 1]?.group ?? "") : "";
@@ -1542,6 +1588,11 @@ export function App({
   // The sidebar takes the right of the frame when there is room for it, and
   // the layout needs to know that before it places anything.
   const wide = width >= 108 && (settings.detail || settings.session);
+  // Measured from what those panels draw, plus a margin. Being a line short
+  // costs a section; being a line over costs a line of content, silently,
+  // out of the middle. The asymmetry is the whole reason to round up.
+  const SESSION_LINES = 12;
+  const TEAMCOMP_LINES = 11;
 
   // How much room a view actually gets, once the header, the tab strip and
   // the key hints have taken theirs. Everything sized to the window is
@@ -1883,6 +1934,16 @@ export function App({
   // Window minus the header, the tab strip, its rule and the footer.
   const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
+  // The panel shares the body with the session chart, and in agent select
+  // with the team composition too. It used to be handed the whole terminal
+  // height, so its budget covered space it did not have and Ink answered by
+  // dropping lines out of the middle of it.
+  const panelSpace = Math.max(
+    8,
+    bodyHeight -
+      (settings.session ? SESSION_LINES : 0) -
+      (current.state === "PREGAME" ? TEAMCOMP_LINES : 0),
+  );
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -2005,7 +2066,7 @@ export function App({
               <Detail
                 p={player}
                 tab={panelTab}
-                height={height}
+                height={panelSpace}
                 settings={settings}
                 last={lastMatch}
               />

@@ -39405,7 +39405,7 @@ function cell(key, p, rail, teamColor, selected = false, drawWidth) {
       return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: met > 0, color: met > 0 ? C.gold : C.line, children: pad(met ? `${met}x` : NONE, w, align) });
     }
     case "hs":
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: pad(p.hsPct === null || p.hsPct === void 0 ? NONE : `${num(p.hsPct)}`, w, align) });
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: pad(pct1(p.hsPct), w, align) });
     case "lvl":
       return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: pad(String(num(p.level) ?? NONE), w, align) });
     case "form": {
@@ -39513,19 +39513,31 @@ var STACK_NAME = {
   5: "five stack"
 };
 var PANEL_TABS = ["stats", "form", "guns", "met"];
-var PANEL_COST = { stats: 9, form: 5, guns: 6, met: 6 };
-var PANEL_CHROME_LINES = 14;
-function panelSections(tab2, height) {
-  let left = height - PANEL_CHROME_LINES;
+var PANEL_COST = { stats: 10, form: 4, guns: 6, met: 8 };
+function panelChrome(p, reasons, bar2) {
+  return 2 + // the border
+  1 + // the name
+  1 + // the blank line under it
+  1 + // level, title and role
+  (bar2 ? 2 : 0) + // the section bar, when anything is shut
+  (reasons ? reasons + 2 : 0) + // the smurf block
+  1 + // rank, RR and leaderboard
+  (isRanked(p) ? 1 : 0) + // the RR meter
+  1 + // peak
+  (p.previousRank ? 1 : 0) + // last act
+  2;
+}
+function panelSections(tab2, height, chrome) {
   const from = PANEL_TABS.indexOf(tab2);
-  const out = [];
-  for (let i = 0; i < PANEL_TABS.length; i += 1) {
-    const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
-    if (!name) continue;
-    const cost = PANEL_COST[name];
-    if (out.length && cost > left) break;
-    out.push(name);
-    left -= cost;
+  const first = PANEL_TABS[from] ?? "stats";
+  if (height < chrome + PANEL_COST[first]) return [];
+  const out = [first];
+  const all = Object.values(PANEL_COST).reduce((n, c) => n + c, 0);
+  if (height >= chrome + all + 4) {
+    for (let i = 1; i < PANEL_TABS.length; i += 1) {
+      const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
+      if (name) out.push(name);
+    }
   }
   return out;
 }
@@ -39541,7 +39553,8 @@ function Detail({
   }
   const mapWr = p.mapWinRate;
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const open = panelSections(tab2, height);
+  const bare = panelSections(tab2, height, panelChrome(p, reasons.length, false));
+  const open = bare.length === PANEL_TABS.length ? bare : panelSections(tab2, height, panelChrome(p, reasons.length, true));
   const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     Box_default,
@@ -39749,7 +39762,7 @@ function SettingsView({
   cursor,
   height
 }) {
-  const lines = Math.max(3, height - 7);
+  const lines = Math.max(3, height - 9);
   const fits = (from) => {
     let used = 0;
     let last = from > 0 ? OPTIONS[from - 1]?.group ?? "" : "";
@@ -40044,6 +40057,8 @@ function App2({
     [board, settings.enemies, sort, filter]
   );
   const wide = width >= 108 && (settings.detail || settings.session);
+  const SESSION_LINES = 12;
+  const TEAMCOMP_LINES = 11;
   const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
     const teams2 = board?.teams ?? {};
@@ -40304,6 +40319,10 @@ function App2({
   const cols = visibleColumns(bodyWidth, settings);
   const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
+  const panelSpace = Math.max(
+    8,
+    bodyHeight - (settings.session ? SESSION_LINES : 0) - (current.state === "PREGAME" ? TEAMCOMP_LINES : 0)
+  );
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -40427,7 +40446,7 @@ function App2({
           {
             p: player,
             tab: panelTab,
-            height,
+            height: panelSpace,
             settings,
             last: lastMatch
           }

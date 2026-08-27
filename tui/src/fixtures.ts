@@ -155,7 +155,7 @@ export const RECAP: Recap = {
   mvp: { name: "SilentEnt#GG", agent: "KAY/O", acs: 348, kd: 3.0 },
   players: [
     {
-      puuid: "1",
+      puuid: "SilentEnt#GG",
       name: "SilentEnt#GG",
       adr: 172,
       kast: 82,
@@ -188,7 +188,7 @@ export const RECAP: Recap = {
       hsPct: 28,
     },
     {
-      puuid: "2",
+      puuid: "Day#9932",
       name: "Day#9932",
       adr: 148,
       kast: 74,
@@ -214,7 +214,7 @@ export const RECAP: Recap = {
       hsPct: 31,
     },
     {
-      puuid: "3",
+      puuid: "PixelAndy#KR",
       name: "PixelAndy#KR",
       adr: 96,
       kast: 61,
@@ -231,7 +231,7 @@ export const RECAP: Recap = {
       hsPct: 19,
     },
     {
-      puuid: "4",
+      puuid: "DriftFrag#RR",
       name: "DriftFrag#RR",
       adr: 131,
       kast: 68,
@@ -248,7 +248,7 @@ export const RECAP: Recap = {
       hsPct: 24,
     },
     {
-      puuid: "5",
+      puuid: "VexedSmoke#1337",
       name: "VexedSmoke#1337",
       adr: 78,
       kast: 52,
@@ -265,7 +265,7 @@ export const RECAP: Recap = {
       hsPct: 13,
     },
     {
-      puuid: "6",
+      puuid: "NeonLock#VAL",
       name: "NeonLock#VAL",
       adr: 158,
       kast: 76,
@@ -283,7 +283,7 @@ export const RECAP: Recap = {
       hsPct: 25,
     },
     {
-      puuid: "7",
+      puuid: "GhostMain#GG",
       name: "GhostMain#GG",
       adr: 124,
       kast: 70,
@@ -300,7 +300,7 @@ export const RECAP: Recap = {
       hsPct: 19,
     },
     {
-      puuid: "8",
+      puuid: "FrostSpike#VAL",
       name: "FrostSpike#VAL",
       adr: 103,
       kast: 58,
@@ -317,7 +317,7 @@ export const RECAP: Recap = {
       hsPct: 30,
     },
     {
-      puuid: "9",
+      puuid: "DriftAim#GG",
       name: "DriftAim#GG",
       adr: 99,
       kast: 64,
@@ -334,7 +334,7 @@ export const RECAP: Recap = {
       hsPct: 27,
     },
     {
-      puuid: "10",
+      puuid: "GhostDash#OCE",
       name: "GhostDash#OCE",
       adr: 81,
       kast: 49,

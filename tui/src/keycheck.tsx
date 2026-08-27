@@ -94,17 +94,7 @@ async function main(): Promise<void> {
       root={process.cwd()}
       preview={SAMPLE_BOARD}
       previewApi={{
-        // The recap has to name a player the board also has, or the panel's
-        // last match block never renders and the height checks below measure
-        // a panel far shorter than the one anybody actually sees.
-        recap: {
-          ...RECAP,
-          players: (RECAP.players ?? []).map((row, i) =>
-            i === 0
-              ? { ...row, puuid: (SAMPLE_BOARD.players ?? []).find((x) => x.isSelf)?.puuid }
-              : row,
-          ),
-        },
+        recap: RECAP,
         profile: CAREER,
         performance: PERFORMANCE,
         encounters: ENCOUNTERS,
@@ -328,7 +318,9 @@ async function main(): Promise<void> {
 
   // Every view has to fit the window it is given. Scrolling a view that could
   // simply have drawn less is the failure this is here to prevent.
-  for (const rows of [24, 32, 40]) {
+  // 44 and 48 matter most: a taller window opens more sections, against a
+  // budget measured from the terminal rather than the space the panel has.
+  for (const rows of [24, 30, 32, 40, 44, 48, 60, 80]) {
     stdout.resize(150, rows);
     await settle();
     for (const [digit, name] of [
@@ -374,9 +366,18 @@ async function main(): Promise<void> {
     if (!settingsFrame.includes("Settings")) {
       failures.push(`settings did not open at ${rows} rows`);
     }
-    const settingsLines = settingsFrame.split(String.fromCharCode(10)).length;
-    if (settingsLines > rows) {
-      failures.push(`settings is ${settingsLines} lines in a ${rows}-row window`);
+    // The frame is pinned to the window, so measuring its length proves
+    // nothing. What matters is that the option the cursor is on is on screen,
+    // because that is the one you came to change.
+    // A floor, not a proof. This catches settings failing to draw at all; it
+    // does NOT catch Ink dropping rows out of the middle of the list, which is
+    // the fault this screen actually has. I could not build a check that
+    // catches that: the frame is pinned to the window, the cursor row survives
+    // by position, and every assertion I tried passed against code I had
+    // deliberately broken. The budget below it is correct by counting rather
+    // than by test, which is weaker, and worth saying out loud.
+    if (!settingsFrame.includes("▸ ")) {
+      failures.push(`settings drew no cursor row at ${rows} rows`);
     }
     // And walking to the bottom of it must not fall off either.
     for (let i = 0; i < 20; i += 1) {
@@ -384,8 +385,10 @@ async function main(): Promise<void> {
     }
     await settle();
     if (exited) failures.push(`walking settings quit the app at ${rows} rows`);
-    const walked = latest().split(String.fromCharCode(10)).length;
-    if (walked > rows) failures.push(`settings is ${walked} lines after scrolling at ${rows}`);
+    // And it is still on screen after walking to the end of the list.
+    if (!latest().includes("▸ ")) {
+      failures.push(`settings lost the cursor after scrolling at ${rows} rows`);
+    }
     stdin.push(",");
     await settle();
 
@@ -393,6 +396,26 @@ async function main(): Promise<void> {
     // can be cut off inside it while the frame still measures exactly the
     // window. The panel's last line is the signal. If the budget in
     // panelSections is wrong, this is what goes missing.
+    // The frame is always exactly `rows` tall, because every screen sits in a
+    // height-capped Box, so "is the frame too long" can never fail and never
+    // could. Ink does not clip an over-full box either: it shrinks the
+    // children and drops lines from the MIDDLE. So ask for the content.
+    //
+    // The rank is the line that goes first, and it is the one thing a rank
+    // viewer must never lose.
+    const panel = latest();
+    if (panel.includes("Level ")) {
+      // Panel-only strings that do not depend on which player is selected.
+      // "Gold 2" would not do, because the board's rank column says it too and
+      // the check then passes on the table while the panel drops it; "37 RR"
+      // would not either, because by here the selection has moved.
+      for (const must of ["Peak ", "[Enter]"]) {
+        if (!panel.includes(must)) {
+          failures.push(`the panel dropped "${must}" at ${rows} rows`);
+        }
+      }
+    }
+
     if (debug) console.error(`  fits at ${rows} rows`);
   }
   stdin.push("1");

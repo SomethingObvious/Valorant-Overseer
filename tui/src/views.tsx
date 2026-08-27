@@ -46,7 +46,7 @@ export function windowOf<T>(
   };
 }
 
-export type ViewName = "board" | "career" | "session" | "recap" | "encounters";
+export type ViewName = "board" | "career" | "session" | "recap" | "encounters" | "settings";
 
 export const VIEWS: Array<{ key: ViewName; label: string; short: string; digit: string }> = [
   { key: "board", label: "BOARD", short: "BOARD", digit: "1" },
@@ -54,6 +54,9 @@ export const VIEWS: Array<{ key: ViewName; label: string; short: string; digit: 
   { key: "session", label: "SESSION", short: "SESSION", digit: "3" },
   { key: "recap", label: "LAST MATCH", short: "MATCH", digit: "4" },
   { key: "encounters", label: "SEEN BEFORE", short: "SEEN", digit: "5" },
+  // A tab like the others, because a screen reachable only by a punctuation
+  // mark nobody mentioned is a screen nobody finds.
+  { key: "settings", label: "SETTINGS", short: "SET", digit: "," },
 ];
 
 export function Tabs({

@@ -346,12 +346,21 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
         # Clutches. The last player standing on their side, with at least one
         # opponent still alive, and then the round goes their way. This needs
         # the sides, which the round does not carry, so they come from the match.
-        winner = won_by
-        if teams:
+        # Only the people who actually played this round, and only when there
+        # are two sides to be the last of. Seeding from the match roster counted
+        # a coach as a living team mate and swallowed the clutch; counting a
+        # deathmatch, where everyone is their own team, made every player the
+        # last one standing. And without a winner there is no answer, so
+        # nothing is recorded rather than a loss being invented.
+        played = {str(ps.get("subject")) for ps in stats if ps.get("subject")}
+        sides: dict[str, set[str]] = {}
+        for puuid in played:
+            side = teams.get(puuid)
+            if side:
+                sides.setdefault(side, set()).add(puuid)
+        if won_by and len(sides) == 2:
             order = sorted(kills, key=lambda k: k["at"])
-            standing: dict[str, set[str]] = {side: set() for side in set(teams.values())}
-            for puuid, side in teams.items():
-                standing[side].add(puuid)
+            standing: dict[str, set[str]] = {side: set(members) for side, members in sides.items()}
             for kill in order:
                 victim = str(kill.get("victim") or "")
                 fell = teams.get(victim)
@@ -364,7 +373,7 @@ def _round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                     others = sum(len(m) for name, m in standing.items() if name != side_name and m)
                     if others >= 1 and alone not in clutched:
                         clutched.add(alone)
-                        key = "clutches" if winner == side_name else "clutchesLost"
+                        key = "clutches" if won_by == side_name else "clutchesLost"
                         slot(alone)[key] += 1
 
         # The opening duel of the round.

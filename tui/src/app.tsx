@@ -654,9 +654,9 @@ const STACK_NAME: Record<number, string> = {
 };
 
 /** The panel's sections, and roughly how many lines each one draws. */
-export const PANEL_TABS = ["stats", "form", "arsenal", "seen"] as const;
+export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
-const PANEL_COST: Record<PanelTab, number> = { stats: 4, form: 5, arsenal: 3, seen: 6 };
+const PANEL_COST: Record<PanelTab, number> = { stats: 4, form: 5, guns: 3, met: 6 };
 // Name, level, the section line, the rank block and the border.
 const PANEL_CHROME_LINES = 14;
 
@@ -738,6 +738,7 @@ function Detail({
             color={open.includes(name) ? C.bone : C.line}
           >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
         ))}
+        <Text color={C.faint}>{"[e]"}</Text>
       </Box>
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
@@ -841,7 +842,7 @@ function Detail({
         </Box>
       ) : null}
 
-      {shows("arsenal") && arr(p.weapons).length ? (
+      {shows("guns") && arr(p.weapons).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
             {"Skins "}
@@ -855,7 +856,7 @@ function Detail({
         </Box>
       ) : null}
 
-      {shows("seen") && settings.stacks && p.stackGuess && !p.party ? (
+      {shows("met") && settings.stacks && p.stackGuess && !p.party ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}`}
@@ -867,7 +868,7 @@ function Detail({
         </Box>
       ) : null}
 
-      {shows("seen") && seenCount(p) ? (
+      {shows("met") && seenCount(p) ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold color={C.gold}>
             {`Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before`}
@@ -1049,10 +1050,31 @@ function SettingsView({
 }) {
   // The list is longer than a short window, and a settings screen that runs
   // off the bottom is worse than most: the option you cannot see is the one
-  // you came to change. Show a run of it around the cursor instead.
-  const room = Math.max(4, height - 8);
-  const first = Math.max(0, Math.min(cursor - Math.floor(room / 2), prefs.OPTIONS.length - room));
-  const shown = prefs.OPTIONS.slice(first, first + room);
+  // you came to change.
+  //
+  // Budget in LINES, not options. A group heading is a line too, and counting
+  // only the options put 28 lines in a 24 row window, which is what running
+  // off the bottom looks like from the outside.
+  const lines = Math.max(3, height - 7);
+  const fits = (from: number): number => {
+    let used = 0;
+    let last = from > 0 ? (prefs.OPTIONS[from - 1]?.group ?? "") : "";
+    let count = 0;
+    for (let i = from; i < prefs.OPTIONS.length; i += 1) {
+      const opt = prefs.OPTIONS[i];
+      if (!opt) break;
+      const cost = 1 + (opt.group === last ? 0 : 1);
+      if (used + cost > lines) break;
+      used += cost;
+      last = opt.group;
+      count += 1;
+    }
+    return count;
+  };
+  // Keep the cursor on screen: walk the start forward until it is inside.
+  let first = 0;
+  while (first < cursor && first + fits(first) <= cursor) first += 1;
+  const shown = prefs.OPTIONS.slice(first, first + Math.max(1, fits(first)));
   let heading = first > 0 ? (prefs.OPTIONS[first - 1]?.group ?? "") : "";
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.red} paddingX={2} paddingY={1}>
@@ -1229,7 +1251,7 @@ const HELP_SECTIONS: Array<[string, Array<[string, string]>]> = [
       ["/", "Filter by name, Esc clears it"],
       ["r", "Ask the backend again for this view"],
       ["d", "Detail panel on and off"],
-      ["e", "Next section of the detail panel"],
+      ["e", "Panel section: stats, form, guns, met before"],
     ],
   ],
   [
@@ -1364,8 +1386,12 @@ export function App({
     preview ? { ...prefs.DEFAULTS, ...previewSettings } : prefs.load(root),
   );
   const [selected, setSelected] = useState<string | null>(null);
-  const [showSettings, setShowSettings] = useState(previewOpenSettings === true);
-  const [view, setView] = useState<ViewName>(previewView ?? "board");
+  // Settings is a view like the others now, so the tab strip can show it and
+  // a click can reach it. It used to be a modal that replaced the whole
+  // screen, reachable only by a comma nobody had been told about.
+  const [view, setView] = useState<ViewName>(
+    previewView ?? (previewOpenSettings === true ? "settings" : "board"),
+  );
   const [sort, setSort] = useState<SortMode>(previewSort ?? "party");
   const [offset, setOffset] = useState(0);
   // Bumped by r. It rides along in the request key, so asking again is the
@@ -1459,6 +1485,11 @@ export function App({
   // the layout needs to know that before it places anything.
   const wide = width >= 108 && (settings.detail || settings.session);
 
+  // How much room a view actually gets, once the header, the tab strip and
+  // the key hints have taken theirs. Everything sized to the window is
+  // measured against this rather than the terminal height.
+  const viewHeight = Math.max(4, height - headerHeight(true) - 3);
+
   const zones = useMemo(() => {
     const teams = board?.teams ?? {};
     const selfTeam = board?.selfTeam ?? "Blue";
@@ -1547,9 +1578,9 @@ export function App({
   };
 
   const handleKey = (input: string, key: Key): void => {
-    if (showSettings) {
+    if (view === "settings") {
       if (key.escape || input === ",") {
-        setShowSettings(false);
+        setView("board");
         return;
       }
       if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
@@ -1721,7 +1752,8 @@ export function App({
       return;
     }
     if (input === ",") {
-      setShowSettings(true);
+      setView("settings");
+      setCursor(0);
       return;
     }
     if (input === "d") update({ ...settings, detail: !settings.detail });
@@ -1767,15 +1799,6 @@ export function App({
     );
   }
 
-  if (showSettings) {
-    return (
-      <>
-        {keys}
-        <SettingsView settings={settings} cursor={cursor} height={height} />
-      </>
-    );
-  }
-
   const current = board ?? {};
   if (!rows.length) {
     return (
@@ -1804,8 +1827,6 @@ export function App({
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
   const player = selectedPlayer;
-
-  const viewHeight = Math.max(4, height - headerHeight(true) - 3);
 
   if (view !== "board") {
     return (
@@ -1841,6 +1862,9 @@ export function App({
               height={viewHeight}
               rich={settings.richRecap}
             />
+          ) : null}
+          {view === "settings" ? (
+            <SettingsView settings={settings} cursor={cursor} height={viewHeight} />
           ) : null}
           {view === "encounters" ? (
             <EncountersView

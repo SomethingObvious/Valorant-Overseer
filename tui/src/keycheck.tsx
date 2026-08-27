@@ -344,7 +344,7 @@ async function main(): Promise<void> {
     // rather than push the footer off the bottom.
     stdin.push("1");
     await settle();
-    for (const section of ["stats", "form", "arsenal", "seen"]) {
+    for (const section of ["stats", "form", "guns", "met"]) {
       stdin.push("e");
       await settle();
       const lines = latest().split(String.fromCharCode(10)).length;
@@ -355,6 +355,30 @@ async function main(): Promise<void> {
         failures.push(`panel ${section} lost the key hints at ${rows} rows`);
       }
     }
+    // Settings, which is the longest list in the app and the one screen where
+    // an option you cannot see is the option you came to change.
+    stdin.push(",");
+    await settle();
+    if (exited) failures.push(`settings quit the app at ${rows} rows`);
+    const settingsFrame = latest();
+    if (!settingsFrame.includes("Settings")) {
+      failures.push(`settings did not open at ${rows} rows`);
+    }
+    const settingsLines = settingsFrame.split(String.fromCharCode(10)).length;
+    if (settingsLines > rows) {
+      failures.push(`settings is ${settingsLines} lines in a ${rows}-row window`);
+    }
+    // And walking to the bottom of it must not fall off either.
+    for (let i = 0; i < 20; i += 1) {
+      stdin.push("j");
+    }
+    await settle();
+    if (exited) failures.push(`walking settings quit the app at ${rows} rows`);
+    const walked = latest().split(String.fromCharCode(10)).length;
+    if (walked > rows) failures.push(`settings is ${walked} lines after scrolling at ${rows}`);
+    stdin.push(",");
+    await settle();
+
     if (debug) console.error(`  fits at ${rows} rows`);
   }
   stdin.push("1");

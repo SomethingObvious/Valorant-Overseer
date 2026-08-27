@@ -38722,7 +38722,10 @@ var VIEWS = [
   { key: "career", label: "CAREER", short: "CAREER", digit: "2" },
   { key: "session", label: "SESSION", short: "SESSION", digit: "3" },
   { key: "recap", label: "LAST MATCH", short: "MATCH", digit: "4" },
-  { key: "encounters", label: "SEEN BEFORE", short: "SEEN", digit: "5" }
+  { key: "encounters", label: "SEEN BEFORE", short: "SEEN", digit: "5" },
+  // A tab like the others, because a screen reachable only by a punctuation
+  // mark nobody mentioned is a screen nobody finds.
+  { key: "settings", label: "SETTINGS", short: "SET", digit: "," }
 ];
 function Tabs({
   active: active2,
@@ -39505,8 +39508,8 @@ var STACK_NAME = {
   4: "four stack",
   5: "five stack"
 };
-var PANEL_TABS = ["stats", "form", "arsenal", "seen"];
-var PANEL_COST = { stats: 4, form: 5, arsenal: 3, seen: 6 };
+var PANEL_TABS = ["stats", "form", "guns", "met"];
+var PANEL_COST = { stats: 4, form: 5, guns: 3, met: 6 };
 var PANEL_CHROME_LINES = 14;
 function panelSections(tab2, height) {
   let left = height - PANEL_CHROME_LINES;
@@ -39552,15 +39555,18 @@ function Detail({
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          Text,
-          {
-            bold: name === tab2,
-            color: open.includes(name) ? C.bone : C.line,
-            children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
-          },
-          name
-        )) }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
+          PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            Text,
+            {
+              bold: name === tab2,
+              color: open.includes(name) ? C.bone : C.line,
+              children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
+            },
+            name
+          )),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: "[e]" })
+        ] }),
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39611,15 +39617,15 @@ function Detail({
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Mains " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
-        shows("arsenal") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
+        shows("guns") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
         ] }) : null,
-        shows("seen") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        shows("met") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(p.stackGuess.same) ?? 0}/${num(p.stackGuess.shared) ?? 0} same side, ${num(p.stackGuess.confidence) ?? 0}% sure` })
         ] }) : null,
-        shows("seen") && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+        shows("met") && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before` }),
           num(p.encounter?.withCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.withCount)} on your team, ${num(p.encounter?.winsWith) ?? 0}W-${num(p.encounter?.lossesWith) ?? 0}L${num(p.encounter?.drawsWith) ? `-${num(p.encounter?.drawsWith)}D` : ""}` }) : null,
           num(p.encounter?.againstCount) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${num(p.encounter?.againstCount)} against you, ${num(p.encounter?.winsAgainst) ?? 0}W-${num(p.encounter?.lossesAgainst) ?? 0}L${num(p.encounter?.drawsAgainst) ? `-${num(p.encounter?.drawsAgainst)}D` : ""}` }) : null
@@ -39723,9 +39729,25 @@ function SettingsView({
   cursor,
   height
 }) {
-  const room = Math.max(4, height - 8);
-  const first = Math.max(0, Math.min(cursor - Math.floor(room / 2), OPTIONS.length - room));
-  const shown = OPTIONS.slice(first, first + room);
+  const lines = Math.max(3, height - 7);
+  const fits = (from) => {
+    let used = 0;
+    let last = from > 0 ? OPTIONS[from - 1]?.group ?? "" : "";
+    let count = 0;
+    for (let i = from; i < OPTIONS.length; i += 1) {
+      const opt = OPTIONS[i];
+      if (!opt) break;
+      const cost = 1 + (opt.group === last ? 0 : 1);
+      if (used + cost > lines) break;
+      used += cost;
+      last = opt.group;
+      count += 1;
+    }
+    return count;
+  };
+  let first = 0;
+  while (first < cursor && first + fits(first) <= cursor) first += 1;
+  const shown = OPTIONS.slice(first, first + Math.max(1, fits(first)));
   let heading = first > 0 ? OPTIONS[first - 1]?.group ?? "" : "";
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", borderStyle: "round", borderColor: C.red, paddingX: 2, paddingY: 1, children: [
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.bone, children: "Settings" }),
@@ -39838,7 +39860,7 @@ var HELP_SECTIONS = [
       ["/", "Filter by name, Esc clears it"],
       ["r", "Ask the backend again for this view"],
       ["d", "Detail panel on and off"],
-      ["e", "Next section of the detail panel"]
+      ["e", "Panel section: stats, form, guns, met before"]
     ]
   ],
   [
@@ -39936,8 +39958,9 @@ function App2({
     () => preview ? { ...DEFAULTS, ...previewSettings } : load(root2)
   );
   const [selected, setSelected] = (0, import_react35.useState)(null);
-  const [showSettings, setShowSettings] = (0, import_react35.useState)(previewOpenSettings === true);
-  const [view, setView] = (0, import_react35.useState)(previewView ?? "board");
+  const [view, setView] = (0, import_react35.useState)(
+    previewView ?? (previewOpenSettings === true ? "settings" : "board")
+  );
   const [sort, setSort] = (0, import_react35.useState)(previewSort ?? "party");
   const [offset, setOffset] = (0, import_react35.useState)(0);
   const [refreshedAt, setRefreshedAt] = (0, import_react35.useState)(0);
@@ -40001,6 +40024,7 @@ function App2({
     [board, settings.enemies, sort, filter]
   );
   const wide = width >= 108 && (settings.detail || settings.session);
+  const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
     const teams2 = board?.teams ?? {};
     const selfTeam2 = board?.selfTeam ?? "Blue";
@@ -40062,9 +40086,9 @@ function App2({
     save(root2, next);
   };
   const handleKey = (input, key) => {
-    if (showSettings) {
+    if (view === "settings") {
       if (key.escape || input === ",") {
-        setShowSettings(false);
+        setView("board");
         return;
       }
       if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
@@ -40209,7 +40233,8 @@ function App2({
       return;
     }
     if (input === ",") {
-      setShowSettings(true);
+      setView("settings");
+      setCursor(0);
       return;
     }
     if (input === "d") update({ ...settings, detail: !settings.detail });
@@ -40240,12 +40265,6 @@ function App2({
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(HelpView, { width })
     ] });
   }
-  if (showSettings) {
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
-      keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(SettingsView, { settings, cursor, height })
-    ] });
-  }
   const current = board ?? {};
   if (!rows.length) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
@@ -40273,7 +40292,6 @@ function App2({
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
   const player = selectedPlayer;
-  const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   if (view !== "board") {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
       keys,
@@ -40311,6 +40329,7 @@ function App2({
             rich: settings.richRecap
           }
         ) : null,
+        view === "settings" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(SettingsView, { settings, cursor, height: viewHeight }) : null,
         view === "encounters" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           EncountersView,
           {

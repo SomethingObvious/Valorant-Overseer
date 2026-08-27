@@ -824,11 +824,6 @@ function Detail({
       {p.peakAct ? (
         <Text wrap="truncate" color={C.faint}>{`  reached in ${p.peakAct}`}</Text>
       ) : null}
-      {peakGap(p) ? (
-        <Text wrap="truncate" color={C.gold}>
-          {`  ${(num(p.peakRankTier) ?? 0) - (num(p.rankTier) ?? 0)} tiers above now`}
-        </Text>
-      ) : null}
       {p.previousRank ? (
         <Text wrap="truncate" color={C.faint}>{`Last act ${p.previousRank}`}</Text>
       ) : null}

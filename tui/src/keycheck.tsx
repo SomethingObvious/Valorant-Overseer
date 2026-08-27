@@ -94,7 +94,17 @@ async function main(): Promise<void> {
       root={process.cwd()}
       preview={SAMPLE_BOARD}
       previewApi={{
-        recap: RECAP,
+        // The recap has to name a player the board also has, or the panel's
+        // last match block never renders and the height checks below measure
+        // a panel far shorter than the one anybody actually sees.
+        recap: {
+          ...RECAP,
+          players: (RECAP.players ?? []).map((row, i) =>
+            i === 0
+              ? { ...row, puuid: (SAMPLE_BOARD.players ?? []).find((x) => x.isSelf)?.puuid }
+              : row,
+          ),
+        },
         profile: CAREER,
         performance: PERFORMANCE,
         encounters: ENCOUNTERS,
@@ -379,6 +389,10 @@ async function main(): Promise<void> {
     stdin.push(",");
     await settle();
 
+    // The frame fitting proves nothing on its own: the root clips, so content
+    // can be cut off inside it while the frame still measures exactly the
+    // window. The panel's last line is the signal. If the budget in
+    // panelSections is wrong, this is what goes missing.
     if (debug) console.error(`  fits at ${rows} rows`);
   }
   stdin.push("1");

@@ -836,6 +836,89 @@ def _report_crash() -> None:
             pass
 
 
+if __name__ == "__main__" and "--self-check" in sys.argv:
+    # Nothing here has ever tested the launcher, and the launcher is the part
+    # that decides whether anything runs at all. It spent four launches in a
+    # row declaring a healthy backend dead, forty seconds at a time, and every
+    # other check in this repository passed while it did.
+    import tempfile
+
+    _real_dir = OVERSEER_DIR
+
+    def _bridge(**fields: object) -> None:
+        (OVERSEER_DIR / "bridge.json").write_text(json.dumps(fields), encoding="utf-8")
+
+    # Two of the cases below are meant to time out, and the timeout says so on
+    # the way past. Quiet it, so a passing check does not print warnings.
+    _say_warn = warn
+
+    def _quiet(msg: str) -> None:
+        return
+
+    warn = _quiet
+    with tempfile.TemporaryDirectory() as _tmp:
+        OVERSEER_DIR = Path(_tmp)
+
+        # A file left by the previous launch must not count as this one.
+        _bridge(wsPort=7878, pid=4242, launchId="an-older-launch")
+        assert not wait_bridge("mine", 999, 1.2), "a stale bridge was accepted"
+
+        # The launch id is the answer, whatever the pid turned out to be.
+        _bridge(wsPort=7878, pid=4242, launchId="mine")
+        assert wait_bridge("mine", 999, 1.2), "the launch id was not matched"
+
+        # And a backend too old to write one still matches on pid.
+        _bridge(wsPort=7878, pid=999)
+        assert wait_bridge("mine", 999, 1.2), "the pid fallback was not matched"
+
+        # A bridge with no port is not a bridge.
+        _bridge(wsPort=0, pid=999, launchId="mine")
+        assert not wait_bridge("mine", 999, 1.2), "a portless bridge was accepted"
+
+    warn = _say_warn
+    OVERSEER_DIR = _real_dir
+
+    # The one that matters. Matching on pid failed only because the real
+    # interpreter re-execs into a second process, which no hand written
+    # fixture reproduces: it has to be the actual python, actually spawned.
+    _kept = None
+    _bridge_path = OVERSEER_DIR / "bridge.json"
+    if _bridge_path.exists():
+        _kept = _bridge_path.read_bytes()
+    _sock = socket.socket()
+    _sock.bind(("127.0.0.1", 0))
+    _spare = _sock.getsockname()[1]
+    _sock.close()
+    _launch = secrets.token_hex(8)
+    _env = dict(os.environ)
+    _env["WS_PORT"] = str(_spare)
+    _env["OVERSEER_LAUNCH_ID"] = _launch
+    _env["DISCORD_RPC"] = "false"
+    _proc = subprocess.Popen(
+        [resolve_python(), "app.py"],
+        cwd=str(BACKEND),
+        env=_env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        assert wait_bridge(_launch, _proc.pid, 45), (
+            "the launcher did not recognise a backend it started itself"
+        )
+    finally:
+        _proc.terminate()
+        try:
+            _proc.wait(timeout=10)
+        except Exception:
+            _proc.kill()
+        if _kept is not None:
+            _bridge_path.write_bytes(_kept)
+        elif _bridge_path.exists():
+            _bridge_path.unlink()
+
+    print("run self-check OK (a launch recognises its own backend)")
+    raise SystemExit(0)
+
 if __name__ == "__main__":
     try:
         main()

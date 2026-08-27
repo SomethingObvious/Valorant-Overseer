@@ -562,6 +562,9 @@ function Test-PowerShellFormat {
 # it re-derives the collection-value price table from valorant-api.com, because
 # Riot repricing a content tier silently makes every collection total wrong and
 # no local test can notice.
+# run.py is the launcher, and it decides whether any of the rest ever runs.
+# It spent four launches declaring a healthy backend dead while every check
+# in this file passed, because nothing here had ever executed a line of it.
 $SelfChecks = @("backend\encounter_log.py", "backend\history.py", "backend\inventory.py",
     "backend\live_match.py",
     "backend\offline_launch.py", "backend\overseer_commands.py",
@@ -571,7 +574,7 @@ $SelfChecks = @("backend\encounter_log.py", "backend\history.py", "backend\inven
 # app.py starts the WebSocket bridge when it is run, so its self-check needs
 # the flag. It is the guard that the bridge's request router keeps answering
 # in demo mode -- the whole data surface, now that the HTTP API is deleted.
-$SelfCheckArgs = @{ "backend\app.py" = @("--self-check") }
+$SelfCheckArgs = @{ "backend\app.py" = @("--self-check"); "run.py" = @("--self-check") }
 
 # The scoreboard's own guard: it renders every board shape a missing Riot
 # field can produce and checks the column fitter, with no game and no

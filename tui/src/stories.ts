@@ -163,6 +163,27 @@ export const STORIES: Story[] = [
     // The panel shows the selected player, which starts as you, so its flags
     // only draw when you are the flagged one. They used to sit below the form
     // and the map record, off the bottom of the panel on any ordinary window.
+    // The panel showing what the last completed match knows about the selected
+    // player, which on the board is the only real per match data there is.
+    name: "detail-last-match",
+    summary: "Panel with the selected player's line from the last match",
+    board: SAMPLE_BOARD,
+    width: 150,
+    api: {
+      recap: {
+        ...RECAP,
+        players: (RECAP.players ?? []).map((row, i) =>
+          i === 0
+            ? {
+                ...row,
+                puuid: (SAMPLE_BOARD.players ?? []).find((x) => x.isSelf)?.puuid ?? row.puuid,
+              }
+            : row,
+        ),
+      },
+    },
+  },
+  {
     name: "detail-flagged",
     summary: "Detail panel for a flagged account: smurf, leaderboard, stack",
     board: board({

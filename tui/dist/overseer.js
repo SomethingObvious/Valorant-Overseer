@@ -39513,7 +39513,7 @@ var STACK_NAME = {
   5: "five stack"
 };
 var PANEL_TABS = ["stats", "form", "guns", "met"];
-var PANEL_COST = { stats: 4, form: 5, guns: 3, met: 6 };
+var PANEL_COST = { stats: 9, form: 5, guns: 6, met: 6 };
 var PANEL_CHROME_LINES = 14;
 function panelSections(tab2, height) {
   let left = height - PANEL_CHROME_LINES;
@@ -39533,7 +39533,8 @@ function Detail({
   p,
   tab: tab2,
   height,
-  settings
+  settings,
+  last
 }) {
   if (!p) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { borderStyle: "round", borderColor: C.line, paddingX: 1, width: SIDEBAR, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "No player selected." }) });
@@ -39611,7 +39612,13 @@ function Detail({
                 children: `   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`
               }
             ) : null
-          ] })
+          ] }),
+          last ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.ice, children: "Last match" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(last.kills) ?? 0}/${num(last.deaths) ?? 0}/${num(last.assists) ?? 0}  ${dash(last.acs)} ACS  ${dash(last.adr)} ADR` }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${dash(last.kast, "% KAST")}  ${pct1(last.hsPct)} HS  ${dash(last.econ)} econ` }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(last.firstBloods) ?? 0}/${num(last.firstDeaths) ?? 0} duels  ${num(last.clutches) ?? 0} clutch  ${(num(last.plants) ?? 0) + (num(last.defuses) ?? 0)} spike` })
+          ] }) : null
         ] }) : null,
         shows("form") && formPips(p).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Form  " }),
@@ -39624,7 +39631,7 @@ function Detail({
         ] }) : null,
         shows("guns") && !arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Guns" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  Nothing equipped yet." })
+          arr(last?.weaponKills).length ? arr(last?.weaponKills).slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} kill${num(w.kills) === 1 ? "" : "s"} last match` }, w.name ?? "")) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  Nothing equipped yet." })
         ] }) : null,
         shows("guns") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
@@ -40072,12 +40079,7 @@ function App2({
     "performance",
     view === "session" ? `session:${refreshedAt}` : null
   );
-  const recap = useRequest(
-    bridge,
-    connected,
-    "recap",
-    view === "recap" ? `recap:${refreshedAt}:${matchKey}` : null
-  );
+  const recap = useRequest(bridge, connected, "recap", `recap:${refreshedAt}:${matchKey}`);
   const encounters = useRequest(
     bridge,
     connected,
@@ -40089,6 +40091,7 @@ function App2({
     if (seed === void 0) return live;
     return { phase: "ready", data: seed, error: "" };
   };
+  const lastMatch = arr(canned("recap", recap).data?.players).find((x) => x.puuid === selectedPlayer?.puuid) ?? null;
   (0, import_react35.useEffect)(() => {
     if (rows.length && !rows.some((p) => p.puuid === selected)) {
       setSelected(rows.find((p) => p.isSelf)?.puuid ?? rows[0]?.puuid ?? null);
@@ -40419,7 +40422,16 @@ function App2({
       ] }),
       wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
         current.state === "PREGAME" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TeamComp, { players: arrange(arr(teams[selfTeam]), sort), board: current }) : null,
-        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Detail, { p: player, tab: panelTab, height, settings }) : null,
+        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          Detail,
+          {
+            p: player,
+            tab: panelTab,
+            height,
+            settings,
+            last: lastMatch
+          }
+        ) : null,
         settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null
       ] }) : null
     ] }),

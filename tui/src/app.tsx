@@ -1,6 +1,6 @@
 import { Box, type Key, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Career, Encounters, Fetched, Performance, Recap } from "./api.js";
+import type { Career, Encounters, Fetched, Performance, Recap, RecapPlayer } from "./api.js";
 import { useRequest } from "./api.js";
 import { Bridge } from "./bridge.js";
 import { brailleBars, colourRuns } from "./chart.js";
@@ -657,7 +657,7 @@ const STACK_NAME: Record<number, string> = {
 /** The panel's sections, and roughly how many lines each one draws. */
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
-const PANEL_COST: Record<PanelTab, number> = { stats: 4, form: 5, guns: 3, met: 6 };
+const PANEL_COST: Record<PanelTab, number> = { stats: 9, form: 5, guns: 6, met: 6 };
 // Name, level, the section line, the rank block and the border.
 const PANEL_CHROME_LINES = 14;
 
@@ -689,11 +689,13 @@ function Detail({
   tab,
   height,
   settings,
+  last,
 }: {
   p: Player | null;
   tab: PanelTab;
   height: number;
   settings: prefs.Settings;
+  last: RecapPlayer | null;
 }) {
   if (!p) {
     return (
@@ -814,6 +816,26 @@ function Detail({
               >{`   This map ${num(mapWr.winRate) ?? 0}% (${num(mapWr.games)})`}</Text>
             ) : null}
           </Box>
+
+          {last ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold color={C.ice}>
+                {"Last match"}
+              </Text>
+              <Text wrap="truncate" color={C.faint}>
+                {`  ${num(last.kills) ?? 0}/${num(last.deaths) ?? 0}/${num(last.assists) ?? 0}` +
+                  `  ${dash(last.acs)} ACS  ${dash(last.adr)} ADR`}
+              </Text>
+              <Text wrap="truncate" color={C.faint}>
+                {`  ${dash(last.kast, "% KAST")}  ${pct1(last.hsPct)} HS  ${dash(last.econ)} econ`}
+              </Text>
+              <Text wrap="truncate" color={C.faint}>
+                {`  ${num(last.firstBloods) ?? 0}/${num(last.firstDeaths) ?? 0} duels` +
+                  `  ${num(last.clutches) ?? 0} clutch` +
+                  `  ${(num(last.plants) ?? 0) + (num(last.defuses) ?? 0)} spike`}
+              </Text>
+            </Box>
+          ) : null}
         </>
       ) : null}
 
@@ -851,9 +873,19 @@ function Detail({
           <Text wrap="truncate" color={C.dim}>
             {"Guns"}
           </Text>
-          <Text wrap="truncate" color={C.faint}>
-            {"  Nothing equipped yet."}
-          </Text>
+          {arr(last?.weaponKills).length ? (
+            arr(last?.weaponKills)
+              .slice(0, 4)
+              .map((w) => (
+                <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
+                  {`  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} kill${num(w.kills) === 1 ? "" : "s"} last match`}
+                </Text>
+              ))
+          ) : (
+            <Text wrap="truncate" color={C.faint}>
+              {"  Nothing equipped yet."}
+            </Text>
+          )}
         </Box>
       ) : null}
 
@@ -1573,12 +1605,7 @@ export function App({
     "performance",
     view === "session" ? `session:${refreshedAt}` : null,
   );
-  const recap = useRequest<Recap>(
-    bridge,
-    connected,
-    "recap",
-    view === "recap" ? `recap:${refreshedAt}:${matchKey}` : null,
-  );
+  const recap = useRequest<Recap>(bridge, connected, "recap", `recap:${refreshedAt}:${matchKey}`);
   const encounters = useRequest<Encounters>(
     bridge,
     connected,
@@ -1591,6 +1618,13 @@ export function App({
     if (seed === undefined) return live;
     return { phase: "ready", data: seed as T, error: "" };
   };
+
+  // The selected player's line from the last completed match, if they were
+  // in it. On the board nothing has happened yet, so this is the only real
+  // per match data there is to show about them.
+  const lastMatch =
+    arr(canned("recap", recap).data?.players).find((x) => x.puuid === selectedPlayer?.puuid) ??
+    null;
 
   useEffect(() => {
     if (rows.length && !rows.some((p) => p.puuid === selected)) {
@@ -1968,7 +2002,13 @@ export function App({
               <TeamComp players={arrange(arr(teams[selfTeam]), sort)} board={current} />
             ) : null}
             {settings.detail ? (
-              <Detail p={player} tab={panelTab} height={height} settings={settings} />
+              <Detail
+                p={player}
+                tab={panelTab}
+                height={height}
+                settings={settings}
+                last={lastMatch}
+              />
             ) : null}
             {settings.session ? <Session board={current} /> : null}
           </Box>

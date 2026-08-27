@@ -476,6 +476,12 @@ def _write_bridge_file(ws_port: int, token: str) -> None:
             "token": token,
             "protocol": ws_server.PROTOCOL_VERSION,
             "pid": os.getpid(),
+            # Which launch wrote this. The pid cannot answer that: the venv's
+            # python.exe on Windows re-execs, so the process the launcher
+            # started and the process that writes this file have different
+            # pids, and a launcher matching on pid waits for a match that can
+            # never come.
+            "launchId": os.getenv("OVERSEER_LAUNCH_ID", ""),
         },
         prefix=".bridge-",
     ):

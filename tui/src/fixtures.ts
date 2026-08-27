@@ -170,6 +170,12 @@ export const RECAP: Recap = {
       defusesWon: 0,
       multiKills: { "2": 3, "3": 1 },
       topWeapon: { name: "Vandal", kills: 18 },
+      weaponKills: [
+        { name: "Vandal", kills: 18 },
+        { name: "Sheriff", kills: 5 },
+        { name: "Classic", kills: 3 },
+        { name: "Operator", kills: 1 },
+      ],
       team: "Blue",
       agent: "KAY/O",
       rank: "Diamond 3",

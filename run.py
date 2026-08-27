@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -477,18 +478,26 @@ def choose_port(preferred: str | int, label: str) -> int:
     )
 
 
-def wait_bridge(pid: int, timeout: float) -> bool:
+def wait_bridge(launch_id: str, pid: int, timeout: float) -> bool:
     """Wait for the backend to publish .overseer/bridge.json for this launch.
 
-    The pid check matters: the file survives from the previous run, so its
-    mere existence proves nothing about the process just started.
+    The file survives from the previous run, so its mere existence proves
+    nothing: it has to be matched to the launch that just happened.
+
+    That match used to be on pid, and on Windows it could never succeed. The
+    venv's python.exe re-execs into a second process, so the pid handed to
+    Popen and the pid the backend reports are different numbers, and the wait
+    ran to its full forty seconds every single time before declaring a healthy
+    backend dead. The launch id is passed in, so it says what pid meant to.
     """
     bridge = OVERSEER_DIR / "bridge.json"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             data = json.loads(bridge.read_text(encoding="utf-8"))
-            if int(data.get("pid", 0)) == pid and int(data.get("wsPort", 0)) > 0:
+            if int(data.get("wsPort", 0)) > 0 and (
+                (launch_id and data.get("launchId") == launch_id) or int(data.get("pid", 0)) == pid
+            ):
                 return True
         except Exception:
             pass
@@ -723,6 +732,9 @@ def main() -> None:
 
         child_env = os.environ.copy()
         child_env["WS_PORT"] = str(ws_port)
+        # Stamped into bridge.json so this launch can recognise its own.
+        launch_id = secrets.token_hex(8)
+        child_env["OVERSEER_LAUNCH_ID"] = launch_id
 
         LOG.info("starting stack: ws=%s", ws_port)
 
@@ -745,7 +757,7 @@ def main() -> None:
         _CTRL_KILL_PIDS.append(backend_proc.pid)
         _install_console_close_handler()
 
-        if not wait_bridge(backend_proc.pid, 40):
+        if not wait_bridge(launch_id, backend_proc.pid, 40):
             tail = tail_backend_log()
             LOG.error("VG-BACKEND-001 backend did not become healthy; last output:\n%s", tail)
             die(

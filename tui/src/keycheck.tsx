@@ -443,6 +443,12 @@ async function main(): Promise<void> {
     // The rank is the line that goes first, and it is the one thing a rank
     // viewer must never lose.
     const panel = latest();
+    // A panel with every section shut is what a budget that is too tight looks
+    // like: the section names are there and not one of them has anything under
+    // it. That is what launching the app looked like after the last fix.
+    if (rows >= 36 && panel.includes("Level ") && !panel.includes("Win   ")) {
+      failures.push(`the panel opened no section at ${rows} rows`);
+    }
     if (panel.includes("Level ")) {
       // Panel-only strings that do not depend on which player is selected.
       // "Gold 2" would not do, because the board's rank column says it too and

@@ -56,7 +56,7 @@ export const VIEWS: Array<{ key: ViewName; label: string; short: string; digit: 
   { key: "encounters", label: "SEEN BEFORE", short: "SEEN", digit: "5" },
   // A tab like the others, because a screen reachable only by a punctuation
   // mark nobody mentioned is a screen nobody finds.
-  { key: "settings", label: "SETTINGS", short: "SET", digit: "," },
+  { key: "settings", label: "SETTINGS", short: "SET", digit: "6" },
 ];
 
 export function Tabs({

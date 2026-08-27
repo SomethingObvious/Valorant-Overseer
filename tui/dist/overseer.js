@@ -38729,7 +38729,7 @@ var VIEWS = [
   { key: "encounters", label: "SEEN BEFORE", short: "SEEN", digit: "5" },
   // A tab like the others, because a screen reachable only by a punctuation
   // mark nobody mentioned is a screen nobody finds.
-  { key: "settings", label: "SETTINGS", short: "SET", digit: "," }
+  { key: "settings", label: "SETTINGS", short: "SET", digit: "6" }
 ];
 function Tabs({
   active: active2,
@@ -39382,7 +39382,7 @@ function cell(key, p, rail, teamColor, selected = false, drawWidth) {
       ] });
     }
     case "peak":
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : p.peakColor ?? C.dim, children: pad(`${p.peakRank ?? NONE}${peakGap(p) ? " ^" : ""}`, w) });
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : p.peakColor ?? C.dim, children: pad(p.peakRank ?? NONE, w) });
     case "kd": {
       return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: kdColor(p.kd), children: pad(kd2(p.kd), w, align) });
     }
@@ -39574,18 +39574,15 @@ function Detail({
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
-        open.length < PANEL_TABS.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
-          PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            Text,
-            {
-              bold: name === tab2,
-              color: open.includes(name) ? C.bone : C.line,
-              children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
-            },
-            name
-          )),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: "e" })
-        ] }) : null,
+        open.length < PANEL_TABS.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          Text,
+          {
+            bold: name === tab2,
+            color: open.includes(name) ? C.bone : C.line,
+            children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
+          },
+          name
+        )) }) : null,
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39596,7 +39593,9 @@ function Detail({
           num(p.leaderboard) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: C.gold, children: `  #${num(p.leaderboard)}` }) : null
         ] }),
         isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}${p.peakAct ? ` \xB7 ${p.peakAct}` : ""}` }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}` }),
+        p.peakAct ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  reached in ${p.peakAct}` }) : null,
+        peakGap(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.gold, children: `  ${(num(p.peakRankTier) ?? 0) - (num(p.rankTier) ?? 0)} tiers above now` }) : null,
         p.previousRank ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `Last act ${p.previousRank}` }) : null,
         shows("stats") ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
@@ -40057,8 +40056,8 @@ function App2({
     [board, settings.enemies, sort, filter]
   );
   const wide = width >= 108 && (settings.detail || settings.session);
-  const SESSION_LINES = 12;
-  const TEAMCOMP_LINES = 11;
+  const SESSION_LINES = 8;
+  const TEAMCOMP_LINES = 8;
   const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
     const teams2 = board?.teams ?? {};

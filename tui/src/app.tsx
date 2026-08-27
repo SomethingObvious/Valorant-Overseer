@@ -417,7 +417,7 @@ export function cell(
     case "peak":
       return (
         <Text wrap="truncate" color={peakGap(p) ? C.gold : (p.peakColor ?? C.dim)}>
-          {pad(`${p.peakRank ?? NONE}${peakGap(p) ? " ^" : ""}`, w)}
+          {pad(p.peakRank ?? NONE, w)}
         </Text>
       );
     case "kd": {
@@ -784,7 +784,6 @@ function Detail({
               color={open.includes(name) ? C.bone : C.line}
             >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
           ))}
-          <Text color={C.faint}>{"e"}</Text>
         </Box>
       ) : null}
       {/* The flags come first. They used to sit under the form and the map
@@ -817,9 +816,19 @@ function Detail({
           {meter(num(p.rr), 100, 10)}
         </Text>
       ) : null}
+      {/* When they peaked, on its own line and in plain words, because an act
+          code tacked onto the end of a rank is not something anyone reads. */}
       <Text wrap="truncate" color={peakGap(p) ? C.gold : C.dim}>
-        {`Peak ${p.peakRank ?? NONE}${p.peakAct ? ` · ${p.peakAct}` : ""}`}
+        {`Peak ${p.peakRank ?? NONE}`}
       </Text>
+      {p.peakAct ? (
+        <Text wrap="truncate" color={C.faint}>{`  reached in ${p.peakAct}`}</Text>
+      ) : null}
+      {peakGap(p) ? (
+        <Text wrap="truncate" color={C.gold}>
+          {`  ${(num(p.peakRankTier) ?? 0) - (num(p.rankTier) ?? 0)} tiers above now`}
+        </Text>
+      ) : null}
       {p.previousRank ? (
         <Text wrap="truncate" color={C.faint}>{`Last act ${p.previousRank}`}</Text>
       ) : null}
@@ -1591,8 +1600,8 @@ export function App({
   // Measured from what those panels draw, plus a margin. Being a line short
   // costs a section; being a line over costs a line of content, silently,
   // out of the middle. The asymmetry is the whole reason to round up.
-  const SESSION_LINES = 12;
-  const TEAMCOMP_LINES = 11;
+  const SESSION_LINES = 8;
+  const TEAMCOMP_LINES = 8;
 
   // How much room a view actually gets, once the header, the tab strip and
   // the key hints have taken theirs. Everything sized to the window is

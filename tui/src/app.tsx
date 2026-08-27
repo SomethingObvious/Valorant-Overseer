@@ -1689,22 +1689,6 @@ export function App({
   };
 
   const handleKey = (input: string, key: Key): void => {
-    if (view === "settings") {
-      if (key.escape || input === ",") {
-        setView("board");
-        return;
-      }
-      if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow || input === "j")
-        setCursor((c) => Math.min(prefs.OPTIONS.length - 1, c + 1));
-      const opt = prefs.OPTIONS[cursor];
-      if (!opt) return;
-      if (key.return || key.leftArrow || key.rightArrow || input === " ") {
-        update({ ...settings, [opt.key]: !settings[opt.key] } as prefs.Settings);
-      }
-      return;
-    }
-
     // A read can hold several reports or half of one. Whatever it holds, it
     // must not reach the keys below: every report starts with the escape byte,
     // and Escape on the board quits.
@@ -1761,6 +1745,31 @@ export function App({
     // Filter mode swallows everything: while it is on, keys are a search
     // term, not commands. lazygit and k9s both work this way and it is what
     // anyone will try first.
+    // Settings takes the keys that mean something in a list and lets the rest
+    // past. It used to sit above the mouse handling and return no matter what,
+    // so from inside settings the digits, Tab, r and q all did nothing and the
+    // tab strip was a one way door: you could click your way in and not out.
+    if (view === "settings") {
+      if (key.escape || input === ",") {
+        setView("board");
+        return;
+      }
+      if (key.upArrow || input === "k") {
+        setCursor((c) => Math.max(0, c - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setCursor((c) => Math.min(prefs.OPTIONS.length - 1, c + 1));
+        return;
+      }
+      const opt = prefs.OPTIONS[cursor];
+      if (opt && (key.return || key.leftArrow || key.rightArrow || input === " ")) {
+        update({ ...settings, [opt.key]: !settings[opt.key] } as prefs.Settings);
+        return;
+      }
+      // Anything else is a view key, a quit, a refresh. Fall through.
+    }
+
     if (filtering) {
       if (key.escape) {
         setFilter("");

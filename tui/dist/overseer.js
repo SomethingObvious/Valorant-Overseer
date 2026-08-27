@@ -40117,21 +40117,6 @@ function App2({
     save(root2, next);
   };
   const handleKey = (input, key) => {
-    if (view === "settings") {
-      if (key.escape || input === ",") {
-        setView("board");
-        return;
-      }
-      if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow || input === "j")
-        setCursor((c) => Math.min(OPTIONS.length - 1, c + 1));
-      const opt = OPTIONS[cursor];
-      if (!opt) return;
-      if (key.return || key.leftArrow || key.rightArrow || input === " ") {
-        update({ ...settings, [opt.key]: !settings[opt.key] });
-      }
-      return;
-    }
     const chunk = parseMouseChunk(pendingMouse.current, input);
     pendingMouse.current = chunk.pending;
     if (chunk.events.length) {
@@ -40174,6 +40159,25 @@ function App2({
       return;
     }
     if (chunk.mouse) return;
+    if (view === "settings") {
+      if (key.escape || input === ",") {
+        setView("board");
+        return;
+      }
+      if (key.upArrow || input === "k") {
+        setCursor((c) => Math.max(0, c - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setCursor((c) => Math.min(OPTIONS.length - 1, c + 1));
+        return;
+      }
+      const opt = OPTIONS[cursor];
+      if (opt && (key.return || key.leftArrow || key.rightArrow || input === " ")) {
+        update({ ...settings, [opt.key]: !settings[opt.key] });
+        return;
+      }
+    }
     if (filtering) {
       if (key.escape) {
         setFilter("");

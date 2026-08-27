@@ -224,6 +224,45 @@ async function main(): Promise<void> {
     await settle();
   }
 
+  // Settings advertises [1-5] Views, [Tab] Next and [Q] Quit in its own
+  // footer. Every one of them did nothing, because the branch returned before
+  // the rest of the handler ran. Each route out is walked here.
+  for (const [key, label] of [
+    ["2", "digit"],
+    ["	", "tab"],
+    [ESC, "esc"],
+  ] as Array<[string, string]>) {
+    stdin.push(",");
+    await settle();
+    if (where(latest()) !== "settings") {
+      failures.push(`settings did not open before the ${label} test`);
+    }
+    stdin.push(key);
+    await settle();
+    if (where(latest()) === "settings") {
+      failures.push(`${label} did not leave settings`);
+    }
+    stdin.push("1");
+    await settle();
+  }
+
+  // And clicking a tab from inside settings, which is the way in, must also
+  // be a way out.
+  {
+    const board = computed.tabs[0];
+    stdin.push(",");
+    await settle();
+    if (board) {
+      stdin.push(clickAt(board.left + 1, board.top));
+      await settle();
+      if (where(latest()) === "settings") {
+        failures.push("clicking the board tab did not leave settings");
+      }
+    }
+    stdin.push("1");
+    await settle();
+  }
+
   // A lone escape byte on the board must not close the app. The terminal
   // reports the mouse as escape sequences, and a read that ends just after the
   // escape byte delivers it by itself, which the key parser cannot tell from

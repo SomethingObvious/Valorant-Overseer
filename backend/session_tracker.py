@@ -15,6 +15,10 @@ _PATH = data_path("sessions.json")
 _LEGACY_PATH = data_path("session.json")
 _LOCK = threading.RLock()
 _RECAP_TTL = 600.0
+# How long the last completed match is taken as still being the last one.
+# A finished match that the app watched end comes through current_recap
+# instead, so this only bounds the cold path.
+_LAST_MATCH_TTL = 300.0
 _MAX_POINTS = 40
 _MAX_ARCHIVE = 100
 
@@ -408,8 +412,20 @@ def recap_of_last_match(lm: Any) -> dict[str, Any] | None:
     board, which is showing you what just happened, and the wrong thing for a
     view called Last Match: open the app cold and it had nothing in it at all.
 
-    Cached by match id, because it costs a history lookup and a match detail.
+    Cached by time first, then by match id.
+
+    The match id cache alone was worth little: learning the id means calling
+    player_career, and that is a history lookup, a match detail and a name
+    service write before the cache is even consulted. Three to six requests to
+    Riot on a cache hit, on a view the board now asks for on every match
+    transition. The last match a player finished does not change while they are
+    sitting in a lobby, so the answer keeps.
     """
+    with _LOCK:
+        cached = _STATE.get("last_match_recap")
+        fetched_at = float(_STATE.get("last_match_recap_at") or 0.0)
+    if isinstance(cached, dict) and time.time() - fetched_at < _LAST_MATCH_TTL:
+        return cached
     try:
         history_list = lm.player_career(lm.self_puuid, count=1).get("matches") or []
     except Exception:
@@ -426,6 +442,7 @@ def recap_of_last_match(lm: Any) -> dict[str, Any] | None:
     if recap:
         with _LOCK:
             _STATE["last_match_recap"] = recap
+            _STATE["last_match_recap_at"] = time.time()
     return recap
 
 

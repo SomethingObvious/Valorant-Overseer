@@ -10,7 +10,7 @@ import type {
   SplitRow,
 } from "./api.js";
 import { brailleBars, colourRuns } from "./chart.js";
-import { arr, bar, dash, kd2, NONE, num, pad, trim } from "./format.js";
+import { arr, bar, dash, kd2, NONE, num, pad, pct1, trim } from "./format.js";
 import { C, kdColor } from "./theme.js";
 import type { Player } from "./types.js";
 
@@ -511,7 +511,7 @@ export function SessionView({
 
 // rail + agent + rank + K/D/A + kd + acs + adr + kast + hs + fb. The name gets
 // whatever is left, so a row can never outgrow the panel and wrap.
-const RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
+const RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 6 + 5;
 // Everything the round data yields beyond the usual scoreboard: economy,
 // opening duels both ways, multikills, clutches, the spike, and the gun. It
 // costs nothing to compute and needs 46 more columns to show, so it appears
@@ -534,7 +534,7 @@ function RecapHead({ width, rich }: { width: number; rich: boolean }): React.Rea
         {pad("ACS", 6, "right")}
         {pad("ADR", 6, "right")}
         {pad("KAST", 6, "right")}
-        {pad("HS", 5, "right")}
+        {pad("HS", 6, "right")}
         {pad("FB", 5, "right")}
         {richAt(width, rich) ? (
           <>
@@ -587,7 +587,7 @@ function RecapRow({
       <Text color={kast !== null && kast >= 70 ? C.ally : C.dim}>
         {pad(kast === null ? NONE : `${kast}%`, 6, "right")}
       </Text>
-      <Text color={C.faint}>{pad(dash(p.hsPct, "%"), 5, "right")}</Text>
+      <Text color={C.faint}>{pad(pct1(p.hsPct), 6, "right")}</Text>
       <Text color={fb > 0 ? C.gold : C.faint}>{pad(fb ? String(fb) : NONE, 5, "right")}</Text>
       {richAt(width, rich) ? (
         <>

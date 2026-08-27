@@ -18,6 +18,7 @@ import {
   NONE,
   num,
   pad,
+  pct1,
   peakGap,
   railFor,
   rrFlow,
@@ -66,7 +67,7 @@ const COLUMNS: Record<string, Column> = {
   kd: { header: "K/D", width: 5, prio: 0, align: "right" },
   wr: { header: "WIN", width: 5, prio: 1, align: "right" },
   games: { header: "GAMES", width: 6, prio: 3, align: "right" },
-  hs: { header: "HS", width: 4, prio: 3, align: "right" },
+  hs: { header: "HS", width: 6, prio: 3, align: "right" },
   map: { header: "MAP", width: 9, prio: 2, align: "right" },
   seen: { header: "MET", width: 4, prio: 1, align: "right" },
   // Level is the smurf tell: a level 40 account sitting in Immortal is the
@@ -722,6 +723,7 @@ function Detail({
       <Text bold color={C.bone}>
         {p.name ?? NONE}
       </Text>
+      <Box height={1} />
       <Text wrap="truncate" color={C.dim}>
         {p.title ? `${p.title} · ` : ""}
         {`Level ${num(p.level) ?? NONE}`}
@@ -730,16 +732,18 @@ function Detail({
 
       {/* One section at a time, because the panel is 38 columns and the data
           is not. Everything is reachable and nothing is cut off halfway. */}
-      <Box marginTop={1}>
-        {PANEL_TABS.map((name) => (
-          <Text
-            key={name}
-            bold={name === tab}
-            color={open.includes(name) ? C.bone : C.line}
-          >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
-        ))}
-        <Text color={C.faint}>{"[e]"}</Text>
-      </Box>
+      {open.length < PANEL_TABS.length ? (
+        <Box marginTop={1}>
+          {PANEL_TABS.map((name) => (
+            <Text
+              key={name}
+              bold={name === tab}
+              color={open.includes(name) ? C.bone : C.line}
+            >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
+          ))}
+          <Text color={C.faint}>{"e"}</Text>
+        </Box>
+      ) : null}
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
@@ -801,7 +805,7 @@ function Detail({
               {"HS    "}
             </Text>
             <Text wrap="truncate" color={C.text}>
-              {dash(p.hsPct, "%")}
+              {pct1(p.hsPct)}
             </Text>
             {mapWr && (num(mapWr.games) ?? 0) > 0 ? (
               <Text
@@ -842,6 +846,17 @@ function Detail({
         </Box>
       ) : null}
 
+      {shows("guns") && !arr(p.weapons).length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text wrap="truncate" color={C.dim}>
+            {"Guns"}
+          </Text>
+          <Text wrap="truncate" color={C.faint}>
+            {"  Nothing equipped yet."}
+          </Text>
+        </Box>
+      ) : null}
+
       {shows("guns") && arr(p.weapons).length ? (
         <Box>
           <Text wrap="truncate" color={C.dim}>
@@ -864,6 +879,17 @@ function Detail({
           <Text wrap="truncate" color={C.faint}>
             {`  ${num(p.stackGuess.same) ?? 0}/${num(p.stackGuess.shared) ?? 0} same side` +
               `, ${num(p.stackGuess.confidence) ?? 0}% sure`}
+          </Text>
+        </Box>
+      ) : null}
+
+      {shows("met") && !seenCount(p) && !(settings.stacks && p.stackGuess) ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text wrap="truncate" color={C.dim}>
+            {"Met"}
+          </Text>
+          <Text wrap="truncate" color={C.faint}>
+            {"  First time seeing them."}
           </Text>
         </Box>
       ) : null}

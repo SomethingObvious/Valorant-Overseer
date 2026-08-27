@@ -38269,6 +38269,10 @@ function trim(n) {
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
 }
 var NONE = "-";
+function pct1(value) {
+  const n = num(value);
+  return n === null ? NONE : `${n.toFixed(1)}%`;
+}
 function dash(value, suffix = "") {
   const n = num(value);
   return n === null ? NONE : `${trim(n)}${suffix}`;
@@ -39011,7 +39015,7 @@ function SessionView({
     ] });
   } });
 }
-var RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 5 + 5;
+var RECAP_FIXED = 1 + 10 + 13 + 11 + 6 + 6 + 6 + 6 + 6 + 5;
 var RECAP_RICH = 6 + 7 + 5 + 8 + 7 + 11;
 var richAt = (width, rich) => rich && width >= RECAP_FIXED + RECAP_RICH + 24;
 var RECAP_NAME_MAX = 22;
@@ -39027,7 +39031,7 @@ function RecapHead({ width, rich }) {
       pad("ACS", 6, "right"),
       pad("ADR", 6, "right"),
       pad("KAST", 6, "right"),
-      pad("HS", 5, "right"),
+      pad("HS", 6, "right"),
       pad("FB", 5, "right"),
       richAt(width, rich) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
         pad("ECON", 6, "right"),
@@ -39062,7 +39066,7 @@ function RecapRow({
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.text, children: pad(dash(p.acs), 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(dash(p.adr), 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: kast !== null && kast >= 70 ? C.ally : C.dim, children: pad(kast === null ? NONE : `${kast}%`, 6, "right") }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.hsPct, "%"), 5, "right") }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(pct1(p.hsPct), 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: fb > 0 ? C.gold : C.faint, children: pad(fb ? String(fb) : NONE, 5, "right") }),
     richAt(width, rich) ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(dash(p.econ), 6, "right") }),
@@ -39176,7 +39180,7 @@ var COLUMNS = {
   kd: { header: "K/D", width: 5, prio: 0, align: "right" },
   wr: { header: "WIN", width: 5, prio: 1, align: "right" },
   games: { header: "GAMES", width: 6, prio: 3, align: "right" },
-  hs: { header: "HS", width: 4, prio: 3, align: "right" },
+  hs: { header: "HS", width: 6, prio: 3, align: "right" },
   map: { header: "MAP", width: 9, prio: 2, align: "right" },
   seen: { header: "MET", width: 4, prio: 1, align: "right" },
   // Level is the smurf tell: a level 40 account sitting in Immortal is the
@@ -39550,12 +39554,13 @@ function Detail({
       width: SIDEBAR,
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.bone, children: p.name ?? NONE }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", color: C.dim, children: [
           p.title ? `${p.title} \xB7 ` : "",
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
+        open.length < PANEL_TABS.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
             Text,
             {
@@ -39565,8 +39570,8 @@ function Detail({
             },
             name
           )),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: "[e]" })
-        ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: "e" })
+        ] }) : null,
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39597,7 +39602,7 @@ function Detail({
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "HS    " }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: dash(p.hsPct, "%") }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: pct1(p.hsPct) }),
             mapWr && (num(mapWr.games) ?? 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
               Text,
               {
@@ -39617,6 +39622,10 @@ function Detail({
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Mains " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
+        shows("guns") && !arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Guns" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  Nothing equipped yet." })
+        ] }) : null,
         shows("guns") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
@@ -39624,6 +39633,10 @@ function Detail({
         shows("met") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(p.stackGuess.same) ?? 0}/${num(p.stackGuess.shared) ?? 0} same side, ${num(p.stackGuess.confidence) ?? 0}% sure` })
+        ] }) : null,
+        shows("met") && !seenCount(p) && !(settings.stacks && p.stackGuess) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Met" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  First time seeing them." })
         ] }) : null,
         shows("met") && seenCount(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Met ${seenCount(p)} time${seenCount(p) === 1 ? "" : "s"} before` }),

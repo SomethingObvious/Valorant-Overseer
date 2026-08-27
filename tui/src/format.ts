@@ -17,6 +17,12 @@ export function trim(n: number): string {
 /** Shown wherever Riot gave us nothing. A hyphen, not a dash character. */
 export const NONE = "-";
 
+/** A percentage to one decimal, always. `-` when there is nothing to show. */
+export function pct1(value: unknown): string {
+  const n = num(value);
+  return n === null ? NONE : `${n.toFixed(1)}%`;
+}
+
 export function dash(value: unknown, suffix = ""): string {
   const n = num(value);
   return n === null ? NONE : `${trim(n)}${suffix}`;

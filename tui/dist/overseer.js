@@ -38206,59 +38206,6 @@ var Bridge = class {
   }
 };
 
-// src/chart.ts
-var BRAILLE_BASE = 10240;
-var DOTS = [
-  [1, 8],
-  [2, 16],
-  [4, 32],
-  [64, 128]
-];
-function brailleBars(columns, rows) {
-  const height = Math.max(1, rows);
-  const dotRows = height * 4;
-  const cells = Math.ceil(columns.length / 2);
-  const out = [];
-  for (let row = 0; row < height; row += 1) {
-    let text = "";
-    const positives = [];
-    for (let cell2 = 0; cell2 < cells; cell2 += 1) {
-      let bits = 0;
-      let anyPositive = false;
-      for (let half = 0; half < 2; half += 1) {
-        const column = columns[cell2 * 2 + half];
-        if (!column) continue;
-        const filled = Math.round(Math.max(0, Math.min(1, column.value)) * dotRows);
-        if (filled > 0 && column.positive) anyPositive = true;
-        for (let dot = 0; dot < 4; dot += 1) {
-          const dotFromBottom = dotRows - (row * 4 + dot) - 1;
-          if (dotFromBottom < filled) {
-            bits |= DOTS[dot]?.[half] ?? 0;
-          }
-        }
-      }
-      text += String.fromCharCode(BRAILLE_BASE + bits);
-      positives.push(anyPositive);
-    }
-    out.push({ key: `row${row}`, text, positives });
-  }
-  return out;
-}
-function colourRuns(row) {
-  const runs = [];
-  for (let i = 0; i < row.text.length; i += 1) {
-    const char = row.text[i] ?? "";
-    const positive = row.positives[i] ?? true;
-    const last = runs[runs.length - 1];
-    if (last && last.positive === positive) {
-      last.text += char;
-      continue;
-    }
-    runs.push({ key: `${row.key}:${i}`, text: char, positive });
-  }
-  return runs;
-}
-
 // src/format.ts
 function num(value) {
   if (value === null || value === void 0 || value === "") return null;
@@ -38317,13 +38264,6 @@ function seenCount(p) {
 function streakText(p) {
   const count = num(p.streak?.count) ?? 0;
   return count >= 3 ? `${p.streak?.type ?? ""}${count}` : "";
-}
-function agoText(stamp, now) {
-  if (stamp === null) return "";
-  const secs = Math.max(0, Math.round((now - stamp) / 1e3));
-  if (secs < 2) return "just now";
-  if (secs < 60) return `${secs}s ago`;
-  return `${Math.floor(secs / 60)}m ago`;
 }
 function outcomeOf(result) {
   const word = String(result ?? "").toLowerCase();
@@ -38703,6 +38643,59 @@ var STATE_COLOR = {
   MENUS: C.ally,
   OFFLINE: C.dim
 };
+
+// src/chart.ts
+var BRAILLE_BASE = 10240;
+var DOTS = [
+  [1, 8],
+  [2, 16],
+  [4, 32],
+  [64, 128]
+];
+function brailleBars(columns, rows) {
+  const height = Math.max(1, rows);
+  const dotRows = height * 4;
+  const cells = Math.ceil(columns.length / 2);
+  const out = [];
+  for (let row = 0; row < height; row += 1) {
+    let text = "";
+    const positives = [];
+    for (let cell2 = 0; cell2 < cells; cell2 += 1) {
+      let bits = 0;
+      let anyPositive = false;
+      for (let half = 0; half < 2; half += 1) {
+        const column = columns[cell2 * 2 + half];
+        if (!column) continue;
+        const filled = Math.round(Math.max(0, Math.min(1, column.value)) * dotRows);
+        if (filled > 0 && column.positive) anyPositive = true;
+        for (let dot = 0; dot < 4; dot += 1) {
+          const dotFromBottom = dotRows - (row * 4 + dot) - 1;
+          if (dotFromBottom < filled) {
+            bits |= DOTS[dot]?.[half] ?? 0;
+          }
+        }
+      }
+      text += String.fromCharCode(BRAILLE_BASE + bits);
+      positives.push(anyPositive);
+    }
+    out.push({ key: `row${row}`, text, positives });
+  }
+  return out;
+}
+function colourRuns(row) {
+  const runs = [];
+  for (let i = 0; i < row.text.length; i += 1) {
+    const char = row.text[i] ?? "";
+    const positive = row.positives[i] ?? true;
+    const last = runs[runs.length - 1];
+    if (last && last.positive === positive) {
+      last.text += char;
+      continue;
+    }
+    runs.push({ key: `${row.key}:${i}`, text: char, positive });
+  }
+  return runs;
+}
 
 // src/views.tsx
 var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
@@ -39245,8 +39238,6 @@ function ordered(board, showEnemies, sort) {
 function Header({
   board,
   conn,
-  lastAt,
-  now,
   width,
   filter,
   filtering
@@ -39303,7 +39294,7 @@ function Header({
         {
           wrap: "truncate",
           color: conn === "live" ? C.ally : conn === "connecting" ? C.gold : C.red,
-          children: conn === "live" ? `\u25CF ${agoText(lastAt, now) || "live"}` : `\u25CB ${conn}`
+          children: conn === "live" ? "\u25CF live" : `\u25CB ${conn}`
         }
       )
     ] }),
@@ -39724,11 +39715,7 @@ function Session({ board }) {
   if (!flow.length) return null;
   const net = num(board.session?.net) ?? 0;
   const wins = flow.filter((f) => f.result === "W").length;
-  const perMatch = Math.max(1, Math.min(4, Math.floor((SIDEBAR - 4) * 2 / flow.length)));
-  const columns = flow.flatMap(
-    (f) => Array.from({ length: perMatch }, () => ({ value: f.level / 8, positive: f.delta >= 0 }))
-  );
-  const rows = brailleBars(columns, 3);
+  const HEIGHTS = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     Box_default,
     {
@@ -39743,13 +39730,13 @@ function Session({ board }) {
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: net >= 0 ? C.ally : C.loss, children: `  ${net > 0 ? "+" : ""}${net} RR` }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${wins}W-${flow.length - wins}L` })
         ] }),
-        rows.map((row) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { children: colourRuns(row).map((run) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: run.positive ? C.ally : C.loss, children: run.text }, run.key)) }, row.key)),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: "One bar per match. " }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { children: flow.map((f) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: f.delta >= 0 ? C.ally : C.loss, children: HEIGHTS[Math.max(0, Math.min(HEIGHTS.length - 1, f.level - 1))] ?? "\u2581" }, f.key)) }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "Taller bars won or lost more RR." }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.ally, children: "Green" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " gained RR, " }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " is a win, " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.loss, children: "red" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " lost it." })
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " is a loss." })
         ] })
       ]
     }
@@ -39984,7 +39971,6 @@ function App2({
   const [board, setBoard] = (0, import_react35.useState)(preview ?? null);
   const [conn, setConn] = (0, import_react35.useState)(preview ? "live" : "connecting");
   const [connDetail, setConnDetail] = (0, import_react35.useState)("");
-  const [lastAt, setLastAt] = (0, import_react35.useState)(null);
   const [settings, setSettings] = (0, import_react35.useState)(
     () => preview ? { ...DEFAULTS, ...previewSettings } : load(root2)
   );
@@ -40015,7 +40001,6 @@ function App2({
     const bridge2 = new Bridge(root2, {
       onBoard: (b) => {
         setBoard(b);
-        setLastAt(Date.now());
       },
       onStatus: (s, detail) => {
         setConn(s);
@@ -40055,7 +40040,8 @@ function App2({
     [board, settings.enemies, sort, filter]
   );
   const wide = width >= 108 && (settings.detail || settings.session);
-  const SESSION_LINES = 8;
+  const SESSION_LINES = 6;
+  const MIN_PANEL = 14;
   const TEAMCOMP_LINES = 8;
   const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
@@ -40302,18 +40288,7 @@ function App2({
   if (!rows.length) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
       keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-        Header,
-        {
-          board: current,
-          conn,
-          lastAt,
-          now: Date.now(),
-          width,
-          filter,
-          filtering
-        }
-      ),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Holding, { board: current, conn, detail: connDetail, tick, animate: !preview })
     ] });
   }
@@ -40332,18 +40307,7 @@ function App2({
   if (view !== "board") {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
       keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-        Header,
-        {
-          board: current,
-          conn,
-          lastAt,
-          now: Date.now(),
-          width,
-          filter,
-          filtering
-        }
-      ),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tabs, { active: view, width, hovered: hoverTab }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", height: viewHeight, overflow: "hidden", children: [
         view === "career" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -40395,18 +40359,7 @@ function App2({
   }
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", height, overflow: "hidden", children: [
     keys,
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-      Header,
-      {
-        board: current,
-        conn,
-        lastAt,
-        now: Date.now(),
-        width,
-        filter,
-        filtering
-      }
-    ),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tabs, { active: view, width, hovered: hoverTab }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { height: bodyHeight, overflow: "hidden", children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", width: bodyWidth, flexShrink: 0, overflowX: "hidden", children: [
@@ -40443,7 +40396,7 @@ function App2({
       ] }),
       wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
         current.state === "PREGAME" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TeamComp, { players: arrange(arr(teams[selfTeam]), sort), board: current }) : null,
-        settings.detail ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        settings.detail && panelSpace >= MIN_PANEL ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           Detail,
           {
             p: player,

@@ -3,9 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Career, Encounters, Fetched, Performance, Recap, RecapPlayer } from "./api.js";
 import { useRequest } from "./api.js";
 import { Bridge } from "./bridge.js";
-import { brailleBars, colourRuns } from "./chart.js";
 import {
-  agoText,
   arr,
   arrange,
   bar,
@@ -178,16 +176,12 @@ function ordered(board: Board | null, showEnemies: boolean, sort: SortMode): Pla
 function Header({
   board,
   conn,
-  lastAt,
-  now,
   width,
   filter,
   filtering,
 }: {
   board: Board;
   conn: ConnectionState;
-  lastAt: number | null;
-  now: number;
   width: number;
   filter: string;
   filtering: boolean;
@@ -280,7 +274,7 @@ function Header({
           wrap="truncate"
           color={conn === "live" ? C.ally : conn === "connecting" ? C.gold : C.red}
         >
-          {conn === "live" ? `● ${agoText(lastAt, now) || "live"}` : `○ ${conn}`}
+          {conn === "live" ? "● live" : `○ ${conn}`}
         </Text>
       </Box>
 
@@ -1095,14 +1089,17 @@ function Session({ board }: { board: Board }) {
   if (!flow.length) return null;
   const net = num(board.session?.net) ?? 0;
   const wins = flow.filter((f) => f.result === "W").length;
-  // Six matches across a 38-column panel is three braille cells and unreadable.
-  // Widen each match into several sub-columns so the chart fills the panel;
-  // 4 keeps a long session legible without turning a short one into slabs.
-  const perMatch = Math.max(1, Math.min(4, Math.floor(((SIDEBAR - 4) * 2) / flow.length)));
-  const columns = flow.flatMap((f) =>
-    Array.from({ length: perMatch }, () => ({ value: f.level / 8, positive: f.delta >= 0 })),
-  );
-  const rows = brailleBars(columns, 3);
+  // One block per match, one row.
+  //
+  // This was three rows of braille, which packs two columns and four rows of
+  // dots into every cell. It reads beautifully in a terminal that draws braille
+  // one cell wide and it is a mess in one that does not: braille is East Asian
+  // Ambiguous, so a terminal is within its rights to give every character two
+  // cells, and then a twelve character chart is twenty four columns wide in a
+  // panel that budgeted twelve. Blocks are the same family as the RR meter and
+  // the K/D bar next to them, so whatever this terminal does with them, it
+  // already does everywhere else on the screen.
+  const HEIGHTS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
   return (
     <Box
       flexDirection="column"
@@ -1120,21 +1117,21 @@ function Session({ board }: { board: Board }) {
         </Text>
         <Text color={C.faint}>{`  ${wins}W-${flow.length - wins}L`}</Text>
       </Box>
-      {rows.map((row) => (
-        <Box key={row.key}>
-          {colourRuns(row).map((run) => (
-            <Text key={run.key} color={run.positive ? C.ally : C.loss}>
-              {run.text}
-            </Text>
-          ))}
-        </Box>
-      ))}
-      <Text color={C.faint}>{"One bar per match. "}</Text>
-      <Text>
+      <Box>
+        {flow.map((f) => (
+          <Text key={f.key} color={f.delta >= 0 ? C.ally : C.loss}>
+            {HEIGHTS[Math.max(0, Math.min(HEIGHTS.length - 1, f.level - 1))] ?? "▁"}
+          </Text>
+        ))}
+      </Box>
+      <Text wrap="truncate" color={C.faint}>
+        {"Taller bars won or lost more RR."}
+      </Text>
+      <Text wrap="truncate">
         <Text color={C.ally}>{"Green"}</Text>
-        <Text color={C.faint}>{" gained RR, "}</Text>
+        <Text color={C.faint}>{" is a win, "}</Text>
         <Text color={C.loss}>{"red"}</Text>
-        <Text color={C.faint}>{" lost it."}</Text>
+        <Text color={C.faint}>{" is a loss."}</Text>
       </Text>
     </Box>
   );
@@ -1489,7 +1486,6 @@ export function App({
   const [board, setBoard] = useState<Board | null>(preview ?? null);
   const [conn, setConn] = useState<ConnectionState>(preview ? "live" : "connecting");
   const [connDetail, setConnDetail] = useState("");
-  const [lastAt, setLastAt] = useState<number | null>(null);
   const [settings, setSettings] = useState<prefs.Settings>(() =>
     preview ? { ...prefs.DEFAULTS, ...previewSettings } : prefs.load(root),
   );
@@ -1534,7 +1530,6 @@ export function App({
     const bridge = new Bridge(root, {
       onBoard: (b) => {
         setBoard(b);
-        setLastAt(Date.now());
       },
       onStatus: (s, detail) => {
         setConn(s);
@@ -1595,7 +1590,10 @@ export function App({
   // Measured from what those panels draw, plus a margin. Being a line short
   // costs a section; being a line over costs a line of content, silently,
   // out of the middle. The asymmetry is the whole reason to round up.
-  const SESSION_LINES = 8;
+  const SESSION_LINES = 6;
+  // Name, blank, level, rank, meter, peak, act, last act, blank, hint and
+  // the border. Under this there is no panel worth drawing.
+  const MIN_PANEL = 14;
   const TEAMCOMP_LINES = 8;
 
   // How much room a view actually gets, once the header, the tab strip and
@@ -1928,15 +1926,7 @@ export function App({
     return (
       <Box flexDirection="column">
         {keys}
-        <Header
-          board={current}
-          conn={conn}
-          lastAt={lastAt}
-          now={Date.now()}
-          width={width}
-          filter={filter}
-          filtering={filtering}
-        />
+        <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
         <Holding board={current} conn={conn} detail={connDetail} tick={tick} animate={!preview} />
       </Box>
     );
@@ -1966,15 +1956,7 @@ export function App({
     return (
       <Box flexDirection="column">
         {keys}
-        <Header
-          board={current}
-          conn={conn}
-          lastAt={lastAt}
-          now={Date.now()}
-          width={width}
-          filter={filter}
-          filtering={filtering}
-        />
+        <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
         <Tabs active={view} width={width} hovered={hoverTab} />
         <Box flexDirection="column" height={viewHeight} overflow="hidden">
           {view === "career" ? (
@@ -2031,15 +2013,7 @@ export function App({
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       {keys}
-      <Header
-        board={current}
-        conn={conn}
-        lastAt={lastAt}
-        now={Date.now()}
-        width={width}
-        filter={filter}
-        filtering={filtering}
-      />
+      <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
       <Tabs active={view} width={width} hovered={hoverTab} />
       <Box height={bodyHeight} overflow="hidden">
         <Box flexDirection="column" width={bodyWidth} flexShrink={0} overflowX="hidden">
@@ -2075,7 +2049,11 @@ export function App({
             {current.state === "PREGAME" ? (
               <TeamComp players={arrange(arr(teams[selfTeam]), sort)} board={current} />
             ) : null}
-            {settings.detail ? (
+            {/* Below this the panel cannot draw even its own header, and Ink
+                pays for the overflow by deleting lines out of the middle of
+                it: the rank goes, silently. Better no panel than a broken one,
+                and the board gets the room. */}
+            {settings.detail && panelSpace >= MIN_PANEL ? (
               <Detail
                 p={player}
                 tab={panelTab}

@@ -39561,6 +39561,8 @@ function Detail({
       paddingX: 1,
       marginBottom: 1,
       width: SIDEBAR,
+      height,
+      flexShrink: 0,
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.bone, children: p.name ?? NONE }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
@@ -40032,7 +40034,7 @@ function App2({
     const out = [];
     for (const name of PANEL_TABS) {
       const span = sectionWidth(name);
-      out.push({ top: row, height: 1, left, width: span, value: name });
+      out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
     return out;

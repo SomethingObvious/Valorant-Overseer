@@ -767,6 +767,8 @@ function Detail({
       paddingX={1}
       marginBottom={1}
       width={SIDEBAR}
+      height={height}
+      flexShrink={0}
     >
       <Text bold color={C.bone}>
         {p.name ?? NONE}
@@ -1580,7 +1582,7 @@ export function App({
     }> = [];
     for (const name of PANEL_TABS) {
       const span = sectionWidth(name);
-      out.push({ top: row, height: 1, left, width: span, value: name });
+      out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
     return out;

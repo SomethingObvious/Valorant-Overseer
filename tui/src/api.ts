@@ -180,6 +180,11 @@ export interface Career {
   name?: string | undefined;
   /** What they get their kills with, summed over the matches below. */
   topGuns?: Array<{ name?: string; kills?: number; share?: number }> | undefined;
+  /** Do they buy the round after losing a pistol, or save it. */
+  forceHabit?: { forced?: number; chances?: number; pct?: number | null } | undefined;
+  /** What they take into the round after winning one. */
+  bonusBuys?: Array<{ name?: string; rounds?: number; share?: number }> | undefined;
+  bonusRounds?: number | undefined;
   rank?: string | undefined;
   rankColor?: string | undefined;
   peakRank?: string | undefined;

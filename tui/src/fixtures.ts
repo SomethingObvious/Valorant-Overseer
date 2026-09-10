@@ -14,6 +14,14 @@ export const CAREER: Career = {
     { name: "Operator", kills: 13, share: 7 },
     { name: "Classic", kills: 10, share: 6 },
   ],
+  // Loses the pistol nine times, buys anyway seven of them.
+  forceHabit: { forced: 7, chances: 9, pct: 78 },
+  bonusBuys: [
+    { name: "Spectre", rounds: 4, share: 44 },
+    { name: "Sheriff", rounds: 3, share: 33 },
+    { name: "Bulldog", rounds: 2, share: 22 },
+  ],
+  bonusRounds: 9,
   name: "SilentEnt#GG",
   rank: "Diamond 3",
   peakRank: "Ascendant 3",

@@ -39509,6 +39509,7 @@ var STACK_NAME = {
 };
 var sectionMark = (isOpen) => isOpen ? "\u25BE" : "\u25B8";
 var sectionWidth = (name) => name.length + 2;
+var GUN_VIEWS = ["used", "force", "bonus"];
 var PANEL_TABS = ["stats", "form", "guns", "met"];
 var PANEL_COST = { stats: 10, form: 4, guns: 6, met: 8 };
 function panelChrome(p, reasons, bar2) {
@@ -39516,7 +39517,8 @@ function panelChrome(p, reasons, bar2) {
   1 + // the name
   1 + // the blank line under it
   1 + // level, title and role
-  (bar2 ? 2 : 0) + // the section bar, when anything is shut
+  2 + // the section bar
+  (bar2 ? 1 : 0) + // the guns sub bar, when the guns section is the open one
   (reasons ? reasons + 2 : 0) + // the smurf block
   1 + // rank, RR and leaderboard
   (isRanked(p) ? 1 : 0) + // the RR meter
@@ -39539,20 +39541,65 @@ function panelSections(tab2, height, chrome, focused = null) {
   }
   return out;
 }
+function GunsUsed({
+  p,
+  last,
+  career
+}) {
+  const habit = arr(career?.topGuns);
+  if (habit.length) {
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: habit.slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}% of kills` }, w.name ?? "")) });
+  }
+  const lastGuns = arr(last?.weaponKills);
+  if (lastGuns.length) {
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: lastGuns.slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} last match` }, w.name ?? "")) });
+  }
+  const held = arr(p.weapons);
+  if (!held.length) {
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  Nothing equipped yet." });
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: held.slice(0, 4).map((w, i) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.weapon ?? NONE, 11)}${w.skin?.name ?? ""}` }, w.weapon ?? i)) });
+}
+function GunsForce({ career }) {
+  const habit = career?.forceHabit;
+  const chances = num(habit?.chances) ?? 0;
+  if (!habit || !chances) {
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  No pistol rounds on record." });
+  }
+  const pct = num(habit.pct) ?? 0;
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: pct >= 50 ? C.gold : C.faint, children: `  Forces ${num(habit.forced) ?? 0} of ${chances} (${pct}%)` }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: pct >= 50 ? "  Expect a buy, not a save." : "  Expect a save." })
+  ] });
+}
+function GunsBonus({ career }) {
+  const buys = arr(career?.bonusBuys);
+  if (!buys.length) {
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  No bonus rounds on record." });
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: buys.map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}%` }, w.name ?? "")) });
+}
 function Detail({
   p,
   tab: tab2,
   height,
   settings,
   last,
-  focused
+  focused,
+  gunView,
+  career
 }) {
   if (!p) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { borderStyle: "round", borderColor: C.line, paddingX: 1, width: SIDEBAR, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "No player selected." }) });
   }
   const mapWr = p.mapWinRate;
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const bare = panelSections(tab2, height, panelChrome(p, reasons.length, true), focused);
+  const bare = panelSections(
+    tab2,
+    height,
+    panelChrome(p, reasons.length, focused === "guns"),
+    focused
+  );
   const open = bare;
   const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
@@ -39584,6 +39631,15 @@ function Detail({
           },
           name
         )) }),
+        focused === "guns" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { children: GUN_VIEWS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          Text,
+          {
+            bold: name === gunView,
+            color: name === gunView ? C.ice : C.line,
+            children: `${sectionMark(name === gunView)}${name.toUpperCase()} `
+          },
+          name
+        )) }) : null,
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39641,13 +39697,11 @@ function Detail({
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Mains " }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
-        shows("guns") && !arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Guns" }),
-          arr(last?.weaponKills).length ? arr(last?.weaponKills).slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} kill${num(w.kills) === 1 ? "" : "s"} last match` }, w.name ?? "")) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "  Nothing equipped yet." })
-        ] }) : null,
-        shows("guns") && arr(p.weapons).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Skins " }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: ` ${arr(p.weapons).slice(0, 2).map((w) => w.skin?.name ?? NONE).join("  ")}` })
+        shows("guns") ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: gunView === "used" ? "Guns they use" : gunView === "force" ? "After losing a pistol round" : "Bonus round buys" }),
+          gunView === "used" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsUsed, { p, last, career }) : null,
+          gunView === "force" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsForce, { career }) : null,
+          gunView === "bonus" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsBonus, { career }) : null
         ] }) : null,
         shows("met") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
@@ -39948,6 +40002,7 @@ function App2({
   const [refreshedAt, setRefreshedAt] = (0, import_react35.useState)(0);
   const [panelTab, setPanelTab] = (0, import_react35.useState)("stats");
   const [focusedSection, setFocusedSection] = (0, import_react35.useState)(null);
+  const [gunView, setGunView] = (0, import_react35.useState)("used");
   const pendingMouse = (0, import_react35.useRef)("");
   const [hoverPlayer, setHoverPlayer] = (0, import_react35.useState)(null);
   const [hoverTab, setHoverTab] = (0, import_react35.useState)(null);
@@ -40041,12 +40096,26 @@ function App2({
       out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
-    return out;
-  }, [wide, settings.detail, board, width]);
+    if (focusedSection !== "guns") return out;
+    const subZones = [];
+    let subLeft = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
+    for (const name of GUN_VIEWS) {
+      const span = sectionWidth(name);
+      subZones.push({
+        top: row + 1,
+        height: 1,
+        left: subLeft,
+        width: span + 1,
+        value: `gun:${name}`
+      });
+      subLeft += span;
+    }
+    return [...subZones, ...out];
+  }, [wide, settings.detail, board, width, focusedSection]);
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
   const matchKey = board?.matchId ?? "none";
-  const careerKey = view === "career" && selected ? `${selected}:${refreshedAt}` : null;
+  const careerKey = (view === "career" || focusedSection === "guns") && selected ? `${selected}:${refreshedAt}` : null;
   const career = useRequest(bridge, connected, "profile", careerKey, {
     puuid: selected ?? ""
   });
@@ -40108,7 +40177,9 @@ function App2({
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
         const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overSection) {
+          if (overSection?.startsWith("gun:")) {
+            setGunView(overSection.slice(4));
+          } else if (overSection) {
             setFocusedSection((current2) => current2 === overSection ? null : overSection);
             setPanelTab(overSection);
           } else if (overTab) {
@@ -40211,6 +40282,7 @@ function App2({
       return;
     }
     if (input === "e") {
+      setFocusedSection(null);
       setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length] ?? t);
       return;
     }
@@ -40382,7 +40454,9 @@ function App2({
             height: panelSpace,
             settings,
             last: lastMatch,
-            focused: focusedSection
+            focused: focusedSection,
+            gunView,
+            career: canned("profile", career).data ?? null
           }
         ) : null,
         settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null

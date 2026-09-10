@@ -305,6 +305,50 @@ async function main(): Promise<void> {
     await settle();
   }
 
+  // The three sub buttons under GUNS. Same rule as the main bar: find the row
+  // the app actually drew, click where the word really is, and check the
+  // heading changed. The heading is the only honest signal, because the guns
+  // content itself can be identical between two of the three.
+  {
+    stdout.resize(150, 60);
+    await settle();
+    const gunsBar = latest().split(String.fromCharCode(10));
+    const mainRow = gunsBar.findIndex((l) => l.includes("STATS") && l.includes("GUNS"));
+    const at = (gunsBar[mainRow] ?? "").indexOf("GUNS");
+    if (mainRow >= 0 && at >= 0) {
+      stdin.push(clickAt(at + 2, mainRow + 1));
+      await settle();
+      const withSub = latest().split(String.fromCharCode(10));
+      const subRow = withSub.findIndex((l) => l.includes("USED") && l.includes("BONUS"));
+      if (subRow < 0) {
+        failures.push("focusing guns drew no sub bar");
+      } else {
+        const sub = withSub[subRow] ?? "";
+        for (const [name, heading] of [
+          ["FORCE", "After losing a pistol"],
+          ["BONUS", "Bonus round buys"],
+          ["USED", "Guns they use"],
+        ] as Array<[string, string]>) {
+          const col = sub.indexOf(name);
+          if (col < 0) {
+            failures.push(`the guns sub bar does not show ${name}`);
+            continue;
+          }
+          stdin.push(clickAt(col + 2, subRow + 1));
+          await settle();
+          if (!latest().includes(heading)) {
+            failures.push(`clicking ${name} did not switch the guns section`);
+          }
+        }
+      }
+      // e clears the focus, so the checks after this see the whole panel.
+      stdin.push("e");
+      await settle();
+    }
+    stdout.resize(150, 40);
+    await settle();
+  }
+
   // A lone escape byte on the board must not close the app. The terminal
   // reports the mouse as escape sequences, and a read that ends just after the
   // escape byte delivers it by itself, which the key parser cannot tell from
@@ -488,7 +532,11 @@ async function main(): Promise<void> {
     // A panel with every section shut is what a budget that is too tight looks
     // like: the section names are there and not one of them has anything under
     // it. That is what launching the app looked like after the last fix.
-    if (rows >= 36 && panel.includes("Level ") && !panel.includes("Win   ")) {
+    // Any section will do. Naming one only asserts which tab happened to be
+    // selected, and e moves that; what matters is that the budget left room
+    // for something, which is what launching the app failed to do.
+    const anySection = ["Win   ", "Form  ", "Guns they use", "Met"].some((m) => panel.includes(m));
+    if (rows >= 36 && panel.includes("Level ") && !anySection) {
       failures.push(`the panel opened no section at ${rows} rows`);
     }
     if (panel.includes("Level ")) {

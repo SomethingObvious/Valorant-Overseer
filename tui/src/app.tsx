@@ -655,6 +655,10 @@ export const sectionMark = (isOpen: boolean): string => (isOpen ? "▾" : "▸")
 /** How wide one section reads on the bar, arrow and trailing space included. */
 export const sectionWidth = (name: string): number => name.length + 2;
 
+/** The three questions the guns section answers, and the order they sit in. */
+export const GUN_VIEWS = ["used", "force", "bonus"] as const;
+export type GunView = (typeof GUN_VIEWS)[number];
+
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 // What each section draws at most, counted from the JSX rather than guessed.
@@ -676,7 +680,8 @@ function panelChrome(p: Player, reasons: number, bar: boolean): number {
     1 + // the name
     1 + // the blank line under it
     1 + // level, title and role
-    (bar ? 2 : 0) + // the section bar, when anything is shut
+    2 + // the section bar
+    (bar ? 1 : 0) + // the guns sub bar, when the guns section is the open one
     (reasons ? reasons + 2 : 0) + // the smurf block
     1 + // rank, RR and leaderboard
     (isRanked(p) ? 1 : 0) + // the RR meter
@@ -724,6 +729,104 @@ export function panelSections(
   return out;
 }
 
+/** What they habitually kill with, falling back to this match and the last. */
+function GunsUsed({
+  p,
+  last,
+  career,
+}: {
+  p: Player;
+  last: RecapPlayer | null;
+  career: Career | null;
+}) {
+  const habit = arr(career?.topGuns);
+  if (habit.length) {
+    return (
+      <>
+        {habit.slice(0, 4).map((w) => (
+          <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
+            {`  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}% of kills`}
+          </Text>
+        ))}
+      </>
+    );
+  }
+  const lastGuns = arr(last?.weaponKills);
+  if (lastGuns.length) {
+    return (
+      <>
+        {lastGuns.slice(0, 4).map((w) => (
+          <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
+            {`  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} last match`}
+          </Text>
+        ))}
+      </>
+    );
+  }
+  const held = arr(p.weapons);
+  if (!held.length) {
+    return (
+      <Text wrap="truncate" color={C.faint}>
+        {"  Nothing equipped yet."}
+      </Text>
+    );
+  }
+  return (
+    <>
+      {held.slice(0, 4).map((w, i) => (
+        <Text key={w.weapon ?? i} wrap="truncate" color={C.faint}>
+          {`  ${pad(w.weapon ?? NONE, 11)}${w.skin?.name ?? ""}`}
+        </Text>
+      ))}
+    </>
+  );
+}
+
+/** Whether they force the round after losing a pistol, or save it. */
+function GunsForce({ career }: { career: Career | null }) {
+  const habit = career?.forceHabit;
+  const chances = num(habit?.chances) ?? 0;
+  if (!habit || !chances) {
+    return (
+      <Text wrap="truncate" color={C.faint}>
+        {"  No pistol rounds on record."}
+      </Text>
+    );
+  }
+  const pct = num(habit.pct) ?? 0;
+  return (
+    <>
+      <Text wrap="truncate" color={pct >= 50 ? C.gold : C.faint}>
+        {`  Forces ${num(habit.forced) ?? 0} of ${chances} (${pct}%)`}
+      </Text>
+      <Text wrap="truncate" color={C.faint}>
+        {pct >= 50 ? "  Expect a buy, not a save." : "  Expect a save."}
+      </Text>
+    </>
+  );
+}
+
+/** What they take into the round after winning a pistol. */
+function GunsBonus({ career }: { career: Career | null }) {
+  const buys = arr(career?.bonusBuys);
+  if (!buys.length) {
+    return (
+      <Text wrap="truncate" color={C.faint}>
+        {"  No bonus rounds on record."}
+      </Text>
+    );
+  }
+  return (
+    <>
+      {buys.map((w) => (
+        <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
+          {`  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}%`}
+        </Text>
+      ))}
+    </>
+  );
+}
+
 function Detail({
   p,
   tab,
@@ -731,6 +834,8 @@ function Detail({
   settings,
   last,
   focused,
+  gunView,
+  career,
 }: {
   p: Player | null;
   tab: PanelTab;
@@ -738,6 +843,8 @@ function Detail({
   settings: prefs.Settings;
   last: RecapPlayer | null;
   focused: PanelTab | null;
+  gunView: GunView;
+  career: Career | null;
 }) {
   if (!p) {
     return (
@@ -755,7 +862,12 @@ function Detail({
   // Costed twice: the bar only exists when something is shut, and whether
   // anything is shut depends on the budget. Ask without it, then again
   // with it if the first answer left a section out.
-  const bare = panelSections(tab, height, panelChrome(p, reasons.length, true), focused);
+  const bare = panelSections(
+    tab,
+    height,
+    panelChrome(p, reasons.length, focused === "guns"),
+    focused,
+  );
   const open = bare;
   const shows = (name: PanelTab): boolean => open.includes(name);
   return (
@@ -791,6 +903,17 @@ function Detail({
           >{`${sectionMark(open.includes(name))}${name.toUpperCase()} `}</Text>
         ))}
       </Box>
+      {focused === "guns" ? (
+        <Box>
+          {GUN_VIEWS.map((name) => (
+            <Text
+              key={name}
+              bold={name === gunView}
+              color={name === gunView ? C.ice : C.line}
+            >{`${sectionMark(name === gunView)}${name.toUpperCase()} `}</Text>
+          ))}
+        </Box>
+      ) : null}
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
@@ -918,38 +1041,18 @@ function Detail({
         </Box>
       ) : null}
 
-      {shows("guns") && !arr(p.weapons).length ? (
+      {shows("guns") ? (
         <Box flexDirection="column" marginTop={1}>
           <Text wrap="truncate" color={C.dim}>
-            {"Guns"}
+            {gunView === "used"
+              ? "Guns they use"
+              : gunView === "force"
+                ? "After losing a pistol round"
+                : "Bonus round buys"}
           </Text>
-          {arr(last?.weaponKills).length ? (
-            arr(last?.weaponKills)
-              .slice(0, 4)
-              .map((w) => (
-                <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
-                  {`  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} kill${num(w.kills) === 1 ? "" : "s"} last match`}
-                </Text>
-              ))
-          ) : (
-            <Text wrap="truncate" color={C.faint}>
-              {"  Nothing equipped yet."}
-            </Text>
-          )}
-        </Box>
-      ) : null}
-
-      {shows("guns") && arr(p.weapons).length ? (
-        <Box>
-          <Text wrap="truncate" color={C.dim}>
-            {"Skins "}
-          </Text>
-          <Text wrap="truncate" color={C.ice}>
-            {` ${arr(p.weapons)
-              .slice(0, 2)
-              .map((w) => w.skin?.name ?? NONE)
-              .join("  ")}`}
-          </Text>
+          {gunView === "used" ? <GunsUsed p={p} last={last} career={career} /> : null}
+          {gunView === "force" ? <GunsForce career={career} /> : null}
+          {gunView === "bonus" ? <GunsBonus career={career} /> : null}
         </Box>
       ) : null}
 
@@ -1443,6 +1546,8 @@ export function App({
   // Set by clicking a section name: that one alone is drawn until it is
   // clicked again. Null means show whatever fits.
   const [focusedSection, setFocusedSection] = useState<PanelTab | null>(null);
+  // Which of the three gun questions the panel is answering.
+  const [gunView, setGunView] = useState<GunView>("used");
   // Half of a mouse report, held over until the rest of it arrives.
   const pendingMouse = useRef("");
   const [hoverPlayer, setHoverPlayer] = useState<string | null>(null);
@@ -1585,8 +1690,22 @@ export function App({
       out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
-    return out;
-  }, [wide, settings.detail, board, width]);
+    if (focusedSection !== "guns") return out;
+    const subZones: typeof out = [];
+    let subLeft = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
+    for (const name of GUN_VIEWS) {
+      const span = sectionWidth(name);
+      subZones.push({
+        top: row + 1,
+        height: 1,
+        left: subLeft,
+        width: span + 1,
+        value: `gun:${name}` as PanelTab,
+      });
+      subLeft += span;
+    }
+    return [...subZones, ...out];
+  }, [wide, settings.detail, board, width, focusedSection]);
 
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
@@ -1610,7 +1729,10 @@ export function App({
 
   // key === null means "do not ask". Nothing here polls: a view that is not
   // open never costs a request, which is what keeps the Riot side quiet.
-  const careerKey = view === "career" && selected ? `${selected}:${refreshedAt}` : null;
+  const careerKey =
+    (view === "career" || focusedSection === "guns") && selected
+      ? `${selected}:${refreshedAt}`
+      : null;
   const career = useRequest<Career>(bridge, connected, "profile", careerKey, {
     puuid: selected ?? "",
   });
@@ -1689,7 +1811,9 @@ export function App({
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
         const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overSection) {
+          if (overSection?.startsWith("gun:")) {
+            setGunView(overSection.slice(4) as GunView);
+          } else if (overSection) {
             setFocusedSection((current) => (current === overSection ? null : overSection));
             setPanelTab(overSection);
           } else if (overTab) {
@@ -1815,6 +1939,9 @@ export function App({
       return;
     }
     if (input === "e") {
+      // Also the way back out of a section you clicked into, which otherwise
+      // needs you to find and click the same word again.
+      setFocusedSection(null);
       setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length] ?? t);
       return;
     }
@@ -2019,6 +2146,8 @@ export function App({
                 settings={settings}
                 last={lastMatch}
                 focused={focusedSection}
+                gunView={gunView}
+                career={canned("profile", career).data ?? null}
               />
             ) : null}
             {settings.session ? <Session board={current} /> : null}

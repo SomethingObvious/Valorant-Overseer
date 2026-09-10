@@ -1508,6 +1508,7 @@ class LiveMatch:
             "score": mine.get("roundsWon", 0),
             "opponentScore": opponent_score,
             "agent": agent.get("name", "Unknown"),
+            "buys": _buy_habits(md, puuid),
             # What they actually got kills with in this match, best first.
             "gunKills": [
                 {"name": valapi.weapon_name(item) or "Ability", "kills": n}
@@ -1668,6 +1669,69 @@ class LiveMatch:
         }
 
 
+# A rifle and armour is about 3900, an SMG and light armour about 2000. Below
+# that nobody has forced anything; they have saved and bought a pistol.
+FORCE_VALUE = 2000
+
+# The pistol rounds and the round after each of them. Competitive plays twelve
+# a side, so the second half opens at index twelve. Overtime does its own thing
+# and is left out rather than guessed at.
+PISTOL_ROUNDS = (0, 12)
+
+
+def _buy_habits(md: dict[str, Any], puuid: str) -> dict[str, Any]:
+    """What they do with the round after a pistol round.
+
+    Two questions, both answered from the economy block that match-details
+    already carries: do they force when the pistol is lost, and what do they
+    buy when it is won and the money is short either way.
+    """
+    rounds = md.get("roundResults") or []
+    side = None
+    for player in md.get("players") or []:
+        if isinstance(player, dict) and player.get("subject") == puuid:
+            side = player.get("teamId")
+            break
+
+    forced = 0
+    lost_pistols = 0
+    won_pistols = 0
+    bonus: dict[str, int] = {}
+
+    for first in PISTOL_ROUNDS:
+        second = first + 1
+        if not side or second >= len(rounds):
+            continue
+        pistol = rounds[first] if isinstance(rounds[first], dict) else {}
+        winner = pistol.get("winningTeam")
+        if not winner:
+            continue
+        economy: dict[str, Any] = {}
+        for ps in (rounds[second] or {}).get("playerStats") or []:
+            if isinstance(ps, dict) and ps.get("subject") == puuid:
+                economy = ps.get("economy") or {}
+                break
+        if not economy:
+            continue
+        if winner == side:
+            # The bonus round: what they actually took into it.
+            won_pistols += 1
+            name = valapi.weapon_name(str(economy.get("weapon") or "")) or ""
+            if name:
+                bonus[name] = bonus.get(name, 0) + 1
+        else:
+            lost_pistols += 1
+            if int(economy.get("loadoutValue") or 0) >= FORCE_VALUE:
+                forced += 1
+
+    return {
+        "forced": forced,
+        "lostPistols": lost_pistols,
+        "wonPistols": won_pistols,
+        "bonus": bonus,
+    }
+
+
 def _career_summary(matches: list[Any]) -> dict[str, Any]:
     n = len(matches)
     if not n:
@@ -1757,6 +1821,18 @@ def _career_summary(matches: list[Any]) -> dict[str, Any]:
             if name:
                 guns[name] = guns.get(name, 0) + int(gun.get("kills") or 0)
     total_gun_kills = sum(guns.values())
+
+    # The pistol round habits, summed the same way.
+    forced = lost_pistols = won_pistols = 0
+    bonus: dict[str, int] = {}
+    for row in matches:
+        habit = (row or {}).get("buys") or {}
+        forced += int(habit.get("forced") or 0)
+        lost_pistols += int(habit.get("lostPistols") or 0)
+        won_pistols += int(habit.get("wonPistols") or 0)
+        for name, n in (habit.get("bonus") or {}).items():
+            bonus[str(name)] = bonus.get(str(name), 0) + int(n or 0)
+    bonus_total = sum(bonus.values())
     top_guns = [
         {
             "name": name,
@@ -1781,6 +1857,22 @@ def _career_summary(matches: list[Any]) -> dict[str, Any]:
         "agentPool": agent_pool,
         "mapStats": map_stats,
         "topGuns": top_guns,
+        # Do they force the round after losing a pistol, and what do they take
+        # into the round after winning one.
+        "forceHabit": {
+            "forced": forced,
+            "chances": lost_pistols,
+            "pct": round(100 * forced / lost_pistols) if lost_pistols else None,
+        },
+        "bonusBuys": [
+            {
+                "name": name,
+                "rounds": n,
+                "share": round(100 * n / bonus_total) if bonus_total else 0,
+            }
+            for name, n in sorted(bonus.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+        ],
+        "bonusRounds": won_pistols,
     }
 
 

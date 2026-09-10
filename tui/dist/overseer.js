@@ -39503,6 +39503,8 @@ var STACK_NAME = {
   4: "four stack",
   5: "five stack"
 };
+var sectionMark = (isOpen) => isOpen ? "\u25BE" : "\u25B8";
+var sectionWidth = (name) => name.length + 2;
 var PANEL_TABS = ["stats", "form", "guns", "met"];
 var PANEL_COST = { stats: 10, form: 4, guns: 6, met: 8 };
 function panelChrome(p, reasons, bar2) {
@@ -39518,7 +39520,8 @@ function panelChrome(p, reasons, bar2) {
   (p.previousRank ? 1 : 0) + // last act
   2;
 }
-function panelSections(tab2, height, chrome) {
+function panelSections(tab2, height, chrome, focused = null) {
+  if (focused) return [focused];
   const from = PANEL_TABS.indexOf(tab2);
   const first = PANEL_TABS[from] ?? "stats";
   if (height < chrome + PANEL_COST[first]) return [];
@@ -39537,15 +39540,16 @@ function Detail({
   tab: tab2,
   height,
   settings,
-  last
+  last,
+  focused
 }) {
   if (!p) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { borderStyle: "round", borderColor: C.line, paddingX: 1, width: SIDEBAR, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "No player selected." }) });
   }
   const mapWr = p.mapWinRate;
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const bare = panelSections(tab2, height, panelChrome(p, reasons.length, false));
-  const open = bare.length === PANEL_TABS.length ? bare : panelSections(tab2, height, panelChrome(p, reasons.length, true));
+  const bare = panelSections(tab2, height, panelChrome(p, reasons.length, true), focused);
+  const open = bare;
   const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     Box_default,
@@ -39565,15 +39569,15 @@ function Detail({
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
-        open.length < PANEL_TABS.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           Text,
           {
             bold: name === tab2,
             color: open.includes(name) ? C.bone : C.line,
-            children: `${open.includes(name) ? "\u25BE" : "\u25B8"}${name.toUpperCase()} `
+            children: `${sectionMark(open.includes(name))}${name.toUpperCase()} `
           },
           name
-        )) }) : null,
+        )) }),
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39656,51 +39660,6 @@ function Detail({
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.line, children: "[Enter]" }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: " Career and match history" })
         ] })
-      ]
-    }
-  );
-}
-var ROLE_ORDER = ["Duelist", "Initiator", "Controller", "Sentinel"];
-function TeamComp({ players, board }) {
-  const counts = /* @__PURE__ */ new Map();
-  let unpicked = 0;
-  for (const p of players) {
-    const role = p.role ?? "";
-    if (!role) {
-      unpicked += 1;
-      continue;
-    }
-    counts.set(role, (counts.get(role) ?? 0) + 1);
-  }
-  const missing = ROLE_ORDER.filter((role) => !counts.get(role));
-  const locked = num(board.lockProgress?.locked) ?? 0;
-  const total = num(board.lockProgress?.total) ?? players.length;
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-    Box_default,
-    {
-      flexDirection: "column",
-      borderStyle: "round",
-      borderColor: C.line,
-      borderDimColor: true,
-      paddingX: 1,
-      marginBottom: 1,
-      width: SIDEBAR,
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.dim, children: "TEAM COMP" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `   ${locked}/${total} locked` })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
-        ROLE_ORDER.map((role) => {
-          const n = counts.get(role) ?? 0;
-          return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: n ? ROLE_COLOR[role] ?? C.text : C.line, children: `${ROLE_GLYPH[role] ?? " "} ` }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { width: 12, flexShrink: 0, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: n ? C.text : C.faint, children: role }) }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: n ? ROLE_COLOR[role] ?? C.text : C.line, children: n ? "#".repeat(Math.min(n, 5)) : "-" })
-          ] }, role);
-        }),
-        unpicked ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `${unpicked} still picking` }) }) : null,
-        missing.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, flexDirection: "column", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `No ${missing.map((m) => m.toLowerCase()).join(", no ")}` }) }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.ally, children: "All four roles covered" }) })
       ]
     }
   );
@@ -39982,6 +39941,7 @@ function App2({
   const [offset, setOffset] = (0, import_react35.useState)(0);
   const [refreshedAt, setRefreshedAt] = (0, import_react35.useState)(0);
   const [panelTab, setPanelTab] = (0, import_react35.useState)("stats");
+  const [focusedSection, setFocusedSection] = (0, import_react35.useState)(null);
   const pendingMouse = (0, import_react35.useRef)("");
   const [hoverPlayer, setHoverPlayer] = (0, import_react35.useState)(null);
   const [hoverTab, setHoverTab] = (0, import_react35.useState)(null);
@@ -40042,7 +40002,6 @@ function App2({
   const wide = width >= 108 && (settings.detail || settings.session);
   const SESSION_LINES = 6;
   const MIN_PANEL = 14;
-  const TEAMCOMP_LINES = 8;
   const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
     const teams2 = board?.teams ?? {};
@@ -40065,6 +40024,19 @@ function App2({
       bodyWidth: wide ? width - SIDEBAR - 3 : width
     });
   }, [board, settings.enemies, sort, filter, width, wide]);
+  const sectionZones = (0, import_react35.useMemo)(() => {
+    if (!wide || !settings.detail) return [];
+    const hasMeta2 = num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0;
+    const row = headerHeight(hasMeta2) + 2 + 5 + 1;
+    let left = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
+    const out = [];
+    for (const name of PANEL_TABS) {
+      const span = sectionWidth(name);
+      out.push({ top: row, height: 1, left, width: span, value: name });
+      left += span;
+    }
+    return out;
+  }, [wide, settings.detail, board, width]);
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
   const matchKey = board?.matchId ?? "none";
@@ -40128,8 +40100,12 @@ function App2({
       if (aim) {
         const overTab = hitTest(zones.tabs, aim.column, aim.row);
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
+        const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overTab) {
+          if (overSection) {
+            setFocusedSection((current2) => current2 === overSection ? null : overSection);
+            setPanelTab(overSection);
+          } else if (overTab) {
             setView(overTab);
             setOffset(0);
           } else if (overPlayer) {
@@ -40296,10 +40272,7 @@ function App2({
   const cols = visibleColumns(bodyWidth, settings);
   const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
-  const panelSpace = Math.max(
-    8,
-    bodyHeight - (settings.session ? SESSION_LINES : 0) - (current.state === "PREGAME" ? TEAMCOMP_LINES : 0)
-  );
+  const panelSpace = Math.max(8, bodyHeight - (settings.session ? SESSION_LINES : 0));
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -40395,7 +40368,6 @@ function App2({
         ) : null
       ] }),
       wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
-        current.state === "PREGAME" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(TeamComp, { players: arrange(arr(teams[selfTeam]), sort), board: current }) : null,
         settings.detail && panelSpace >= MIN_PANEL ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           Detail,
           {
@@ -40403,7 +40375,8 @@ function App2({
             tab: panelTab,
             height: panelSpace,
             settings,
-            last: lastMatch
+            last: lastMatch,
+            focused: focusedSection
           }
         ) : null,
         settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null

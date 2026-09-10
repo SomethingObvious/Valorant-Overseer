@@ -263,6 +263,48 @@ async function main(): Promise<void> {
     await settle();
   }
 
+  // Clicking a section name in the panel. The zones are worked out from the
+  // layout constants, so the only check worth having is against the frame the
+  // app actually drew: find the row the bar is on, click each name where it
+  // really is, and see the section open.
+  {
+    stdout.resize(150, 60);
+    await settle();
+    const frameLines = latest().split(String.fromCharCode(10));
+    const barRow = frameLines.findIndex((l) => l.includes("STATS") && l.includes("GUNS"));
+    if (barRow < 0) {
+      failures.push("the panel drew no section bar");
+    } else {
+      const bar = frameLines[barRow] ?? "";
+      // A click focuses one section, so the test is not that the clicked one
+      // is present - on a tall terminal they all are, and the check passes
+      // however wrong the zones happen to be. It is that the OTHERS are gone.
+      for (const [name, mine, others] of [
+        ["GUNS", "Guns", ["Win   ", "Met"]],
+        ["MET", "Met", ["Win   ", "Guns"]],
+        ["STATS", "Win   ", ["Guns", "Met"]],
+      ] as Array<[string, string, string[]]>) {
+        const at = bar.indexOf(name);
+        if (at < 0) {
+          failures.push(`the bar does not show ${name}`);
+          continue;
+        }
+        // Rows and columns are 1-based in a mouse report.
+        stdin.push(clickAt(at + 2, barRow + 1));
+        await settle();
+        const after = latest();
+        if (!after.includes(mine)) failures.push(`clicking ${name} did not open it`);
+        for (const gone of others) {
+          if (after.includes(gone)) {
+            failures.push(`clicking ${name} left ${gone.trim()} on screen`);
+          }
+        }
+      }
+    }
+    stdout.resize(150, 40);
+    await settle();
+  }
+
   // A lone escape byte on the board must not close the app. The terminal
   // reports the mouse as escape sequences, and a read that ends just after the
   // escape byte delivers it by itself, which the key parser cannot tell from

@@ -649,6 +649,12 @@ const STACK_NAME: Record<number, string> = {
 };
 
 /** The panel's sections, and roughly how many lines each one draws. */
+/** The arrow in front of a section name, and the only place it is decided. */
+export const sectionMark = (isOpen: boolean): string => (isOpen ? "▾" : "▸");
+
+/** How wide one section reads on the bar, arrow and trailing space included. */
+export const sectionWidth = (name: string): number => name.length + 2;
+
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 // What each section draws at most, counted from the JSX rather than guessed.
@@ -693,7 +699,13 @@ function panelChrome(p: Player, reasons: number, bar: boolean): number {
  * exactly, forever, is not a thing this code can do, and being wrong is
  * invisible. So it only opens more when there is room to be wrong by a lot.
  */
-export function panelSections(tab: PanelTab, height: number, chrome: number): PanelTab[] {
+export function panelSections(
+  tab: PanelTab,
+  height: number,
+  chrome: number,
+  focused: PanelTab | null = null,
+): PanelTab[] {
+  if (focused) return [focused];
   const from = PANEL_TABS.indexOf(tab);
   const first = PANEL_TABS[from] ?? "stats";
   // Even one section has to fit. It used to be included unconditionally, so a
@@ -718,12 +730,14 @@ function Detail({
   height,
   settings,
   last,
+  focused,
 }: {
   p: Player | null;
   tab: PanelTab;
   height: number;
   settings: prefs.Settings;
   last: RecapPlayer | null;
+  focused: PanelTab | null;
 }) {
   if (!p) {
     return (
@@ -741,11 +755,8 @@ function Detail({
   // Costed twice: the bar only exists when something is shut, and whether
   // anything is shut depends on the budget. Ask without it, then again
   // with it if the first answer left a section out.
-  const bare = panelSections(tab, height, panelChrome(p, reasons.length, false));
-  const open =
-    bare.length === PANEL_TABS.length
-      ? bare
-      : panelSections(tab, height, panelChrome(p, reasons.length, true));
+  const bare = panelSections(tab, height, panelChrome(p, reasons.length, true), focused);
+  const open = bare;
   const shows = (name: PanelTab): boolean => open.includes(name);
   return (
     <Box
@@ -769,17 +780,15 @@ function Detail({
 
       {/* One section at a time, because the panel is 38 columns and the data
           is not. Everything is reachable and nothing is cut off halfway. */}
-      {open.length < PANEL_TABS.length ? (
-        <Box marginTop={1}>
-          {PANEL_TABS.map((name) => (
-            <Text
-              key={name}
-              bold={name === tab}
-              color={open.includes(name) ? C.bone : C.line}
-            >{`${open.includes(name) ? "▾" : "▸"}${name.toUpperCase()} `}</Text>
-          ))}
-        </Box>
-      ) : null}
+      <Box marginTop={1}>
+        {PANEL_TABS.map((name) => (
+          <Text
+            key={name}
+            bold={name === tab}
+            color={open.includes(name) ? C.bone : C.line}
+          >{`${sectionMark(open.includes(name))}${name.toUpperCase()} `}</Text>
+        ))}
+      </Box>
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
@@ -996,81 +1005,6 @@ function Detail({
           {" Career and match history"}
         </Text>
       </Box>
-    </Box>
-  );
-}
-
-// Agent select only. Every value here comes off the board, so this costs no
-// request: the roles are already on the players and the lock state is already
-// on the board. A composition with no controller or no initiator is the thing
-// people notice thirty seconds too late.
-const ROLE_ORDER = ["Duelist", "Initiator", "Controller", "Sentinel"] as const;
-
-function TeamComp({ players, board }: { players: Player[]; board: Board }) {
-  const counts = new Map<string, number>();
-  let unpicked = 0;
-  for (const p of players) {
-    const role = p.role ?? "";
-    if (!role) {
-      unpicked += 1;
-      continue;
-    }
-    counts.set(role, (counts.get(role) ?? 0) + 1);
-  }
-
-  const missing = ROLE_ORDER.filter((role) => !counts.get(role));
-  const locked = num(board.lockProgress?.locked) ?? 0;
-  const total = num(board.lockProgress?.total) ?? players.length;
-
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={C.line}
-      borderDimColor
-      paddingX={1}
-      marginBottom={1}
-      width={SIDEBAR}
-    >
-      <Box>
-        <Text bold color={C.dim}>
-          TEAM COMP
-        </Text>
-        <Text color={C.faint}>{`   ${locked}/${total} locked`}</Text>
-      </Box>
-      <Box height={1} />
-      {ROLE_ORDER.map((role) => {
-        const n = counts.get(role) ?? 0;
-        return (
-          <Box key={role}>
-            <Text color={n ? (ROLE_COLOR[role] ?? C.text) : C.line}>
-              {`${ROLE_GLYPH[role] ?? " "} `}
-            </Text>
-            <Box width={12} flexShrink={0}>
-              <Text color={n ? C.text : C.faint}>{role}</Text>
-            </Box>
-            <Text bold color={n ? (ROLE_COLOR[role] ?? C.text) : C.line}>
-              {n ? "#".repeat(Math.min(n, 5)) : "-"}
-            </Text>
-          </Box>
-        );
-      })}
-      {unpicked ? (
-        <Box marginTop={1}>
-          <Text color={C.faint}>{`${unpicked} still picking`}</Text>
-        </Box>
-      ) : null}
-      {missing.length ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color={C.gold}>
-            {`No ${missing.map((m) => m.toLowerCase()).join(", no ")}`}
-          </Text>
-        </Box>
-      ) : (
-        <Box marginTop={1}>
-          <Text color={C.ally}>All four roles covered</Text>
-        </Box>
-      )}
     </Box>
   );
 }
@@ -1504,6 +1438,9 @@ export function App({
   // Which section of the detail panel is open. One at a time, so a long
   // name or a four figure number can never push the rest off the bottom.
   const [panelTab, setPanelTab] = useState<PanelTab>("stats");
+  // Set by clicking a section name: that one alone is drawn until it is
+  // clicked again. Null means show whatever fits.
+  const [focusedSection, setFocusedSection] = useState<PanelTab | null>(null);
   // Half of a mouse report, held over until the rest of it arrives.
   const pendingMouse = useRef("");
   const [hoverPlayer, setHoverPlayer] = useState<string | null>(null);
@@ -1594,7 +1531,6 @@ export function App({
   // Name, blank, level, rank, meter, peak, act, last act, blank, hint and
   // the border. Under this there is no panel worth drawing.
   const MIN_PANEL = 14;
-  const TEAMCOMP_LINES = 8;
 
   // How much room a view actually gets, once the header, the tab strip and
   // the key hints have taken theirs. Everything sized to the window is
@@ -1625,6 +1561,30 @@ export function App({
       bodyWidth: wide ? width - SIDEBAR - 3 : width,
     });
   }, [board, settings.enemies, sort, filter, width, wide]);
+
+  const sectionZones = useMemo(() => {
+    if (!wide || !settings.detail) return [];
+    const hasMeta = num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0;
+    // The terminal counts rows and columns from one, which is what the
+    // mouse reports use. Border, name, blank, level, blank, then the bar.
+    const row = headerHeight(hasMeta) + 2 + 5 + 1;
+    // Board columns, the two column gap, the panel's border and its padding,
+    // and then one more because the first column is column one.
+    let left = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
+    const out: Array<{
+      top: number;
+      height: number;
+      left: number;
+      width: number;
+      value: PanelTab;
+    }> = [];
+    for (const name of PANEL_TABS) {
+      const span = sectionWidth(name);
+      out.push({ top: row, height: 1, left, width: span, value: name });
+      left += span;
+    }
+    return out;
+  }, [wide, settings.detail, board, width]);
 
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
@@ -1725,8 +1685,12 @@ export function App({
       if (aim) {
         const overTab = hitTest(zones.tabs, aim.column, aim.row);
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
+        const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overTab) {
+          if (overSection) {
+            setFocusedSection((current) => (current === overSection ? null : overSection));
+            setPanelTab(overSection);
+          } else if (overTab) {
             setView(overTab);
             setOffset(0);
           } else if (overPlayer) {
@@ -1941,12 +1905,7 @@ export function App({
   // with the team composition too. It used to be handed the whole terminal
   // height, so its budget covered space it did not have and Ink answered by
   // dropping lines out of the middle of it.
-  const panelSpace = Math.max(
-    8,
-    bodyHeight -
-      (settings.session ? SESSION_LINES : 0) -
-      (current.state === "PREGAME" ? TEAMCOMP_LINES : 0),
-  );
+  const panelSpace = Math.max(8, bodyHeight - (settings.session ? SESSION_LINES : 0));
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -2046,9 +2005,6 @@ export function App({
         </Box>
         {wide ? (
           <Box flexDirection="column" marginLeft={2} flexShrink={0}>
-            {current.state === "PREGAME" ? (
-              <TeamComp players={arrange(arr(teams[selfTeam]), sort)} board={current} />
-            ) : null}
             {/* Below this the panel cannot draw even its own header, and Ink
                 pays for the overflow by deleting lines out of the middle of
                 it: the rank goes, silently. Better no panel than a broken one,
@@ -2060,6 +2016,7 @@ export function App({
                 height={panelSpace}
                 settings={settings}
                 last={lastMatch}
+                focused={focusedSection}
               />
             ) : null}
             {settings.session ? <Session board={current} /> : null}

@@ -282,6 +282,20 @@ export function CareerView({
                 />
               </Box>
             </Box>
+            {arr(career.topGuns).length ? (
+              <Box marginTop={1}>
+                <Text bold color={C.dim}>
+                  {pad("GUNS", 8)}
+                </Text>
+                {arr(career.topGuns)
+                  .slice(0, 5)
+                  .map((w, i) => (
+                    <Text key={w.name ?? i} color={i === 0 ? C.ice : C.faint}>
+                      {`${w.name ?? NONE} ${num(w.share) ?? 0}%   `}
+                    </Text>
+                  ))}
+              </Box>
+            ) : null}
             <MatchList
               matches={arr(career.matches)}
               width={half * 2 + 1}

@@ -1434,11 +1434,17 @@ class LiveMatch:
 
         hits_by_player: dict[str, int] = {}
         heads_by_player: dict[str, int] = {}
+        guns: dict[str, int] = {}
         for rr in md.get("roundResults", []):
             for ps in rr.get("playerStats", []):
                 player_id = ps.get("subject")
                 if not player_id:
                     continue
+                if player_id == puuid:
+                    for kill in ps.get("kills") or []:
+                        item = (kill.get("finishingDamage") or {}).get("damageItem") or ""
+                        if item:
+                            guns[item] = guns.get(item, 0) + 1
                 for dmg in ps.get("damage", []):
                     hits_by_player[player_id] = (
                         hits_by_player.get(player_id, 0)
@@ -1502,6 +1508,11 @@ class LiveMatch:
             "score": mine.get("roundsWon", 0),
             "opponentScore": opponent_score,
             "agent": agent.get("name", "Unknown"),
+            # What they actually got kills with in this match, best first.
+            "gunKills": [
+                {"name": valapi.weapon_name(item) or "Ability", "kills": n}
+                for item, n in sorted(guns.items(), key=lambda kv: (-kv[1], str(kv[0])))
+            ],
             "agentPortrait": agent.get("portrait"),
             "agentColor": agent.get("color", "#8B978F"),
             "kills": kills,
@@ -1736,6 +1747,25 @@ def _career_summary(matches: list[Any]) -> dict[str, Any]:
         for mp, (w, g) in sorted(_tally("map").items(), key=lambda x: -x[1][1])
     ]
 
+    # Which guns they actually reach for, summed over every match in the
+    # history. Each of those matches was fetched in full for this view
+    # already, so the answer costs a loop rather than a request.
+    guns: dict[str, int] = {}
+    for row in matches:
+        for gun in (row or {}).get("gunKills") or []:
+            name = str(gun.get("name") or "")
+            if name:
+                guns[name] = guns.get(name, 0) + int(gun.get("kills") or 0)
+    total_gun_kills = sum(guns.values())
+    top_guns = [
+        {
+            "name": name,
+            "kills": kills,
+            "share": round(100 * kills / total_gun_kills) if total_gun_kills else 0,
+        }
+        for name, kills in sorted(guns.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+    ]
+
     return {
         "averages": {
             "games": n,
@@ -1750,6 +1780,7 @@ def _career_summary(matches: list[Any]) -> dict[str, Any]:
         "coPlayers": co_players,
         "agentPool": agent_pool,
         "mapStats": map_stats,
+        "topGuns": top_guns,
     }
 
 

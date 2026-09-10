@@ -178,6 +178,8 @@ export interface CareerMatch {
 
 export interface Career {
   name?: string | undefined;
+  /** What they get their kills with, summed over the matches below. */
+  topGuns?: Array<{ name?: string; kills?: number; share?: number }> | undefined;
   rank?: string | undefined;
   rankColor?: string | undefined;
   peakRank?: string | undefined;

@@ -38860,6 +38860,10 @@ function CareerView({
           }
         ) })
       ] }),
+      arr(career.topGuns).length ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { marginTop: 1, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { bold: true, color: C.dim, children: pad("GUNS", 8) }),
+        arr(career.topGuns).slice(0, 5).map((w, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: i === 0 ? C.ice : C.faint, children: `${w.name ?? NONE} ${num(w.share) ?? 0}%   ` }, w.name ?? i))
+      ] }) : null,
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         MatchList,
         {

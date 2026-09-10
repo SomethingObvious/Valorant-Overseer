@@ -5,6 +5,15 @@ import type { Career, Encounters, Performance, Recap } from "./api.js";
 // client. Nothing in the running app imports this file.
 
 export const CAREER: Career = {
+  // Summed over the matches below, which is what makes it a habit rather
+  // than one good game with a Sheriff.
+  topGuns: [
+    { name: "Vandal", kills: 96, share: 54 },
+    { name: "Phantom", kills: 41, share: 23 },
+    { name: "Sheriff", kills: 18, share: 10 },
+    { name: "Operator", kills: 13, share: 7 },
+    { name: "Classic", kills: 10, share: 6 },
+  ],
   name: "SilentEnt#GG",
   rank: "Diamond 3",
   peakRank: "Ascendant 3",

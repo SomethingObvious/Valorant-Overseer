@@ -132,6 +132,26 @@ export function outcomeOf(result: unknown): "W" | "L" | "D" {
   return "L";
 }
 
+/** At this share of career kills on the Operator, they are an opper. */
+export const OPPER_SHARE = 10;
+/** One match is a thin sample, so the recap alone has to clear a higher bar. */
+export const OPPER_SHARE_LAST = 20;
+
+/**
+ * Operator kills as a share of all kills, from whatever gun data is in hand.
+ * The career is the honest answer when it has been fetched; the last match is
+ * what the board has for everyone who was in it.
+ */
+export function opShare(
+  guns: Array<{ name?: string | undefined; kills?: number | undefined }> | undefined,
+): number | null {
+  const list = arr(guns);
+  const total = list.reduce((n, g) => n + (num(g.kills) ?? 0), 0);
+  if (!total) return null;
+  const op = list.find((g) => (g.name ?? "").toLowerCase() === "operator");
+  return Math.round((100 * (num(op?.kills) ?? 0)) / total);
+}
+
 export function rrFlow(points: SessionPoint[] | undefined): FlowBar[] {
   const list = arr(points);
   const deltas = list.map((p) => num(p.delta) ?? 0);

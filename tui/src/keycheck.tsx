@@ -305,10 +305,9 @@ async function main(): Promise<void> {
     await settle();
   }
 
-  // The three sub buttons under GUNS. Same rule as the main bar: find the row
-  // the app actually drew, click where the word really is, and check the
-  // heading changed. The heading is the only honest signal, because the guns
-  // content itself can be identical between two of the three.
+  // GUNS is one section with three answers stacked in it. Focusing it has to
+  // show all three headings at once, since there is no second click to reach
+  // the other two any more.
   {
     stdout.resize(150, 60);
     await settle();
@@ -318,28 +317,9 @@ async function main(): Promise<void> {
     if (mainRow >= 0 && at >= 0) {
       stdin.push(clickAt(at + 2, mainRow + 1));
       await settle();
-      const withSub = latest().split(String.fromCharCode(10));
-      const subRow = withSub.findIndex((l) => l.includes("USED") && l.includes("BONUS"));
-      if (subRow < 0) {
-        failures.push("focusing guns drew no sub bar");
-      } else {
-        const sub = withSub[subRow] ?? "";
-        for (const [name, heading] of [
-          ["FORCE", "After losing a pistol"],
-          ["BONUS", "Bonus round buys"],
-          ["USED", "Guns they use"],
-        ] as Array<[string, string]>) {
-          const col = sub.indexOf(name);
-          if (col < 0) {
-            failures.push(`the guns sub bar does not show ${name}`);
-            continue;
-          }
-          stdin.push(clickAt(col + 2, subRow + 1));
-          await settle();
-          if (!latest().includes(heading)) {
-            failures.push(`clicking ${name} did not switch the guns section`);
-          }
-        }
+      const shown = latest();
+      for (const heading of ["Guns", "After a lost pistol", "Bonus round"]) {
+        if (!shown.includes(heading)) failures.push(`focusing guns did not show ${heading}`);
       }
       // e clears the focus, so the checks after this see the whole panel.
       stdin.push("e");
@@ -347,6 +327,31 @@ async function main(): Promise<void> {
     }
     stdout.resize(150, 40);
     await settle();
+  }
+
+  // The opper mark, both ways round. PixelAndy#KR has a quarter of their
+  // last match kills on the Operator and no career fetched, so the recap bar
+  // applies and the row carries the mark. Day#9932 clears the same bar in the
+  // recap, but they are the selected player and the seeded career puts them
+  // at seven percent, which overrides the one match reading.
+  {
+    const board = latest().split(String.fromCharCode(10));
+    const mark = String.fromCodePoint(0x1f3af);
+    // The panel title repeats the selected name on the header row, so the
+    // player row is the one that also carries the agent.
+    const row = (agent: string, name: string): string | undefined =>
+      board.find((l) => l.includes(agent) && l.includes(name));
+    const andy = row("Astra", "PixelAndy#KR");
+    const day = row("Chamber", "Day#9932");
+    const silent = row("KAY/O", "SilentEnt#GG");
+    if (!andy?.includes(mark)) failures.push("the opper mark is missing from PixelAndy#KR");
+    if (!day?.includes(String.fromCharCode(0x2588))) {
+      failures.push("Day#9932 is not the selected player, so the career override is untested");
+    } else if (day.includes(mark)) {
+      failures.push("Day#9932 is marked an opper against a seven percent career");
+    }
+    if (silent?.includes(mark))
+      failures.push("SilentEnt#GG is marked an opper on one Operator kill");
   }
 
   // A lone escape byte on the board must not close the app. The terminal
@@ -535,7 +540,7 @@ async function main(): Promise<void> {
     // Any section will do. Naming one only asserts which tab happened to be
     // selected, and e moves that; what matters is that the budget left room
     // for something, which is what launching the app failed to do.
-    const anySection = ["Win   ", "Form  ", "Guns they use", "Met"].some((m) => panel.includes(m));
+    const anySection = ["Win   ", "Form  ", "Guns", "Met"].some((m) => panel.includes(m));
     if (rows >= 36 && panel.includes("Level ") && !anySection) {
       failures.push(`the panel opened no section at ${rows} rows`);
     }

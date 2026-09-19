@@ -15,6 +15,9 @@ import {
   meter,
   NONE,
   num,
+  OPPER_SHARE,
+  OPPER_SHARE_LAST,
+  opShare,
   pad,
   pct1,
   peakGap,
@@ -490,6 +493,9 @@ export function cell(
   }
 }
 
+/** The opper mark. A Wide glyph, two cells, which Ink measures correctly. */
+const OP_MARK = String.fromCodePoint(0x1f3af);
+
 function PlayerRow({
   p,
   rail,
@@ -498,6 +504,7 @@ function PlayerRow({
   teamColor,
   selected,
   hovered,
+  opper,
 }: {
   p: Player;
   rail: string;
@@ -506,6 +513,7 @@ function PlayerRow({
   teamColor: string;
   selected: boolean;
   hovered: boolean;
+  opper: boolean;
 }) {
   const streak = streakText(p);
   return (
@@ -518,7 +526,7 @@ function PlayerRow({
           {cell(key, p, rail, teamColor, selected, widths[key])}
         </Box>
       ))}
-      <Box width={5} flexShrink={0}>
+      <Box width={7} flexShrink={0}>
         <Text wrap="truncate">
           {p.smurf ? (
             <Text bold color={C.gold}>
@@ -527,6 +535,7 @@ function PlayerRow({
           ) : (
             <Text>{"  "}</Text>
           )}
+          <Text>{opper ? OP_MARK : "  "}</Text>
           {streak ? (
             <Text bold color={outcomeColor(streak.slice(0, 1))}>
               {streak}
@@ -551,6 +560,7 @@ function TeamBlock({
   width,
   sort,
   stacks,
+  oppers,
 }: {
   label: string;
   color: string;
@@ -562,6 +572,7 @@ function TeamBlock({
   width: number;
   sort: SortMode;
   stacks: boolean;
+  oppers: Set<string>;
 }) {
   const widths = columnWidths(cols, width);
   const title = (
@@ -632,6 +643,7 @@ function TeamBlock({
           teamColor={color}
           selected={p.puuid === selected}
           hovered={p.puuid === hovered}
+          opper={oppers.has(p.puuid ?? "")}
         />
       ))}
     </Box>
@@ -655,16 +667,12 @@ export const sectionMark = (isOpen: boolean): string => (isOpen ? "▾" : "▸")
 /** How wide one section reads on the bar, arrow and trailing space included. */
 export const sectionWidth = (name: string): number => name.length + 2;
 
-/** The three questions the guns section answers, and the order they sit in. */
-export const GUN_VIEWS = ["used", "force", "bonus"] as const;
-export type GunView = (typeof GUN_VIEWS)[number];
-
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 // What each section draws at most, counted from the JSX rather than guessed.
 // stats is the tall one: three stat rows, the map line, and a five line last
 // match block when there is a last match.
-const PANEL_COST: Record<PanelTab, number> = { stats: 10, form: 4, guns: 6, met: 8 };
+const PANEL_COST: Record<PanelTab, number> = { stats: 10, form: 4, guns: 12, met: 8 };
 
 /**
  * Lines the panel spends before a single section is drawn.
@@ -674,14 +682,13 @@ const PANEL_COST: Record<PanelTab, number> = { stats: 10, form: 4, guns: 6, met:
  * every child and drops lines out of the middle, so a budget that is too
  * generous does not overflow the screen, it quietly removes content.
  */
-function panelChrome(p: Player, reasons: number, bar: boolean): number {
+function panelChrome(p: Player, reasons: number): number {
   return (
     2 + // the border
     1 + // the name
     1 + // the blank line under it
     1 + // level, title and role
     2 + // the section bar
-    (bar ? 1 : 0) + // the guns sub bar, when the guns section is the open one
     (reasons ? reasons + 2 : 0) + // the smurf block
     1 + // rank, RR and leaderboard
     (isRanked(p) ? 1 : 0) + // the RR meter
@@ -743,9 +750,9 @@ function GunsUsed({
   if (habit.length) {
     return (
       <>
-        {habit.slice(0, 4).map((w) => (
+        {habit.slice(0, 3).map((w) => (
           <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
-            {`  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}% of kills`}
+            {`  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}%`}
           </Text>
         ))}
       </>
@@ -755,7 +762,7 @@ function GunsUsed({
   if (lastGuns.length) {
     return (
       <>
-        {lastGuns.slice(0, 4).map((w) => (
+        {lastGuns.slice(0, 3).map((w) => (
           <Text key={w.name ?? ""} wrap="truncate" color={C.faint}>
             {`  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} last match`}
           </Text>
@@ -834,7 +841,6 @@ function Detail({
   settings,
   last,
   focused,
-  gunView,
   career,
 }: {
   p: Player | null;
@@ -843,7 +849,6 @@ function Detail({
   settings: prefs.Settings;
   last: RecapPlayer | null;
   focused: PanelTab | null;
-  gunView: GunView;
   career: Career | null;
 }) {
   if (!p) {
@@ -862,12 +867,7 @@ function Detail({
   // Costed twice: the bar only exists when something is shut, and whether
   // anything is shut depends on the budget. Ask without it, then again
   // with it if the first answer left a section out.
-  const bare = panelSections(
-    tab,
-    height,
-    panelChrome(p, reasons.length, focused === "guns"),
-    focused,
-  );
+  const bare = panelSections(tab, height, panelChrome(p, reasons.length), focused);
   const open = bare;
   const shows = (name: PanelTab): boolean => open.includes(name);
   return (
@@ -903,17 +903,6 @@ function Detail({
           >{`${sectionMark(open.includes(name))}${name.toUpperCase()} `}</Text>
         ))}
       </Box>
-      {focused === "guns" ? (
-        <Box>
-          {GUN_VIEWS.map((name) => (
-            <Text
-              key={name}
-              bold={name === gunView}
-              color={name === gunView ? C.ice : C.line}
-            >{`${sectionMark(name === gunView)}${name.toUpperCase()} `}</Text>
-          ))}
-        </Box>
-      ) : null}
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
@@ -1044,15 +1033,17 @@ function Detail({
       {shows("guns") ? (
         <Box flexDirection="column" marginTop={1}>
           <Text wrap="truncate" color={C.dim}>
-            {gunView === "used"
-              ? "Guns they use"
-              : gunView === "force"
-                ? "After losing a pistol round"
-                : "Bonus round buys"}
+            {"Guns"}
           </Text>
-          {gunView === "used" ? <GunsUsed p={p} last={last} career={career} /> : null}
-          {gunView === "force" ? <GunsForce career={career} /> : null}
-          {gunView === "bonus" ? <GunsBonus career={career} /> : null}
+          <GunsUsed p={p} last={last} career={career} />
+          <Text wrap="truncate" color={C.dim}>
+            {"After a lost pistol"}
+          </Text>
+          <GunsForce career={career} />
+          <Text wrap="truncate" color={C.dim}>
+            {"Bonus round"}
+          </Text>
+          <GunsBonus career={career} />
         </Box>
       ) : null}
 
@@ -1546,8 +1537,6 @@ export function App({
   // Set by clicking a section name: that one alone is drawn until it is
   // clicked again. Null means show whatever fits.
   const [focusedSection, setFocusedSection] = useState<PanelTab | null>(null);
-  // Which of the three gun questions the panel is answering.
-  const [gunView, setGunView] = useState<GunView>("used");
   // Half of a mouse report, held over until the rest of it arrives.
   const pendingMouse = useRef("");
   const [hoverPlayer, setHoverPlayer] = useState<string | null>(null);
@@ -1690,22 +1679,8 @@ export function App({
       out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
-    if (focusedSection !== "guns") return out;
-    const subZones: typeof out = [];
-    let subLeft = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
-    for (const name of GUN_VIEWS) {
-      const span = sectionWidth(name);
-      subZones.push({
-        top: row + 1,
-        height: 1,
-        left: subLeft,
-        width: span + 1,
-        value: `gun:${name}` as PanelTab,
-      });
-      subLeft += span;
-    }
-    return [...subZones, ...out];
-  }, [wide, settings.detail, board, width, focusedSection]);
+    return out;
+  }, [wide, settings.detail, board, width]);
 
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
@@ -1759,9 +1734,26 @@ export function App({
   // The selected player's line from the last completed match, if they were
   // in it. On the board nothing has happened yet, so this is the only real
   // per match data there is to show about them.
-  const lastMatch =
-    arr(canned("recap", recap).data?.players).find((x) => x.puuid === selectedPlayer?.puuid) ??
-    null;
+  const recapPlayers = arr(canned("recap", recap).data?.players);
+  const lastMatch = recapPlayers.find((x) => x.puuid === selectedPlayer?.puuid) ?? null;
+
+  // Who leans on the Operator. One match is a thin sample, so it takes a
+  // higher share to call it from the recap alone; the career, when it has
+  // been fetched for the selected player, overrides in both directions.
+  const careerGuns = canned("profile", career).data?.topGuns;
+  const oppers = useMemo(() => {
+    const out = new Set<string>();
+    for (const x of recapPlayers) {
+      const share = opShare(x.weaponKills);
+      if (x.puuid && share !== null && share >= OPPER_SHARE_LAST) out.add(x.puuid);
+    }
+    const habit = opShare(careerGuns);
+    if (selectedPlayer?.puuid && habit !== null) {
+      if (habit >= OPPER_SHARE) out.add(selectedPlayer.puuid);
+      else out.delete(selectedPlayer.puuid);
+    }
+    return out;
+  }, [recapPlayers, careerGuns, selectedPlayer]);
 
   useEffect(() => {
     if (rows.length && !rows.some((p) => p.puuid === selected)) {
@@ -1811,9 +1803,7 @@ export function App({
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
         const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overSection?.startsWith("gun:")) {
-            setGunView(overSection.slice(4) as GunView);
-          } else if (overSection) {
+          if (overSection) {
             setFocusedSection((current) => (current === overSection ? null : overSection));
             setPanelTab(overSection);
           } else if (overTab) {
@@ -2116,6 +2106,7 @@ export function App({
             width={bodyWidth}
             sort={sort}
             stacks={settings.stacks}
+            oppers={oppers}
           />
           {settings.enemies && current.state === "INGAME" && other ? (
             <TeamBlock
@@ -2129,6 +2120,7 @@ export function App({
               width={bodyWidth}
               sort={sort}
               stacks={settings.stacks}
+              oppers={oppers}
             />
           ) : null}
         </Box>
@@ -2146,7 +2138,6 @@ export function App({
                 settings={settings}
                 last={lastMatch}
                 focused={focusedSection}
-                gunView={gunView}
                 career={canned("profile", career).data ?? null}
               />
             ) : null}

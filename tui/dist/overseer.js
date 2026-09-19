@@ -38271,6 +38271,15 @@ function outcomeOf(result) {
   if (word === "draw") return "D";
   return "L";
 }
+var OPPER_SHARE = 10;
+var OPPER_SHARE_LAST = 20;
+function opShare(guns) {
+  const list = arr(guns);
+  const total = list.reduce((n, g) => n + (num(g.kills) ?? 0), 0);
+  if (!total) return null;
+  const op = list.find((g) => (g.name ?? "").toLowerCase() === "operator");
+  return Math.round(100 * (num(op?.kills) ?? 0) / total);
+}
 function rrFlow(points) {
   const list = arr(points);
   const deltas = list.map((p) => num(p.delta) ?? 0);
@@ -39415,6 +39424,7 @@ function cell(key, p, rail, teamColor, selected = false, drawWidth) {
       return null;
   }
 }
+var OP_MARK = String.fromCodePoint(127919);
 function PlayerRow({
   p,
   rail,
@@ -39422,14 +39432,16 @@ function PlayerRow({
   widths,
   teamColor,
   selected,
-  hovered
+  hovered,
+  opper
 }) {
   const streak = streakText(p);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: selected ? C.red : hovered ? C.dim : C.line, children: selected ? "\u2588 " : hovered ? "\u2590 " : "  " }),
     cols.map((key) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { width: widths[key] ?? 0, marginRight: 1, flexShrink: 0, children: cell(key, p, rail, teamColor, selected, widths[key]) }, key)),
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { width: 5, flexShrink: 0, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { width: 7, flexShrink: 0, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
       p.smurf ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "! " }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { children: "  " }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { children: opper ? OP_MARK : "  " }),
       streak ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: outcomeColor(streak.slice(0, 1)), children: streak }) : null
     ] }) })
   ] });
@@ -39444,7 +39456,8 @@ function TeamBlock({
   hovered,
   width,
   sort,
-  stacks
+  stacks,
+  oppers
 }) {
   const widths = columnWidths(cols, width);
   const title = /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { children: [
@@ -39493,7 +39506,8 @@ function TeamBlock({
             widths,
             teamColor: color,
             selected: p.puuid === selected,
-            hovered: p.puuid === hovered
+            hovered: p.puuid === hovered,
+            opper: oppers.has(p.puuid ?? "")
           },
           p.puuid ?? i
         ))
@@ -39509,16 +39523,14 @@ var STACK_NAME = {
 };
 var sectionMark = (isOpen) => isOpen ? "\u25BE" : "\u25B8";
 var sectionWidth = (name) => name.length + 2;
-var GUN_VIEWS = ["used", "force", "bonus"];
 var PANEL_TABS = ["stats", "form", "guns", "met"];
-var PANEL_COST = { stats: 10, form: 4, guns: 6, met: 8 };
-function panelChrome(p, reasons, bar2) {
+var PANEL_COST = { stats: 10, form: 4, guns: 12, met: 8 };
+function panelChrome(p, reasons) {
   return 2 + // the border
   1 + // the name
   1 + // the blank line under it
   1 + // level, title and role
   2 + // the section bar
-  (bar2 ? 1 : 0) + // the guns sub bar, when the guns section is the open one
   (reasons ? reasons + 2 : 0) + // the smurf block
   1 + // rank, RR and leaderboard
   (isRanked(p) ? 1 : 0) + // the RR meter
@@ -39548,11 +39560,11 @@ function GunsUsed({
 }) {
   const habit = arr(career?.topGuns);
   if (habit.length) {
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: habit.slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}% of kills` }, w.name ?? "")) });
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: habit.slice(0, 3).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.share) ?? 0}%` }, w.name ?? "")) });
   }
   const lastGuns = arr(last?.weaponKills);
   if (lastGuns.length) {
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: lastGuns.slice(0, 4).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} last match` }, w.name ?? "")) });
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_jsx_runtime3.Fragment, { children: lastGuns.slice(0, 3).map((w) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${pad(w.name ?? NONE, 11)}${num(w.kills) ?? 0} last match` }, w.name ?? "")) });
   }
   const held = arr(p.weapons);
   if (!held.length) {
@@ -39586,7 +39598,6 @@ function Detail({
   settings,
   last,
   focused,
-  gunView,
   career
 }) {
   if (!p) {
@@ -39594,12 +39605,7 @@ function Detail({
   }
   const mapWr = p.mapWinRate;
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const bare = panelSections(
-    tab2,
-    height,
-    panelChrome(p, reasons.length, focused === "guns"),
-    focused
-  );
+  const bare = panelSections(tab2, height, panelChrome(p, reasons.length), focused);
   const open = bare;
   const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
@@ -39631,15 +39637,6 @@ function Detail({
           },
           name
         )) }),
-        focused === "guns" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { children: GUN_VIEWS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          Text,
-          {
-            bold: name === gunView,
-            color: name === gunView ? C.ice : C.line,
-            children: `${sectionMark(name === gunView)}${name.toUpperCase()} `
-          },
-          name
-        )) }) : null,
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
@@ -39698,10 +39695,12 @@ function Detail({
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.text, children: ` ${arr(p.topAgents).map((a) => `${a.agent ?? "?"} ${num(a.games) ?? 0}`).join("  ")}` })
         ] }) : null,
         shows("guns") ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: gunView === "used" ? "Guns they use" : gunView === "force" ? "After losing a pistol round" : "Bonus round buys" }),
-          gunView === "used" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsUsed, { p, last, career }) : null,
-          gunView === "force" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsForce, { career }) : null,
-          gunView === "bonus" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsBonus, { career }) : null
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Guns" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsUsed, { p, last, career }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "After a lost pistol" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsForce, { career }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Bonus round" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(GunsBonus, { career })
         ] }) : null,
         shows("met") && settings.stacks && p.stackGuess && !p.party ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: `Probably a ${STACK_NAME[num(p.stackGuess.size) ?? 0] ?? "stack"}` }),
@@ -40002,7 +40001,6 @@ function App2({
   const [refreshedAt, setRefreshedAt] = (0, import_react35.useState)(0);
   const [panelTab, setPanelTab] = (0, import_react35.useState)("stats");
   const [focusedSection, setFocusedSection] = (0, import_react35.useState)(null);
-  const [gunView, setGunView] = (0, import_react35.useState)("used");
   const pendingMouse = (0, import_react35.useRef)("");
   const [hoverPlayer, setHoverPlayer] = (0, import_react35.useState)(null);
   const [hoverTab, setHoverTab] = (0, import_react35.useState)(null);
@@ -40096,22 +40094,8 @@ function App2({
       out.push({ top: row - 1, height: 3, left, width: span + 1, value: name });
       left += span;
     }
-    if (focusedSection !== "guns") return out;
-    const subZones = [];
-    let subLeft = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
-    for (const name of GUN_VIEWS) {
-      const span = sectionWidth(name);
-      subZones.push({
-        top: row + 1,
-        height: 1,
-        left: subLeft,
-        width: span + 1,
-        value: `gun:${name}`
-      });
-      subLeft += span;
-    }
-    return [...subZones, ...out];
-  }, [wide, settings.detail, board, width, focusedSection]);
+    return out;
+  }, [wide, settings.detail, board, width]);
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
   const matchKey = board?.matchId ?? "none";
@@ -40137,7 +40121,22 @@ function App2({
     if (seed === void 0) return live;
     return { phase: "ready", data: seed, error: "" };
   };
-  const lastMatch = arr(canned("recap", recap).data?.players).find((x) => x.puuid === selectedPlayer?.puuid) ?? null;
+  const recapPlayers = arr(canned("recap", recap).data?.players);
+  const lastMatch = recapPlayers.find((x) => x.puuid === selectedPlayer?.puuid) ?? null;
+  const careerGuns = canned("profile", career).data?.topGuns;
+  const oppers = (0, import_react35.useMemo)(() => {
+    const out = /* @__PURE__ */ new Set();
+    for (const x of recapPlayers) {
+      const share = opShare(x.weaponKills);
+      if (x.puuid && share !== null && share >= OPPER_SHARE_LAST) out.add(x.puuid);
+    }
+    const habit = opShare(careerGuns);
+    if (selectedPlayer?.puuid && habit !== null) {
+      if (habit >= OPPER_SHARE) out.add(selectedPlayer.puuid);
+      else out.delete(selectedPlayer.puuid);
+    }
+    return out;
+  }, [recapPlayers, careerGuns, selectedPlayer]);
   (0, import_react35.useEffect)(() => {
     if (rows.length && !rows.some((p) => p.puuid === selected)) {
       setSelected(rows.find((p) => p.isSelf)?.puuid ?? rows[0]?.puuid ?? null);
@@ -40177,9 +40176,7 @@ function App2({
         const overPlayer = view === "board" ? hitTest(zones.players, aim.column, aim.row) : null;
         const overSection = hitTest(sectionZones, aim.column, aim.row);
         if (press) {
-          if (overSection?.startsWith("gun:")) {
-            setGunView(overSection.slice(4));
-          } else if (overSection) {
+          if (overSection) {
             setFocusedSection((current2) => current2 === overSection ? null : overSection);
             setPanelTab(overSection);
           } else if (overTab) {
@@ -40426,7 +40423,8 @@ function App2({
             hovered: hoverPlayer,
             width: bodyWidth,
             sort,
-            stacks: settings.stacks
+            stacks: settings.stacks,
+            oppers
           }
         ),
         settings.enemies && current.state === "INGAME" && other ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -40441,7 +40439,8 @@ function App2({
             hovered: hoverPlayer,
             width: bodyWidth,
             sort,
-            stacks: settings.stacks
+            stacks: settings.stacks,
+            oppers
           }
         ) : null
       ] }),
@@ -40455,7 +40454,6 @@ function App2({
             settings,
             last: lastMatch,
             focused: focusedSection,
-            gunView,
             career: canned("profile", career).data ?? null
           }
         ) : null,

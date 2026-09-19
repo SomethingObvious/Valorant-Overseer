@@ -220,6 +220,12 @@ export const RECAP: Recap = {
       defusesWon: 1,
       multiKills: { "2": 2 },
       topWeapon: { name: "Phantom", kills: 14 },
+      // Five of nineteen on the Operator: past the one match bar, so the
+      // board flags them from the recap alone.
+      weaponKills: [
+        { name: "Phantom", kills: 14 },
+        { name: "Operator", kills: 5 },
+      ],
       team: "Blue",
       agent: "Chamber",
       rank: "Gold 2",
@@ -237,6 +243,12 @@ export const RECAP: Recap = {
       kast: 61,
       firstBloods: 0,
       topWeapon: { name: "Spectre", kills: 9 },
+      // Three of twelve on the Operator, and no career in hand for anyone
+      // but the selected player, so the one match bar is what flags them.
+      weaponKills: [
+        { name: "Spectre", kills: 9 },
+        { name: "Operator", kills: 3 },
+      ],
       team: "Blue",
       agent: "Astra",
       rank: "Silver 3",

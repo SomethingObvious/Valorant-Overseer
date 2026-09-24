@@ -72,6 +72,12 @@ _RR_CACHE: dict[str, tuple[Any, ...]] = {}
 _MATCH_DETAIL_CACHE: dict[str, dict[str, Any]] = {}
 _MATCH_DETAIL_MAX = 200
 
+# A finished career, keyed by the match list it was built from. Eight match
+# details is the dearest thing the panel asks for and the answer cannot change
+# while the newest match id is the same one, so a repeat costs the history
+# lookup and nothing else. No expiry: a new match changes the key.
+_CAREER_CACHE: dict[str, tuple[dict[str, Any], tuple[str, ...]]] = {}
+
 # Two pools, deliberately not one. The per-player fan-outs call kd_hs, which
 # fans out again over match details; with a single shared pool the outer
 # workers would occupy every thread while waiting on inner tasks that can
@@ -106,6 +112,18 @@ def _fallback_name(puuid: str) -> str:
     return f"Player-{(puuid or '????')[:4].upper()}"
 
 
+# What each signal costs, in plain terms. Tier 20 is Diamond 3: three per
+# group from Iron at 3, so Diamond is 18 to 20 and Immortal starts at 24.
+_SMURF_PEAK_TIER = 20
+_SMURF_LEVEL = 60
+_SMURF_KD = 1.35
+_SMURF_KD_LEVEL = 80
+_SMURF_KD_MATCHES = 5
+_SMURF_WR = 62.0
+_SMURF_WR_GAMES = 15
+_SMURF_WR_LEVEL = 100
+
+
 def smurf_signals(
     *,
     level: int | None,
@@ -114,16 +132,33 @@ def smurf_signals(
     kd: float | None,
     win_rate: float | None,
     games: int | None,
+    kd_matches: int | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     lvl = level or 0
+    # A hidden level is the commonest thing about a smurf and the one field
+    # this cannot do without: every signal below is "for that level". With it
+    # hidden there is nothing to say, so nothing is said.
     if lvl <= 0:
         return reasons
-    if lvl < 60 and (peak_tier or 0) >= 20:
+    if lvl < _SMURF_LEVEL and (peak_tier or 0) >= _SMURF_PEAK_TIER:
         reasons.append(f"Lvl {lvl}, peak {rank_from_tier(peak_tier)['name']}")
-    if kd is not None and kd >= 1.35 and lvl < 80:
+    # The K/D is the last few matches, not a career, and three good games is
+    # something anybody has. Under five matches it is not evidence, and this is
+    # the one signal that can flag a low level account on its own.
+    if (
+        kd is not None
+        and kd >= _SMURF_KD
+        and lvl < _SMURF_KD_LEVEL
+        and (kd_matches or 0) >= _SMURF_KD_MATCHES
+    ):
         reasons.append(f"K/D {kd} at lvl {lvl}")
-    if win_rate is not None and win_rate >= 62 and (games or 0) >= 15 and lvl < 100:
+    if (
+        win_rate is not None
+        and win_rate >= _SMURF_WR
+        and (games or 0) >= _SMURF_WR_GAMES
+        and lvl < _SMURF_WR_LEVEL
+    ):
         reasons.append(f"{win_rate}% WR")
     return reasons
 
@@ -147,13 +182,23 @@ def compute_smurf(
     kd: float | None,
     win_rate: float | None,
     games: int | None,
+    kd_matches: int | None = None,
 ) -> tuple[bool, list[str]]:
     reasons = smurf_signals(
-        level=level, peak_tier=peak_tier, rank_tier=rank_tier, kd=kd, win_rate=win_rate, games=games
+        level=level,
+        peak_tier=peak_tier,
+        rank_tier=rank_tier,
+        kd=kd,
+        win_rate=win_rate,
+        games=games,
+        kd_matches=kd_matches,
     )
     if not reasons:
         return False, []
-    flagged = ((level or 0) < 60 and len(reasons) >= 1) or len(reasons) >= 2
+    # Under level 60 one signal is enough, because the level is itself half the
+    # argument. Above it, a single number is not worth calling somebody a
+    # smurf over, so it takes two.
+    flagged = ((level or 0) < _SMURF_LEVEL and len(reasons) >= 1) or len(reasons) >= 2
     return flagged, reasons
 
 
@@ -1115,6 +1160,7 @@ class LiveMatch:
                 kd=cached["kd"],
                 win_rate=rk["wr"],
                 games=rk["games"],
+                kd_matches=len((cached.get("intel") or {}).get("form") or []),
             )
             players.append(
                 assemble_player(
@@ -1311,6 +1357,7 @@ class LiveMatch:
                 kd=kd,
                 win_rate=rk["wr"],
                 games=rk["games"],
+                kd_matches=len((intel or {}).get("form") or []),
             )
             players.append(
                 assemble_player(
@@ -1364,11 +1411,22 @@ class LiveMatch:
             entries = []
         mids = [h["MatchID"] for h in entries if h.get("MatchID")]
 
+        hit = _CAREER_CACHE.get(puuid)
+        if hit and mids and hit[1] == tuple(mids):
+            return hit[0]
+
         def fetch_detail(mid: str) -> Any:
             try:
-                return self._career_match(
-                    self.auth.pd_get(f"/match-details/v1/matches/{mid}"), puuid, mid
-                )
+                # The board already pulled the newest few of these to work out
+                # a K/D, and they are the same documents. Reading them from
+                # there is the difference between a career that opens and one
+                # you wait for.
+                md = _MATCH_DETAIL_CACHE.get(mid)
+                if md is None:
+                    md = self.auth.pd_get(f"/match-details/v1/matches/{mid}")
+                    if isinstance(md, dict) and "players" in md:
+                        _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
+                return self._career_match(md, puuid, mid)
             except Exception:
                 return None
 
@@ -1414,7 +1472,12 @@ class LiveMatch:
                 }
             )
 
-        return {"source": "local", "puuid": puuid, "matches": matches, **_career_summary(matches)}
+        out = {"source": "local", "puuid": puuid, "matches": matches, **_career_summary(matches)}
+        # Only cache a complete answer. Half a career, because Riot throttled
+        # three of the fetches, would otherwise stick until the next match.
+        if mids and len(matches) == len(mids):
+            _cache_put(_CAREER_CACHE, _KD_CACHE_MAX, puuid, (out, tuple(mids)))
+        return out
 
     def _career_match(self, md: dict[str, Any], puuid: str, mid: str = "") -> dict[str, Any] | None:
         info = md.get("matchInfo", {}) or {}
@@ -2170,7 +2233,106 @@ def _self_check() -> None:
     assert side_now("PREGAME", None, "competitive", None) is None
     assert side_now("MENUS", "Red", "competitive", None) is None
 
-    print("live_match self-check OK (round stats: KAST, trades, opening duels, econ; sides)")
+    # A career is eight match details, and the same eight every time until they
+    # play another match. Twice through has to cost one history lookup and no
+    # details at all, or opening the guns section is a wait every time.
+    class _CountingAuth:
+        puuid = "me"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.history = ["m1", "m2"]
+
+        def headers(self) -> dict[str, str]:
+            return {}
+
+        def pd_get(self, path: str, **_: Any) -> Any:
+            self.calls.append(path)
+            if path.startswith("/match-history"):
+                return {"History": [{"MatchID": m} for m in self.history]}
+            if path.startswith("/match-details"):
+                mid = path.rsplit("/", 1)[-1]
+                return {
+                    "matchInfo": {"matchId": mid, "queueID": "competitive", "gameStartMillis": 1},
+                    "players": [
+                        {
+                            "subject": "me",
+                            "teamId": "Blue",
+                            "characterId": "",
+                            "stats": {"kills": 10, "deaths": 5, "assists": 2, "score": 4000},
+                        }
+                    ],
+                    "teams": [{"teamId": "Blue", "won": True, "roundsWon": 13}],
+                    "roundResults": [],
+                }
+            return {}
+
+        def get_glz(self, *_: Any, **__: Any) -> Any:
+            return {}
+
+    _CAREER_CACHE.clear()
+    _MATCH_DETAIL_CACHE.clear()
+    auth = _CountingAuth()
+    lm = LiveMatch(auth)
+    first = lm.player_career("me", count=2)
+    details = [c for c in auth.calls if c.startswith("/match-details")]
+    assert len(details) == 2, auth.calls
+    second = lm.player_career("me", count=2)
+    again = [c for c in auth.calls if c.startswith("/match-details")]
+    assert len(again) == 2, f"a repeat refetched the details: {again}"
+    # Identity, not equality: the detail cache alone would make a rebuild look
+    # free here, and the point of this cache is not paying to parse eight
+    # matches again either.
+    assert second is first, "the career was rebuilt rather than served from the cache"
+
+    # A new match at the top of the history is a different career, and the one
+    # detail that is already in hand still does not go back to Riot.
+    auth.calls.clear()
+    auth.history = ["m0", "m1"]
+    lm.player_career("me", count=2)
+    fresh = [c for c in auth.calls if c.startswith("/match-details")]
+    assert fresh == ["/match-details/v1/matches/m0"], fresh
+
+    # The smurf flag. Every signal is "for that level", so a hidden level says
+    # nothing at all, and a K/D off three matches is not evidence.
+    assert compute_smurf(level=0, peak_tier=26, rank_tier=12, kd=2.5, win_rate=90.0, games=50) == (
+        False,
+        [],
+    )
+    hot, why = compute_smurf(
+        level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=3
+    )
+    assert (hot, why) == (False, []), why
+    hot, why = compute_smurf(
+        level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
+    )
+    assert hot and why == ["K/D 1.9 at lvl 41"], why
+    # A low level on a high peak is one signal and enough on its own.
+    flagged, why = compute_smurf(
+        level=41, peak_tier=24, rank_tier=12, kd=None, win_rate=None, games=None
+    )
+    assert flagged and why == ["Lvl 41, peak Immortal 1"], why
+    # Diamond 3 is where the peak signal starts; Diamond 2 is not a signal.
+    assert (
+        compute_smurf(level=41, peak_tier=19, rank_tier=12, kd=None, win_rate=None, games=None)[1]
+        == []
+    )
+    # Above 60 one number is not enough, two are.
+    one, why = compute_smurf(
+        level=75, peak_tier=26, rank_tier=12, kd=1.5, win_rate=None, games=None, kd_matches=5
+    )
+    assert not one and why == ["K/D 1.5 at lvl 75"], why
+    two, why = compute_smurf(
+        level=75, peak_tier=26, rank_tier=12, kd=1.5, win_rate=70.0, games=30, kd_matches=5
+    )
+    assert two and len(why) == 2, why
+    # A win rate off nine games is not a win rate.
+    assert (
+        compute_smurf(level=75, peak_tier=26, rank_tier=12, kd=None, win_rate=80.0, games=9)[1]
+        == []
+    )
+
+    print("live_match self-check OK (round stats, sides, career cached, smurf signals)")
 
 
 if __name__ == "__main__":

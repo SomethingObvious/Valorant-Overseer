@@ -4,6 +4,7 @@ import type { Career, Encounters, Fetched, Performance, Recap, RecapPlayer } fro
 import { useRequest } from "./api.js";
 import { Bridge } from "./bridge.js";
 import {
+  actShort,
   arr,
   arrange,
   bar,
@@ -34,7 +35,15 @@ import { enableMouse, hitTest, parseMouseChunk } from "./mouse.js";
 import { enterAltScreen } from "./screen.js";
 import * as prefs from "./settings.js";
 import { Shimmer } from "./shimmer.js";
-import { C, kdColor, ROLE_COLOR, ROLE_GLYPH, STATE_COLOR, STATE_LABEL } from "./theme.js";
+import {
+  C,
+  kdColor,
+  ROLE_COLOR,
+  ROLE_GLYPH,
+  rankColor,
+  STATE_COLOR,
+  STATE_LABEL,
+} from "./theme.js";
 import type { Board, ConnectionState, Player, TeamStats } from "./types.js";
 import {
   CareerView,
@@ -64,7 +73,9 @@ const COLUMNS: Record<string, Column> = {
   name: { header: "PLAYER", width: 17, prio: 0 },
   rank: { header: "RANK", width: 12, prio: 0 },
   rr: { header: "RR", width: 7, prio: 2, align: "right" },
-  peak: { header: "PEAK", width: 13, prio: 1 },
+  // "Ascendant 3 V25A4": the rank and when they got there. A peak with no
+  // date beside it reads as a current rank, every time.
+  peak: { header: "PEAK", width: 17, prio: 1 },
   kd: { header: "K/D", width: 5, prio: 0, align: "right" },
   wr: { header: "WIN", width: 5, prio: 1, align: "right" },
   games: { header: "GAMES", width: 6, prio: 3, align: "right" },
@@ -85,10 +96,12 @@ export const COLUMN_WIDTHS: Record<string, number> = Object.fromEntries(
   Object.entries(COLUMNS).map(([k, c]) => [k, c.width]),
 );
 
-// 2 panel border + 1 panel padding + 2 selection prefix + 5 trailing flag
+// 2 panel border + 1 panel padding + 2 selection prefix + 7 trailing flag
 // column. Get this wrong and the rows overflow and Ink wraps every one of
-// them to two lines, which is subtle enough to ship twice.
-export const ROW_CHROME = 10;
+// them to two lines, which is subtle enough to ship twice. It shipped again
+// when the opper mark widened the flag column from five columns to seven and
+// this number stayed where it was.
+export const ROW_CHROME = 12;
 const NAME_MIN = 10;
 
 /**
@@ -98,7 +111,7 @@ const NAME_MIN = 10;
 // The terminal width, not the width the table gets: the panel keeps two
 // columns for its own border, so a row is fitted to width - 2. Naming the
 // smaller number here let 43 and 44 through, where every row wrapped.
-export const MIN_WIDTH = 45;
+export const MIN_WIDTH = 47;
 
 /** A result's colour. A draw is neither side's, so it takes neither's. */
 export const outcomeColor = (letter: string): string =>
@@ -182,18 +195,20 @@ function Header({
   width,
   filter,
   filtering,
+  session: showSession,
 }: {
   board: Board;
   conn: ConnectionState;
   width: number;
   filter: string;
   filtering: boolean;
+  session: boolean;
 }) {
   const state = board.state ?? "OFFLINE";
   const score = board.score;
   const prob = num(board.winProb);
   const session = board.session;
-  const flow = rrFlow(session?.points);
+  const flow = showSession ? rrFlow(session?.points) : [];
   const net = num(session?.net) ?? 0;
 
   // Shed the least useful thing first as the terminal narrows. Wrapping is
@@ -389,7 +404,7 @@ export function cell(
     case "rank": {
       const tier = num(p.rankTier) ?? 0;
       return (
-        <Text wrap="truncate" bold={tier > 2} color={tier <= 2 ? C.faint : (p.rankColor ?? C.text)}>
+        <Text wrap="truncate" bold={tier > 2} color={rankColor(tier)}>
           {pad(p.rank ?? NONE, w)}
         </Text>
       );
@@ -411,12 +426,17 @@ export function cell(
         </Text>
       );
     }
-    case "peak":
+    case "peak": {
+      const act = actShort(p.peakAct);
       return (
-        <Text wrap="truncate" color={peakGap(p) ? C.gold : (p.peakColor ?? C.dim)}>
-          {pad(p.peakRank ?? NONE, w)}
+        <Text wrap="truncate">
+          <Text color={peakGap(p) ? C.gold : rankColor(p.peakRankTier)}>
+            {pad(p.peakRank ?? NONE, act ? Math.min(12, w) : w)}
+          </Text>
+          {act && w > 12 ? <Text color={C.faint}>{pad(act, w - 12)}</Text> : null}
         </Text>
       );
+    }
     case "kd": {
       return (
         <Text wrap="truncate" bold color={kdColor(p.kd)}>
@@ -589,7 +609,9 @@ function TeamBlock({
       {stats ? (
         <>
           <Text color={C.line}>{"  "}</Text>
-          <Text color={stats.rankColor ?? C.dim}>{`${stats.avgRank ?? NONE} avg`}</Text>
+          <Text color={rankColor(stats.avgRankTier, stats.avgRank)}>
+            {`${stats.avgRank ?? NONE} avg`}
+          </Text>
           <Text color={C.line}>{"   "}</Text>
           <Text color={kdColor(stats.avgKd)}>{`${stats.avgKd ?? NONE} K/D`}</Text>
           <Text color={C.line}>{"   "}</Text>
@@ -675,6 +697,53 @@ export type PanelTab = (typeof PANEL_TABS)[number];
 const PANEL_COST: Record<PanelTab, number> = { stats: 10, form: 4, guns: 12, met: 8 };
 
 /**
+ * What a section will really draw for THIS player, counted off the JSX below.
+ *
+ * The worst case above is what the budget used to spend on every section, and
+ * it is nearly always wrong: guns is twelve lines with a career and nine
+ * without, met is three lines for a stranger and seven for someone you have
+ * played with. Paying worst case four times over meant a panel with thirty
+ * blank lines in it and three sections shut, on a terminal with room for all
+ * four. The exact number is not hard to keep, because every line below is
+ * either unconditional or behind a test that can be asked here too.
+ */
+function sectionCost(
+  name: PanelTab,
+  p: Player,
+  last: RecapPlayer | null,
+  career: Career | null,
+  settings: prefs.Settings,
+): number {
+  switch (name) {
+    // A blank, K/D, win, HS, and the five line last match block.
+    case "stats":
+      return 1 + 3 + (last ? 5 : 0);
+    // A blank and the pips, then the mains on their own line.
+    case "form":
+      return (formPips(p).length ? 2 : 0) + (arr(p.topAgents).length ? 1 : 0);
+    case "guns": {
+      const used = arr(career?.topGuns).length
+        ? Math.min(3, arr(career?.topGuns).length)
+        : arr(last?.weaponKills).length
+          ? Math.min(3, arr(last?.weaponKills).length)
+          : Math.min(4, arr(p.weapons).length) || 1;
+      const force = num(career?.forceHabit?.chances) ? 2 : 1;
+      const bonus = arr(career?.bonusBuys).length || 1;
+      return 1 + 1 + used + 1 + force + 1 + bonus;
+    }
+    case "met": {
+      const stack = settings.stacks && p.stackGuess && !p.party ? 3 : 0;
+      if (!seenCount(p)) return stack || 3;
+      return (
+        stack + 2 + (num(p.encounter?.withCount) ? 1 : 0) + (num(p.encounter?.againstCount) ? 1 : 0)
+      );
+    }
+    default:
+      return PANEL_COST[name];
+  }
+}
+
+/**
  * Lines the panel spends before a single section is drawn.
  *
  * This was a flat 14 and it was wrong in both directions, which is how the
@@ -686,52 +755,51 @@ function panelChrome(p: Player, reasons: number): number {
   return (
     2 + // the border
     1 + // the name
-    1 + // the blank line under it
     1 + // level, title and role
     2 + // the section bar
     (reasons ? reasons + 2 : 0) + // the smurf block
-    1 + // rank, RR and leaderboard
+    2 + // the blank line and then rank, RR and leaderboard
     (isRanked(p) ? 1 : 0) + // the RR meter
-    1 + // peak
+    1 + // peak, with the act it was reached in
     (p.previousRank ? 1 : 0) + // last act
     2 // the blank line and the Enter hint
   );
 }
 
 /**
- * Which sections to draw, starting from the one that is open.
+ * Which sections to draw, filling the space from the one that is open.
  *
- * One at a time, unless the window is tall enough that the rest are free.
+ * Ink does not clip an over-full box: it shrinks the children and drops lines
+ * out of the MIDDLE, so a budget that is a line too generous does not spill
+ * off the screen where you would see it, it silently deletes the rank line.
+ * That is why this counts rather than guesses, and why `cost` is the measured
+ * height of each section instead of its worst case.
  *
- * Opening several was an attempt to use a tall terminal properly and it was a
- * bad trade. Ink does not clip an over-full box: it shrinks the children and
- * drops lines out of the MIDDLE, so a budget that is a line too generous does
- * not spill off the screen where you would see it, it silently deletes the
- * player's rank. Predicting the rendered height of four variable sections
- * exactly, forever, is not a thing this code can do, and being wrong is
- * invisible. So it only opens more when there is room to be wrong by a lot.
+ * A section that does not fit is skipped rather than ending the loop, so a
+ * three line form still gets in behind a twelve line guns block that did not.
  */
 export function panelSections(
   tab: PanelTab,
   height: number,
   chrome: number,
   focused: PanelTab | null = null,
+  cost: (name: PanelTab) => number = (name) => PANEL_COST[name],
 ): PanelTab[] {
-  if (focused) return [focused];
-  const from = PANEL_TABS.indexOf(tab);
-  const first = PANEL_TABS[from] ?? "stats";
-  // Even one section has to fit. It used to be included unconditionally, so a
-  // short panel drew a section it had no room for and Ink paid for it out of
-  // the rank line.
-  if (height < chrome + PANEL_COST[first]) return [];
-  const out: PanelTab[] = [first];
-  // Every section at its worst, plus the chrome, plus a margin for being wrong.
-  const all = Object.values(PANEL_COST).reduce((n, c) => n + c, 0);
-  if (height >= chrome + all + 4) {
-    for (let i = 1; i < PANEL_TABS.length; i += 1) {
-      const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
-      if (name) out.push(name);
-    }
+  // The focused section is the one that was asked for, so it is offered the
+  // room first. The rest follow in bar order, which is the order they draw in.
+  const start = Math.max(0, PANEL_TABS.indexOf(focused ?? tab));
+  const order: PanelTab[] = [];
+  for (let i = 0; i < PANEL_TABS.length; i += 1) {
+    const name = PANEL_TABS[(start + i) % PANEL_TABS.length];
+    if (name) order.push(name);
+  }
+  const out: PanelTab[] = [];
+  let used = chrome;
+  for (const name of order) {
+    const c = cost(name);
+    if (used + c > height) continue;
+    out.push(name);
+    used += c;
   }
   return out;
 }
@@ -864,11 +932,13 @@ function Detail({
   // Both of these are guesses rather than measurements, and either can be
   // switched off by someone who would rather not be told.
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  // Costed twice: the bar only exists when something is shut, and whether
-  // anything is shut depends on the budget. Ask without it, then again
-  // with it if the first answer left a section out.
-  const bare = panelSections(tab, height, panelChrome(p, reasons.length), focused);
-  const open = bare;
+  const chrome = panelChrome(p, reasons.length);
+  const costOf = (name: PanelTab): number => sectionCost(name, p, last, career, settings);
+  const open = panelSections(tab, height, chrome, focused, costOf);
+  const used = Math.min(
+    height,
+    open.reduce((n, name) => n + costOf(name), chrome),
+  );
   const shows = (name: PanelTab): boolean => open.includes(name);
   return (
     <Box
@@ -879,13 +949,12 @@ function Detail({
       paddingX={1}
       marginBottom={1}
       width={SIDEBAR}
-      height={height}
+      height={used}
       flexShrink={0}
     >
       <Text bold color={C.bone}>
         {p.name ?? NONE}
       </Text>
-      <Box height={1} />
       <Text wrap="truncate" color={C.dim}>
         {p.title ? `${p.title} · ` : ""}
         {`Level ${num(p.level) ?? NONE}`}
@@ -920,7 +989,7 @@ function Detail({
       ) : null}
 
       <Box marginTop={1}>
-        <Text wrap="truncate" color={p.rankColor ?? C.text}>
+        <Text wrap="truncate" color={rankColor(p.rankTier)}>
           {p.rank ?? NONE}
         </Text>
         {isRanked(p) ? <Text wrap="truncate" color={C.dim}>{`  ${num(p.rr) ?? 0} RR`}</Text> : null}
@@ -933,14 +1002,14 @@ function Detail({
           {meter(num(p.rr), 100, 10)}
         </Text>
       ) : null}
-      {/* When they peaked, on its own line and in plain words, because an act
-          code tacked onto the end of a rank is not something anyone reads. */}
-      <Text wrap="truncate" color={peakGap(p) ? C.gold : C.dim}>
-        {`Peak ${p.peakRank ?? NONE}`}
+      {/* The peak and when they reached it, on one line. Two lines for one
+          fact is what the panel could least afford, and the date matters: a
+          peak from two years ago is a different player to a peak from last
+          month. */}
+      <Text wrap="truncate">
+        <Text color={peakGap(p) ? C.gold : C.dim}>{`Peak ${p.peakRank ?? NONE}`}</Text>
+        {p.peakAct ? <Text color={C.faint}>{`  ${p.peakAct}`}</Text> : null}
       </Text>
-      {p.peakAct ? (
-        <Text wrap="truncate" color={C.faint}>{`  reached in ${p.peakAct}`}</Text>
-      ) : null}
       {p.previousRank ? (
         <Text wrap="truncate" color={C.faint}>{`Last act ${p.previousRank}`}</Text>
       ) : null}
@@ -955,6 +1024,12 @@ function Detail({
               wrap="truncate"
               color={kdColor(p.kd)}
             >{`${dash(p.kd)} ${bar(num(p.kd), 2, 8)}`}</Text>
+            {/* Over how many matches. The board fills K/D from the last few
+                matches, the same set the form pips come from, and a number
+                with no sample size behind it reads as a career average. */}
+            {num(p.kd) !== null && arr(p.form).length ? (
+              <Text wrap="truncate" color={C.faint}>{`  last ${arr(p.form).length}`}</Text>
+            ) : null}
           </Box>
           <Box>
             <Text wrap="truncate" color={C.dim}>
@@ -1112,59 +1187,6 @@ function record(flow: ReturnType<typeof rrFlow>): string {
   const count = (letter: "W" | "L" | "D"): number => flow.filter((f) => f.result === letter).length;
   const draws = count("D");
   return `${count("W")}W-${count("L")}L${draws ? `-${draws}D` : ""}`;
-}
-
-function Session({ board }: { board: Board }) {
-  const flow = rrFlow(board.session?.points);
-  if (!flow.length) return null;
-  const net = num(board.session?.net) ?? 0;
-  const wins = flow.filter((f) => f.result === "W").length;
-  // One block per match, one row.
-  //
-  // This was three rows of braille, which packs two columns and four rows of
-  // dots into every cell. It reads beautifully in a terminal that draws braille
-  // one cell wide and it is a mess in one that does not: braille is East Asian
-  // Ambiguous, so a terminal is within its rights to give every character two
-  // cells, and then a twelve character chart is twenty four columns wide in a
-  // panel that budgeted twelve. Blocks are the same family as the RR meter and
-  // the K/D bar next to them, so whatever this terminal does with them, it
-  // already does everywhere else on the screen.
-  const HEIGHTS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={C.line}
-      paddingX={1}
-      width={SIDEBAR}
-    >
-      <Box>
-        <Text bold color={C.dim}>
-          SESSION RR
-        </Text>
-        <Text bold color={net >= 0 ? C.ally : C.loss}>
-          {`  ${net > 0 ? "+" : ""}${net} RR`}
-        </Text>
-        <Text color={C.faint}>{`  ${wins}W-${flow.length - wins}L`}</Text>
-      </Box>
-      <Box>
-        {flow.map((f) => (
-          <Text key={f.key} color={f.delta >= 0 ? C.ally : C.loss}>
-            {HEIGHTS[Math.max(0, Math.min(HEIGHTS.length - 1, f.level - 1))] ?? "▁"}
-          </Text>
-        ))}
-      </Box>
-      <Text wrap="truncate" color={C.faint}>
-        {"Taller bars won or lost more RR."}
-      </Text>
-      <Text wrap="truncate">
-        <Text color={C.ally}>{"Green"}</Text>
-        <Text color={C.faint}>{" is a win, "}</Text>
-        <Text color={C.loss}>{"red"}</Text>
-        <Text color={C.faint}>{" is a loss."}</Text>
-      </Text>
-    </Box>
-  );
 }
 
 // --- settings --------------------------------------------------------------
@@ -1620,13 +1642,9 @@ export function App({
   // The sidebar takes the right of the frame when there is room for it, and
   // the layout needs to know that before it places anything.
   const wide = width >= 108 && (settings.detail || settings.session);
-  // Measured from what those panels draw, plus a margin. Being a line short
-  // costs a section; being a line over costs a line of content, silently,
-  // out of the middle. The asymmetry is the whole reason to round up.
-  const SESSION_LINES = 6;
-  // Name, blank, level, rank, meter, peak, act, last act, blank, hint and
-  // the border. Under this there is no panel worth drawing.
-  const MIN_PANEL = 14;
+  // Name, level, rank, meter, peak, last act, blank, hint and the border.
+  // Under this there is no panel worth drawing.
+  const MIN_PANEL = 12;
 
   // How much room a view actually gets, once the header, the tab strip and
   // the key hints have taken theirs. Everything sized to the window is
@@ -1643,7 +1661,9 @@ export function App({
         ? matching(arrange(arr(teams[other]), sort), filter)
         : [];
     return boardLayout({
-      hasMeta: num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0,
+      hasMeta:
+        num(board?.winProb) !== null ||
+        (settings.session && rrFlow(board?.session?.points).length > 0),
       tabs: VIEWS.map((v) => ({
         key: v.key,
         digit: v.digit,
@@ -1656,11 +1676,13 @@ export function App({
       width,
       bodyWidth: wide ? width - SIDEBAR - 3 : width,
     });
-  }, [board, settings.enemies, sort, filter, width, wide]);
+  }, [board, settings.enemies, settings.session, sort, filter, width, wide]);
 
   const sectionZones = useMemo(() => {
     if (!wide || !settings.detail) return [];
-    const hasMeta = num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0;
+    const hasMeta =
+      num(board?.winProb) !== null ||
+      (settings.session && rrFlow(board?.session?.points).length > 0);
     // The terminal counts rows and columns from one, which is what the
     // mouse reports use. Border, name, blank, level, blank, then the bar.
     const row = headerHeight(hasMeta) + 2 + 5 + 1;
@@ -1680,7 +1702,7 @@ export function App({
       left += span;
     }
     return out;
-  }, [wide, settings.detail, board, width]);
+  }, [wide, settings.detail, settings.session, board, width]);
 
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
@@ -2009,7 +2031,14 @@ export function App({
     return (
       <Box flexDirection="column">
         {keys}
-        <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
+        <Header
+          board={current}
+          conn={conn}
+          width={width}
+          filter={filter}
+          filtering={filtering}
+          session={settings.session}
+        />
         <Holding board={current} conn={conn} detail={connDetail} tick={tick} animate={!preview} />
       </Box>
     );
@@ -2018,13 +2047,15 @@ export function App({
   const bodyWidth = wide ? width - SIDEBAR - 3 : width - 2;
   const cols = visibleColumns(bodyWidth, settings);
   // Window minus the header, the tab strip, its rule and the footer.
-  const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
+  const hasMeta =
+    num(current.winProb) !== null ||
+    (settings.session && rrFlow(current.session?.points).length > 0);
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
   // The panel shares the body with the session chart, and in agent select
   // with the team composition too. It used to be handed the whole terminal
   // height, so its budget covered space it did not have and Ink answered by
   // dropping lines out of the middle of it.
-  const panelSpace = Math.max(8, bodyHeight - (settings.session ? SESSION_LINES : 0));
+  const panelSpace = bodyHeight;
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -2034,7 +2065,14 @@ export function App({
     return (
       <Box flexDirection="column">
         {keys}
-        <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
+        <Header
+          board={current}
+          conn={conn}
+          width={width}
+          filter={filter}
+          filtering={filtering}
+          session={settings.session}
+        />
         <Tabs active={view} width={width} hovered={hoverTab} />
         <Box flexDirection="column" height={viewHeight} overflow="hidden">
           {view === "career" ? (
@@ -2091,7 +2129,14 @@ export function App({
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       {keys}
-      <Header board={current} conn={conn} width={width} filter={filter} filtering={filtering} />
+      <Header
+        board={current}
+        conn={conn}
+        width={width}
+        filter={filter}
+        filtering={filtering}
+        session={settings.session}
+      />
       <Tabs active={view} width={width} hovered={hoverTab} />
       <Box height={bodyHeight} overflow="hidden">
         <Box flexDirection="column" width={bodyWidth} flexShrink={0} overflowX="hidden">
@@ -2141,7 +2186,6 @@ export function App({
                 career={canned("profile", career).data ?? null}
               />
             ) : null}
-            {settings.session ? <Session board={current} /> : null}
           </Box>
         ) : null}
       </Box>

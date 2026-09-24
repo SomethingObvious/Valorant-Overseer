@@ -268,7 +268,9 @@ async function main(): Promise<void> {
   // app actually drew: find the row the bar is on, click each name where it
   // really is, and see the section open.
   {
-    stdout.resize(150, 60);
+    // Tall enough for the chrome and one big section, short enough that the
+    // other big one has to wait.
+    stdout.resize(150, 37);
     await settle();
     const frameLines = latest().split(String.fromCharCode(10));
     const barRow = frameLines.findIndex((l) => l.includes("STATS") && l.includes("GUNS"));
@@ -276,13 +278,13 @@ async function main(): Promise<void> {
       failures.push("the panel drew no section bar");
     } else {
       const bar = frameLines[barRow] ?? "";
-      // A click focuses one section, so the test is not that the clicked one
-      // is present - on a tall terminal they all are, and the check passes
-      // however wrong the zones happen to be. It is that the OTHERS are gone.
+      // Clicked section in, and the one that cannot fit beside it out. Both
+      // halves matter: the first fails when the zone is off by a row or a
+      // column and the click lands nowhere, the second when focus stops
+      // buying the section any room of its own.
       for (const [name, mine, others] of [
-        ["GUNS", "Guns", ["Win   ", "Met"]],
-        ["MET", "Met", ["Win   ", "Guns"]],
-        ["STATS", "Win   ", ["Guns", "Met"]],
+        ["GUNS", "Guns", ["Win   "]],
+        ["STATS", "Win   ", ["Guns"]],
       ] as Array<[string, string, string[]]>) {
         const at = bar.indexOf(name);
         if (at < 0) {
@@ -352,6 +354,42 @@ async function main(): Promise<void> {
     }
     if (silent?.includes(mark))
       failures.push("SilentEnt#GG is marked an opper on one Operator kill");
+  }
+
+  // The panel ends where its content ends, for every player on the board.
+  //
+  // Both failures this catches are silent. Budget a line too many and there is
+  // a blank line above the bottom border; budget a line too few and Ink drops
+  // a line out of the MIDDLE of the panel, so the border still looks right and
+  // the rank, or the name, is simply gone.
+  {
+    const TOP_LEFT = String.fromCodePoint(0x256d);
+    const BOTTOM_LEFT = String.fromCodePoint(0x2570);
+    stdout.resize(150, 60);
+    await settle();
+    for (let i = 0; i < 6; i += 1) {
+      const lines = latest().split(String.fromCharCode(10));
+      // The sidebar corners are the only box corners this far right.
+      const top = lines.findIndex((l) => l.lastIndexOf(TOP_LEFT) > 100);
+      let bottom = -1;
+      for (let r = 0; r < lines.length; r += 1) {
+        if ((lines[r] ?? "").lastIndexOf(BOTTOM_LEFT) > 100) bottom = r;
+      }
+      if (top < 0 || bottom <= top) {
+        failures.push("the panel drew no box");
+        break;
+      }
+      const above = (lines[bottom - 1] ?? "").trim();
+      if (!above.includes("[Enter]")) {
+        failures.push(`panel row above the border is ${above.slice(100) || "blank"}, not the hint`);
+      }
+      const head = (lines[top + 1] ?? "").slice(100);
+      if (!/[A-Za-z]/.test(head)) failures.push("the panel lost its name line");
+      stdin.push(String.fromCharCode(27) + "[B");
+      await settle();
+    }
+    stdout.resize(150, 40);
+    await settle();
   }
 
   // A lone escape byte on the board must not close the app. The terminal

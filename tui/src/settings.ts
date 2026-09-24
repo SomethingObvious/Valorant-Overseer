@@ -101,7 +101,12 @@ export interface Option {
 
 export const OPTIONS: Option[] = [
   { group: "Panels", key: "detail", label: "Detail panel", hint: "The selected player, in full" },
-  { group: "Panels", key: "session", label: "Session panel", hint: "RR gained and lost today" },
+  {
+    group: "Panels",
+    key: "session",
+    label: "Session strip",
+    hint: "RR gained and lost today, under the title",
+  },
   { group: "Panels", key: "enemies", label: "Enemy team", hint: "The other side, once in game" },
   { group: "Columns", key: "colAgent", label: "Agent", hint: "Who they are playing" },
   { group: "Columns", key: "colRank", label: "Rank", hint: "Current rank" },

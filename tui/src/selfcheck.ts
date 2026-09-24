@@ -8,6 +8,7 @@ import {
   visibleColumns,
 } from "./app.js";
 import { arrange, bar, blockFor, dash, meter, num, pad, railFor, rrFlow } from "./format.js";
+import { rankColor } from "./theme.js";
 import type { Player } from "./types.js";
 
 // The Python renderer this replaces died 22 different ways on fields Riot
@@ -103,6 +104,43 @@ export function selfCheck(): string[] {
     const widths = columnWidths(keys, body);
     const used = keys.reduce((n, k) => n + (widths[k] ?? 0) + 1, ROW_CHROME);
     if (used > body) failures.push(`width ${w}: rows need ${used} columns and would wrap`);
+  }
+
+  // One rank, one colour. Every shape that draws a rank gets its colour from
+  // the same place, whether it carries a tier or only the name, because the
+  // two paths disagreeing is the whole reason this function exists.
+  const tierOf: Record<string, number> = {
+    Iron: 3,
+    Bronze: 6,
+    Silver: 9,
+    Gold: 12,
+    Platinum: 15,
+    Diamond: 18,
+    Ascendant: 21,
+    Immortal: 24,
+    Radiant: 27,
+  };
+  for (const [group, tier] of Object.entries(tierOf)) {
+    for (let step = 0; step < (group === "Radiant" ? 1 : 3); step += 1) {
+      const name = group === "Radiant" ? "Radiant" : `${group} ${step + 1}`;
+      const byTier = rankColor(tier + step);
+      const byName = rankColor(undefined, name);
+      if (byTier !== byName) {
+        failures.push(`${name}: tier says ${byTier}, name says ${byName}`);
+      }
+      if (byTier === rankColor(0)) failures.push(`${name} drew as unranked`);
+    }
+  }
+  // Unranked, and anything that is not a rank at all, stay out of the palette.
+  if (rankColor(2) !== rankColor(undefined, "Unranked")) failures.push("unranked disagrees");
+  if (rankColor(undefined, "Gold 2") === rankColor(undefined, "Platinum 2")) {
+    failures.push("two groups share a colour");
+  }
+  if (rankColor(undefined, "") !== rankColor(0)) failures.push("a missing rank is not unranked");
+  // The rank has to be what the name starts with. Matching anywhere in the
+  // string colours "Peak Gold 2" gold, and that string is drawn in the panel.
+  if (rankColor(undefined, "Peak Gold 2") !== rankColor(0)) {
+    failures.push("a rank name is matched anywhere in the string, not at the front");
   }
 
   // Columns may be shed on a narrow terminal, but never these, and the set

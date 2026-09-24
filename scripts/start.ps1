@@ -72,6 +72,11 @@ Stop-RunningApp "launcher" | Out-Null
 
 
 
+# The scoreboard is a table, and a table needs columns. Asked for before the
+# handoff so the app starts at the size it was designed for rather than
+# dropping columns to fit whatever the window happened to be left at.
+Set-OverseerWindow -Columns 160 -Rows 46
+
 Complete-Progress "Opening the scoreboard."
 
 # This console becomes the scoreboard, and the scoreboard draws its own header.

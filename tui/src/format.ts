@@ -132,6 +132,21 @@ export function outcomeOf(result: unknown): "W" | "L" | "D" {
   return "L";
 }
 
+/**
+ * "V25 Act 4" as "V25A4", which is what fits beside a rank on a board row.
+ *
+ * Riot's own label is the long form and the panel has room for it; a column
+ * eleven characters wide does not, and a peak rank with no date on it is the
+ * thing that keeps getting misread as current.
+ */
+export function actShort(act: unknown): string {
+  const text = typeof act === "string" ? act.trim() : "";
+  if (!text) return "";
+  const m = /^([EV])(\d+)\s*Act\s*(\d+)$/i.exec(text);
+  if (!m) return text.replace(/\s+/g, "");
+  return `${m[1]?.toUpperCase()}${m[2]}A${m[3]}`;
+}
+
 /** At this share of career kills on the Operator, they are an opper. */
 export const OPPER_SHARE = 10;
 /** One match is a thin sample, so the recap alone has to clear a higher bar. */

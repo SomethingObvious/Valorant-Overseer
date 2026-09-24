@@ -8,6 +8,7 @@ import { findStory, STORIES, type Story } from "./stories.js";
 //   node preview.mjs              every story
 //   node preview.mjs ingame       one story
 //   node preview.mjs narrow --raw keep the ANSI colour
+//   node preview.mjs ingame --rows=30  render it as a thirty row terminal
 // Never bundled into dist/overseer.js.
 
 class FakeStdout extends EventEmitter {
@@ -40,8 +41,9 @@ class FakeStdin extends EventEmitter {
 // bracketed text, such as the "[,]" key hints in the footer.
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, "g");
 
-async function renderStory(story: Story, raw: boolean): Promise<string> {
+async function renderStory(story: Story, raw: boolean, rows?: number): Promise<string> {
   const stdout = new FakeStdout(story.width);
+  if (rows) stdout.rows = rows;
   const instance = render(
     <App
       root={process.cwd()}
@@ -73,6 +75,10 @@ const args = process.argv.slice(2);
 const raw = args.includes("--raw");
 const quiet = args.includes("--quiet");
 const bare = args.includes("--bare");
+// --rows 30 renders as a thirty row terminal, which is how a short panel gets
+// looked at rather than reasoned about.
+const rowsArg = args.find((a) => a.startsWith("--rows="));
+const rows = rowsArg ? Number(rowsArg.slice(7)) : undefined;
 const wanted = args.filter((a) => !a.startsWith("--"));
 
 if (args.includes("--list")) {
@@ -99,7 +105,7 @@ const LOCATION = /:[0-9]+:[0-9]+/;
 let failed = 0;
 let crashed = 0;
 for (const story of chosen) {
-  const frame = await renderStory(story, raw);
+  const frame = await renderStory(story, raw, rows);
   const clean = frame.replace(ANSI, "").trim();
   // Ink catches a render fault and draws it into the frame instead of throwing,
   // so the process exits 0 and a story that crashed is indistinguishable from

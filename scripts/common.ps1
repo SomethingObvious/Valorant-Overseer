@@ -320,6 +320,45 @@ function Test-StdinInteractive {
 
 
 
+function Set-OverseerWindow([int]$Columns, [int]$Rows, [string]$LogName = "launcher") {
+    # Ask the console for the size the scoreboard was laid out for.
+    #
+    # The board is a table, and what it can show is decided by how many columns
+    # it is given: under about 154 the RR column goes, then the map record, and
+    # a peak rank loses the act it was reached in. None of that is a fault and
+    # all of it is avoidable, because this console belongs to us.
+    #
+    # Only ever grows, and never past what the screen can physically show. A
+    # terminal that will not be resized is not an error either: Windows
+    # Terminal decides its own size and says nothing, so the request is made,
+    # the result is logged and the app draws itself to whatever it actually
+    # got.
+    try {
+        $raw = $Host.UI.RawUI
+        $max = $raw.MaxPhysicalWindowSize
+        $win = $raw.WindowSize
+        $w = [Math]::Max($win.Width, [Math]::Min($Columns, $max.Width))
+        $h = [Math]::Max($win.Height, [Math]::Min($Rows, $max.Height))
+        if ($w -eq $win.Width -and $h -eq $win.Height) {
+            Write-OverseerLog -Log $LogName -Message "window already $($win.Width)x$($win.Height)"
+            return
+        }
+        # The window cannot exceed the buffer, so the buffer goes first. The
+        # scrollback height is left alone: the app runs on the alternate screen
+        # and shrinking it here would throw away what the launcher printed.
+        $buf = $raw.BufferSize
+        if ($buf.Width -lt $w) {
+            $raw.BufferSize = New-Object System.Management.Automation.Host.Size($w, $buf.Height)
+        }
+        $raw.WindowSize = New-Object System.Management.Automation.Host.Size($w, $h)
+        Write-OverseerLog -Log $LogName -Message "window resized to ${w}x${h} (was $($win.Width)x$($win.Height))"
+    }
+    catch {
+        Write-OverseerLog -Log $LogName -Message "window resize declined by this terminal: $($_.Exception.Message)"
+    }
+}
+
+
 function Get-PythonIdentity([string]$exe, [string[]]$exeArgs) {
     $probe = Join-Path $PSScriptRoot "python_probe.py"
     try {

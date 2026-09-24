@@ -178,7 +178,13 @@ def generate(seed: int = 7) -> dict[str, Any]:
                 level = rng.randint(18, 55)
             weapons = _weapons(rng)
             smurf, smurf_reasons = compute_smurf(
-                level=level, peak_tier=peak, rank_tier=tier, kd=kd, win_rate=win_rate, games=games
+                level=level,
+                peak_tier=peak,
+                rank_tier=tier,
+                kd=kd,
+                win_rate=win_rate,
+                games=games,
+                kd_matches=5,
             )
             players.append(
                 assemble_player(
@@ -253,7 +259,13 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
             kd = round(rng.uniform(1.4, 2.1), 2)
             level = rng.randint(18, 55)
         smurf, smurf_reasons = compute_smurf(
-            level=level, peak_tier=peak, rank_tier=t, kd=kd, win_rate=win_rate, games=games
+            level=level,
+            peak_tier=peak,
+            rank_tier=t,
+            kd=kd,
+            win_rate=win_rate,
+            games=games,
+            kd_matches=5,
         )
         players.append(
             assemble_player(

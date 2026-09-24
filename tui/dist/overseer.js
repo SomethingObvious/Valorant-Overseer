@@ -38271,6 +38271,13 @@ function outcomeOf(result) {
   if (word === "draw") return "D";
   return "L";
 }
+function actShort(act) {
+  const text = typeof act === "string" ? act.trim() : "";
+  if (!text) return "";
+  const m = /^([EV])(\d+)\s*Act\s*(\d+)$/i.exec(text);
+  if (!m) return text.replace(/\s+/g, "");
+  return `${m[1]?.toUpperCase()}${m[2]}A${m[3]}`;
+}
 var OPPER_SHARE = 10;
 var OPPER_SHARE_LAST = 20;
 function opShare(guns) {
@@ -38531,7 +38538,12 @@ function save(root2, settings) {
 }
 var OPTIONS = [
   { group: "Panels", key: "detail", label: "Detail panel", hint: "The selected player, in full" },
-  { group: "Panels", key: "session", label: "Session panel", hint: "RR gained and lost today" },
+  {
+    group: "Panels",
+    key: "session",
+    label: "Session strip",
+    hint: "RR gained and lost today, under the title"
+  },
   { group: "Panels", key: "enemies", label: "Enemy team", hint: "The other side, once in game" },
   { group: "Columns", key: "colAgent", label: "Agent", hint: "Who they are playing" },
   { group: "Columns", key: "colRank", label: "Rank", hint: "Current rank" },
@@ -38620,6 +38632,52 @@ var C = {
   loss: "#FF8088",
   ink: "#0B1119"
 };
+var RANK_COLORS = [
+  "#4A4A4A",
+  // Unranked
+  "#5A5751",
+  // Iron
+  "#BB8F5A",
+  // Bronze
+  "#AEB2B2",
+  // Silver
+  "#C5BA3F",
+  // Gold
+  "#18A7B9",
+  // Platinum
+  "#D864C7",
+  // Diamond
+  "#189452",
+  // Ascendant
+  "#DD4444",
+  // Immortal
+  "#FFFDCD"
+  // Radiant
+];
+var RANK_GROUPS = [
+  "unranked",
+  "iron",
+  "bronze",
+  "silver",
+  "gold",
+  "platinum",
+  "diamond",
+  "ascendant",
+  "immortal",
+  "radiant"
+];
+function rankColor(tier, name) {
+  const t = num(tier);
+  if (t !== null && t >= 3) {
+    return RANK_COLORS[Math.min(RANK_COLORS.length - 1, Math.floor(t / 3))] ?? C.text;
+  }
+  const word = String(name ?? "").trim().toLowerCase();
+  if (t === null && word) {
+    const at = RANK_GROUPS.findIndex((g) => g !== "unranked" && word.startsWith(g));
+    if (at > 0) return RANK_COLORS[at] ?? C.text;
+  }
+  return C.faint;
+}
 function kdColor(kd) {
   const n = num(kd);
   if (n === null) return C.faint;
@@ -38841,7 +38899,7 @@ function CareerView({
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { flexDirection: "column", children: [
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { paddingX: 1, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { bold: true, color: C.bone, children: player.name ?? NONE }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: player.rankColor ?? C.dim, children: `  ${player.rank ?? NONE}` }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: rankColor(player.rankTier, player.rank), children: `  ${player.rank ?? NONE}` }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: `   Peak ${player.peakRank ?? NONE}` }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: `   Level ${num(player.level) ?? NONE}` })
     ] }),
@@ -39066,7 +39124,7 @@ function RecapRow({
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: p.team === "Blue" ? C.ally : C.enemy, children: "\u258E" }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ice, children: pad(p.agent ?? NONE, 10) }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.text, children: pad(p.name ?? NONE, Math.min(RECAP_NAME_MAX, Math.max(10, width - RECAP_FIXED))) }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: p.rankColor ?? C.dim, children: pad(p.rank ?? NONE, 13) }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: rankColor(p.rankTier, p.rank), children: pad(p.rank ?? NONE, 13) }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.text, children: pad(`${num(p.kills) ?? 0}/${num(p.deaths) ?? 0}/${num(p.assists) ?? 0}`, 11) }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: kdColor(p.kd), children: pad(kd2(p.kd), 6, "right") }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.text, children: pad(dash(p.acs), 6, "right") }),
@@ -39160,7 +39218,7 @@ function EncountersView({
         const draws = num(row.draws) ?? 0;
         return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Box_default, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.text, children: pad(row.name ?? NONE, Math.max(14, width - 62)) }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: row.rankColor ?? C.dim, children: pad(row.rank ?? NONE, 13) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: rankColor(void 0, row.rank), children: pad(row.rank ?? NONE, 13) }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.faint, children: pad(`${num(row.seen) ?? num(row.games) ?? 0}x`, 6, "right") }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.ally, children: pad(`${wins}W`, 5, "right") }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { color: C.loss, children: pad(`${losses}L`, 5, "right") }),
@@ -39182,7 +39240,9 @@ var COLUMNS = {
   name: { header: "PLAYER", width: 17, prio: 0 },
   rank: { header: "RANK", width: 12, prio: 0 },
   rr: { header: "RR", width: 7, prio: 2, align: "right" },
-  peak: { header: "PEAK", width: 13, prio: 1 },
+  // "Ascendant 3 V25A4": the rank and when they got there. A peak with no
+  // date beside it reads as a current rank, every time.
+  peak: { header: "PEAK", width: 17, prio: 1 },
   kd: { header: "K/D", width: 5, prio: 0, align: "right" },
   wr: { header: "WIN", width: 5, prio: 1, align: "right" },
   games: { header: "GAMES", width: 6, prio: 3, align: "right" },
@@ -39199,9 +39259,9 @@ var COLUMN_KEYS = Object.keys(COLUMNS);
 var COLUMN_WIDTHS = Object.fromEntries(
   Object.entries(COLUMNS).map(([k, c]) => [k, c.width])
 );
-var ROW_CHROME = 10;
+var ROW_CHROME = 12;
 var NAME_MIN = 10;
-var MIN_WIDTH = 45;
+var MIN_WIDTH = 47;
 var outcomeColor = (letter) => letter === "W" ? C.ally : letter === "D" ? C.gold : C.loss;
 var bodyWidthOf = (width) => Math.max(1, width - 2);
 function columnWidths(keys, width) {
@@ -39253,13 +39313,14 @@ function Header({
   conn,
   width,
   filter,
-  filtering
+  filtering,
+  session: showSession
 }) {
   const state = board.state ?? "OFFLINE";
   const score = board.score;
   const prob = num(board.winProb);
   const session = board.session;
-  const flow = rrFlow(session?.points);
+  const flow = showSession ? rrFlow(session?.points) : [];
   const net = num(session?.net) ?? 0;
   const winCells = width >= 110 ? 16 : width >= 80 ? 10 : 6;
   const roomy = width >= 96;
@@ -39374,7 +39435,7 @@ function cell(key, p, rail, teamColor, selected = false, drawWidth) {
     }
     case "rank": {
       const tier = num(p.rankTier) ?? 0;
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: tier > 2, color: tier <= 2 ? C.faint : p.rankColor ?? C.text, children: pad(p.rank ?? NONE, w) });
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: tier > 2, color: rankColor(tier), children: pad(p.rank ?? NONE, w) });
     }
     case "rr": {
       if (!isRanked(p))
@@ -39385,8 +39446,13 @@ function cell(key, p, rail, teamColor, selected = false, drawWidth) {
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: earned === null || earned === 0 ? C.line : earned > 0 ? C.ally : C.loss, children: pad(earned ? `${earned > 0 ? "+" : ""}${earned}` : "", 4, "right") })
       ] });
     }
-    case "peak":
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : p.peakColor ?? C.dim, children: pad(p.peakRank ?? NONE, w) });
+    case "peak": {
+      const act = actShort(p.peakAct);
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: peakGap(p) ? C.gold : rankColor(p.peakRankTier), children: pad(p.peakRank ?? NONE, act ? Math.min(12, w) : w) }),
+        act && w > 12 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: pad(act, w - 12) }) : null
+      ] });
+    }
     case "kd": {
       return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: kdColor(p.kd), children: pad(kd2(p.kd), w, align) });
     }
@@ -39468,7 +39534,7 @@ function TeamBlock({
     ] }) : null,
     stats ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.line, children: "  " }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: stats.rankColor ?? C.dim, children: `${stats.avgRank ?? NONE} avg` }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: rankColor(stats.avgRankTier, stats.avgRank), children: `${stats.avgRank ?? NONE} avg` }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.line, children: "   " }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: kdColor(stats.avgKd), children: `${stats.avgKd ?? NONE} K/D` }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.line, children: "   " }),
@@ -39525,31 +39591,55 @@ var sectionMark = (isOpen) => isOpen ? "\u25BE" : "\u25B8";
 var sectionWidth = (name) => name.length + 2;
 var PANEL_TABS = ["stats", "form", "guns", "met"];
 var PANEL_COST = { stats: 10, form: 4, guns: 12, met: 8 };
+function sectionCost(name, p, last, career, settings) {
+  switch (name) {
+    // A blank, K/D, win, HS, and the five line last match block.
+    case "stats":
+      return 1 + 3 + (last ? 5 : 0);
+    // A blank and the pips, then the mains on their own line.
+    case "form":
+      return (formPips(p).length ? 2 : 0) + (arr(p.topAgents).length ? 1 : 0);
+    case "guns": {
+      const used = arr(career?.topGuns).length ? Math.min(3, arr(career?.topGuns).length) : arr(last?.weaponKills).length ? Math.min(3, arr(last?.weaponKills).length) : Math.min(4, arr(p.weapons).length) || 1;
+      const force = num(career?.forceHabit?.chances) ? 2 : 1;
+      const bonus = arr(career?.bonusBuys).length || 1;
+      return 1 + 1 + used + 1 + force + 1 + bonus;
+    }
+    case "met": {
+      const stack = settings.stacks && p.stackGuess && !p.party ? 3 : 0;
+      if (!seenCount(p)) return stack || 3;
+      return stack + 2 + (num(p.encounter?.withCount) ? 1 : 0) + (num(p.encounter?.againstCount) ? 1 : 0);
+    }
+    default:
+      return PANEL_COST[name];
+  }
+}
 function panelChrome(p, reasons) {
   return 2 + // the border
   1 + // the name
-  1 + // the blank line under it
   1 + // level, title and role
   2 + // the section bar
   (reasons ? reasons + 2 : 0) + // the smurf block
-  1 + // rank, RR and leaderboard
+  2 + // the blank line and then rank, RR and leaderboard
   (isRanked(p) ? 1 : 0) + // the RR meter
-  1 + // peak
+  1 + // peak, with the act it was reached in
   (p.previousRank ? 1 : 0) + // last act
   2;
 }
-function panelSections(tab2, height, chrome, focused = null) {
-  if (focused) return [focused];
-  const from = PANEL_TABS.indexOf(tab2);
-  const first = PANEL_TABS[from] ?? "stats";
-  if (height < chrome + PANEL_COST[first]) return [];
-  const out = [first];
-  const all = Object.values(PANEL_COST).reduce((n, c) => n + c, 0);
-  if (height >= chrome + all + 4) {
-    for (let i = 1; i < PANEL_TABS.length; i += 1) {
-      const name = PANEL_TABS[(from + i) % PANEL_TABS.length];
-      if (name) out.push(name);
-    }
+function panelSections(tab2, height, chrome, focused = null, cost = (name) => PANEL_COST[name]) {
+  const start = Math.max(0, PANEL_TABS.indexOf(focused ?? tab2));
+  const order = [];
+  for (let i = 0; i < PANEL_TABS.length; i += 1) {
+    const name = PANEL_TABS[(start + i) % PANEL_TABS.length];
+    if (name) order.push(name);
+  }
+  const out = [];
+  let used = chrome;
+  for (const name of order) {
+    const c = cost(name);
+    if (used + c > height) continue;
+    out.push(name);
+    used += c;
   }
   return out;
 }
@@ -39605,8 +39695,13 @@ function Detail({
   }
   const mapWr = p.mapWinRate;
   const reasons = settings.smurf ? arr(p.smurfReasons) : [];
-  const bare = panelSections(tab2, height, panelChrome(p, reasons.length), focused);
-  const open = bare;
+  const chrome = panelChrome(p, reasons.length);
+  const costOf = (name) => sectionCost(name, p, last, career, settings);
+  const open = panelSections(tab2, height, chrome, focused, costOf);
+  const used = Math.min(
+    height,
+    open.reduce((n, name) => n + costOf(name), chrome)
+  );
   const shows = (name) => open.includes(name);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     Box_default,
@@ -39618,11 +39713,10 @@ function Detail({
       paddingX: 1,
       marginBottom: 1,
       width: SIDEBAR,
-      height,
+      height: used,
       flexShrink: 0,
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.bone, children: p.name ?? NONE }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { height: 1 }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", color: C.dim, children: [
           p.title ? `${p.title} \xB7 ` : "",
           `Level ${num(p.level) ?? NONE}`,
@@ -39642,13 +39736,15 @@ function Detail({
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
         ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: p.rankColor ?? C.text, children: p.rank ?? NONE }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: rankColor(p.rankTier), children: p.rank ?? NONE }),
           isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: `  ${num(p.rr) ?? 0} RR` }) : null,
           num(p.leaderboard) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: C.gold, children: `  #${num(p.leaderboard)}` }) : null
         ] }),
         isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}` }),
-        p.peakAct ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  reached in ${p.peakAct}` }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}` }),
+          p.peakAct ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${p.peakAct}` }) : null
+        ] }),
         p.previousRank ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `Last act ${p.previousRank}` }) : null,
         shows("stats") ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
@@ -39660,7 +39756,8 @@ function Detail({
                 color: kdColor(p.kd),
                 children: `${dash(p.kd)} ${bar(num(p.kd), 2, 8)}`
               }
-            )
+            ),
+            num(p.kd) !== null && arr(p.form).length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  last ${arr(p.form).length}` }) : null
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Win   " }),
@@ -39727,38 +39824,6 @@ function record(flow) {
   const count = (letter) => flow.filter((f) => f.result === letter).length;
   const draws = count("D");
   return `${count("W")}W-${count("L")}L${draws ? `-${draws}D` : ""}`;
-}
-function Session({ board }) {
-  const flow = rrFlow(board.session?.points);
-  if (!flow.length) return null;
-  const net = num(board.session?.net) ?? 0;
-  const wins = flow.filter((f) => f.result === "W").length;
-  const HEIGHTS = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-    Box_default,
-    {
-      flexDirection: "column",
-      borderStyle: "round",
-      borderColor: C.line,
-      paddingX: 1,
-      width: SIDEBAR,
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.dim, children: "SESSION RR" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: net >= 0 ? C.ally : C.loss, children: `  ${net > 0 ? "+" : ""}${net} RR` }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${wins}W-${flow.length - wins}L` })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { children: flow.map((f) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: f.delta >= 0 ? C.ally : C.loss, children: HEIGHTS[Math.max(0, Math.min(HEIGHTS.length - 1, f.level - 1))] ?? "\u2581" }, f.key)) }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: "Taller bars won or lost more RR." }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.ally, children: "Green" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " is a win, " }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.loss, children: "red" }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: " is a loss." })
-        ] })
-      ]
-    }
-  );
 }
 function SettingsView({
   settings,
@@ -40059,8 +40124,7 @@ function App2({
     [board, settings.enemies, sort, filter]
   );
   const wide = width >= 108 && (settings.detail || settings.session);
-  const SESSION_LINES = 6;
-  const MIN_PANEL = 14;
+  const MIN_PANEL = 12;
   const viewHeight = Math.max(4, height - headerHeight(true) - 3);
   const zones = (0, import_react35.useMemo)(() => {
     const teams2 = board?.teams ?? {};
@@ -40069,7 +40133,7 @@ function App2({
     const ally = matching(arrange(arr(teams2[selfTeam2]), sort), filter);
     const enemy = settings.enemies && board?.state === "INGAME" && other2 ? matching(arrange(arr(teams2[other2]), sort), filter) : [];
     return boardLayout({
-      hasMeta: num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0,
+      hasMeta: num(board?.winProb) !== null || settings.session && rrFlow(board?.session?.points).length > 0,
       tabs: VIEWS.map((v) => ({
         key: v.key,
         digit: v.digit,
@@ -40082,10 +40146,10 @@ function App2({
       width,
       bodyWidth: wide ? width - SIDEBAR - 3 : width
     });
-  }, [board, settings.enemies, sort, filter, width, wide]);
+  }, [board, settings.enemies, settings.session, sort, filter, width, wide]);
   const sectionZones = (0, import_react35.useMemo)(() => {
     if (!wide || !settings.detail) return [];
-    const hasMeta2 = num(board?.winProb) !== null || rrFlow(board?.session?.points).length > 0;
+    const hasMeta2 = num(board?.winProb) !== null || settings.session && rrFlow(board?.session?.points).length > 0;
     const row = headerHeight(hasMeta2) + 2 + 5 + 1;
     let left = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
     const out = [];
@@ -40095,7 +40159,7 @@ function App2({
       left += span;
     }
     return out;
-  }, [wide, settings.detail, board, width]);
+  }, [wide, settings.detail, settings.session, board, width]);
   const selectedPlayer = rows.find((p) => p.puuid === selected) ?? null;
   const connected = conn === "live";
   const matchKey = board?.matchId ?? "none";
@@ -40339,15 +40403,25 @@ function App2({
   if (!rows.length) {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
       keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        Header,
+        {
+          board: current,
+          conn,
+          width,
+          filter,
+          filtering,
+          session: settings.session
+        }
+      ),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Holding, { board: current, conn, detail: connDetail, tick, animate: !preview })
     ] });
   }
   const bodyWidth = wide ? width - SIDEBAR - 3 : width - 2;
   const cols = visibleColumns(bodyWidth, settings);
-  const hasMeta = num(current.winProb) !== null || rrFlow(current.session?.points).length > 0;
+  const hasMeta = num(current.winProb) !== null || settings.session && rrFlow(current.session?.points).length > 0;
   const bodyHeight = Math.max(1, height - headerHeight(hasMeta) - 3);
-  const panelSpace = Math.max(8, bodyHeight - (settings.session ? SESSION_LINES : 0));
+  const panelSpace = bodyHeight;
   const teams = current.teams ?? {};
   const selfTeam = current.selfTeam ?? "Blue";
   const other = Object.keys(teams).find((t) => t !== selfTeam);
@@ -40355,7 +40429,17 @@ function App2({
   if (view !== "board") {
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", children: [
       keys,
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        Header,
+        {
+          board: current,
+          conn,
+          width,
+          filter,
+          filtering,
+          session: settings.session
+        }
+      ),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tabs, { active: view, width, hovered: hoverTab }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", height: viewHeight, overflow: "hidden", children: [
         view === "career" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -40407,7 +40491,17 @@ function App2({
   }
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", height, overflow: "hidden", children: [
     keys,
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Header, { board: current, conn, width, filter, filtering }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      Header,
+      {
+        board: current,
+        conn,
+        width,
+        filter,
+        filtering,
+        session: settings.session
+      }
+    ),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tabs, { active: view, width, hovered: hoverTab }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { height: bodyHeight, overflow: "hidden", children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", width: bodyWidth, flexShrink: 0, overflowX: "hidden", children: [
@@ -40444,21 +40538,18 @@ function App2({
           }
         ) : null
       ] }),
-      wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: [
-        settings.detail && panelSpace >= MIN_PANEL ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          Detail,
-          {
-            p: player,
-            tab: panelTab,
-            height: panelSpace,
-            settings,
-            last: lastMatch,
-            focused: focusedSection,
-            career: canned("profile", career).data ?? null
-          }
-        ) : null,
-        settings.session ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Session, { board: current }) : null
-      ] }) : null
+      wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { flexDirection: "column", marginLeft: 2, flexShrink: 0, children: settings.detail && panelSpace >= MIN_PANEL ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        Detail,
+        {
+          p: player,
+          tab: panelTab,
+          height: panelSpace,
+          settings,
+          last: lastMatch,
+          focused: focusedSection,
+          career: canned("profile", career).data ?? null
+        }
+      ) : null }) : null
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { paddingX: 1, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
       KeyHints,
@@ -40556,6 +40647,36 @@ function selfCheck() {
     const widths = columnWidths(keys, body);
     const used = keys.reduce((n, k) => n + (widths[k] ?? 0) + 1, ROW_CHROME);
     if (used > body) failures.push(`width ${w}: rows need ${used} columns and would wrap`);
+  }
+  const tierOf = {
+    Iron: 3,
+    Bronze: 6,
+    Silver: 9,
+    Gold: 12,
+    Platinum: 15,
+    Diamond: 18,
+    Ascendant: 21,
+    Immortal: 24,
+    Radiant: 27
+  };
+  for (const [group, tier] of Object.entries(tierOf)) {
+    for (let step = 0; step < (group === "Radiant" ? 1 : 3); step += 1) {
+      const name = group === "Radiant" ? "Radiant" : `${group} ${step + 1}`;
+      const byTier = rankColor(tier + step);
+      const byName = rankColor(void 0, name);
+      if (byTier !== byName) {
+        failures.push(`${name}: tier says ${byTier}, name says ${byName}`);
+      }
+      if (byTier === rankColor(0)) failures.push(`${name} drew as unranked`);
+    }
+  }
+  if (rankColor(2) !== rankColor(void 0, "Unranked")) failures.push("unranked disagrees");
+  if (rankColor(void 0, "Gold 2") === rankColor(void 0, "Platinum 2")) {
+    failures.push("two groups share a colour");
+  }
+  if (rankColor(void 0, "") !== rankColor(0)) failures.push("a missing rank is not unranked");
+  if (rankColor(void 0, "Peak Gold 2") !== rankColor(0)) {
+    failures.push("a rank name is matched anywhere in the string, not at the front");
   }
   let seen = 0;
   for (let w = 20; w < 400; w += 2) {

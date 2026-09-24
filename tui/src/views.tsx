@@ -11,7 +11,7 @@ import type {
 } from "./api.js";
 import { brailleBars, colourRuns } from "./chart.js";
 import { arr, bar, dash, kd2, NONE, num, pad, pct1, trim } from "./format.js";
-import { C, kdColor } from "./theme.js";
+import { C, kdColor, rankColor } from "./theme.js";
 import type { Player } from "./types.js";
 
 /**
@@ -252,7 +252,7 @@ export function CareerView({
         <Text bold color={C.bone}>
           {player.name ?? NONE}
         </Text>
-        <Text color={player.rankColor ?? C.dim}>{`  ${player.rank ?? NONE}`}</Text>
+        <Text color={rankColor(player.rankTier, player.rank)}>{`  ${player.rank ?? NONE}`}</Text>
         <Text color={C.faint}>{`   Peak ${player.peakRank ?? NONE}`}</Text>
         <Text color={C.faint}>{`   Level ${num(player.level) ?? NONE}`}</Text>
       </Box>
@@ -591,7 +591,7 @@ function RecapRow({
       <Text color={C.text}>
         {pad(p.name ?? NONE, Math.min(RECAP_NAME_MAX, Math.max(10, width - RECAP_FIXED)))}
       </Text>
-      <Text color={p.rankColor ?? C.dim}>{pad(p.rank ?? NONE, 13)}</Text>
+      <Text color={rankColor(p.rankTier, p.rank)}>{pad(p.rank ?? NONE, 13)}</Text>
       <Text color={C.text}>
         {pad(`${num(p.kills) ?? 0}/${num(p.deaths) ?? 0}/${num(p.assists) ?? 0}`, 11)}
       </Text>
@@ -760,7 +760,7 @@ export function EncountersView({
               return (
                 <Box key={row.puuid ?? i}>
                   <Text color={C.text}>{pad(row.name ?? NONE, Math.max(14, width - 62))}</Text>
-                  <Text color={row.rankColor ?? C.dim}>{pad(row.rank ?? NONE, 13)}</Text>
+                  <Text color={rankColor(undefined, row.rank)}>{pad(row.rank ?? NONE, 13)}</Text>
                   <Text color={C.faint}>
                     {pad(`${num(row.seen) ?? num(row.games) ?? 0}x`, 6, "right")}
                   </Text>

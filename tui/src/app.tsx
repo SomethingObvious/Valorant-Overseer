@@ -683,11 +683,18 @@ const STACK_NAME: Record<number, string> = {
 };
 
 /** The panel's sections, and roughly how many lines each one draws. */
-/** The arrow in front of a section name, and the only place it is decided. */
-export const sectionMark = (isOpen: boolean): string => (isOpen ? "▾" : "▸");
+/**
+ * What a section button says.
+ *
+ * The arrow this used to carry is gone: the buttons are filled plates now, so
+ * open and shut is the colour of the plate, and an arrow was both a second way
+ * of saying it and an East Asian Ambiguous glyph sitting inside a fixed width
+ * label, which a terminal is free to draw two cells wide.
+ */
+export const sectionLabel = (name: string): string => ` ${name.toUpperCase()} `;
 
-/** How wide one section reads on the bar, arrow and trailing space included. */
-export const sectionWidth = (name: string): number => name.length + 2;
+/** How wide one button is on the bar, its plate and the gap after it. */
+export const sectionWidth = (name: string): number => sectionLabel(name).length + 1;
 
 export const PANEL_TABS = ["stats", "form", "guns", "met"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
@@ -758,8 +765,7 @@ function panelChrome(p: Player, reasons: number): number {
     1 + // level, title and role
     2 + // the section bar
     (reasons ? reasons + 2 : 0) + // the smurf block
-    2 + // the blank line and then rank, RR and leaderboard
-    (isRanked(p) ? 1 : 0) + // the RR meter
+    2 + // the blank line, then rank, RR, the meter and any ladder place
     1 + // peak, with the act it was reached in
     (p.previousRank ? 1 : 0) + // last act
     2 // the blank line and the Enter hint
@@ -961,24 +967,37 @@ function Detail({
         {p.role ? ` · ${p.role}` : ""}
       </Text>
 
-      {/* One section at a time, because the panel is 38 columns and the data
-          is not. Everything is reachable and nothing is cut off halfway. */}
+      {/* Four buttons, and what they look like says what they will do: the
+          bright one is the section you asked for, the dim filled ones are
+          showing as well, the dark ones will open if you click them. */}
       <Box marginTop={1}>
-        {PANEL_TABS.map((name) => (
-          <Text
-            key={name}
-            bold={name === tab}
-            color={open.includes(name) ? C.bone : C.line}
-          >{`${sectionMark(open.includes(name))}${name.toUpperCase()} `}</Text>
-        ))}
+        {PANEL_TABS.map((name) => {
+          const shown = open.includes(name);
+          const picked = name === (focused ?? tab);
+          return (
+            <Text key={name}>
+              <Text
+                bold={picked}
+                color={picked ? C.ink : shown ? C.bone : C.dim}
+                backgroundColor={picked ? C.ice : shown ? C.line : C.slate}
+              >
+                {sectionLabel(name)}
+              </Text>
+              <Text> </Text>
+            </Text>
+          );
+        })}
       </Box>
       {/* The flags come first. They used to sit under the form and the map
           record, which is below the fold on any terminal that is not enormous:
           the one thing you want shouting at you was the one thing clipped. */}
       {reasons.length ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold color={C.gold}>
-            ⚑ Smurf
+          {/* The backend weighs its signals, and one weak signal is not an
+              accusation. Only a flag gets called a smurf; the rest is shown
+              for what it is, which is something to keep an eye on. */}
+          <Text bold={p.smurf === true} color={C.gold}>
+            {p.smurf ? "⚑ Smurf" : "Worth a look"}
           </Text>
           {reasons.map((r) => (
             <Text key={r} color={C.gold}>
@@ -992,16 +1011,18 @@ function Detail({
         <Text wrap="truncate" color={rankColor(p.rankTier)}>
           {p.rank ?? NONE}
         </Text>
-        {isRanked(p) ? <Text wrap="truncate" color={C.dim}>{`  ${num(p.rr) ?? 0} RR`}</Text> : null}
+        {isRanked(p) ? (
+          <>
+            <Text wrap="truncate" color={C.dim}>{`  ${num(p.rr) ?? 0} RR `}</Text>
+            <Text wrap="truncate" color={C.ice}>
+              {meter(num(p.rr), 100, 8)}
+            </Text>
+          </>
+        ) : null}
         {num(p.leaderboard) ? (
-          <Text wrap="truncate" bold color={C.gold}>{`  #${num(p.leaderboard)}`}</Text>
+          <Text wrap="truncate" bold color={C.gold}>{` #${num(p.leaderboard)}`}</Text>
         ) : null}
       </Box>
-      {isRanked(p) ? (
-        <Text wrap="truncate" color={C.ice}>
-          {meter(num(p.rr), 100, 10)}
-        </Text>
-      ) : null}
       {/* The peak and when they reached it, on one line. Two lines for one
           fact is what the panel could least afford, and the date matters: a
           peak from two years ago is a different player to a peak from last
@@ -1056,7 +1077,7 @@ function Detail({
 
           {last ? (
             <Box flexDirection="column" marginTop={1}>
-              <Text bold color={C.ice}>
+              <Text wrap="truncate" color={C.dim}>
                 {"Last match"}
               </Text>
               <Text wrap="truncate" color={C.faint}>
@@ -1683,9 +1704,10 @@ export function App({
     const hasMeta =
       num(board?.winProb) !== null ||
       (settings.session && rrFlow(board?.session?.points).length > 0);
-    // The terminal counts rows and columns from one, which is what the
-    // mouse reports use. Border, name, blank, level, blank, then the bar.
-    const row = headerHeight(hasMeta) + 2 + 5 + 1;
+    // The terminal counts rows and columns from one, which is what the mouse
+    // reports use. After the header: the tab strip, its rule, then the panel's
+    // border, the name, the level, a blank, and the bar. Seven rows.
+    const row = headerHeight(hasMeta) + 7;
     // Board columns, the two column gap, the panel's border and its padding,
     // and then one more because the first column is column one.
     let left = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;

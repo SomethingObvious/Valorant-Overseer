@@ -324,9 +324,11 @@ function Set-OverseerWindow([int]$Columns, [int]$Rows, [string]$LogName = "launc
     # Ask the console for the size the scoreboard was laid out for.
     #
     # The board is a table, and what it can show is decided by how many columns
-    # it is given: under about 154 the RR column goes, then the map record, and
-    # a peak rank loses the act it was reached in. None of that is a fault and
-    # all of it is avoidable, because this console belongs to us.
+    # it is given. 178 columns is where the last column stops being dropped
+    # (the row costs 137 and the panel takes 41), and 55 rows is where the
+    # detail panel can open all four of its sections at once. The numbers
+    # passed in are deliberately past both, because being a few columns short
+    # costs a column of data and being a few over costs nothing.
     #
     # Only ever grows, and never past what the screen can physically show. A
     # terminal that will not be resized is not an error either: Windows
@@ -343,12 +345,17 @@ function Set-OverseerWindow([int]$Columns, [int]$Rows, [string]$LogName = "launc
             Write-OverseerLog -Log $LogName -Message "window already $($win.Width)x$($win.Height)"
             return
         }
-        # The window cannot exceed the buffer, so the buffer goes first. The
-        # scrollback height is left alone: the app runs on the alternate screen
-        # and shrinking it here would throw away what the launcher printed.
+        # The window cannot exceed the buffer in EITHER direction, so the
+        # buffer goes first and both dimensions count: a console whose
+        # scrollback is only as tall as its window refuses a taller window with
+        # "Window cannot be taller than the screen buffer", which is how this
+        # came to do nothing at all the first time. Only ever grown, so
+        # whatever scrollback is there survives.
         $buf = $raw.BufferSize
-        if ($buf.Width -lt $w) {
-            $raw.BufferSize = New-Object System.Management.Automation.Host.Size($w, $buf.Height)
+        $bufW = [Math]::Max($buf.Width, $w)
+        $bufH = [Math]::Max($buf.Height, $h)
+        if ($bufW -ne $buf.Width -or $bufH -ne $buf.Height) {
+            $raw.BufferSize = New-Object System.Management.Automation.Host.Size($bufW, $bufH)
         }
         $raw.WindowSize = New-Object System.Management.Automation.Host.Size($w, $h)
         Write-OverseerLog -Log $LogName -Message "window resized to ${w}x${h} (was $($win.Width)x$($win.Height))"
@@ -356,6 +363,35 @@ function Set-OverseerWindow([int]$Columns, [int]$Rows, [string]$LogName = "launc
     catch {
         Write-OverseerLog -Log $LogName -Message "window resize declined by this terminal: $($_.Exception.Message)"
     }
+}
+
+
+function Start-OverseerConsole([string]$LogName = "launcher") {
+    # The first frame.
+    #
+    # cmd has already drawn a prompt and a command line by the time this runs,
+    # and the window is whatever size it was left at, so the wordmark used to
+    # land under somebody else's text in a window that then jumped size a
+    # second later. Size it, empty it, and put the cursor away before anything
+    # is printed: the launcher then reads as the app starting rather than as a
+    # script running.
+    Set-OverseerWindow -Columns 190 -Rows 58 -LogName $LogName
+    try {
+        $esc = [char]27
+        # 2J clears the screen, 3J the scrollback so nothing survives above the
+        # fold, H homes the cursor, ?25l hides it. The bar that follows writes
+        # over itself with carriage returns and a blinking cursor sitting in
+        # the middle of it is most of what made this look unfinished.
+        Write-Host "$esc[2J$esc[3J$esc[H$esc[?25l" -NoNewline
+    }
+    catch { }
+}
+
+function Stop-OverseerConsole {
+    # Whatever happens next, the cursor comes back. A console left with an
+    # invisible cursor is a broken terminal as far as anyone typing in it is
+    # concerned.
+    try { Write-Host "$([char]27)[?25h" -NoNewline } catch { }
 }
 
 

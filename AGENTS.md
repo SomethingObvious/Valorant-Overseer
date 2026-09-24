@@ -162,9 +162,20 @@ layers cannot drift apart.
 **Rebase, never merge.** If your branch is behind the base branch, rebase onto
 it before pushing. `pre-push` enforces this and rejects merge commits.
 
-**Squash.** Keep a branch to the fewest commits that still read as a coherent
-story. Hard limit 5 (`git config overseer.maxCommits`). Conventional Commits
-subject, at most 72 characters, no trailing full stop.
+**Squash to one.** One commit per push, and a commit is a whole update rather
+than a step towards one. Hard limit 1, in `.githooks/policy`, enforced by
+`pre-push`. Keep amending while the work is still in progress:
+
+```console
+git commit --amend --no-edit     # fold the next change into the same commit
+git rebase -i origin/main        # fold commits that are already separate
+```
+
+Nothing lands as "fix the thing I broke two commits ago". The history is a list
+of releases, so the message has room to explain the whole change and does: a
+Conventional Commits subject, at most 72 characters, no trailing full stop, and
+a body that says what moved and why. Raise the limit only with a reason:
+`git config overseer.maxCommits N`.
 
 **No inline lint suppressions.** `# noqa`, `# type: ignore`, `# nosec`,
 `SuppressMessageAttribute`, `<!-- markdownlint-disable -->` and friends are

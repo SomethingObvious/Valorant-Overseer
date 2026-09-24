@@ -112,16 +112,27 @@ def _fallback_name(puuid: str) -> str:
     return f"Player-{(puuid or '????')[:4].upper()}"
 
 
-# What each signal costs, in plain terms. Tier 20 is Diamond 3: three per
-# group from Iron at 3, so Diamond is 18 to 20 and Immortal starts at 24.
+# What each signal is, in plain terms. Tier 20 is Diamond 3: three per group
+# from Iron at 3, so Diamond is 18 to 20 and Immortal starts at 24.
+#
+# Every signal carries a weight rather than a vote, because they are not the
+# same size. A level 40 account whose peak is Immortal is most of an argument by
+# itself; one good headshot percentage is a hint. Two points is a flag.
 _SMURF_PEAK_TIER = 20
 _SMURF_LEVEL = 60
 _SMURF_KD = 1.35
+_SMURF_KD_STRONG = 1.8
 _SMURF_KD_LEVEL = 80
 _SMURF_KD_MATCHES = 5
 _SMURF_WR = 62.0
+_SMURF_WR_STRONG = 70.0
 _SMURF_WR_GAMES = 15
+_SMURF_WR_GAMES_STRONG = 20
 _SMURF_WR_LEVEL = 100
+_SMURF_HS = 30.0
+_SMURF_HS_LEVEL = 80
+_SMURF_GAP_TIERS = 3
+_SMURF_FLAG_SCORE = 2
 
 
 def smurf_signals(
@@ -133,33 +144,53 @@ def smurf_signals(
     win_rate: float | None,
     games: int | None,
     kd_matches: int | None = None,
-) -> list[str]:
-    reasons: list[str] = []
+    hs: float | None = None,
+) -> list[tuple[str, int]]:
+    """Every signal that fires, each with what it is worth."""
+    reasons: list[tuple[str, int]] = []
     lvl = level or 0
     # A hidden level is the commonest thing about a smurf and the one field
     # this cannot do without: every signal below is "for that level". With it
     # hidden there is nothing to say, so nothing is said.
     if lvl <= 0:
         return reasons
-    if lvl < _SMURF_LEVEL and (peak_tier or 0) >= _SMURF_PEAK_TIER:
-        reasons.append(f"Lvl {lvl}, peak {rank_from_tier(peak_tier)['name']}")
+    peak = peak_tier or 0
+    high_peak = lvl < _SMURF_LEVEL and peak >= _SMURF_PEAK_TIER
+    if high_peak:
+        reasons.append((f"Lvl {lvl}, peak {rank_from_tier(peak_tier)['name']}", 2))
     # The K/D is the last few matches, not a career, and three good games is
-    # something anybody has. Under five matches it is not evidence, and this is
-    # the one signal that can flag a low level account on its own.
+    # something anybody has, so under five matches it is not evidence at all.
     if (
         kd is not None
         and kd >= _SMURF_KD
         and lvl < _SMURF_KD_LEVEL
         and (kd_matches or 0) >= _SMURF_KD_MATCHES
     ):
-        reasons.append(f"K/D {kd} at lvl {lvl}")
+        reasons.append((f"K/D {kd} at lvl {lvl}", 2 if kd >= _SMURF_KD_STRONG else 1))
     if (
         win_rate is not None
         and win_rate >= _SMURF_WR
         and (games or 0) >= _SMURF_WR_GAMES
         and lvl < _SMURF_WR_LEVEL
     ):
-        reasons.append(f"{win_rate}% WR")
+        strong = win_rate >= _SMURF_WR_STRONG and (games or 0) >= _SMURF_WR_GAMES_STRONG
+        reasons.append((f"{win_rate}% win over {games} games", 2 if strong else 1))
+    # Aim is the hardest thing to hide and the slowest thing to learn. Same
+    # sample as the K/D, off the same matches, so it needs the same floor.
+    if (
+        hs is not None
+        and hs >= _SMURF_HS
+        and lvl < _SMURF_HS_LEVEL
+        and (kd_matches or 0) >= _SMURF_KD_MATCHES
+    ):
+        reasons.append((f"{round(hs)}% headshots", 1))
+    # Playing well below their own peak. On a low level account that is either a
+    # new account or one that was left to slide, and both are worth knowing.
+    # Skipped when the peak already spoke above, because two lines saying the
+    # same thing about the same account is not two pieces of evidence.
+    gap = peak - (rank_tier or 0)
+    if not high_peak and lvl < _SMURF_LEVEL and peak and gap >= _SMURF_GAP_TIERS:
+        reasons.append((f"{gap} ranks below peak", 1))
     return reasons
 
 
@@ -183,8 +214,9 @@ def compute_smurf(
     win_rate: float | None,
     games: int | None,
     kd_matches: int | None = None,
+    hs: float | None = None,
 ) -> tuple[bool, list[str]]:
-    reasons = smurf_signals(
+    signals = smurf_signals(
         level=level,
         peak_tier=peak_tier,
         rank_tier=rank_tier,
@@ -192,14 +224,17 @@ def compute_smurf(
         win_rate=win_rate,
         games=games,
         kd_matches=kd_matches,
+        hs=hs,
     )
-    if not reasons:
+    if not signals:
         return False, []
-    # Under level 60 one signal is enough, because the level is itself half the
-    # argument. Above it, a single number is not worth calling somebody a
-    # smurf over, so it takes two.
-    flagged = ((level or 0) < _SMURF_LEVEL and len(reasons) >= 1) or len(reasons) >= 2
-    return flagged, reasons
+    # Two points is a flag: one strong signal, or two ordinary ones agreeing.
+    # Counting signals instead of weighing them meant a single hot number on a
+    # fresh account was enough, which is how a good week gets called a smurf.
+    # The reasons are returned either way, so one point still shows in the
+    # panel as something worth a look, without the accusation.
+    score = sum(weight for _, weight in signals)
+    return score >= _SMURF_FLAG_SCORE, [text for text, _ in signals]
 
 
 def assemble_player(
@@ -1161,6 +1196,7 @@ class LiveMatch:
                 win_rate=rk["wr"],
                 games=rk["games"],
                 kd_matches=len((cached.get("intel") or {}).get("form") or []),
+                hs=cached["hs"],
             )
             players.append(
                 assemble_player(
@@ -1358,6 +1394,7 @@ class LiveMatch:
                 win_rate=rk["wr"],
                 games=rk["games"],
                 kd_matches=len((intel or {}).get("form") or []),
+                hs=hs,
             )
             players.append(
                 assemble_player(
@@ -2307,25 +2344,78 @@ def _self_check() -> None:
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
     )
     assert hot and why == ["K/D 1.9 at lvl 41"], why
+    # 1.4 is the same signal at half the weight: shown, not flagged.
+    warm, why = compute_smurf(
+        level=41, peak_tier=12, rank_tier=12, kd=1.4, win_rate=None, games=None, kd_matches=5
+    )
+    assert not warm and why == ["K/D 1.4 at lvl 41"], why
+    # Two ordinary signals agreeing is a flag.
+    both, why = compute_smurf(
+        level=41,
+        peak_tier=12,
+        rank_tier=12,
+        kd=1.4,
+        win_rate=None,
+        games=None,
+        kd_matches=5,
+        hs=34.0,
+    )
+    assert both and why == ["K/D 1.4 at lvl 41", "34% headshots"], why
+    # Aim needs the same sample the K/D needs, and stops counting by level 80.
+    assert (
+        compute_smurf(
+            level=41, peak_tier=12, rank_tier=12, kd=None, win_rate=None, games=None, hs=40.0
+        )[1]
+        == []
+    )
+    assert (
+        compute_smurf(
+            level=90,
+            peak_tier=12,
+            rank_tier=12,
+            kd=None,
+            win_rate=None,
+            games=None,
+            kd_matches=5,
+            hs=40.0,
+        )[1]
+        == []
+    )
+    # Sitting well below their own peak on a low level account.
+    gap, why = compute_smurf(
+        level=41, peak_tier=18, rank_tier=12, kd=None, win_rate=None, games=None
+    )
+    assert not gap and why == ["6 ranks below peak"], why
     # A low level on a high peak is one signal and enough on its own.
     flagged, why = compute_smurf(
         level=41, peak_tier=24, rank_tier=12, kd=None, win_rate=None, games=None
     )
     assert flagged and why == ["Lvl 41, peak Immortal 1"], why
-    # Diamond 3 is where the peak signal starts; Diamond 2 is not a signal.
+    # Diamond 3 is where the two point peak signal starts. A Diamond 2 peak is
+    # the one point version of the same idea and must not flag on its own.
+    near, why = compute_smurf(
+        level=41, peak_tier=19, rank_tier=12, kd=None, win_rate=None, games=None
+    )
+    assert not near and why == ["7 ranks below peak"], why
+    # Same rank as their peak, nothing to say.
     assert (
-        compute_smurf(level=41, peak_tier=19, rank_tier=12, kd=None, win_rate=None, games=None)[1]
+        compute_smurf(level=41, peak_tier=12, rank_tier=12, kd=None, win_rate=None, games=None)[1]
         == []
     )
-    # Above 60 one number is not enough, two are.
+    # Above 60 the level stops arguing for itself: one ordinary number is not
+    # enough, two are, and an extreme one is on its own.
     one, why = compute_smurf(
         level=75, peak_tier=26, rank_tier=12, kd=1.5, win_rate=None, games=None, kd_matches=5
     )
     assert not one and why == ["K/D 1.5 at lvl 75"], why
     two, why = compute_smurf(
-        level=75, peak_tier=26, rank_tier=12, kd=1.5, win_rate=70.0, games=30, kd_matches=5
+        level=75, peak_tier=26, rank_tier=12, kd=1.5, win_rate=64.0, games=30, kd_matches=5
     )
     assert two and len(why) == 2, why
+    alone, why = compute_smurf(
+        level=75, peak_tier=26, rank_tier=12, kd=None, win_rate=88.0, games=40
+    )
+    assert alone and why == ["88.0% win over 40 games"], why
     # A win rate off nine games is not a win rate.
     assert (
         compute_smurf(level=75, peak_tier=26, rank_tier=12, kd=None, win_rate=80.0, games=9)[1]

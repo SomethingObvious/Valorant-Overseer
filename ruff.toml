@@ -31,6 +31,12 @@ ignore = [
   "COM",
 
   # --- documentation --------------------------------------------------------
+  # A copyright header on every file. This is one person's private application,
+  # not a distribution: there is nobody to notify, and the release build strips
+  # every comment out of the artifact anyway, so the header would exist only in
+  # the repository and only to satisfy this rule. ruff 0.16 promoted CPY001 out
+  # of preview, which is how it arrived without anything changing here.
+  "CPY001",
   # This is an application, not a library: nothing here is imported by anyone
   # else, and the release build strips every docstring out of the artifact
   # anyway. 346 annotation findings and 246 docstring findings would be churn

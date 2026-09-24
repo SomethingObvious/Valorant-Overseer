@@ -169,6 +169,7 @@ def generate(seed: int = 7) -> dict[str, Any]:
             win_rate = rng.randint(38, 64)
             kd = round(rng.uniform(0.6, 1.8), 2)
             level = rng.randint(20, 480)
+            hs = rng.randint(12, 28)
             if (team, i) in smurf_slots:
                 peak = max(peak, 22)
                 tier = max(tier, 20)
@@ -176,6 +177,7 @@ def generate(seed: int = 7) -> dict[str, Any]:
                 win_rate = max(win_rate, 64)
                 games = max(games, 20)
                 level = rng.randint(18, 55)
+                hs = rng.randint(30, 38)
             weapons = _weapons(rng)
             smurf, smurf_reasons = compute_smurf(
                 level=level,
@@ -185,6 +187,7 @@ def generate(seed: int = 7) -> dict[str, Any]:
                 win_rate=win_rate,
                 games=games,
                 kd_matches=5,
+                hs=float(hs),
             )
             players.append(
                 assemble_player(
@@ -202,7 +205,7 @@ def generate(seed: int = 7) -> dict[str, Any]:
                     win_rate=win_rate,
                     games=games,
                     kd=kd,
-                    hs=rng.randint(12, 34),
+                    hs=hs,
                     level=level,
                     level_hidden=slot["hiddenLevel"],
                     party=party_lookup.get(slot["puuid"]),
@@ -253,11 +256,13 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
         games = rng.randint(20, 400)
         kd = round(rng.uniform(0.6, 1.8), 2)
         level = rng.randint(20, 480)
+        hs = rng.randint(12, 28)
         if i == 1:
             peak = max(peak, 22)
             t = max(t, 20)
             kd = round(rng.uniform(1.4, 2.1), 2)
             level = rng.randint(18, 55)
+            hs = rng.randint(30, 38)
         smurf, smurf_reasons = compute_smurf(
             level=level,
             peak_tier=peak,
@@ -266,6 +271,7 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
             win_rate=win_rate,
             games=games,
             kd_matches=5,
+            hs=float(hs),
         )
         players.append(
             assemble_player(
@@ -283,7 +289,7 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
                 win_rate=win_rate,
                 games=games,
                 kd=kd,
-                hs=rng.randint(12, 34),
+                hs=hs,
                 level=level,
                 level_hidden=False,
                 party=party if size > 1 else None,

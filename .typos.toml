@@ -15,3 +15,6 @@ Yoru = "Yoru"
 # Appears inside the base64 X-Riot-ClientPlatform blob, and in Unreal Engine
 # paths in the game's own log lines.
 UE = "UE"
+# ruff rule prefixes are not words. CPY is flake8-copyright, which ruff 0.16
+# promoted out of preview; ISC is implicit-str-concat.
+CPY = "CPY"

@@ -213,10 +213,12 @@ def _kill_leftover_instances() -> bool:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "$m = $env:VS_MATCH; Get-CimInstance Win32_Process -Filter "
-                "\"Name like 'py%'\" | Where-Object { $_.CommandLine -and "
-                "$_.CommandLine.ToLower().Contains($m) } | "
-                "ForEach-Object { $_.ProcessId }",
+                (
+                    "$m = $env:VS_MATCH; Get-CimInstance Win32_Process -Filter "
+                    "\"Name like 'py%'\" | Where-Object { $_.CommandLine -and "
+                    "$_.CommandLine.ToLower().Contains($m) } | "
+                    "ForEach-Object { $_.ProcessId }"
+                ),
             ],
             capture_output=True,
             text=True,
@@ -326,8 +328,10 @@ def _proc_info(pid: int) -> tuple[str, str, int]:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId={pid}'; "
-                "$p.ExecutablePath; $p.CommandLine; $p.ParentProcessId",
+                (
+                    f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId={pid}'; "
+                    "$p.ExecutablePath; $p.CommandLine; $p.ParentProcessId"
+                ),
             ],
             capture_output=True,
             text=True,

@@ -38629,6 +38629,9 @@ var C = {
   dim: "#7E8C92",
   faint: "#55636D",
   line: "#2A3947",
+  // The plate a shut section button sits on. Light enough to read as a button
+  // on a dark terminal, dark enough not to compete with the open one.
+  slate: "#1B2733",
   loss: "#FF8088",
   ink: "#0B1119"
 };
@@ -39587,8 +39590,8 @@ var STACK_NAME = {
   4: "four stack",
   5: "five stack"
 };
-var sectionMark = (isOpen) => isOpen ? "\u25BE" : "\u25B8";
-var sectionWidth = (name) => name.length + 2;
+var sectionLabel = (name) => ` ${name.toUpperCase()} `;
+var sectionWidth = (name) => sectionLabel(name).length + 1;
 var PANEL_TABS = ["stats", "form", "guns", "met"];
 var PANEL_COST = { stats: 10, form: 4, guns: 12, met: 8 };
 function sectionCost(name, p, last, career, settings) {
@@ -39620,8 +39623,7 @@ function panelChrome(p, reasons) {
   1 + // level, title and role
   2 + // the section bar
   (reasons ? reasons + 2 : 0) + // the smurf block
-  2 + // the blank line and then rank, RR and leaderboard
-  (isRanked(p) ? 1 : 0) + // the RR meter
+  2 + // the blank line, then rank, RR, the meter and any ladder place
   1 + // peak, with the act it was reached in
   (p.previousRank ? 1 : 0) + // last act
   2;
@@ -39722,25 +39724,34 @@ function Detail({
           `Level ${num(p.level) ?? NONE}`,
           p.role ? ` \xB7 ${p.role}` : ""
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          Text,
-          {
-            bold: name === tab2,
-            color: open.includes(name) ? C.bone : C.line,
-            children: `${sectionMark(open.includes(name))}${name.toUpperCase()} `
-          },
-          name
-        )) }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Box_default, { marginTop: 1, children: PANEL_TABS.map((name) => {
+          const shown = open.includes(name);
+          const picked = name === (focused ?? tab2);
+          return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              Text,
+              {
+                bold: picked,
+                color: picked ? C.ink : shown ? C.bone : C.dim,
+                backgroundColor: picked ? C.ice : shown ? C.line : C.slate,
+                children: sectionLabel(name)
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { children: " " })
+          ] }, name);
+        }) }),
         reasons.length ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.gold, children: "\u2691 Smurf" }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: p.smurf === true, color: C.gold, children: p.smurf ? "\u2691 Smurf" : "Worth a look" }),
           reasons.map((r) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.gold, children: `  ${r}` }, r))
         ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { marginTop: 1, children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: rankColor(p.rankTier), children: p.rank ?? NONE }),
-          isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: `  ${num(p.rr) ?? 0} RR` }) : null,
-          num(p.leaderboard) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: C.gold, children: `  #${num(p.leaderboard)}` }) : null
+          isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: `  ${num(p.rr) ?? 0} RR ` }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 8) })
+          ] }) : null,
+          num(p.leaderboard) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", bold: true, color: C.gold, children: ` #${num(p.leaderboard)}` }) : null
         ] }),
-        isRanked(p) ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.ice, children: meter(num(p.rr), 100, 10) }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Text, { wrap: "truncate", children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: peakGap(p) ? C.gold : C.dim, children: `Peak ${p.peakRank ?? NONE}` }),
           p.peakAct ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { color: C.faint, children: `  ${p.peakAct}` }) : null
@@ -39776,7 +39787,7 @@ function Detail({
             ) : null
           ] }),
           last ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(Box_default, { flexDirection: "column", marginTop: 1, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { bold: true, color: C.ice, children: "Last match" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.dim, children: "Last match" }),
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(last.kills) ?? 0}/${num(last.deaths) ?? 0}/${num(last.assists) ?? 0}  ${dash(last.acs)} ACS  ${dash(last.adr)} ADR` }),
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${dash(last.kast, "% KAST")}  ${pct1(last.hsPct)} HS  ${dash(last.econ)} econ` }),
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text, { wrap: "truncate", color: C.faint, children: `  ${num(last.firstBloods) ?? 0}/${num(last.firstDeaths) ?? 0} duels  ${num(last.clutches) ?? 0} clutch  ${(num(last.plants) ?? 0) + (num(last.defuses) ?? 0)} spike` })
@@ -40150,7 +40161,7 @@ function App2({
   const sectionZones = (0, import_react35.useMemo)(() => {
     if (!wide || !settings.detail) return [];
     const hasMeta2 = num(board?.winProb) !== null || settings.session && rrFlow(board?.session?.points).length > 0;
-    const row = headerHeight(hasMeta2) + 2 + 5 + 1;
+    const row = headerHeight(hasMeta2) + 7;
     let left = (wide ? width - SIDEBAR - 3 : width) + 2 + 2 + 1;
     const out = [];
     for (const name of PANEL_TABS) {

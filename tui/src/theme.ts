@@ -11,6 +11,9 @@ export const C = {
   dim: "#7E8C92",
   faint: "#55636D",
   line: "#2A3947",
+  // The plate a shut section button sits on. Light enough to read as a button
+  // on a dark terminal, dark enough not to compete with the open one.
+  slate: "#1B2733",
   loss: "#FF8088",
   ink: "#0B1119",
 } as const;

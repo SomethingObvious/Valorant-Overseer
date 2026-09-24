@@ -9,6 +9,8 @@
 
 
 
+Start-OverseerConsole
+
 $Script:PhaseTotal = 3
 function Show-Phase([int]$step, [string]$text) {
     $width = 14
@@ -43,6 +45,7 @@ $markers = Test-Markers
 if (-not $markers.Ok) {
     Write-Host ""
     Write-OverseerLog -Log launcher -Level ERROR -Code VG-DEPS-001 -Message "startup blocked: $($markers.Reason)"
+    Stop-OverseerConsole
     Show-FatalDialog "Valorant Overseer can't start: $($markers.Reason).`n`nRun install.bat to repair (your settings and data are kept)." "launcher"
     exit 1
 }
@@ -54,6 +57,7 @@ if (-not $venv.Ok) {
         if ($r -match 'python|venv') { $code = "VG-PY-001" }
         Write-OverseerLog -Log launcher -Level ERROR -Code $code -Message "startup blocked: $r"
     }
+    Stop-OverseerConsole
     Show-FatalDialog "Valorant Overseer can't start: $($venv.Reasons[0]).`n`nRun install.bat to repair (your settings and data are kept)." "launcher"
     exit 1
 }
@@ -72,11 +76,6 @@ Stop-RunningApp "launcher" | Out-Null
 
 
 
-# The scoreboard is a table, and a table needs columns. Asked for before the
-# handoff so the app starts at the size it was designed for rather than
-# dropping columns to fit whatever the window happened to be left at.
-Set-OverseerWindow -Columns 160 -Rows 46
-
 Complete-Progress "Opening the scoreboard."
 
 # This console becomes the scoreboard, and the scoreboard draws its own header.
@@ -89,7 +88,12 @@ Write-Host "$esc[2J$esc[3J$esc[H" -NoNewline
 $env:VS_PREVALIDATED = "1"
 $env:VS_ATTACHED_CLI = "1"
 Write-OverseerLog -Log launcher -Message "handing this console to run.py (attached single-window mode)"
-& $VenvPy (Join-Path $Root "run.py") --prod
-$code = $LASTEXITCODE
+try {
+    & $VenvPy (Join-Path $Root "run.py") --prod
+    $code = $LASTEXITCODE
+}
+finally {
+    Stop-OverseerConsole
+}
 Write-OverseerLog -Log launcher -Message "run.py exited with code $code"
 exit $code

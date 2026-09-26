@@ -895,7 +895,16 @@ impl Overseer {
                     [colour::BG_RAISED, colour::BG],
                 ));
                 ui.painter()
-                    .vline(all.left(), all.y_range(), (1.0, colour::LINE));
+                    .vline(all.left(), all.y_range(), (1.0, colour::VOID));
+                // The panel is a column standing beside the board rather
+                // than a region of the same sheet, so its near edge is lit:
+                // one dark stroke and one light one, the same cut the rows
+                // are separated by, turned on its side.
+                ui.painter().vline(
+                    all.left() + 1.0,
+                    all.y_range(),
+                    (1.0, colour::TEXT_STRONG.gamma_multiply(0.07)),
+                );
                 // The panel changes subject whenever the pointer crosses a
                 // row, which on the way down a roster is five times in a
                 // second. Snapping through five people reads as flicker.

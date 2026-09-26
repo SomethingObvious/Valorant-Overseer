@@ -490,7 +490,7 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
                 pos2(middle + half, top.max(y)),
             );
             let tint = if v >= rule { colour::GOOD } else { colour::BAD };
-            painter.rect_filled(bar, 0, tint);
+            painter.add(shape::pip(bar, tint));
         }
         return;
     }

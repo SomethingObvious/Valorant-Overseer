@@ -124,6 +124,55 @@ pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, String); 2] {
     }
 }
 
+/// Who is on one side, in the order the board draws them: sorted by
+/// whatever heading was clicked, without anybody the search has hidden.
+///
+/// The one definition. The keys walk this order and the board draws it, so
+/// the two cannot disagree about what comes after what; they used to, and
+/// the arrows stepped through people who were not on screen.
+pub(crate) fn roster<'a>(
+    board: &'a Board,
+    team: &str,
+    sort: &Sort,
+    filter: &str,
+) -> Vec<&'a overseer_core::Player> {
+    let mut players = board.team(team);
+    sort::apply(&mut players, sort);
+    players.retain(|p| sort::matches(p, filter));
+    players
+}
+
+/// Every account on screen, top to bottom, by id.
+pub(crate) fn order(board: &Board, sort: &Sort, filter: &str, enemies_first: bool) -> Vec<String> {
+    teams(board, enemies_first)
+        .iter()
+        .flat_map(|(_side, team)| roster(board, team, sort, filter))
+        .filter_map(|p| p.puuid.clone())
+        .collect()
+}
+
+/// The account a step up or down from `from`, stopping at either end, or
+/// the first one when nothing was chosen or the choice is not on screen.
+pub(crate) fn step(order: &[String], from: Option<&str>, down: bool) -> Option<String> {
+    let at = from.and_then(|id| order.iter().position(|o| o == id));
+    let next = match (at, down) {
+        (None, _) => 0,
+        (Some(i), true) => (i + 1).min(order.len().saturating_sub(1)),
+        (Some(i), false) => i.saturating_sub(1),
+    };
+    order.get(next).cloned()
+}
+
+/// The next of `among` after `from`, wrapping round to the first.
+pub(crate) fn next_after(among: &[String], from: Option<&str>) -> Option<String> {
+    let first = among.first()?;
+    let at = from.and_then(|id| among.iter().position(|f| f == id));
+    Some(
+        at.map_or(first, |i| among.get(i + 1).unwrap_or(first))
+            .clone(),
+    )
+}
+
 /// Whether the board is still arriving, and so wants frames.
 ///
 /// The only motion on the board that nothing else asks frames for: it is
@@ -195,9 +244,7 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
         if overlay && *side == Side::Ally {
             continue;
         }
-        let mut players = scene.board.team(team);
-        sort::apply(&mut players, scene.sort);
-        players.retain(|p| sort::matches(p, scene.filter));
+        let players = roster(scene.board, team, scene.sort, scene.filter);
         if players.is_empty() {
             continue;
         }
@@ -296,4 +343,48 @@ fn nobody(ui: &mut Ui, filter: &str) {
         );
     });
     ui.add_space(space::XXL);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_after, step};
+
+    fn ids(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    /// The arrows stop at either end rather than wrapping: the board is a
+    /// column, and going off the bottom of a column to its top is a jump
+    /// nobody asked for.
+    #[test]
+    fn a_step_stops_at_either_end() {
+        let order = ids(&["a", "b", "c"]);
+        assert_eq!(step(&order, Some("b"), true).as_deref(), Some("c"));
+        assert_eq!(step(&order, Some("c"), true).as_deref(), Some("c"));
+        assert_eq!(step(&order, Some("a"), false).as_deref(), Some("a"));
+        assert_eq!(step(&order, Some("b"), false).as_deref(), Some("a"));
+    }
+
+    /// Somebody the search has hidden, or nobody at all, starts at the top.
+    #[test]
+    fn a_step_from_nowhere_starts_at_the_top() {
+        let order = ids(&["a", "b"]);
+        assert_eq!(step(&order, None, true).as_deref(), Some("a"));
+        assert_eq!(step(&order, Some("gone"), false).as_deref(), Some("a"));
+        assert_eq!(step(&[], Some("a"), true), None);
+    }
+
+    /// Worth-a-look wraps: it is a cycle through a handful of accounts.
+    #[test]
+    fn the_next_flagged_account_wraps_round() {
+        let flagged = ids(&["x", "y"]);
+        assert_eq!(next_after(&flagged, None).as_deref(), Some("x"));
+        assert_eq!(next_after(&flagged, Some("x")).as_deref(), Some("y"));
+        assert_eq!(next_after(&flagged, Some("y")).as_deref(), Some("x"));
+        assert_eq!(
+            next_after(&flagged, Some("elsewhere")).as_deref(),
+            Some("x")
+        );
+        assert_eq!(next_after(&[], Some("x")), None);
+    }
 }

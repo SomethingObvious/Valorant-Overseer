@@ -26,7 +26,7 @@ use crate::hotkey::{self, Hotkey};
 use crate::notes::{self, Notes};
 use crate::overlay;
 use crate::settings::{self, Quality, Settings};
-use crate::sort::{self, Sort};
+use crate::sort::Sort;
 use crate::tray::{self, Action, Tray};
 use crate::{panel, view};
 use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
@@ -371,13 +371,10 @@ impl Overseer {
                 })
             })
             .collect();
-        let Some(first) = flagged.first() else { return };
-        let at = self
-            .selected
-            .as_deref()
-            .and_then(|id| flagged.iter().position(|f| f == id));
-        let next = at.map_or(first, |i| flagged.get(i + 1).unwrap_or(first));
-        self.selected = Some(next.clone());
+        let Some(next) = board::next_after(&flagged, self.selected.as_deref()) else {
+            return;
+        };
+        self.selected = Some(next);
         // The pointer wins over the selection everywhere else in this app,
         // so a jump has to take the pointer's job away or nothing appears
         // to happen, and keep it away until the pointer moves.
@@ -467,20 +464,10 @@ impl Overseer {
         // people who were not visible and could not get from one block to
         // the other.
         let order = self.visible_order();
-        if order.is_empty() {
-            return;
+        if let Some(next) = board::step(&order, self.selected.as_deref(), down) {
+            self.selected = Some(next);
+            self.keyboard_owns = true;
         }
-        let at = self
-            .selected
-            .as_ref()
-            .and_then(|id| order.iter().position(|o| o == id));
-        let next = match (at, down) {
-            (None, _) => 0,
-            (Some(i), true) => (i + 1).min(order.len() - 1),
-            (Some(i), false) => i.saturating_sub(1),
-        };
-        self.selected = order.get(next).cloned();
-        self.keyboard_owns = true;
     }
 
     /// Every account on screen, in the order they are drawn.
@@ -488,14 +475,12 @@ impl Overseer {
     /// One definition, so the keys and the board cannot disagree about what
     /// comes after what.
     fn visible_order(&self) -> Vec<String> {
-        let mut order = Vec::with_capacity(self.board.players.len());
-        for (_side, team) in board::teams(&self.board, self.settings.enemies_first) {
-            let mut players = self.board.team(&team);
-            sort::apply(&mut players, &self.sort);
-            players.retain(|p| sort::matches(p, &self.filter));
-            order.extend(players.iter().filter_map(|p| p.puuid.clone()));
-        }
-        order
+        board::order(
+            &self.board,
+            &self.sort,
+            &self.filter,
+            self.settings.enemies_first,
+        )
     }
 
     /// The first enemy worth a look, in screen order.
@@ -540,7 +525,8 @@ impl Overseer {
     /// Only while there is a tray to put it in. Without one this would be a
     /// window that cannot be closed and has nowhere to be reopened from.
     fn closing(&mut self, ctx: &egui::Context) {
-        if self.quitting || self.tray.is_err() || !ctx.input(|i| i.viewport().close_requested()) {
+        let asked = ctx.input(|i| i.viewport().close_requested());
+        if !to_tray(asked, self.tray.is_ok(), self.quitting) {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1368,9 +1354,32 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
     // nothing.
 }
 
+/// Whether a close should hide the window in the tray instead of ending
+/// the app.
+///
+/// Only when a close was asked for, there is a tray to hide in, and the
+/// close did not come from the tray's own Quit. That last condition was
+/// missing, and Quit hid the window and left the app running with nothing on
+/// screen but the icon it had just been told to go away from.
+const fn to_tray(asked: bool, have_tray: bool, quitting: bool) -> bool {
+    asked && have_tray && !quitting
+}
+
 #[cfg(test)]
 mod tests {
-    use super::connecting_text;
+    use super::{connecting_text, to_tray};
+
+    /// The close button hides to the tray; Quit ends the app.
+    #[test]
+    fn quit_quits_and_the_close_button_hides() {
+        assert!(to_tray(true, true, false), "the close button should hide");
+        assert!(!to_tray(true, true, true), "quit should quit");
+        assert!(
+            !to_tray(true, false, false),
+            "no tray, so close should close"
+        );
+        assert!(!to_tray(false, true, false), "nothing asked, nothing to do");
+    }
 
     #[test]
     fn the_first_attempt_has_no_detail_to_show() {

@@ -217,10 +217,12 @@ pub(crate) fn look(ui: &mut Ui, survey: &Survey) {
             }
             if survey.blocked() {
                 ui.add_space(space::LG);
-                note(
+                overseer_ui::say(
                     ui,
-                    "The install cannot go ahead until the red line above is dealt with.",
+                    space::XL,
                     colour::ENEMY,
+                    "The install cannot go ahead until the red line above is dealt with.",
+                    None,
                 );
             }
         });

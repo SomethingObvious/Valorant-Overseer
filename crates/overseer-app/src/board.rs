@@ -1433,38 +1433,7 @@ fn notice(ui: &mut Ui, board: &Board) {
         Some("warn" | "warning") => colour::WARN,
         _ => colour::INFO,
     };
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let painter = ui.painter().clone();
-    let band = Rect::from_min_max(
-        pos2(rect.left() + GUTTER, rect.top()),
-        pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
-    );
-    painter.add(shape::cut_filled(band, 4.0, tint.gamma_multiply(0.10)));
-    painter.rect_filled(
-        Rect::from_min_size(band.min, vec2(2.0, band.height())),
-        0,
-        tint,
-    );
-    let after = painter.text(
-        pos2(band.left() + space::LG, band.center().y),
-        Align2::LEFT_CENTER,
-        message,
-        Face::Body.at(size::MICRO),
-        tint,
-    );
-    if let Some(action) = notice.action.as_deref().filter(|a| !a.is_empty()) {
-        painter.text(
-            pos2(after.right() + space::LG, band.center().y),
-            Align2::LEFT_CENTER,
-            action,
-            Face::Body.at(size::MICRO),
-            colour::TEXT_DIM,
-        );
-    }
+    overseer_ui::say(ui, GUTTER, tint, message, notice.action.as_deref());
 }
 
 /// A team's heading: a band in their colour, what to worry about, and how

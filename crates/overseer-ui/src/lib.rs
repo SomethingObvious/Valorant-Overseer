@@ -378,6 +378,57 @@ pub mod shape {
     }
 }
 
+/// The app speaking, rather than reporting: one band in the colour of what
+/// it has to say.
+///
+/// Every screen has somewhere it stops listing things and says something.
+/// Red prose on the ground is a shout; a washed band with a bar down its
+/// left is the same sentence at the same urgency without raising its voice,
+/// and it reads as part of the layout rather than as something that went
+/// wrong with the layout. Shared, because the board and the installer both
+/// do it and neither should invent its own.
+///
+/// `aside` is the quieter half: what to do about it, when there is
+/// something to do. `gutter` is whatever the screen around it is already
+/// indented by: two points out from the block above is the sort of thing
+/// nobody sees and everybody feels.
+pub fn say(ui: &mut egui::Ui, gutter: f32, tint: Color32, message: &str, aside: Option<&str>) {
+    let (rect, _response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), space::ROW),
+        egui::Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    let band = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + gutter, rect.top()),
+        egui::pos2(rect.right() - gutter, rect.bottom() - space::SM),
+    );
+    painter.add(shape::cut_filled(band, 4.0, tint.gamma_multiply(0.10)));
+    painter.rect_filled(
+        egui::Rect::from_min_size(band.min, egui::vec2(2.0, band.height())),
+        0,
+        tint,
+    );
+    let after = painter.text(
+        egui::pos2(band.left() + space::LG, band.center().y),
+        egui::Align2::LEFT_CENTER,
+        message,
+        Face::Body.at(size::MICRO),
+        tint,
+    );
+    if let Some(aside) = aside.filter(|a| !a.is_empty()) {
+        painter.text(
+            egui::pos2(after.right() + space::LG, band.center().y),
+            egui::Align2::LEFT_CENTER,
+            aside,
+            Face::Body.at(size::MICRO),
+            colour::TEXT_DIM,
+        );
+    }
+}
+
 /// One row that can be switched on, drawn the one way this product draws
 /// them.
 ///

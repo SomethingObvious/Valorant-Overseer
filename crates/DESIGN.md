@@ -111,12 +111,35 @@ before the averages, so the block has a direction. A row's hover and
 selection tints run left to right, away from the rail, so they look like
 they came from it.
 
+A wash on its own was not enough, and for a long time this app looked
+printed. What makes a surface look like a surface is the edge where the
+light lands on it, so `shape::lit` is the wash plus one bright hairline
+along the top and one dark one along the bottom: two strokes, and the whole
+difference between a coloured rectangle and a thing sitting on top of
+something else. Every raised thing gets it, which is why it is one call
+rather than a habit each screen has to remember.
+
+**Blocks sit on something, rows are cut into it.** Each team, and the
+ladder and session together, is one surface with a shadow under it, punched
+into the paint list before the block is drawn and filled in once its height
+is known. Ten rows on the window's own background is a list; the same ten on
+a raised surface is a board. The separator between rows is then a groove, one
+stroke of shadow and one of light, because the old single hairline was darker
+than the page but lighter than the surface the rows had just been given, and
+it vanished the moment they got one.
+
+**A glow is for a thing that happens, not for decoration.** `shape::halo`
+goes on the marks meant to catch the eye from across the window and nowhere
+else: the flag on an account worth looking at, the rail of the row under the
+pointer, and a score digit for as long as the animator takes to catch up
+with a round that was just won. A glow on everything is a glow on nothing.
+
 All of it costs the same triangles the flat version costs: the colour is per
 vertex and the tessellator interpolates it for nothing. `shape::cut_wash`
-does the chamfered ones, `Shape::gradient_rect` the square ones, and
-`shape::drop_shadow` is three stacked blurred rects because epaint's blur is
-an oversized feather with a linear falloff and one of them alone has a hard
-edge.
+does the chamfered ones, `shape::lit` the raised ones,
+`Shape::gradient_rect` the square ones, and `shape::drop_shadow` is three
+stacked blurred rects because epaint's blur is an oversized feather with a
+linear falloff and one of them alone has a hard edge.
 
 **Shape.** One motif: a corner cut at forty five degrees, on two diagonally
 opposite corners, seven points deep. It is the game's own language, it costs
@@ -197,9 +220,9 @@ device pixels:
 | | |
 | --- | --- |
 | Idle | 0.2% of a core |
-| Pointer swept down the roster as fast as it moves | 0.2% of a core |
+| Pointer swept down the roster as fast as it moves | under 0.2% of a core |
 | Committed | 445 MB |
-| Resident | 390 MB, or 16 MB once Windows has trimmed it |
+| Resident | 390 to 460 MB, or 16 MB once Windows has trimmed it |
 
 Take the two memory figures together or neither. The resident number is not
 reproducible on its own: six samples across one run came out 391, 13, 16, 16,

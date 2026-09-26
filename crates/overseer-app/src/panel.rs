@@ -44,8 +44,13 @@ pub(crate) fn show(
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            ui.add_space(space::SM);
+            let plate = ui.painter().add(egui::Shape::Noop);
+            let top = ui.cursor().top();
             name(ui, player);
             identity(ui, player);
+            identity_plate(ui, player, plate, top);
+            ui.add_space(space::SM);
             if !player.smurf_reasons.is_empty() {
                 flags(ui, player);
             }
@@ -175,18 +180,10 @@ fn name(ui: &mut Ui, player: &Player) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    // The agent's colour, down the side of their name, tying the panel to
-    // the row it came from without repeating a word of it.
-    if let Some(tint) = hex(player.agent_color.as_deref()) {
-        ui.painter().rect_filled(
-            Rect::from_min_size(
-                pos2(rect.left(), rect.top() + space::SM),
-                vec2(3.0, rect.height() - space::MD),
-            ),
-            0,
-            tint,
-        );
-    }
+    // No rail down the side any more: the plate behind this block is washed
+    // in the agent's own colour, which ties the panel to the row it came
+    // from more plainly than three points of bar ever did, and two marks
+    // saying the same thing is one mark too many.
     // The tag is part of the name and not part of the point, so it is drawn
     // quieter rather than dropped: two people with the same name is exactly
     // when the tag matters.
@@ -221,6 +218,40 @@ fn name(ui: &mut Ui, player: &Player) {
             colour::TEXT_FAINT,
         );
     }
+}
+
+/// The surface the name and the line under it sit on, in the agent's own
+/// colour.
+///
+/// The panel is the one part of the window with nothing behind it: a column
+/// of text and hairlines, which is what a document looks like rather than
+/// what a card about a person looks like. Its top is now a plate washed from
+/// the colour of whoever it is about, which does two jobs at once. It gives
+/// the column something to start on, and it is the second place the agent's
+/// colour appears, so moving the pointer down the roster changes the colour
+/// of the panel and you can see the subject change out of the corner of your
+/// eye without reading a word.
+fn identity_plate(ui: &Ui, player: &Player, at: egui::layers::ShapeIdx, top: f32) {
+    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::BG_RAISED);
+    let plate = Rect::from_min_max(
+        pos2(ui.max_rect().left() + space::LG, top),
+        pos2(
+            ui.max_rect().right() - space::LG,
+            ui.cursor().top() - space::SM,
+        ),
+    );
+    if plate.height() < space::ROW {
+        return;
+    }
+    ui.painter().set(
+        at,
+        shape::lit(
+            plate,
+            shape::CHAMFER,
+            shape::blend(colour::BG_RAISED, tint, 0.20),
+            shape::blend(colour::BG_RAISED, tint, 0.04),
+        ),
+    );
 }
 
 /// Level, role, agent and title, because they are one thought.

@@ -27,17 +27,20 @@ use crate::view;
 use overseer_ui as design;
 
 /// A ten player board is the worst case the app ever draws, and it comes to
-/// 235 shapes: ten rows with a rule, a state bar and up to five result pips
-/// each, twelve columns of text, two team headings with their averages, two
-/// heading rows, the title bar and the panel.
+/// 262 shapes: ten rows with a groove, a state bar and up to five result
+/// pips each, twelve columns of text, two team headings with their averages,
+/// two heading rows, three block surfaces with a shadow apiece, the title bar
+/// and the panel.
 ///
-/// The budget is that figure with a quarter of headroom. It has moved once,
-/// from 160, when the board went from six columns to twelve and grew the
-/// form pips. That is the process working rather than failing: the number
-/// makes an increase a decision somebody took, and this comment is where the
+/// The budget is that figure with headroom. It has moved twice: from 160,
+/// when the board went from six columns to twelve and grew the form pips,
+/// and to here, when every row separator became two strokes rather than one
+/// so the rows would read as cut into a surface rather than printed on a
+/// page. That is the process working rather than failing. The number makes
+/// an increase a decision somebody took, and this comment is where the
 /// reason goes. What it is really guarding against is the other kind of
 /// increase, where a shadow lands on every row and nothing says so.
-const SHAPE_BUDGET: usize = 300;
+const SHAPE_BUDGET: usize = 330;
 
 /// Builds the harness the way the app is built, on a full board.
 fn harness() -> Harness<'static, bool> {

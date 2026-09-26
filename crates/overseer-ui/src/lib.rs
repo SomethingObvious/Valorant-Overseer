@@ -345,6 +345,70 @@ pub mod shape {
         }
     }
 
+    /// A chamfered surface with a light on it: a wash down the face, a bright
+    /// hairline along the top edge and a dark one along the bottom.
+    ///
+    /// A gradient on its own still reads as printed. What makes a surface
+    /// look like a surface is the edge where the light lands on it, and that
+    /// is one hairline: two pixels of work for the whole difference between
+    /// a coloured rectangle and a thing sitting on top of something else.
+    /// Everything raised in this app gets one, which is why it is one call
+    /// rather than a habit each screen has to remember.
+    pub fn lit(rect: Rect, cut: f32, top: Color32, bottom: Color32) -> Shape {
+        let points = cut_corners(rect, cut);
+        let mut mesh = egui::Mesh::default();
+        for point in &points {
+            let t = ((point.y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
+            mesh.colored_vertex(*point, blend(top, bottom, t));
+        }
+        for i in 1..points.len().saturating_sub(1) {
+            mesh.add_triangle(0, i as u32, i as u32 + 1);
+        }
+        let inset = cut.min(rect.width() * 0.5).min(rect.height() * 0.5);
+        Shape::Vec(vec![
+            Shape::mesh(mesh),
+            Shape::line_segment(
+                [
+                    pos2(rect.left() + inset, rect.top() + 0.5),
+                    pos2(rect.right() - 0.5, rect.top() + 0.5),
+                ],
+                Stroke::new(1.0, super::colour::TEXT_STRONG.gamma_multiply(0.11)),
+            ),
+            Shape::line_segment(
+                [
+                    pos2(rect.left() + 0.5, rect.bottom() - 0.5),
+                    pos2(rect.right() - inset, rect.bottom() - 0.5),
+                ],
+                Stroke::new(1.0, super::colour::VOID.gamma_multiply(0.55)),
+            ),
+        ])
+    }
+
+    /// A glow behind something small and bright, so it reads as lit rather
+    /// than as printed.
+    ///
+    /// Three feathered copies rather than one: a single oversized blur has a
+    /// hard edge where it stops, and the thing about a halo is that nobody
+    /// should be able to find where it ends. Reserved for the few marks that
+    /// are meant to catch the eye from across the window, because a glow on
+    /// everything is a glow on nothing.
+    #[must_use]
+    pub fn halo(rect: Rect, tint: Color32, strength: f32) -> Vec<Shape> {
+        [(14.0_f32, 0.22_f32), (7.0, 0.30), (3.0, 0.34)]
+            .into_iter()
+            .map(|(blur, alpha)| {
+                Shape::from(
+                    egui::epaint::RectShape::filled(
+                        rect.expand(blur * 0.5),
+                        egui::CornerRadius::same(4),
+                        tint.gamma_multiply(alpha * strength),
+                    )
+                    .with_blur_width(blur),
+                )
+            })
+            .collect()
+    }
+
     /// A soft edge under or beside a surface, so it reads as being above
     /// what it covers.
     ///

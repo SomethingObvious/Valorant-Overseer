@@ -629,6 +629,11 @@ impl Overseer {
             egui::Direction::TopDown,
             [colour::BG_INSET, colour::BG_RAISED],
         ));
+        painter.hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            (1.0, colour::TEXT_STRONG.gamma_multiply(0.09)),
+        );
         painter.extend(shape::drop_shadow(
             Rect::from_min_max(
                 pos2(rect.left(), rect.bottom() - 2.0),
@@ -726,6 +731,28 @@ impl Overseer {
         x
     }
 
+    /// A flare behind a score digit, for as long as it takes the animator to
+    /// catch up with it.
+    ///
+    /// Nothing else in this window flashes, because nothing else in it is a
+    /// thing that happens. A round being won is a thing that happens, and it
+    /// is the one event the person watching would want to feel rather than
+    /// read.
+    fn round_won(&self, painter: &egui::Painter, digit: Rect, score: u32, tint: egui::Color32) {
+        if self.quality() == Quality::Efficient {
+            return;
+        }
+        let settled = painter.ctx().animate_value_with_time(
+            egui::Id::new(("score", tint.to_array())),
+            score as f32,
+            motion::MEASURE,
+        );
+        let flare = (score as f32 - settled).abs().min(1.0);
+        if flare > 0.01 {
+            painter.extend(shape::halo(digit, tint, flare));
+        }
+    }
+
     /// Attack is the game's red and defence is its green, the same way round
     /// as the game draws them.
     fn side_tint(&self) -> egui::Color32 {
@@ -757,6 +784,12 @@ impl Overseer {
                 font.clone(),
                 colour::ALLY,
             );
+            // The one number on screen that changes while you are watching,
+            // and the only thing in the window that has earned a flare. It
+            // comes off the animator rather than off a timestamp kept for
+            // the purpose: how far the eased value still is from the real
+            // one is exactly how recently the round was won.
+            self.round_won(painter, after, ally, colour::ALLY);
             // Two numbers with a gap between them are two numbers. The game
             // puts a rule between its own, and this is that rule cut at the
             // angle everything else in this window is cut at, so the score
@@ -779,6 +812,7 @@ impl Overseer {
                 font,
                 colour::ENEMY,
             );
+            self.round_won(painter, after, enemy, colour::ENEMY);
             if let Some(round) = score.round {
                 caps_at(
                     painter,
@@ -1026,6 +1060,7 @@ impl Overseer {
                     // Its own id scope: both blocks have a column called
                     // K/D, and without this they ask egui for the same
                     // widget id and it says so, loudly, across the board.
+                    let block = board::open_block(ui);
                     ui.push_id(&team, |ui| {
                         if board::team_heading(ui, label, tint, &self.board, &team) {
                             worth = Some(team.clone());
@@ -1052,10 +1087,11 @@ impl Overseer {
                             hovered = over;
                         }
                     });
+                    board::close_block(ui, block, self.quality() == Quality::Efficient);
                     ui.add_space(if windowed { space::XL } else { space::LG });
                 }
                 if windowed && shown > 0 {
-                    board::board_foot(ui, &self.board);
+                    board::board_foot(ui, &self.board, self.quality() == Quality::Efficient);
                 }
                 if shown == 0 {
                     nobody(ui, &filter);

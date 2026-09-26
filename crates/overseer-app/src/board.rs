@@ -445,10 +445,20 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
     );
     furniture(&painter, player, style, inner, hover, chosen);
     flags(&painter, player, inner, style.noted);
+    // A groove rather than a line. One stroke the colour of the shadow and
+    // one the colour of the light under it is how a surface gets cut, and it
+    // is the difference between ten rows and one block of text. The old
+    // single line was darker than the page but lighter than the surface the
+    // rows now sit on, so it disappeared the moment they got one.
     painter.hline(
         inner.left() + space::LG..=inner.right(),
-        inner.bottom(),
-        (1.0, colour::LINE_SOFT),
+        inner.bottom() - 0.5,
+        (1.0, colour::VOID.gamma_multiply(0.5)),
+    );
+    painter.hline(
+        inner.left() + space::LG..=inner.right(),
+        inner.bottom() + 0.5,
+        (1.0, colour::TEXT_STRONG.gamma_multiply(0.045)),
     );
 
     // An account the backend could not see at all. A row of dashes across
@@ -576,15 +586,28 @@ fn furniture(
                 colour::BG_SELECTED.gamma_multiply(chosen * 0.55),
             ],
         ));
+        // The chosen row is the one thing on the board lifted off the
+        // surface the others are lying on, and a fill alone does not lift
+        // anything. One hairline of light along its top edge does.
+        painter.hline(
+            inner.x_range(),
+            inner.top() + 0.5,
+            (1.0, colour::TEXT_STRONG.gamma_multiply(0.13 * chosen)),
+        );
     }
     if hover > 0.0 && chosen < 1.0 {
         let fade = hover * (1.0 - chosen);
+        // The tint arrives from the rail rather than appearing everywhere at
+        // once. A row that fades up uniformly reads as a state it was always
+        // in; a row the light runs across reads as something just touched,
+        // and the difference is the whole feel of moving down a roster.
+        let reach = inner.width() * (0.3 + 0.7 * fade);
         painter.add(egui::Shape::gradient_rect(
-            inner,
+            Rect::from_min_size(inner.min, vec2(reach, inner.height())),
             egui::Direction::LeftToRight,
             [
                 colour::BG_HOVER.gamma_multiply(fade),
-                colour::BG_HOVER.gamma_multiply(fade * 0.4),
+                colour::BG_HOVER.gamma_multiply(fade * 0.15),
             ],
         ));
     }
@@ -594,11 +617,11 @@ fn furniture(
     } else {
         hex(player.agent_color.as_deref()).unwrap_or(style.team)
     };
-    painter.rect_filled(
-        Rect::from_min_size(inner.min, vec2(3.0 + 2.0 * lift, inner.height())),
-        0,
-        rail_tint.gamma_multiply(0.45 + 0.55 * lift),
-    );
+    let rail = Rect::from_min_size(inner.min, vec2(3.0 + 2.0 * lift, inner.height()));
+    if lift > 0.02 {
+        painter.extend(shape::halo(rail, rail_tint, lift * 0.9));
+    }
+    painter.rect_filled(rail, 0, rail_tint.gamma_multiply(0.45 + 0.55 * lift));
     let Some(bracket) = style.bracket else { return };
     let x = inner.left() - 10.0;
     let (top, bottom) = (inner.top(), inner.bottom());
@@ -618,11 +641,11 @@ fn furniture(
 fn agent_tile(painter: &egui::Painter, player: &Player, at: Pos2) -> Rect {
     let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::TEXT_DIM);
     let tile = Rect::from_center_size(at, vec2(18.0, 18.0));
-    painter.add(shape::cut_wash(
+    painter.add(shape::lit(
         tile,
         4.0,
-        shape::blend(tint, colour::TEXT_STRONG, 0.18),
-        tint,
+        shape::blend(tint, colour::TEXT_STRONG, 0.34),
+        shape::blend(tint, colour::VOID, 0.18),
     ));
     let initial: String = player
         .agent
@@ -729,11 +752,11 @@ fn rank_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     // Unranked is a state rather than a tier, so it gets no plate: a grey
     // plate next to nine coloured ones reads as a tenth rank.
     if tier > 0 {
-        painter.add(shape::cut_wash(
+        painter.add(shape::lit(
             plate,
             4.0,
-            tint.gamma_multiply(0.26),
-            tint.gamma_multiply(0.10),
+            tint.gamma_multiply(0.30),
+            tint.gamma_multiply(0.12),
         ));
     }
     chevrons(
@@ -783,6 +806,11 @@ fn flags(painter: &egui::Painter, player: &Player, rect: Rect, noted: bool) {
             Face::Display.at(size::MICRO),
             colour::VOID,
         );
+        painter.extend(shape::halo(
+            Rect::from_center_size(pos2(cx, cy), vec2(13.0, 13.0)),
+            colour::WARN,
+            0.85,
+        ));
         x = cx - 6.0 - space::MD;
     }
     // A party Riot told us about is drawn as a bracket down the gutter, so
@@ -1140,7 +1168,7 @@ fn results(painter: &egui::Painter, session: &overseer_core::Session, band: Rect
 /// directly under the last row. Ten rows never fill a window, and a strip
 /// floating in the middle of the space reads as the board having stopped
 /// early; the same strip against the bottom edge reads as a footer.
-pub(crate) fn board_foot(ui: &mut Ui, board: &Board) {
+pub(crate) fn board_foot(ui: &mut Ui, board: &Board, still: bool) {
     let wanted = space::ROW + space::MD + space::XL;
     // The ladder is the first thing to go on a short window. It is the only
     // block down here that restates something the rows already said, and a
@@ -1150,11 +1178,17 @@ pub(crate) fn board_foot(ui: &mut Ui, board: &Board) {
     if spare > 0.0 {
         ui.add_space(spare);
     }
+    // The ladder, anything the backend had to say and the session are one
+    // block: the summary of the thing the roster above is the detail of. So
+    // they sit on one surface, the same surface the two teams sit on, rather
+    // than floating on the page under them.
+    let block = open_block(ui);
     if room {
         ladder(ui, board);
     }
     notice(ui, board);
     session(ui, board);
+    close_block(ui, block, still);
 }
 /// How tall the ladder block is, when the window has room for it.
 ///
@@ -1219,7 +1253,6 @@ pub(crate) fn ladder(ui: &mut Ui, board: &Board) {
         pos2(rect.left() + GUTTER, rect.top()),
         pos2(rect.right() - GUTTER, rect.bottom()),
     );
-    painter.hline(band.x_range(), band.top(), (1.0, colour::LINE));
     let head = band.top() + space::LG;
     caps_at(
         &painter,
@@ -1436,6 +1469,60 @@ fn notice(ui: &mut Ui, board: &Board) {
     overseer_ui::say(ui, GUTTER, tint, message, notice.action.as_deref());
 }
 
+/// A team block's surface, reserved before the block is drawn and filled in
+/// once its height is known.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Block {
+    /// Where in the paint list the surface goes, so it lands under the rows
+    /// rather than over them.
+    idx: egui::layers::ShapeIdx,
+    /// The top of the block, taken before anything was drawn.
+    top: f32,
+}
+
+/// Starts a team block.
+///
+/// Ten rows of text on the window's own background is a list, not a board.
+/// Everything the eye reads as a table sits on something, and the something
+/// has to be one shape behind the whole block rather than a tint on each
+/// row: a tint per row is what makes a scoreboard look like a spreadsheet.
+///
+/// The height is not known until the rows have been laid out, and a block
+/// measured by adding its parts up is a sum nobody revisits. So the surface
+/// is a hole in the paint list, punched here and filled by [`close_block`].
+pub(crate) fn open_block(ui: &Ui) -> Block {
+    Block {
+        idx: ui.painter().add(egui::Shape::Noop),
+        top: ui.cursor().top(),
+    }
+}
+
+/// Closes a team block, and paints the surface it turned out to need.
+pub(crate) fn close_block(ui: &Ui, block: Block, still: bool) {
+    let rect = Rect::from_min_max(
+        pos2(ui.max_rect().left() + GUTTER, block.top),
+        pos2(
+            ui.max_rect().right() - GUTTER,
+            ui.cursor().top() - space::SM,
+        ),
+    );
+    if rect.height() < space::ROW {
+        return;
+    }
+    let mut shapes = if still {
+        Vec::new()
+    } else {
+        shape::drop_shadow(rect, 7.0)
+    };
+    shapes.push(shape::lit(
+        rect,
+        shape::CHAMFER,
+        colour::BG_RAISED,
+        shape::blend(colour::BG_RAISED, colour::BG, 0.45),
+    ));
+    ui.painter().set(block.idx, egui::Shape::Vec(shapes));
+}
+
 /// A team's heading: a band in their colour, what to worry about, and how
 /// they compare.
 ///
@@ -1460,11 +1547,18 @@ pub(crate) fn team_heading(
         pos2(rect.left() + GUTTER, rect.top()),
         pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
     );
-    painter.add(shape::cut_filled(band, shape::CHAMFER, colour::BG_RAISED));
+    // The heading is the top of the block's own surface rather than a band
+    // lying on it, so it is the piece that carries the light.
+    painter.add(shape::lit(
+        band,
+        shape::CHAMFER,
+        shape::blend(colour::BG_RAISED, colour::TEXT_STRONG, 0.06),
+        colour::BG_RAISED,
+    ));
     painter.add(shape::cut_wash(
         band,
         shape::CHAMFER,
-        tint.gamma_multiply(0.34),
+        tint.gamma_multiply(0.40),
         Color32::TRANSPARENT,
     ));
     // The bar is a wash too, bright at the top. A three point rectangle in

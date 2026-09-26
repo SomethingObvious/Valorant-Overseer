@@ -372,6 +372,36 @@ pub(crate) struct Shown<'a> {
     pub(crate) career: &'a crate::career::Career,
 }
 
+/// The detail panel, for the snapshot only: the window builds its own.
+#[cfg(test)]
+fn beside(
+    ui: &mut Ui,
+    width: f32,
+    board: &Board,
+    selected: Option<&str>,
+    notes: &mut crate::notes::Notes,
+    career: &crate::career::Career,
+) {
+    let panel_width = if width >= app::WIDE { 340.0 } else { 280.0 };
+    Panel::right("detail")
+        .exact_size(panel_width)
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let all = ui.max_rect();
+            ui.painter().add(egui::Shape::gradient_rect(
+                all,
+                egui::Direction::TopDown,
+                [colour::BG_RAISED, colour::BG],
+            ));
+            ui.painter()
+                .vline(all.left(), all.y_range(), (1.0, colour::LINE));
+            ui.add_space(space::MD);
+            let player = selected
+                .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
+            panel::show(ui, player, notes, career);
+        });
+}
+
 #[cfg(test)]
 pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
     let Shown {
@@ -385,24 +415,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
     let width = ui.available_width();
     app::snapshot_chrome(ui, board, 12);
     if width >= app::COMPACT && settings.panel {
-        let panel_width = if width >= app::WIDE { 340.0 } else { 280.0 };
-        Panel::right("detail")
-            .exact_size(panel_width)
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                let all = ui.max_rect();
-                ui.painter().add(egui::Shape::gradient_rect(
-                    all,
-                    egui::Direction::TopDown,
-                    [colour::BG_RAISED, colour::BG],
-                ));
-                ui.painter()
-                    .vline(all.left(), all.y_range(), (1.0, colour::LINE));
-                ui.add_space(space::MD);
-                let player = selected
-                    .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
-                panel::show(ui, player, notes, career);
-            });
+        beside(ui, width, board, selected, notes, career);
     }
     CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -429,6 +442,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 if players.is_empty() {
                     continue;
                 }
+                let block = board::open_block(ui);
                 let _jumped = board::team_heading(ui, label, tint, board, &team);
                 // Same id scope as the window uses, for the same reason.
                 ui.push_id(&team, |ui| {
@@ -450,8 +464,9 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                     };
                     board::row(ui, player, &style, &settings.hidden_columns);
                 }
+                board::close_block(ui, block, false);
                 ui.add_space(space::XL);
             }
-            board::board_foot(ui, board);
+            board::board_foot(ui, board, false);
         });
 }

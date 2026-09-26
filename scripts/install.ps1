@@ -1,5 +1,10 @@
 ﻿param(
-    [string]$Region = ""
+    [string]$Region = "",
+    # Which front ends to set up. The window, the terminal, or both. The
+    # wizard passes this; a person running install.bat by hand gets the
+    # default, which is what the previous version of this script did.
+    [ValidateSet("app", "cli", "both")]
+    [string]$Frontend = "both"
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -85,12 +90,17 @@ try {
     }
 
     New-DesktopShortcut
-    Save-Markers (Get-SavedRegion)
+    Save-Markers (Get-SavedRegion) $Frontend
     Write-OverseerLog -Log install -Message "install/repair completed successfully"
 
     Write-Host ""
     Ok "Setup complete!"
-    Write-Host "  Launch the app any time with start.bat (or the Valorant Overseer desktop shortcut)." -ForegroundColor Green
+    $how = switch ($Frontend) {
+        "cli" { "start.bat opens the terminal scoreboard" }
+        "app" { "start.bat opens the window" }
+        default { "start.bat opens the window; start.bat --cli opens the terminal one" }
+    }
+    Write-Host "  $how (or use the desktop shortcut)." -ForegroundColor Green
     exit 0
 }
 catch {

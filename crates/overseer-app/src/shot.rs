@@ -22,7 +22,8 @@ use egui_kittest::Harness;
 use overseer_core::{Board, Player};
 
 use crate::settings::{Quality, Settings};
-use crate::{design, view};
+use crate::view;
+use overseer_ui as design;
 
 /// One frame to render: a board, and who is selected.
 struct Scene {

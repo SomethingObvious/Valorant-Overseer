@@ -1,4 +1,5 @@
-//! The design system: every value the interface is allowed to use.
+//! The Valorant Overseer design system: every value the interface is allowed
+//! to use, shared by the window and the installer so the two are one product.
 //!
 //! An app looks generated when every screen was decided separately. The cure
 //! is not more decoration, it is fewer decisions, so this module holds all of
@@ -18,52 +19,52 @@ use egui::{Color32, FontFamily, FontId, Stroke, Style, TextStyle, Visuals};
 /// written out in `crates/DESIGN.md`. Only the steps with
 /// a user live here, because a constant nothing calls is a decision nobody
 /// needed, and the lint that says so is right.
-pub(crate) mod size {
+pub mod size {
     /// The wordmark and the state of the game.
-    pub(crate) const DISPLAY: f32 = 20.0;
+    pub const DISPLAY: f32 = 20.0;
     /// A panel's subject: a player's name, a team.
-    pub(crate) const TITLE: f32 = 15.0;
+    pub const TITLE: f32 = 15.0;
     /// Everything that is read rather than scanned.
-    pub(crate) const BODY: f32 = 13.0;
+    pub const BODY: f32 = 13.0;
     /// Column headings and section labels. Caps, letterspaced.
-    pub(crate) const LABEL: f32 = 11.0;
+    pub const LABEL: f32 = 11.0;
     /// Footnotes and counters that only matter when looked for.
-    pub(crate) const MICRO: f32 = 10.0;
+    pub const MICRO: f32 = 10.0;
 }
 
 /// A four point grid. Anything not on it is a guess, and guesses do not line
 /// up with each other.
-pub(crate) mod space {
+pub mod space {
     /// Between two things that belong to each other.
-    pub(crate) const SM: f32 = 4.0;
+    pub const SM: f32 = 4.0;
     /// The default gap, and the gutter between columns.
-    pub(crate) const MD: f32 = 8.0;
+    pub const MD: f32 = 8.0;
     /// A panel's inner padding.
-    pub(crate) const LG: f32 = 12.0;
+    pub const LG: f32 = 12.0;
     /// Between two blocks that are not related.
-    pub(crate) const XL: f32 = 16.0;
+    pub const XL: f32 = 16.0;
     /// Around something that wants to be alone.
-    pub(crate) const XXL: f32 = 24.0;
+    pub const XXL: f32 = 24.0;
     /// One player. Body type doubled and rounded onto the grid, which leaves
     /// five and a half points of air above and below a thirteen point glyph.
-    pub(crate) const ROW: f32 = 24.0;
+    pub const ROW: f32 = 24.0;
     /// One player, on a window too narrow to spend the extra four points.
-    pub(crate) const ROW_TIGHT: f32 = 20.0;
+    pub const ROW_TIGHT: f32 = 20.0;
 }
 
 /// How long things take. Four durations, because a fifth would be a fifth
 /// opinion about the same question, and the whole point of a system is that
 /// the same question has one answer.
-pub(crate) mod motion {
+pub mod motion {
     /// A hover tint. Fast enough to feel like the cursor rather than an
     /// animation somebody wrote.
-    pub(crate) const INSTANT: f32 = 0.06;
+    pub const INSTANT: f32 = 0.06;
     /// A selection moving, a value changing.
-    pub(crate) const QUICK: f32 = 0.12;
+    pub const QUICK: f32 = 0.12;
 
     /// The same durations when the window is being careful: fast enough to
     /// still say what changed, short enough to cost nothing.
-    pub(crate) const EFFICIENT: f32 = 0.0;
+    pub const EFFICIENT: f32 = 0.0;
 }
 
 /// Colour by the job it does, never by what it looks like.
@@ -72,44 +73,44 @@ pub(crate) mod motion {
 /// one product. `you` is bone rather than red on purpose: in game your own row
 /// is the light one and the enemy is the red one, and a companion app that
 /// swaps those is worse than one with no colour at all.
-pub(crate) mod colour {
+pub mod colour {
     use egui::Color32;
 
     /// The window's background.
-    pub(crate) const BG: Color32 = Color32::from_rgb(0x0B, 0x11, 0x19);
+    pub const BG: Color32 = Color32::from_rgb(0x0B, 0x11, 0x19);
     /// A surface that sits above the background: a header, a panel.
-    pub(crate) const BG_RAISED: Color32 = Color32::from_rgb(0x11, 0x1A, 0x24);
+    pub const BG_RAISED: Color32 = Color32::from_rgb(0x11, 0x1A, 0x24);
     /// The tint under the cursor.
-    pub(crate) const BG_HOVER: Color32 = Color32::from_rgb(0x18, 0x24, 0x31);
+    pub const BG_HOVER: Color32 = Color32::from_rgb(0x18, 0x24, 0x31);
     /// The tint on the row you have chosen.
-    pub(crate) const BG_SELECTED: Color32 = Color32::from_rgb(0x1E, 0x2C, 0x3A);
+    pub const BG_SELECTED: Color32 = Color32::from_rgb(0x1E, 0x2C, 0x3A);
     /// A rule that separates two things.
-    pub(crate) const LINE: Color32 = Color32::from_rgb(0x2A, 0x39, 0x47);
+    pub const LINE: Color32 = Color32::from_rgb(0x2A, 0x39, 0x47);
     /// A rule between rows, which should be felt rather than seen.
-    pub(crate) const LINE_SOFT: Color32 = Color32::from_rgb(0x18, 0x21, 0x2B);
+    pub const LINE_SOFT: Color32 = Color32::from_rgb(0x18, 0x21, 0x2B);
 
     /// A name, a heading: the brightest text there is.
-    pub(crate) const TEXT_STRONG: Color32 = Color32::from_rgb(0xEC, 0xE8, 0xE1);
+    pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xEC, 0xE8, 0xE1);
     /// Ordinary text.
-    pub(crate) const TEXT: Color32 = Color32::from_rgb(0xD6, 0xDD, 0xE3);
+    pub const TEXT: Color32 = Color32::from_rgb(0xD6, 0xDD, 0xE3);
     /// A label beside a value.
-    pub(crate) const TEXT_DIM: Color32 = Color32::from_rgb(0x7E, 0x8C, 0x92);
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x7E, 0x8C, 0x92);
     /// Present, but not the point.
-    pub(crate) const TEXT_FAINT: Color32 = Color32::from_rgb(0x55, 0x63, 0x6D);
+    pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x55, 0x63, 0x6D);
     /// Your team.
-    pub(crate) const ALLY: Color32 = Color32::from_rgb(0x18, 0xE5, 0xA7);
+    pub const ALLY: Color32 = Color32::from_rgb(0x18, 0xE5, 0xA7);
     /// The other team, and anything dangerous.
-    pub(crate) const ENEMY: Color32 = Color32::from_rgb(0xFF, 0x46, 0x55);
+    pub const ENEMY: Color32 = Color32::from_rgb(0xFF, 0x46, 0x55);
     /// You.
-    pub(crate) const YOU: Color32 = TEXT_STRONG;
+    pub const YOU: Color32 = TEXT_STRONG;
     /// A good number.
-    pub(crate) const GOOD: Color32 = ALLY;
+    pub const GOOD: Color32 = ALLY;
     /// A measurement rather than an outcome.
-    pub(crate) const INFO: Color32 = Color32::from_rgb(0x9A, 0xDE, 0xFF);
+    pub const INFO: Color32 = Color32::from_rgb(0x9A, 0xDE, 0xFF);
     /// Something worth a second look.
-    pub(crate) const WARN: Color32 = Color32::from_rgb(0xFF, 0xB4, 0x54);
+    pub const WARN: Color32 = Color32::from_rgb(0xFF, 0xB4, 0x54);
     /// A bad number.
-    pub(crate) const BAD: Color32 = Color32::from_rgb(0xFF, 0x80, 0x88);
+    pub const BAD: Color32 = Color32::from_rgb(0xFF, 0x80, 0x88);
 }
 
 /// One colour per rank group, in tier order, as the game shows them.
@@ -127,7 +128,8 @@ const RANKS: [Color32; 10] = [
 ];
 
 /// The colour for a rank tier. Tier 0 to 2 is unranked, then three per group.
-pub(crate) fn rank(tier: Option<u32>) -> Color32 {
+#[must_use]
+pub fn rank(tier: Option<u32>) -> Color32 {
     match tier {
         // Floor division on purpose: 12, 13 and 14 are all Gold. Written as
         // div_euclid because the intent is the flooring, not a quotient that
@@ -141,7 +143,8 @@ pub(crate) fn rank(tier: Option<u32>) -> Color32 {
 }
 
 /// The colour a K/D is worth saying out loud in.
-pub(crate) fn kd(value: Option<f64>) -> Color32 {
+#[must_use]
+pub fn kd(value: Option<f64>) -> Color32 {
     match value {
         None => colour::TEXT_FAINT,
         Some(v) if v >= 1.3 => colour::GOOD,
@@ -153,7 +156,7 @@ pub(crate) fn kd(value: Option<f64>) -> Color32 {
 
 /// The three faces, by the job each one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Face {
+pub enum Face {
     /// A DIN, which is the family the game's own interface uses. Headings and
     /// labels, in caps.
     Display,
@@ -175,7 +178,8 @@ impl Face {
     }
 
     /// This face at a size.
-    pub(crate) fn at(self, points: f32) -> FontId {
+    #[must_use]
+    pub fn at(self, points: f32) -> FontId {
         FontId::new(points, FontFamily::Name(self.key().into()))
     }
 }
@@ -194,7 +198,7 @@ const FACES: [(Face, &str); 3] = [
 ];
 
 /// Registers the faces, falling back quietly to what egui ships.
-pub(crate) fn install_fonts(ctx: &egui::Context) {
+pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let dir = std::env::var_os("SystemRoot").map_or_else(
         || std::path::PathBuf::from("C:/Windows"),
@@ -244,7 +248,8 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
 /// Sharp corners are the game's language and they are also cheaper: a rounded
 /// rectangle is a different mesh per radius, and this app draws a great many
 /// rectangles.
-pub(crate) fn style() -> Style {
+#[must_use]
+pub fn style() -> Style {
     let mut visuals = Visuals::dark();
     visuals.panel_fill = colour::BG;
     visuals.window_fill = colour::BG;
@@ -295,7 +300,8 @@ pub(crate) fn style() -> Style {
 /// egui has no letterspacing, so the spaces are put in by hand. That is a
 /// small ugliness in one function rather than at every call site, and caps
 /// without tracking is the thing that reads as unfinished.
-pub(crate) fn label_text(text: &str) -> String {
+#[must_use]
+pub fn label_text(text: &str) -> String {
     let upper = text.to_uppercase();
     let mut out = String::with_capacity(upper.len() * 2);
     for (index, ch) in upper.chars().enumerate() {

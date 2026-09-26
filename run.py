@@ -567,6 +567,45 @@ def tail_backend_log(lines: int = 12) -> str:
 
 
 TUI_BUNDLE = ROOT / "tui" / "dist" / "overseer.js"
+# The window, when one was installed. Beside the launcher in a release, and
+# under the build tree in a checkout, which is the only difference between
+# the two that matters here.
+APP_EXE_CANDIDATES = (
+    ROOT / "overseer.exe",
+    ROOT / "target" / "release" / "overseer.exe",
+    ROOT / "target" / "debug" / "overseer.exe",
+)
+
+
+def app_exe() -> Path | None:
+    """The window's binary, if this install has one."""
+    for candidate in APP_EXE_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def spawn_window() -> subprocess.Popen[bytes] | None:
+    """Starts the window, which talks to the same backend the terminal does.
+
+    It gets its own process rather than this console: the window is not a
+    terminal program, and leaving it attached would keep an empty black
+    rectangle on screen behind it for as long as it runs.
+    """
+    exe = app_exe()
+    if exe is None:
+        die(
+            "VG-APP-001",
+            "overseer.exe is missing. Run install.bat and choose the window, "
+            "or from a source tree: cargo build --release",
+        )
+    try:
+        proc = subprocess.Popen([str(exe)], cwd=str(ROOT))
+    except OSError as exc:
+        LOG.error("VG-APP-001 could not start the window: %s", exc)
+        return None
+    say("Window opened.", C_OK)
+    return proc
 
 
 def tui_args() -> list[str]:
@@ -577,7 +616,7 @@ def tui_args() -> list[str]:
             "from a source tree run: cd tui && npm install && npm run build",
         )
     node = node_cmd()
-    extra = [a for a in sys.argv[1:] if a not in ("--cli", "--no-cli", "--prod")]
+    extra = [a for a in sys.argv[1:] if a not in ("--cli", "--no-cli", "--prod", "--window")]
     return [node, str(TUI_BUNDLE), "--root", str(ROOT), *extra]
 
 
@@ -694,7 +733,11 @@ def main() -> None:
         run_cli()
         return
 
-    with_cli = "--no-cli" not in sys.argv
+    # --window opens the window instead of the terminal scoreboard. Both
+    # read the same backend over the same bridge, so this is only a question
+    # of which front end this launch starts.
+    want_window = "--window" in sys.argv
+    with_cli = "--no-cli" not in sys.argv and not want_window
     prod = "--prod" in sys.argv
 
     if not acquire_instance_lock():
@@ -726,7 +769,12 @@ def main() -> None:
     grouped = set()
     backend_log_fh = None
     try:
-        if with_cli:
+        if want_window:
+            app_proc = spawn_window()
+            if app_proc is not None:
+                procs.append(app_proc)
+                roles[app_proc] = "window"
+        elif with_cli:
             cli_proc = spawn_cli_window(py)
             if cli_proc is not None:
                 procs.append(cli_proc)

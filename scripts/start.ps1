@@ -85,15 +85,38 @@ Complete-Progress "Opening the scoreboard."
 $esc = [char]27
 Write-Host "$esc[2J$esc[3J$esc[H" -NoNewline
 
-$env:VS_PREVALIDATED = "1"
-$env:VS_ATTACHED_CLI = "1"
-Write-OverseerLog -Log launcher -Message "handing this console to run.py (attached single-window mode)"
+# Which front end this install asked for. The window unless the marker says
+# otherwise, and --cli always opens the terminal one, so a person who picked
+# the window can still get a terminal without reinstalling.
+$frontend = "both"
 try {
-    & $VenvPy (Join-Path $Root "run.py") --prod
+    $marker = Join-Path $OverseerDir "installed.json"
+    if (Test-Path $marker) {
+        $saved = (Get-Content -Raw -LiteralPath $marker | ConvertFrom-Json).profile
+        if ($saved) { $frontend = $saved }
+    }
+}
+catch { }
+$wantCli = ($args -contains "--cli") -or ($frontend -eq "cli")
+$appExe = Join-Path $Root "overseer.exe"
+
+if (-not $wantCli -and (Test-Path $appExe)) {
+    Write-OverseerLog -Log launcher -Message "opening the window ($frontend)"
+    Stop-OverseerConsole
+    & $VenvPy (Join-Path $Root "run.py") --prod --window
     $code = $LASTEXITCODE
 }
-finally {
-    Stop-OverseerConsole
+else {
+    $env:VS_PREVALIDATED = "1"
+    $env:VS_ATTACHED_CLI = "1"
+    Write-OverseerLog -Log launcher -Message "handing this console to run.py (attached single-window mode)"
+    try {
+        & $VenvPy (Join-Path $Root "run.py") --prod
+        $code = $LASTEXITCODE
+    }
+    finally {
+        Stop-OverseerConsole
+    }
 }
 Write-OverseerLog -Log launcher -Message "run.py exited with code $code"
 exit $code

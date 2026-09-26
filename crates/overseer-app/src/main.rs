@@ -10,7 +10,6 @@
 
 mod app;
 mod board;
-mod design;
 mod panel;
 mod perf;
 mod probe;

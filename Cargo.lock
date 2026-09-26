@@ -2460,6 +2460,9 @@ dependencies = [
  "egui",
  "egui_kittest",
  "overseer-core",
+ "overseer-ui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2469,6 +2472,23 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+]
+
+[[package]]
+name = "overseer-setup"
+version = "2.34.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_kittest",
+ "overseer-ui",
+]
+
+[[package]]
+name = "overseer-ui"
+version = "2.34.0"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

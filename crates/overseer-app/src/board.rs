@@ -16,7 +16,7 @@ use egui::text::{LayoutJob, TextWrapping};
 use egui::{Align2, Color32, FontId, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 
-use crate::design::{Face, colour, kd, label_text, rank, size, space};
+use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
 
 /// Which way a column's content sits against its own width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

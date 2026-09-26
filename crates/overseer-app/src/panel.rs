@@ -13,7 +13,7 @@
 use egui::{Align2, Color32, Rect, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
-use crate::design::{Face, colour, kd, label_text, rank, size, space};
+use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
 
 /// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;

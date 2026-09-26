@@ -7,8 +7,8 @@
 use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
 use crate::board::COLUMNS;
-use crate::design::{Face, colour, label_text, size, space};
 use crate::settings::{Quality, Settings};
+use overseer_ui::{Face, colour, label_text, size, space};
 
 /// Draws the settings screen. True when something changed and wants saving.
 pub(crate) fn settings(
@@ -191,13 +191,13 @@ fn note(ui: &mut Ui, text: &str) {
 #[cfg(test)]
 use crate::board::{self, Pace, RowStyle};
 #[cfg(test)]
-use crate::design::motion;
-#[cfg(test)]
 use crate::{app, panel};
 #[cfg(test)]
 use egui::{CentralPanel, Panel};
 #[cfg(test)]
 use overseer_core::Board;
+#[cfg(test)]
+use overseer_ui::motion;
 
 #[cfg(test)]
 pub(crate) fn snapshot(ui: &mut Ui, board: &Board, selected: Option<&str>, settings: &Settings) {

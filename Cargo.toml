@@ -9,7 +9,12 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/overseer-core", "crates/overseer-app"]
+members = [
+  "crates/overseer-core",
+  "crates/overseer-ui",
+  "crates/overseer-app",
+  "crates/overseer-setup",
+]
 
 [workspace.package]
 version = "2.34.0"
@@ -127,6 +132,13 @@ allow_attributes_without_reason = "deny"
 # mistake in a library, so it wins, and this is switched off rather than
 # sprinkling the crate with the attributes this repository forbids.
 redundant_pub_crate = "allow"
+
+# Two versions of `syn` are in the tree: the derive macros this app uses have
+# not all moved to 3 yet. It is somebody else's dependency, in a build script,
+# and the only thing this repository could do about it is pin an older egui.
+# `cargo deny` still refuses an unexpected licence or a known advisory in
+# either of them, which is the part that matters.
+multiple_crate_versions = "allow"
 
 # Four bools in `Player`: is this me, is the name hidden, is the level hidden,
 # is this account flagged. The lint is aimed at a domain type where a pile of

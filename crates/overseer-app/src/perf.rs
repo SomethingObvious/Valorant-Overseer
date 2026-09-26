@@ -22,7 +22,8 @@ use egui_kittest::Harness;
 use overseer_core::Board;
 
 use crate::settings::Settings;
-use crate::{design, view};
+use crate::view;
+use overseer_ui as design;
 
 /// A ten player board is the worst case the app ever draws, and it comes to
 /// 235 shapes: ten rows with a rule, a state bar and up to five result pips

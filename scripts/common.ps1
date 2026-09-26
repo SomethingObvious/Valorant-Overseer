@@ -718,13 +718,16 @@ function Get-PathFingerprint {
     return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').Substring(0, 16)
 }
 
-function Save-Markers($region) {
+function Save-Markers($region, $frontend = "both") {
     $mf = Get-RuntimeManifest
     if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
     $installed = @{
         schemaVersion    = $MarkerSchemaVersion
         version          = (Get-LocalVersion)
         region           = $region
+        # Which front ends were asked for. start.bat reads this to decide
+        # what to open, and the wizard reads it to say what is already here.
+        profile          = $frontend
         python           = @{ version = $mf.python.version; arch = $mf.python.arch }
         pip              = $mf.pip.version
         requirementsHash = (HashOf "backend\requirements.txt")
@@ -782,6 +785,9 @@ function Get-SavedRegion {
 function New-DesktopShortcut {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnk = Join-Path $desktop "Valorant Overseer.lnk"
+    # One shortcut whichever profile this is: start.bat reads the marker and
+    # opens what was installed. Two icons for one app is two things to
+    # explain and two things to leave stale.
     $target = Join-Path $Root "start.bat"
     try {
         $ws = New-Object -ComObject WScript.Shell

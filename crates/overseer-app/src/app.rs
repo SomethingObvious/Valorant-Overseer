@@ -19,9 +19,9 @@ use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, po
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
-use crate::design::{self, Face, colour, label_text, motion, size, space};
 use crate::settings::{self, Quality, Settings};
 use crate::{panel, view};
+use overseer_ui::{self, Face, colour, label_text, motion, size, space};
 
 /// Under this width there is no room for the panel beside the board.
 pub(crate) const COMPACT: f32 = 720.0;
@@ -90,9 +90,10 @@ impl Overseer {
     /// repaint when it has something, rather than the window asking every
     /// frame whether anything has happened.
     pub(crate) fn new(cc: &CreationContext<'_>, root: &Path) -> Self {
-        design::install_fonts(&cc.egui_ctx);
+        overseer_ui::install_fonts(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
-        cc.egui_ctx.set_style_of(egui::Theme::Dark, design::style());
+        cc.egui_ctx
+            .set_style_of(egui::Theme::Dark, overseer_ui::style());
         // Printed once, because which adapter the request actually got is the
         // difference between a scoreboard that leaves the game alone and one
         // that does not. There is nowhere else this is knowable.

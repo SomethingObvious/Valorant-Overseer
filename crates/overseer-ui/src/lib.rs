@@ -216,6 +216,31 @@ pub fn rank(tier: Option<u32>) -> Color32 {
     }
 }
 
+/// What Riot call the group a tier belongs to.
+///
+/// Beside [`rank`] and from the same table, because a colour without its
+/// name is a decoration. A scale is only a scale if every band on it is
+/// named, including the bands nobody in this lobby is standing in.
+#[must_use]
+pub fn rank_group(tier: u32) -> &'static str {
+    const NAMES: [&str; 10] = [
+        "unranked",
+        "iron",
+        "bronze",
+        "silver",
+        "gold",
+        "platinum",
+        "diamond",
+        "ascendant",
+        "immortal",
+        "radiant",
+    ];
+    NAMES
+        .get(tier.div_euclid(3) as usize)
+        .or_else(|| NAMES.last())
+        .unwrap_or(&"unranked")
+}
+
 /// The colour a K/D is worth saying out loud in.
 #[must_use]
 pub fn kd(value: Option<f64>) -> Color32 {
@@ -363,15 +388,10 @@ pub mod shape {
 /// two drawings of the same keyboard is two drawings to keep in step.
 #[must_use]
 pub fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> egui::Rect {
-    let face = if key.is_ascii() {
-        Face::Display.at(size::MICRO)
-    } else {
-        Face::Body.at(size::MICRO)
-    };
-    let galley = painter.layout_no_wrap(key.to_uppercase(), face, colour::TEXT_DIM);
+    let galley = painter.layout_no_wrap(key.to_uppercase(), keycap_face(key), colour::TEXT_DIM);
     let plate = egui::Rect::from_min_size(
         egui::pos2(at.x, at.y - 8.0),
-        egui::vec2((galley.size().x + space::MD).max(16.0), 16.0),
+        egui::vec2(keycap_width(painter, key), 16.0),
     );
     painter.add(egui::Shape::gradient_rect(
         plate,
@@ -393,6 +413,28 @@ pub fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> egui::Rect 
         colour::TEXT_DIM,
     );
     plate
+}
+
+/// How wide [`keycap`] will draw a key, before it has been drawn.
+///
+/// A bar of hints has to know whether the next one fits before it commits to
+/// it. A hint printed half over the counter at the other end is worse than a
+/// hint that is not there.
+#[must_use]
+pub fn keycap_width(painter: &egui::Painter, key: &str) -> f32 {
+    let galley = painter.layout_no_wrap(key.to_uppercase(), keycap_face(key), colour::TEXT_DIM);
+    (galley.size().x + space::MD).max(16.0)
+}
+
+/// The display face is caps only and has no arrows, so anything that is not
+/// a letter is set in the reading face. A keycap with a box on it is worse
+/// than no keycap.
+fn keycap_face(key: &str) -> FontId {
+    if key.is_ascii() {
+        Face::Display.at(size::MICRO)
+    } else {
+        Face::Body.at(size::MICRO)
+    }
 }
 
 /// A colour the backend sent as a hex string, if it sent one that parses.
@@ -645,6 +687,16 @@ pub fn caps_at(
     tint: Color32,
 ) {
     let _drawn = caps_text(painter, pos, anchor, text, font, tint);
+}
+
+/// How wide [`caps_text`] will set a label, before it has been set.
+///
+/// The twin of [`keycap_width`], and for the same reason.
+#[must_use]
+pub fn caps_width(painter: &egui::Painter, text: &str, font: FontId) -> f32 {
+    let trailing = tracking_for(font.size);
+    let galley = painter.layout_job(caps(text, font, colour::TEXT_DIM));
+    (galley.size().x - trailing).max(0.0)
 }
 
 /// Paints a caps label and says where it landed.

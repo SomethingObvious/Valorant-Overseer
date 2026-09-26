@@ -1262,26 +1262,11 @@ impl Overseer {
         }
         let painter = ui.painter().clone();
         painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
-        let mut x = rect.left() + GUTTER;
-        for (key, what) in [
-            ("/", "find"),
-            (",", "settings"),
-            ("w", "worth a look"),
-            ("o", "overlay"),
-            ("\u{2191}\u{2193}", "pick"),
-        ] {
-            x = overseer_ui::keycap(&painter, pos2(x, rect.center().y), key).right() + space::SM;
-            let after = caps_text(
-                &painter,
-                pos2(x, rect.center().y),
-                Align2::LEFT_CENTER,
-                what,
-                Face::Display.at(size::MICRO),
-                colour::TEXT_FAINT,
-            );
-            x = after.right() + space::XL;
-        }
 
+        // What the window is spending is drawn first, because the hints are
+        // the half that can be dropped. At four hundred and sixty points the
+        // two halves used to meet in the middle and print over each other,
+        // which read as a rendering fault rather than as a narrow window.
         let (bad, _why) = &self.unreadable;
         let mut right = rect.right() - GUTTER;
         for (text, tint) in [
@@ -1308,6 +1293,33 @@ impl Overseer {
                 tint,
             );
             right = drawn.left() - space::XL;
+        }
+
+        let mut x = rect.left() + GUTTER;
+        for (key, what) in [
+            ("/", "find"),
+            (",", "settings"),
+            ("w", "worth a look"),
+            ("o", "overlay"),
+            ("\u{2191}\u{2193}", "pick"),
+        ] {
+            let font = Face::Display.at(size::MICRO);
+            let wide = overseer_ui::keycap_width(&painter, key)
+                + space::SM
+                + overseer_ui::caps_width(&painter, what, font.clone());
+            if x + wide > right {
+                break;
+            }
+            x = overseer_ui::keycap(&painter, pos2(x, rect.center().y), key).right() + space::SM;
+            let after = caps_text(
+                &painter,
+                pos2(x, rect.center().y),
+                Align2::LEFT_CENTER,
+                what,
+                font,
+                colour::TEXT_FAINT,
+            );
+            x = after.right() + space::XL;
         }
     }
 }

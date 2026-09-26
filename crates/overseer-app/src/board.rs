@@ -556,6 +556,38 @@ fn furniture(
     }
 }
 
+/// The agent's own mark: their colour, chamfered, with their initial on it.
+///
+/// Shared, because the row and the ladder both draw one and the same person
+/// has to look like the same person in both. Eighteen points is the size at
+/// which a single letter is still a letter rather than a texture.
+fn agent_tile(painter: &egui::Painter, player: &Player, at: Pos2) -> Rect {
+    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::TEXT_DIM);
+    let tile = Rect::from_center_size(at, vec2(18.0, 18.0));
+    painter.add(shape::cut_wash(
+        tile,
+        4.0,
+        shape::blend(tint, colour::TEXT_STRONG, 0.18),
+        tint,
+    ));
+    let initial: String = player
+        .agent
+        .as_deref()
+        .unwrap_or("?")
+        .chars()
+        .take(1)
+        .collect::<String>()
+        .to_uppercase();
+    painter.text(
+        tile.center(),
+        Align2::CENTER_CENTER,
+        initial,
+        Face::Display.at(size::LABEL),
+        shape::ink_on(tint),
+    );
+    tile
+}
+
 /// The agent, as a tile with their initial on it.
 ///
 /// A word in a column is a word to read; a coloured tile is a shape to
@@ -575,22 +607,7 @@ fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
         );
         return;
     };
-    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::TEXT_DIM);
-    let tile = Rect::from_min_size(pos2(rect.left(), rect.center().y - 9.0), vec2(18.0, 18.0));
-    painter.add(shape::cut_wash(
-        tile,
-        4.0,
-        shape::blend(tint, colour::TEXT_STRONG, 0.18),
-        tint,
-    ));
-    let initial: String = agent.chars().take(1).collect::<String>().to_uppercase();
-    painter.text(
-        tile.center(),
-        Align2::CENTER_CENTER,
-        initial,
-        Face::Display.at(size::LABEL),
-        shape::ink_on(tint),
-    );
+    let tile = agent_tile(painter, player, pos2(rect.left() + 9.0, rect.center().y));
     cell_text(
         painter,
         agent,
@@ -1071,12 +1088,277 @@ fn results(painter: &egui::Painter, session: &overseer_core::Session, band: Rect
 /// early; the same strip against the bottom edge reads as a footer.
 pub(crate) fn board_foot(ui: &mut Ui, board: &Board) {
     let wanted = space::ROW + space::MD + space::XL;
-    let spare = ui.available_height() - wanted;
+    // The ladder is the first thing to go on a short window. It is the only
+    // block down here that restates something the rows already said, and a
+    // picture is worth less than the rows it would push off the screen.
+    let room = ui.available_height() - wanted > LADDER + space::XXL;
+    let spare = ui.available_height() - wanted - if room { LADDER + space::XL } else { 0.0 };
     if spare > 0.0 {
         ui.add_space(spare);
     }
+    if room {
+        ladder(ui, board);
+    }
     notice(ui, board);
     session(ui, board);
+}
+/// How tall the ladder block is, when the window has room for it.
+///
+/// A heading, a row of marks, the strip, and a row of marks back. Nothing in
+/// it is arbitrary except the air between the marks and the strip, which is
+/// the smallest gap at which a stem reads as a stem.
+pub(crate) const LADDER: f32 = 84.0;
+
+/// Where one account sits on the ladder, in tiers times a hundred.
+///
+/// Riot number tiers three to a rank from Iron at three, and rating runs
+/// nought to a hundred inside one. Multiplying out gives a single axis that
+/// is linear in the only sense that matters: one tier is one tier wide
+/// everywhere along it.
+fn rung(player: &Player) -> Option<f32> {
+    let tier = player.rank_tier.filter(|t| *t >= 3)?;
+    let rr = player.rr.unwrap_or(0).clamp(0, 99) as f32;
+    Some(tier as f32 * 100.0 + rr)
+}
+
+/// How wide the whole axis is, in rating.
+fn axis(first: u32, last: u32) -> f32 {
+    (last - first + 1) as f32 * 100.0
+}
+
+/// The whole lobby on one ladder, enemies above it and allies below.
+///
+/// Every other answer on this board is a number per person, so the question
+/// asked before any other, which is whether this lobby is above you or below
+/// you, costs ten readings and some arithmetic. A ladder answers it without
+/// being read. The strip is Riot's own tier colours in Riot's own order, so
+/// the bands are a scale the player already knows by sight, and every mark
+/// on it is the same tile that person has out on their own row.
+pub(crate) fn ladder(ui: &mut Ui, board: &Board) {
+    let placed: Vec<(&Player, f32)> = board
+        .players
+        .iter()
+        .filter_map(|p| rung(p).map(|at| (p, at)))
+        .collect();
+    let (Some(first), Some(last)) = (
+        placed.iter().filter_map(|(p, _)| p.rank_tier).min(),
+        placed.iter().filter_map(|(p, _)| p.rank_tier).max(),
+    ) else {
+        return;
+    };
+    if placed.len() < 2 {
+        return;
+    }
+    // Out to whole ranks rather than whole tiers. A strip that starts at
+    // Bronze 3 has a band one tier wide at each end, too narrow to carry its
+    // own name, and the two bands nobody can name are the two the eye goes
+    // to first. Three tiers each and every band on the scale says what it is.
+    let (first, last) = (first.div_euclid(3) * 3, last.div_euclid(3) * 3 + 2);
+    ui.add_space(space::XL);
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), LADDER), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    let band = Rect::from_min_max(
+        pos2(rect.left() + GUTTER, rect.top()),
+        pos2(rect.right() - GUTTER, rect.bottom()),
+    );
+    painter.hline(band.x_range(), band.top(), (1.0, colour::LINE));
+    let head = band.top() + space::LG;
+    caps_at(
+        &painter,
+        pos2(band.left() + space::SM, head),
+        Align2::LEFT_CENTER,
+        "ladder",
+        Face::Display.at(size::LABEL),
+        colour::TEXT_DIM,
+    );
+    caps_at(
+        &painter,
+        pos2(band.right() - space::SM, head),
+        Align2::RIGHT_CENTER,
+        &standing(board, &placed),
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+
+    let strip = Rect::from_min_max(
+        pos2(band.left(), band.top() + 46.0),
+        pos2(band.right(), band.top() + 56.0),
+    );
+    let step = band.width() / (last - first + 1) as f32;
+    bands(&painter, first, last, strip, step);
+    rungs(&painter, first, last, strip, step);
+
+    let span = axis(first, last);
+    let floor = first as f32 * 100.0;
+    let at = |rung: f32| band.left() + (rung - floor) / span * band.width();
+    for (_label, tint, team) in teams(board, true) {
+        let mine: Vec<(&Player, f32)> = placed
+            .iter()
+            .filter(|(p, _)| p.team.as_deref() == Some(team.as_str()))
+            .copied()
+            .collect();
+        let above = tint == colour::ENEMY;
+        let y = if above {
+            band.top() + 32.0
+        } else {
+            band.top() + 70.0
+        };
+        marks(
+            &painter,
+            &mine,
+            &at,
+            Row {
+                band,
+                y,
+                above,
+                strip,
+            },
+        );
+    }
+}
+
+/// Where one team's marks go and which way they face.
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    /// The block the marks have to stay inside.
+    band: Rect,
+    /// The middle of the row of marks.
+    y: f32,
+    /// Above the strip, which is where the enemy go.
+    above: bool,
+    /// The strip itself, which the stems have to reach.
+    strip: Rect,
+}
+
+/// One team's marks, nudged apart where two of them land on the same point.
+///
+/// Two tiles overlapping is two people you cannot count, and on this strip
+/// the count is half the answer. So a tile that would land inside the one
+/// before it is pushed clear, which costs a little accuracy on a lobby that
+/// is all one rank and buys back the ability to see that it is. The stem
+/// stays on the true point, so nothing is being hidden.
+fn marks(painter: &egui::Painter, team: &[(&Player, f32)], at: &dyn Fn(f32) -> f32, row: Row) {
+    let mut ordered: Vec<(&Player, f32)> = team.to_vec();
+    ordered.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut taken = f32::MIN;
+    for (player, rung) in ordered {
+        let true_x = at(rung).clamp(row.band.left() + 9.0, row.band.right() - 9.0);
+        let x = true_x.max(taken + 20.0);
+        taken = x;
+        let (from, to) = if row.above {
+            (row.y + 9.0, row.strip.top())
+        } else {
+            (row.strip.bottom(), row.y - 9.0)
+        };
+        painter.vline(true_x, from..=to, (1.0, colour::LINE));
+        if (x - true_x).abs() > 1.0 {
+            let shelf = if row.above { row.y + 9.0 } else { row.y - 9.0 };
+            painter.hline(true_x.min(x)..=true_x.max(x), shelf, (1.0, colour::LINE));
+        }
+        let tile = agent_tile(painter, player, pos2(x, row.y));
+        if player.is_self {
+            painter.rect_stroke(
+                tile.expand(2.0),
+                0,
+                egui::Stroke::new(1.0, colour::YOU),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+}
+
+/// The strip itself: one segment per tier, in that tier's own colour.
+fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32) {
+    for tier in first..=last {
+        let from = strip.left() + (tier - first) as f32 * step;
+        let segment =
+            Rect::from_min_max(pos2(from, strip.top()), pos2(from + step, strip.bottom()));
+        let tint = rank(Some(tier));
+        painter.add(egui::Shape::gradient_rect(
+            segment,
+            egui::Direction::TopDown,
+            [tint.gamma_multiply(0.74), tint.gamma_multiply(0.42)],
+        ));
+        // A hairline at every tier, so the strip is a scale with marks on it
+        // rather than a few wide bands of colour.
+        if tier > first {
+            painter.vline(from, strip.y_range(), (1.0, colour::VOID));
+        }
+    }
+}
+
+/// The name of each rank group, set into its own band.
+///
+/// The colours are Riot's and most players read them without help, but most
+/// is not all, and a scale nobody can name is a decoration. A name is only
+/// set where the band is wide enough to hold it with air on both sides:
+/// half a word cropped by a tier boundary would be worse than the colour on
+/// its own.
+fn rungs(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32) {
+    for group in first.div_euclid(3)..=last.div_euclid(3) {
+        let from = group.saturating_mul(3).max(first);
+        let to = (group.saturating_mul(3) + 2).min(last);
+        let left = strip.left() + (from - first) as f32 * step;
+        let right = strip.left() + (to + 1 - first) as f32 * step;
+        let name = overseer_ui::rank_group(from);
+        let font = Face::Display.at(size::MICRO);
+        if overseer_ui::caps_width(painter, name, font.clone()) + space::XL > right - left {
+            continue;
+        }
+        // Against the band as it is actually painted, not against the pure
+        // tier colour: the strip is washed down towards the ground it sits
+        // on, and ink chosen for the swatch is ink chosen for a colour that
+        // is not on the screen.
+        let tint = shape::ink_on(rank(Some(from)).gamma_multiply(0.58));
+        caps_at(
+            painter,
+            pos2(f32::midpoint(left, right), strip.center().y + 0.5),
+            Align2::CENTER_CENTER,
+            name,
+            font,
+            tint.gamma_multiply(0.8),
+        );
+    }
+}
+
+/// The one sentence the ladder is worth saying out loud.
+///
+/// "Three of them above you" is the whole reason to look at it, and it is
+/// the one thing a picture of ten marks does not say by itself.
+fn standing(board: &Board, placed: &[(&Player, f32)]) -> String {
+    let unranked = board.players.len().saturating_sub(placed.len());
+    let tail = if unranked == 0 {
+        String::new()
+    } else {
+        format!(" \u{b7} {unranked} off the ladder")
+    };
+    let ours = board.self_team.as_deref().unwrap_or("Blue");
+    let Some((_me, mine)) = placed.iter().find(|(p, _)| p.is_self) else {
+        let low = placed.iter().min_by(|a, b| a.1.total_cmp(&b.1));
+        let high = placed.iter().max_by(|a, b| a.1.total_cmp(&b.1));
+        let ends = (
+            low.and_then(|(p, _)| p.rank.clone()),
+            high.and_then(|(p, _)| p.rank.clone()),
+        );
+        return match ends {
+            (Some(low), Some(high)) if low != high => format!("{low} to {high}{tail}"),
+            (Some(only), _) => format!("all {only}{tail}"),
+            _ => tail.trim_start_matches(" \u{b7} ").to_owned(),
+        };
+    };
+    let over = placed
+        .iter()
+        .filter(|(p, rung)| p.team.as_deref() != Some(ours) && rung > mine)
+        .count();
+    match over {
+        0 => format!("none of them above you{tail}"),
+        1 => format!("one of them above you{tail}"),
+        n => format!("{n} of them above you{tail}"),
+    }
 }
 
 /// Anything the backend needs to say about the board itself.

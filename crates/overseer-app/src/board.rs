@@ -18,7 +18,7 @@ use overseer_core::{Board, Player};
 
 use crate::sort::{Direction, Sort};
 use overseer_ui::{
-    Face, caps, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space,
+    Face, art, caps, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space,
 };
 
 /// The margin down both sides of the board.
@@ -490,10 +490,18 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
             "agent" => agent_cell(&painter, player, cell_rect),
             _ => {
                 let (text, tint) = cell(column.head, player, name_colour);
+                // K/D is the one column anybody scans first, so it is the
+                // one column set larger. A table where every value is the
+                // same size is a table with no answer in it.
+                let points = if column.head == "k/d" {
+                    size::TITLE
+                } else {
+                    size::BODY
+                };
                 cell_text(
                     &painter,
                     &text,
-                    column.face.at(size::BODY),
+                    column.face.at(points),
                     tint,
                     cell_rect,
                     column.align,
@@ -638,23 +646,27 @@ fn furniture(
 /// Shared, because the row and the ladder both draw one and the same person
 /// has to look like the same person in both. Eighteen points is the size at
 /// which a single letter is still a letter rather than a texture.
-fn agent_tile(painter: &egui::Painter, player: &Player, at: Pos2) -> Rect {
+fn agent_tile(painter: &egui::Painter, player: &Player, at: Pos2, size: f32) -> Rect {
     let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::TEXT_DIM);
-    let tile = Rect::from_center_size(at, vec2(18.0, 18.0));
+    let tile = Rect::from_center_size(at, vec2(size, size));
+    // The plate goes down first either way. Behind a portrait it is the
+    // agent's colour showing through the transparent corners of Riot's own
+    // artwork, which is what ties a face to the rail on its row.
     painter.add(shape::lit(
         tile,
         4.0,
         shape::blend(tint, colour::TEXT_STRONG, 0.34),
         shape::blend(tint, colour::VOID, 0.18),
     ));
-    let initial: String = player
-        .agent
-        .as_deref()
-        .unwrap_or("?")
-        .chars()
-        .take(1)
-        .collect::<String>()
-        .to_uppercase();
+    let named = player.agent.as_deref().unwrap_or("");
+    if let Some(portrait) = art::agent(painter.ctx(), named) {
+        painter.add(shape::cut_image(tile, 4.0, portrait.id()));
+        return tile;
+    }
+    // An agent this build has never heard of still gets a mark: Riot ship
+    // one or two a year and a blank square on the newest one is exactly the
+    // lobby somebody most wants to read.
+    let initial: String = named.chars().take(1).collect::<String>().to_uppercase();
     painter.text(
         tile.center(),
         Align2::CENTER_CENTER,
@@ -684,7 +696,13 @@ fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
         );
         return;
     };
-    let tile = agent_tile(painter, player, pos2(rect.left() + 9.0, rect.center().y));
+    let size = (rect.height() - 6.0).clamp(18.0, 24.0);
+    let tile = agent_tile(
+        painter,
+        player,
+        pos2(rect.left() + size / 2.0, rect.center().y),
+        size,
+    );
     cell_text(
         painter,
         agent,
@@ -700,6 +718,26 @@ fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
 /// One chevron for the first division of a tier, three for the third, in
 /// the tier's own colour. It is the mark a player reads before the word
 /// beside it, and the whole reason the colours are Riot's exact ones.
+fn emblem(painter: &egui::Painter, tier: u32, at: Pos2, tint: Color32) {
+    if let Some(art) = art::rank(painter.ctx(), tier) {
+        let mark = Rect::from_center_size(at, vec2(20.0, 20.0));
+        let mut mesh = egui::Mesh::with_texture(art.id());
+        mesh.add_rect_with_uv(
+            mark,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        painter.add(egui::Shape::mesh(mesh));
+        return;
+    }
+    chevrons(painter, tier, at, tint);
+}
+
+/// The mark for a tier this build has no emblem for.
+///
+/// Riot add a rank about once a decade, so this is nearly dead code, and it
+/// is here because the alternative to nearly dead code is a blank space
+/// beside a rank name in the one lobby it would matter in.
 fn chevrons(painter: &egui::Painter, tier: u32, at: Pos2, tint: Color32) {
     // Tier 0 to 2 is unranked and has no divisions; Radiant is one tier of
     // one and gets a single mark rather than a third of one.
@@ -741,12 +779,12 @@ fn rank_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     let tier = player.rank_tier.unwrap_or(0);
     let tint = rank(player.rank_tier);
     let galley = painter.layout_no_wrap(name.to_owned(), Face::Body.at(size::BODY), tint);
-    let badge = if tier >= 3 { 14.0 } else { 0.0 };
+    let badge = if tier >= 3 { 18.0 } else { 0.0 };
     let plate = Rect::from_min_size(
-        pos2(rect.left(), rect.center().y - 9.0),
+        pos2(rect.left(), rect.center().y - 11.0),
         vec2(
             (galley.size().x + space::MD * 2.0 + badge).min(rect.width()),
-            18.0,
+            22.0,
         ),
     );
     // Unranked is a state rather than a tier, so it gets no plate: a grey
@@ -755,14 +793,14 @@ fn rank_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
         painter.add(shape::lit(
             plate,
             4.0,
-            tint.gamma_multiply(0.30),
-            tint.gamma_multiply(0.12),
+            tint.gamma_multiply(0.46),
+            tint.gamma_multiply(0.16),
         ));
     }
-    chevrons(
+    emblem(
         painter,
         tier,
-        pos2(plate.left() + space::MD + 4.0, plate.center().y),
+        pos2(plate.left() + space::SM + 8.0, plate.center().y),
         tint,
     );
     painter.galley(
@@ -1346,7 +1384,7 @@ fn marks(painter: &egui::Painter, team: &[(&Player, f32)], at: &dyn Fn(f32) -> f
             let shelf = if row.above { row.y + 9.0 } else { row.y - 9.0 };
             painter.hline(true_x.min(x)..=true_x.max(x), shelf, (1.0, colour::LINE));
         }
-        let tile = agent_tile(painter, player, pos2(x, row.y));
+        let tile = agent_tile(painter, player, pos2(x, row.y), 18.0);
         if player.is_self {
             painter.rect_stroke(
                 tile.expand(2.0),
@@ -1558,8 +1596,17 @@ pub(crate) fn team_heading(
     painter.add(shape::cut_wash(
         band,
         shape::CHAMFER,
-        tint.gamma_multiply(0.40),
+        tint.gamma_multiply(0.62),
         Color32::TRANSPARENT,
+    ));
+    // Bloom off the bar down the left of the band. It is the brightest edge
+    // in the window and the one the eye lands on first, so it is allowed to
+    // spill: a hard three point rule reads as a border, and a lit one reads
+    // as the block being switched on.
+    painter.extend(shape::halo(
+        Rect::from_min_size(band.min, vec2(3.0, band.height())),
+        tint,
+        0.7,
     ));
     // The bar is a wash too, bright at the top. A three point rectangle in
     // a flat colour is a rule; the same bar lit from above is an edge.

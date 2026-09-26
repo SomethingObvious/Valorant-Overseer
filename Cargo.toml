@@ -24,6 +24,11 @@ publish = false
 
 [workspace.dependencies]
 egui = "0.36.2"
+# One PNG decoder for the agent portraits and rank emblems bound into the
+# design crate. The `image` crate would do the same job and bring a dozen
+# formats this app will never see; this is the one that `image` itself uses
+# for PNG.
+png = "0.18.0"
 # Default features on, deliberately. They are the wgpu renderer, the bundled
 # fonts, accesskit for screen readers, and winit's own defaults, which is where
 # raw-window-handle lives: turning them off to "keep it lean" removes the

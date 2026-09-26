@@ -15,7 +15,9 @@ use overseer_core::Player;
 
 use crate::career::{self, Career};
 use crate::notes::{self, Notes};
-use overseer_ui::{Face, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space};
+use overseer_ui::{
+    Face, art, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space,
+};
 
 /// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;
@@ -44,13 +46,13 @@ pub(crate) fn show(
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(space::SM);
+            ui.add_space(space::MD);
             let plate = ui.painter().add(egui::Shape::Noop);
             let top = ui.cursor().top();
             name(ui, player);
             identity(ui, player);
             identity_plate(ui, player, plate, top);
-            ui.add_space(space::SM);
+            ui.add_space(space::MD);
             if !player.smurf_reasons.is_empty() {
                 flags(ui, player);
             }
@@ -192,13 +194,29 @@ fn name(ui: &mut Ui, player: &Player) {
         .split_once('#')
         .map_or((full.as_str(), ""), |(a, b)| (a, b));
     let painter = ui.painter().clone();
-    let after = painter.text(
-        pos2(rect.left() + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        stem,
+    // Cut rather than run off the edge. Riot allow sixteen characters and
+    // this column is three hundred points wide with a face in the first
+    // sixty of them, so the long ones do not fit and never did.
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        stem.to_owned(),
         Face::Body.at(size::DISPLAY),
         colour::TEXT_STRONG,
     );
+    job.wrap = egui::text::TextWrapping {
+        max_width: rect.width() - BESIDE_FACE - space::LG - 44.0,
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = painter.layout_job(job);
+    let after = Rect::from_min_size(
+        pos2(
+            rect.left() + BESIDE_FACE,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley.size(),
+    );
+    painter.galley(after.min, galley, colour::TEXT_STRONG);
     if !tag.is_empty() {
         painter.text(
             pos2(after.right() + space::SM, rect.center().y + 1.0),
@@ -219,6 +237,12 @@ fn name(ui: &mut Ui, player: &Player) {
         );
     }
 }
+
+/// How big the portrait on the panel's own plate is.
+const FACE: f32 = 42.0;
+
+/// Where everything beside that portrait starts.
+const BESIDE_FACE: f32 = space::MD + FACE + space::XL;
 
 /// The surface the name and the line under it sit on, in the agent's own
 /// colour.
@@ -243,15 +267,29 @@ fn identity_plate(ui: &Ui, player: &Player, at: egui::layers::ShapeIdx, top: f32
     if plate.height() < space::ROW {
         return;
     }
-    ui.painter().set(
-        at,
-        shape::lit(
-            plate,
-            shape::CHAMFER,
-            shape::blend(colour::BG_RAISED, tint, 0.20),
-            shape::blend(colour::BG_RAISED, tint, 0.04),
-        ),
+    let mut shapes = vec![shape::lit(
+        plate,
+        shape::CHAMFER,
+        shape::blend(colour::BG_RAISED, tint, 0.20),
+        shape::blend(colour::BG_RAISED, tint, 0.04),
+    )];
+    // The face, at the size a face is worth drawing at. On the board it is
+    // twenty points and doing the job of a letter; here there is room for
+    // it to be the thing you recognise the panel by.
+    let face = Rect::from_center_size(
+        pos2(plate.left() + space::MD + FACE / 2.0, plate.center().y),
+        vec2(FACE, FACE),
     );
+    shapes.push(shape::lit(
+        face,
+        5.0,
+        shape::blend(tint, colour::TEXT_STRONG, 0.30),
+        shape::blend(tint, colour::VOID, 0.20),
+    ));
+    if let Some(portrait) = art::agent(ui.ctx(), player.agent.as_deref().unwrap_or("")) {
+        shapes.push(shape::cut_image(face, 5.0, portrait.id()));
+    }
+    ui.painter().set(at, egui::Shape::Vec(shapes));
 }
 
 /// Level, role, agent and title, because they are one thought.
@@ -271,10 +309,16 @@ fn identity(ui: &mut Ui, player: &Player) {
         parts.push(agent.to_owned());
     }
     if !parts.is_empty() {
-        line(ui, &parts.join("  \u{b7}  "), colour::TEXT_DIM, size::BODY);
+        line_at(
+            ui,
+            &parts.join("  \u{b7}  "),
+            colour::TEXT_DIM,
+            size::BODY,
+            BESIDE_FACE,
+        );
     }
     if let Some(title) = player.title.as_deref() {
-        line(ui, title, colour::TEXT_FAINT, size::MICRO);
+        line_at(ui, title, colour::TEXT_FAINT, size::MICRO, BESIDE_FACE);
     }
 }
 
@@ -759,13 +803,18 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
 
 /// One line of prose, at the panel's left margin.
 pub(crate) fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
+    line_at(ui, text, tint, points, space::LG);
+}
+
+/// The same line, indented past something.
+fn line_at(ui: &mut Ui, text: &str, tint: Color32, points: f32, indent: f32) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
     ui.painter().text(
-        pos2(rect.left() + space::LG, rect.center().y),
+        pos2(rect.left() + indent, rect.center().y),
         Align2::LEFT_CENTER,
         text,
         Face::Body.at(points),

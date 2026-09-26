@@ -12,6 +12,9 @@
 
 use egui::{Color32, FontFamily, FontId, Stroke, Style, TextStyle, Visuals};
 
+pub mod art;
+mod art_assets;
+
 /// Type sizes, in points. Whole numbers because glyphs are rasterised, and a
 /// 13.5 point body is a blurrier 13 point body.
 ///
@@ -51,9 +54,9 @@ pub mod space {
     pub const XXL: f32 = 24.0;
     /// One player. Body type doubled and rounded onto the grid, which leaves
     /// five and a half points of air above and below a thirteen point glyph.
-    pub const ROW: f32 = 24.0;
+    pub const ROW: f32 = 28.0;
     /// One player, on a window too narrow to spend the extra four points.
-    pub const ROW_TIGHT: f32 = 20.0;
+    pub const ROW_TIGHT: f32 = 24.0;
     /// One result in a run of them: a win, a loss, a match in a session.
     ///
     /// Counted rather than read, so it has to be big enough to count at a
@@ -343,6 +346,33 @@ pub mod shape {
         } else {
             super::colour::TEXT_STRONG
         }
+    }
+
+    /// A picture in the app's own shape: chamfered, with the corners cut off
+    /// the image rather than off a plate behind it.
+    ///
+    /// Riot's portraits arrive as squares. A square picture in a window
+    /// where every other surface has two corners cut is the one element
+    /// that came from somewhere else, and it looks it. The polygon is the
+    /// same one everything else uses and the texture is mapped straight
+    /// onto it, so the cut goes through the picture.
+    pub fn cut_image(rect: Rect, cut: f32, texture: egui::TextureId) -> Shape {
+        let points = cut_corners(rect, cut);
+        let mut mesh = egui::Mesh::with_texture(texture);
+        for point in &points {
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: *point,
+                uv: pos2(
+                    (point.x - rect.left()) / rect.width().max(1.0),
+                    (point.y - rect.top()) / rect.height().max(1.0),
+                ),
+                color: Color32::WHITE,
+            });
+        }
+        for i in 1..points.len().saturating_sub(1) {
+            mesh.add_triangle(0, i as u32, i as u32 + 1);
+        }
+        Shape::mesh(mesh)
     }
 
     /// One result, as a block of colour with a light on its top edge.
@@ -1024,6 +1054,7 @@ mod tests {
             space::XL,
             space::XXL,
             space::ROW,
+            space::ROW_TIGHT,
         ] {
             let steps = value / 4.0;
             assert!(steps.fract() == 0.0, "{value} is not on the grid");

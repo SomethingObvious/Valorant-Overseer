@@ -13,6 +13,12 @@ regexes = ['''aBcD1234EfGh5678''']
 
 description = "Build output, installed dependencies and the localhost chat certificate"
 paths = [
+  # The Rust build tree: 750 MB of compiled dependencies, none of it ours, and
+  # scanning it took the secret check from under a second to eleven. The
+  # pattern has to match a path separator rather than anchor at the start,
+  # because the gate scans an absolute path and gitleaks reports what it was
+  # given: anchoring at ^ matched nothing and the exclusion did nothing.
+  '''(^|[\/])target[\/]''',
   # Installed packages are not this repository's source, and a Python tree
   # contains every byte pattern there is: cryptography's own .pyi files trip
   # the generic-api-key rule.

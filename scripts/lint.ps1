@@ -511,6 +511,8 @@ function Invoke-Typos {
 function Invoke-Gitleaks {
     if (-not (Test-Tool "gitleaks")) { return $false }
     $cfg = Join-Path $Root ".gitleaks.toml"
+    # The build tree is excluded in .gitleaks.toml rather than here, because the
+    # two scans below take different path shapes and one config covers both.
     $ok = Invoke-Native "gitleaks" @("dir", "--no-banner", "--redact", "--exit-code", "1",
         "-c", $cfg, $Root)
     return (Invoke-Native "gitleaks" @("git", "--no-banner", "--redact", "--exit-code", "1",
@@ -781,6 +783,65 @@ function Invoke-Verifier([string]$Script) {
 }
 
 # --- run -----------------------------------------------------------------------
+
+# --- the window ----------------------------------------------------------------
+#
+# One gate, so the Rust half is checked the same way and at the same time as
+# everything else. Cargo is not on PATH in every shell that runs this, and a
+# missing tool is a failure here rather than a skipped check: a green tick that
+# skipped the linter is worse than no tick.
+
+function Get-Cargo {
+    $onPath = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    # Not $home: that is a read-only automatic variable, and assigning to it
+    # fails the whole function with a message about the variable rather than
+    # about cargo.
+    $installed = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
+    if (Test-Path $installed) { return $installed }
+    return $null
+}
+
+function Invoke-Cargo([string[]]$Arguments) {
+    $cargo = Get-Cargo
+    if (-not $cargo) {
+        Write-Host "  x cargo is not installed; install rustup" -ForegroundColor Red
+        return $false
+    }
+    return (Invoke-Native $cargo $Arguments)
+}
+
+function Invoke-CargoFormat {
+    return (Invoke-Cargo @("fmt", "--all", "--", "--check"))
+}
+
+# Every lint level lives in Cargo.toml and clippy.toml, so this needs no flags
+# beyond the targets: tests and benches are code too, and the restriction lints
+# are exactly the ones a test is tempted to break.
+function Invoke-Clippy {
+    return (Invoke-Cargo @("clippy", "--workspace", "--all-targets"))
+}
+
+function Invoke-CargoTest {
+    return (Invoke-Cargo @("test", "--workspace"))
+}
+
+# Rustdoc lints only fire under rustdoc, so the documentation has to be built
+# to reach them.
+function Invoke-CargoDoc {
+    return (Invoke-Cargo @("doc", "--workspace", "--no-deps", "--quiet"))
+}
+
+function Invoke-CargoDeny {
+    $deny = Join-Path $env:USERPROFILE ".cargo\bin\cargo-deny.exe"
+    if (-not ((Get-Command cargo-deny -ErrorAction SilentlyContinue) -or (Test-Path $deny))) {
+        Write-Host "  x cargo-deny is not installed; run: cargo install cargo-deny" -ForegroundColor Red
+        return $false
+    }
+    return (Invoke-Cargo @("deny", "check"))
+}
+
+
 Invoke-Step "no inline suppressions" { Test-NoSuppressions }
 Invoke-Step "no nested lint config" { Test-NoNestedConfig }
 Invoke-Step "nothing that emails anybody" { Test-NoMail }
@@ -809,6 +870,11 @@ Invoke-Step "tui bundle is reproducible" { Test-TuiReproducible }
 Invoke-Step "tui self-check" { Invoke-TuiSelfCheck }
 Invoke-Step "tui stories render" { Test-TuiStories }
 Invoke-Step "tui keys work" { Test-TuiKeys }
+Invoke-Step "rust format" { Invoke-CargoFormat }
+Invoke-Step "clippy" { Invoke-Clippy }
+Invoke-Step "rust tests and snapshots" { Invoke-CargoTest }
+Invoke-Step "rustdoc" { Invoke-CargoDoc }
+Invoke-Step "cargo deny" { Invoke-CargoDeny }
 Invoke-Step "comment strip round-trip" { Test-StripRoundTrip }
 Invoke-Step "gitleaks (worktree + history)" { Invoke-Gitleaks }
 Invoke-Step "secrets (project patterns)" { Test-Secrets }

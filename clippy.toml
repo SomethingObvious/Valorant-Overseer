@@ -1,0 +1,30 @@
+# Thresholds for clippy's configurable lints. Deliberately tighter than default.
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 80
+type-complexity-threshold = 200
+enum-variant-name-threshold = 2
+avoid-breaking-exported-api = false
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = false
+
+# The traps that matter in this app specifically.
+disallowed-methods = [
+  # Windows correctness: a non-UTF-8 path silently becomes None and the file is
+  # simply not read, which on this install means the bridge looks absent.
+  { path = "std::path::Path::to_str", reason = "returns None on a non-UTF-8 path, so a real file reads as a missing one", replacement = "std::path::Path::display" },
+  { path = "std::fs::canonicalize", reason = "on Windows it returns an extended-length path that many APIs and log readers mishandle" },
+  # A frame must never wait on the disk, the network or another thread. Every
+  # one of these belongs on the bridge thread, behind the event channel.
+  { path = "std::thread::sleep", reason = "a UI thread that sleeps is a dropped frame; drive timing from egui's repaint clock", replacement = "egui::Context::request_repaint_after" },
+]
+
+# clippy::doc_markdown is in pedantic and denied, and no #[allow] is available.
+# The trailing ".." is mandatory: a bare list REPLACES clippy's defaults.
+doc-valid-idents = [
+  "VALORANT", "WebView2", "PowerShell", "GitHub", "WebSocket", "TypeScript",
+  "wgpu", "egui", "eframe", "winit", "DirectX", "RiotClient", "Overseer",
+  "..",
+]

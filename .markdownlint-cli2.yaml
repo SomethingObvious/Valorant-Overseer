@@ -47,3 +47,6 @@ ignores:
   - "**/node_modules/**"
   - "**/.venv/**"
   - "**/dist/**"
+  # cargo doc writes rustdoc's own bundled font licences here, which are
+  # somebody else's markdown and not ours to reformat.
+  - "**/target/**"

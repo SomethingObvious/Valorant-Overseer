@@ -1,0 +1,137 @@
+# The Rust half of Valorant Overseer: the window, its data layer, and the
+# installer. The Python backend and the terminal front end are unaffected by
+# everything here; see crates/README.md for the plan and the reasoning.
+#
+# The workspace root is the repository root rather than crates/, because
+# clippy.toml, rustfmt.toml and deny.toml are found relative to it, and this
+# repository allows lint configuration at the root only. lint.ps1 rejects a
+# config in a subdirectory, and it is right to.
+
+[workspace]
+resolver = "3"
+members = ["crates/overseer-core", "crates/overseer-app"]
+
+[workspace.package]
+version = "2.34.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+egui = "0.36.2"
+# Default features on, deliberately. They are the wgpu renderer, the bundled
+# fonts, accesskit for screen readers, and winit's own defaults, which is where
+# raw-window-handle lives: turning them off to "keep it lean" removes the
+# renderer and the surface it draws on. `persistence` is the addition, so the
+# window remembers its size and which monitor it was on.
+eframe = { version = "0.36.2", features = ["persistence"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.145"
+# Blocking, and deliberately so. This is one socket carrying about one message
+# a second; an async runtime would be the largest dependency in the tree and
+# would buy nothing. No TLS features: the bridge is plain ws on 127.0.0.1, and
+# ws_server.py rejects anything arriving with an Origin header, which is why
+# the connection lives here and not in a web view.
+tungstenite = { version = "0.30.0", default-features = false, features = [
+  "handshake",
+] }
+
+[workspace.lints.rust]
+# `forbid` rather than `deny`: nothing in this workspace may re-enable it,
+# including a future contributor with an #[allow].
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+single_use_lifetimes = "deny"
+elided_lifetimes_in_paths = "deny"
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+non_ascii_idents = "deny"
+noop_method_call = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+let_underscore = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+# missing_docs forces docs to exist; these check they are correct. They only
+# fire under rustdoc, so the gate runs `cargo doc` to reach them.
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+unescaped_backticks = "deny"
+missing_crate_level_docs = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# clippy::restriction is explicitly not meant to be enabled wholesale: many of
+# its lints contradict each other. These are the individually chosen ones, and
+# they are the ones that stop a scoreboard from taking the app down while
+# somebody is in a match.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+float_cmp_const = "deny"
+lossy_float_literal = "deny"
+string_slice = "deny"
+integer_division = "deny"
+modulo_arithmetic = "deny"
+as_underscore = "deny"
+verbose_file_reads = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+same_name_method = "deny"
+suspicious_xor_used_as_pow = "deny"
+try_err = "deny"
+empty_drop = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+partial_pub_fields = "deny"
+str_to_string = "deny"
+unnecessary_self_imports = "deny"
+# A semantic backstop for this repository's ban on inline suppressions, which
+# is otherwise a regular expression over file text. These reject #[allow] at
+# the syntax tree, where text cannot hide it.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# --- The only relaxations, each with its reason. There are no #[allow]
+# --- attributes anywhere in crates/; a lint that is wrong here is argued for
+# --- in the open, in this file.
+
+# The one lint pair that contradicts itself. `unreachable_pub` says a `pub` item
+# in a binary crate, which nothing can import, must be `pub(crate)`.
+# `clippy::redundant_pub_crate` says a `pub(crate)` item inside a private module
+# should be `pub`. Every module of a binary is a private module, so the two
+# cannot both be satisfied. `unreachable_pub` is the one that catches a real
+# mistake in a library, so it wins, and this is switched off rather than
+# sprinkling the crate with the attributes this repository forbids.
+redundant_pub_crate = "allow"
+
+# A UI is arithmetic between integers that count things and floats that measure
+# pixels: a row index becomes a y offset, a round count becomes a bar width, a
+# percentage becomes an alpha. Casting every one of those through a wrapper
+# type would bury the layout maths this app is mostly made of.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"

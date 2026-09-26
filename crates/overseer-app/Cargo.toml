@@ -1,0 +1,22 @@
+[package]
+name = "overseer-app"
+description = "The Valorant Overseer window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "overseer"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+overseer-core = { path = "../overseer-core", version = "2.34.0" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "0.36.2", features = ["wgpu", "snapshot"] }

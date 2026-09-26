@@ -1,0 +1,11 @@
+# Pinned, because "whatever rustc is on this machine" is how a lint appears or
+# disappears without anybody changing a line. The same channel afterimage uses,
+# so one rustup install serves both.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt", "rust-src"]
+# Windows is the only target. The app drives the Riot client's local API, which
+# only exists on Windows, and this repository's gate says so out loud rather
+# than carrying dead platform branches.
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"

@@ -44,3 +44,6 @@ node_modules_bak/
 
 # TUI build inputs; the bundled dist/ ships, node_modules never does.
 tui/node_modules/
+
+# The Rust build tree.
+target/

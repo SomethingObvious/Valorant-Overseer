@@ -186,6 +186,8 @@ pub(crate) struct RowStyle {
     /// takes. Both zero in the efficient tier, which is the whole of what
     /// that tier does to a row.
     pub(crate) pace: Pace,
+    /// Whether you have written something about this account.
+    pub(crate) noted: bool,
 }
 
 /// What a set of columns needs, gutters and margins included.
@@ -382,7 +384,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
         tint.gamma_multiply(if player.is_self { 1.0 } else { 0.5 }),
     );
 
-    flags(&painter, player, rect);
+    flags(&painter, player, rect, style.noted);
     painter.hline(rect.x_range(), rect.bottom(), (1.0, colour::LINE_SOFT));
 
     let name_colour = if player.is_self {
@@ -413,9 +415,16 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
     response
 }
 
-/// The two marks on the right: worth a look, and in a group.
-fn flags(painter: &egui::Painter, player: &Player, rect: Rect) {
+/// The marks on the right: a note you left, a flag, and a group.
+fn flags(painter: &egui::Painter, player: &Player, rect: Rect, noted: bool) {
     let mut x = rect.right() - space::LG;
+    if noted {
+        // A small square rather than a letter: it means "there is something
+        // in the panel", and it must not compete with the flag beside it.
+        let mark = Rect::from_min_size(pos2(x - 6.0, rect.center().y - 3.0), vec2(6.0, 6.0));
+        painter.rect_filled(mark, 0, colour::INFO);
+        x = mark.left() - space::MD;
+    }
     if player.smurf {
         let drawn = painter.text(
             pos2(x, rect.center().y),

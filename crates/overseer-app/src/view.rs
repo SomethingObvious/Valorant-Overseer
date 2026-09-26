@@ -208,6 +208,7 @@ pub(crate) fn snapshot(
     selected: Option<&str>,
     settings: &Settings,
     sort: &Sort,
+    notes: &mut crate::notes::Notes,
 ) {
     let width = ui.available_width();
     app::snapshot_header(ui, board);
@@ -224,7 +225,7 @@ pub(crate) fn snapshot(
                 ui.add_space(space::MD);
                 let player = selected
                     .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
-                panel::show(ui, player);
+                panel::show(ui, player, notes);
             });
     }
     CentralPanel::default()
@@ -252,6 +253,7 @@ pub(crate) fn snapshot(
                         team: tint,
                         selected: player.name.as_deref() == selected,
                         height,
+                        noted: player.puuid.as_deref().is_some_and(|id| notes.has(id)),
                         pace: Pace {
                             hover: motion::EFFICIENT,
                             select: motion::EFFICIENT,

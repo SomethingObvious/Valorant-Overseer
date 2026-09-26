@@ -19,6 +19,7 @@ use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, po
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
+use crate::notes::{self, Notes};
 use crate::settings::{self, Quality, Settings};
 use crate::sort::{self, Sort};
 use crate::{panel, view};
@@ -68,6 +69,8 @@ pub(crate) struct Overseer {
     /// Set when a key asked for the search box, so the next frame can hand
     /// it the keyboard.
     focus_search: bool,
+    /// What you have written about the accounts you have met.
+    notes: Notes,
 }
 
 /// What the middle of the window is showing.
@@ -125,6 +128,7 @@ impl Overseer {
             sort: Sort::default(),
             filter: String::new(),
             focus_search: false,
+            notes: notes::load(root),
         }
     }
 
@@ -479,6 +483,7 @@ impl Overseer {
                                 selected: player.puuid.is_some() && player.puuid == selected,
                                 height,
                                 pace,
+                                noted: player.puuid.as_deref().is_some_and(|id| self.notes.has(id)),
                             };
                             if board::row(ui, player, &style, &hidden).clicked() {
                                 clicked.clone_from(&player.puuid);
@@ -501,6 +506,16 @@ impl Overseer {
 }
 
 impl App for Overseer {
+    /// Called by eframe on the way out, and every so often before that.
+    ///
+    /// The notes are written when a box loses the keyboard, which covers
+    /// clicking anywhere else. It does not cover closing the window with the
+    /// caret still in the box, and losing a sentence somebody typed about a
+    /// person is the one failure in this app that would actually sting.
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        notes::save(&self.root, &self.notes);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         self.pump();
         self.keys(ui);
@@ -554,7 +569,14 @@ impl App for Overseer {
                 )
                 .show(ui, |ui| {
                     ui.add_space(space::MD);
-                    panel::show(ui, self.current());
+                    // Lent to the panel rather than borrowed from self, because
+                    // the panel edits the notes while reading the player, and
+                    // both live on this struct.
+                    let mut lent = std::mem::take(&mut self.notes);
+                    if panel::show(ui, self.current(), &mut lent) {
+                        notes::save(&self.root, &lent);
+                    }
+                    self.notes = lent;
                 });
         }
         CentralPanel::default().frame(chrome).show(ui, |ui| {
@@ -714,6 +736,7 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         sort: Sort::default(),
         filter: String::new(),
         focus_search: false,
+        notes: Notes::default(),
     };
     Panel::top("header")
         .exact_size(space::XXL + space::MD)

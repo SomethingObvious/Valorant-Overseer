@@ -52,6 +52,7 @@ fn harness() -> Harness<'static, bool> {
                         Some("Day#9932"),
                         &Settings::default(),
                         &Sort::default(),
+                        &mut crate::notes::Notes::default(),
                     );
                 }
             },
@@ -122,6 +123,7 @@ fn a_full_board_stays_inside_its_shape_budget() {
             Some("Day#9932"),
             &Settings::default(),
             &Sort::default(),
+            &mut crate::notes::Notes::default(),
         );
     });
     let count = shapes.shapes.len();

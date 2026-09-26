@@ -21,6 +21,7 @@ use egui::{Ui, vec2};
 use egui_kittest::Harness;
 use overseer_core::{Board, Player};
 
+use crate::notes::{Note, Notes};
 use crate::settings::{Quality, Settings};
 use crate::sort::{Direction, Sort};
 use crate::view;
@@ -33,6 +34,8 @@ struct Scene {
     /// How the board is ordered, so the arrow on a heading is in the picture
     /// rather than only in the code.
     sort: Sort,
+    /// What has been written about the people on the board.
+    notes: Notes,
     /// False on the very first frame. Fonts only materialise once a frame has
     /// run, and the app names its own font families on every line it draws,
     /// so the first frame installs them and draws nothing rather than laying
@@ -256,14 +259,30 @@ fn plain() -> Vec<Player> {
 /// The fonts are installed once against the harness's context rather than
 /// here, because `set_fonts` lands on the next frame and a style naming a
 /// family that is not bound yet panics inside epaint.
-fn draw(ui: &mut Ui, scene: &Scene) {
+fn draw(ui: &mut Ui, scene: &mut Scene) {
     view::snapshot(
         ui,
         &scene.board,
         scene.selected,
         &Settings::default(),
         &scene.sort,
+        &mut scene.notes,
     );
+}
+
+/// A note about somebody on the sample board, so the panel's boxes and the
+/// mark on their row are both in a picture.
+fn remembered() -> Notes {
+    let mut notes = Notes::default();
+    notes.set(
+        "b",
+        Note {
+            text: "Plays for picks early, then hides. Worth watching the flank.".to_owned(),
+            tags: vec!["flanks".to_owned(), "duo".to_owned()],
+            name: "Day#9932".to_owned(),
+        },
+    );
+    notes
 }
 
 /// Every frame worth pinning: the three layouts, a sorted board, and the
@@ -278,6 +297,7 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
                 board: sample(),
                 selected: Some("SilentEnt#GG"),
                 sort: Sort::default(),
+                notes: Notes::default(),
                 ready: true,
             },
         ),
@@ -294,22 +314,20 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
                     column: Some("k/d".to_owned()),
                     direction: Some(Direction::Down),
                 },
+                notes: Notes::default(),
                 ready: true,
             },
         ),
-        // Sorted by K/D, best first, which is the question a heading gets
-        // clicked to answer. The arrow belongs in a picture somebody looks
-        // at rather than only in a unit test.
+        // A player you have written about: the mark on their row, and the
+        // boxes in the panel with something in them.
         (
-            "sorted",
+            "noted",
             vec2(1200.0, 300.0),
             Scene {
                 board: sample(),
-                selected: Some("NeonLock#VAL"),
-                sort: Sort {
-                    column: Some("k/d".to_owned()),
-                    direction: Some(Direction::Down),
-                },
+                selected: Some("Day#9932"),
+                sort: Sort::default(),
+                notes: remembered(),
                 ready: true,
             },
         ),
@@ -320,6 +338,7 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
                 board: sample(),
                 selected: Some("Day#9932"),
                 sort: Sort::default(),
+                notes: Notes::default(),
                 ready: true,
             },
         ),
@@ -330,6 +349,7 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
                 board: sample(),
                 selected: Some("Day#9932"),
                 sort: Sort::default(),
+                notes: Notes::default(),
                 ready: true,
             },
         ),
@@ -340,6 +360,7 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
                 board: Board::default(),
                 selected: None,
                 sort: Sort::default(),
+                notes: Notes::default(),
                 ready: true,
             },
         ),
@@ -365,6 +386,7 @@ fn every_layout_is_unchanged() {
                 board: sample(),
                 selected: None,
                 sort: Sort::default(),
+                notes: Notes::default(),
                 ready: false,
             },
         );

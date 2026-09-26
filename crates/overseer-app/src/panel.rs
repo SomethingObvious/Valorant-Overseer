@@ -10,16 +10,20 @@
 //! "where did that field go": the board shows what fits, and this shows the
 //! rest.
 
-use egui::{Align2, Color32, Rect, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
+use crate::notes::{self, Notes};
 use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
 
 /// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;
 
 /// Draws the panel for a player, or the reason there is nobody to draw.
-pub(crate) fn show(ui: &mut Ui, player: Option<&Player>) {
+///
+/// Returns whether the notes want writing to disk, which is the one thing in
+/// here that changes anything outside the window.
+pub(crate) fn show(ui: &mut Ui, player: Option<&Player>, store: &mut Notes) -> bool {
     let Some(player) = player else {
         heading(ui, "no one selected");
         line(
@@ -28,8 +32,9 @@ pub(crate) fn show(ui: &mut Ui, player: Option<&Player>) {
             colour::TEXT_DIM,
             size::BODY,
         );
-        return;
+        return false;
     };
+    let mut save = false;
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -38,6 +43,7 @@ pub(crate) fn show(ui: &mut Ui, player: Option<&Player>) {
             if !player.smurf_reasons.is_empty() {
                 flags(ui, player);
             }
+            save = notes(ui, player, store);
             ranks(ui, player);
             form(ui, player);
             numbers(ui, player);
@@ -46,6 +52,106 @@ pub(crate) fn show(ui: &mut Ui, player: Option<&Player>) {
             loadout(ui, player);
             ui.add_space(space::XL);
         });
+    save
+}
+
+/// What you know about them that no API does.
+///
+/// High up, above the ranks, because a line you wrote yourself beats every
+/// number under it: "duos with the Jett, plays for picks" decides a match in a
+/// way a win rate does not.
+///
+/// Written back to the store on every keystroke so the mark on the row and the
+/// tags appear as you type, but only committed to disk when a box loses the
+/// keyboard. The tag line keeps its raw text in egui's own scratch space while
+/// it has focus, because tidying "toxic," into "toxic" under somebody's cursor
+/// eats the comma they just typed.
+fn notes(ui: &mut Ui, player: &Player, store: &mut Notes) -> bool {
+    let Some(id) = player.puuid.as_deref() else {
+        return false;
+    };
+    // Most people you meet are not worth writing about, and two empty boxes
+    // pushing the ranks down the panel for all of them is a bad trade. Shut
+    // until there is something in it, or until you say there will be.
+    let opened = egui::Id::new(("note-open", id));
+    let mut note = store.get(id);
+    if note.is_empty() && !ui.data(|d| d.get_temp::<bool>(opened)).unwrap_or(false) {
+        if invite(ui).clicked() {
+            ui.data_mut(|d| d.insert_temp(opened, true));
+        }
+        return false;
+    }
+    heading(ui, "your notes");
+    let mut text = note.text.clone();
+    let key = egui::Id::new(("tags", id));
+    let mut tags = ui
+        .data(|d| d.get_temp::<String>(key))
+        .unwrap_or_else(|| notes::tags_line(&note.tags));
+    let (mut touched, mut done) = (false, false);
+    ui.horizontal(|ui| {
+        ui.add_space(space::LG);
+        let width = (ui.available_width() - space::LG).max(120.0);
+        ui.vertical(|ui| {
+            let prose = ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .desired_width(width)
+                    .desired_rows(2)
+                    .font(Face::Body.at(size::BODY))
+                    .hint_text(hint("what you want to remember about them")),
+            );
+            ui.add_space(space::SM);
+            let labels = ui.add(
+                egui::TextEdit::singleline(&mut tags)
+                    .desired_width(width)
+                    .font(Face::Body.at(size::MICRO))
+                    .hint_text(hint("tags, separated by commas")),
+            );
+            touched = prose.changed() || labels.changed();
+            done = prose.lost_focus() || labels.lost_focus();
+        });
+    });
+    if touched || done {
+        note.text = text;
+        note.tags = notes::parse_tags(&tags);
+        player.display_name().clone_into(&mut note.name);
+        store.set(id, note);
+    }
+    if done {
+        // Let the tidied form come back the next time it is looked at.
+        ui.data_mut(|d| d.remove::<String>(key));
+    } else if touched {
+        ui.data_mut(|d| d.insert_temp(key, tags));
+    }
+    done
+}
+
+/// The one faint line that stands in for the notes section until there is a
+/// note. Small and quiet: it is an offer, not a thing to do.
+fn invite(ui: &mut Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let tint = if response.hovered() {
+            colour::TEXT_DIM
+        } else {
+            colour::TEXT_FAINT
+        };
+        ui.painter().text(
+            pos2(rect.left() + space::LG, rect.center().y),
+            Align2::LEFT_CENTER,
+            "+ write a note about them",
+            Face::Body.at(size::MICRO),
+            tint,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Grey placeholder text, in the panel's own face.
+fn hint(text: &str) -> RichText {
+    RichText::new(text)
+        .color(colour::TEXT_FAINT)
+        .font(Face::Body.at(size::MICRO))
 }
 
 /// The player's name, at the top, in the brightest thing there is.
@@ -546,7 +652,69 @@ fn dash() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{record, stack_word};
+    use egui::Ui;
+    use egui::accesskit::Role;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable as _;
+    use overseer_core::Player;
+
+    use super::{Notes, record, stack_word};
+    use crate::notes::Note;
+
+    /// A keystroke in the panel has to reach the store on the same frame.
+    ///
+    /// The boxes are drawn from the store every frame, so anything not
+    /// written back is a letter the person watched themselves type and then
+    /// watched disappear. Nothing else in the app has that shape, and no
+    /// snapshot would catch it.
+    #[test]
+    fn what_you_type_about_somebody_is_kept() {
+        let player = Player {
+            puuid: Some("p1".to_owned()),
+            name: Some("Day#9932".to_owned()),
+            ..Player::default()
+        };
+        // Started with a tag and no prose, because the section is shut until
+        // there is something in it and the invite that opens it is painted
+        // rather than a widget, so there is no node to click.
+        let mut store = Notes::default();
+        store.set(
+            "p1",
+            Note {
+                tags: vec!["duo".to_owned()],
+                ..Note::default()
+            },
+        );
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(320.0, 300.0))
+            .build_ui_state(
+                move |ui: &mut Ui, state: &mut (bool, Notes)| {
+                    if state.0 {
+                        super::notes(ui, &player, &mut state.1);
+                    }
+                },
+                (false, store),
+            );
+        // Same first frame rule as every other harness here: the faces are
+        // bound on the frame after they are installed.
+        overseer_ui::install_fonts(&harness.ctx);
+        harness
+            .ctx
+            .set_style_of(egui::Theme::Dark, overseer_ui::style());
+        harness.run();
+        harness.state_mut().0 = true;
+        harness.run();
+
+        harness.get_by_role(Role::MultilineTextInput).focus();
+        harness.run();
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("instalocks");
+        harness.run();
+        assert_eq!(harness.state().1.get("p1").text, "instalocks");
+        assert!(harness.state().1.has("p1"));
+    }
 
     #[test]
     fn a_record_only_mentions_draws_when_there_were_some() {

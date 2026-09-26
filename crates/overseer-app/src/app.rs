@@ -87,6 +87,12 @@ const HEADER: f32 = 44.0;
 const SLOW_FRAME: f32 = 1.0 / 45.0;
 /// This many missed frames in a row and the window stops trying to be rich.
 const SLOW_STREAK: u32 = 3;
+/// This many frames inside the budget, after a drop, and it tries again.
+/// Long enough that a busy moment cannot make the tier flicker.
+const FAST_STREAK: u32 = 600;
+/// How long to let the window settle before believing anything its frame
+/// clock says.
+const WARMUP: f64 = 1.5;
 
 /// The window's state.
 pub(crate) struct Overseer {
@@ -111,6 +117,8 @@ pub(crate) struct Overseer {
     slow: u32,
     /// Set when the window dropped its own quality, so it can say so.
     dropped: bool,
+    /// Consecutive frames inside budget, for earning the tier back.
+    fast: u32,
     /// How the board is ordered, if a heading has been clicked.
     sort: Sort,
     /// What has been typed into the search box.
@@ -146,6 +154,9 @@ pub(crate) struct Overseer {
     /// How tall the overlay's contents actually came out last time they
     /// were drawn, so the window can be exactly that tall.
     overlay_drew: Option<f32>,
+    /// Who the panel is currently faded in on, which lags the pointer by
+    /// half the length of the fade.
+    panel_showing: Option<String>,
     /// Frames the bridge sent that this build could not read, and the last
     /// reason. Counted rather than ignored: a board that will not parse
     /// looks exactly like no match in progress, and that cost an evening
@@ -205,6 +216,7 @@ impl Overseer {
             boards: 0,
             slow: 0,
             dropped: false,
+            fast: 0,
             sort: Sort::default(),
             filter: String::new(),
             focus_search: false,
@@ -222,6 +234,7 @@ impl Overseer {
             roster: Vec::new(),
             roster_at: 0.0,
             overlay_drew: None,
+            panel_showing: None,
             unreadable: (0, None),
         }
     }
@@ -593,17 +606,34 @@ impl Overseer {
     /// frame is a window being dragged onto another monitor. The drop is said
     /// out loud in the settings screen, and choosing a tier by hand ends it.
     fn watch_frames(&mut self, ui: &Ui) {
-        if self.settings.quality != Quality::Auto || self.dropped {
+        if self.settings.quality != Quality::Auto {
             return;
         }
-        let dt = ui.input(|i| i.unstable_dt);
+        // The first second is not evidence. Starting up means building a
+        // font atlas, compiling a shader and creating a swapchain, and the
+        // frames that do all that miss every budget there is. Judging on
+        // them dropped the window to the careful tier on every launch and
+        // it never came back, which is exactly the fault this is for.
+        let (dt, since) = ui.input(|i| (i.unstable_dt, i.time));
+        if since < WARMUP {
+            return;
+        }
         if dt > SLOW_FRAME {
             self.slow = self.slow.saturating_add(1);
+            self.fast = 0;
             if self.slow >= SLOW_STREAK {
                 self.dropped = true;
             }
-        } else {
-            self.slow = 0;
+            return;
+        }
+        self.slow = 0;
+        // And a machine that was busy for a moment is not a slow machine.
+        // A long run of frames inside the budget earns the tier back, and
+        // the run is long enough that nothing can oscillate.
+        self.fast = self.fast.saturating_add(1);
+        if self.dropped && self.fast >= FAST_STREAK {
+            self.dropped = false;
+            self.fast = 0;
         }
     }
 
@@ -847,12 +877,33 @@ impl Overseer {
                 ));
                 ui.painter()
                     .vline(all.left(), all.y_range(), (1.0, colour::LINE));
+                // The panel changes subject whenever the pointer crosses a
+                // row, which on the way down a roster is five times in a
+                // second. Snapping through five people reads as flicker.
+                // This fades the one on screen out, swaps, and fades the
+                // next one in, which reads as turning a page.
+                let wanted = self.current().and_then(|p| p.puuid.clone());
+                let settled = ui.ctx().animate_value_with_time(
+                    egui::Id::new("panel-subject"),
+                    f32::from(wanted == self.panel_showing),
+                    motion::QUICK / 2.0,
+                );
+                if settled <= 0.02 && wanted != self.panel_showing {
+                    self.panel_showing = wanted;
+                }
+                ui.multiply_opacity(0.08 + 0.92 * settled);
                 ui.add_space(space::MD);
                 // Lent to the panel rather than borrowed from self, because
                 // the panel edits the notes while reading the player, and
                 // both live on this struct.
                 let mut lent = std::mem::take(&mut self.notes);
-                if panel::show(ui, self.current(), &mut lent, &self.career) {
+                let showing = self.panel_showing.as_ref().and_then(|id| {
+                    self.board
+                        .players
+                        .iter()
+                        .find(|p| p.puuid.as_ref() == Some(id))
+                });
+                if panel::show(ui, showing, &mut lent, &self.career) {
                     notes::save(&self.root, &lent);
                 }
                 self.notes = lent;
@@ -1382,6 +1433,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         boards,
         slow: 0,
         dropped: false,
+        fast: 0,
         sort: Sort::default(),
         filter: String::new(),
         focus_search: false,
@@ -1397,6 +1449,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         roster: Vec::new(),
         roster_at: 0.0,
         overlay_drew: None,
+        panel_showing: None,
         unreadable: (0, None),
     };
     Panel::top("header")

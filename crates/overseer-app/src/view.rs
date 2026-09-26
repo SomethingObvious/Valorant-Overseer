@@ -4,14 +4,15 @@
 //! for them, with a sentence saying what each one is for. A setting whose
 //! effect you have to discover by toggling it is a setting nobody touches.
 
-use egui::{Align2, Rect, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
-use crate::board::{COLUMNS, Column};
+use crate::board::COLUMNS;
+use crate::board::grid::Column;
 use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
-use overseer_ui::{Face, caps_at, caps_text, colour, shape, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
 
 /// What did not start, and why, for the screen to say out loud.
 ///
@@ -290,42 +291,28 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
         return;
     }
     let painter = ui.painter().clone();
-    // A band rather than a rule. A settings screen is a stack of groups, and
-    // a hairline says where one ends without saying that the next one is a
-    // thing: the eye reads a page of hairlines as one long list. The same
-    // lit surface the team headings get, at the same width as the switches
-    // under it, and the screen becomes a stack of cards instead.
-    let middle = rect.center().y + space::SM;
-    let band = Rect::from_min_max(
-        pos2(rect.left() + space::LG, middle - 11.0),
-        pos2(rect.right() - space::LG, middle + 11.0),
-    );
-    painter.add(shape::lit(
-        band,
-        shape::CHAMFER,
-        colour::BG_RAISED,
-        shape::blend(colour::BG_RAISED, colour::BG, 0.55),
-    ));
-    painter.add(shape::tick(
-        pos2(band.left() + space::MD, middle - 5.0),
-        10.0,
-        colour::ENEMY,
-    ));
     let drawn = caps_text(
         &painter,
-        pos2(band.left() + space::MD + space::MD, middle),
+        pos2(rect.left() + space::XL, rect.center().y),
         Align2::LEFT_CENTER,
         text,
-        Face::Display.at(size::LABEL),
-        colour::TEXT_DIM,
+        Face::Heavy.at(17.0),
+        colour::TEXT_STRONG,
     );
-    painter.text(
-        pos2(drawn.right() + space::LG, middle),
+    let about_at = painter.text(
+        pos2(drawn.right() + space::LG, rect.center().y + 1.0),
         Align2::LEFT_CENTER,
         about,
-        Face::Body.at(size::MICRO),
+        Face::Body.at(size::MICRO + 1.0),
         colour::TEXT_FAINT,
     );
+    if about_at.right() + space::MD < rect.right() - space::XL {
+        painter.hline(
+            about_at.right() + space::MD..=rect.right() - space::XL,
+            rect.center().y + 1.0,
+            (1.0, colour::LINE),
+        );
+    }
 }
 
 /// One switch: a mark, a name, and what it is for. True when clicked.
@@ -357,7 +344,7 @@ fn note(ui: &mut Ui, text: &str) {
 /// The board and the panel, drawn the way the window draws them, for the
 /// snapshot test. One door, so the test cannot drift away from the app.
 #[cfg(test)]
-use crate::board::{self, Pace, RowStyle};
+use crate::board;
 #[cfg(test)]
 use crate::{app, panel};
 #[cfg(test)]
@@ -449,47 +436,36 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 egui::Direction::TopDown,
                 [colour::BG, colour::VOID],
             ));
-            ui.add_space(space::MD);
-            let height = if width < app::COMPACT {
-                space::ROW_TIGHT
-            } else {
-                space::ROW
-            };
             if board.players.is_empty() {
                 app::snapshot_empty(ui);
                 return;
             }
-            for (label, tint, team) in board::teams(board, settings.enemies_first) {
-                let mut players = board.team(&team);
-                crate::sort::apply(&mut players, sort);
-                if players.is_empty() {
-                    continue;
-                }
-                let block = board::open_block(ui);
-                let _jumped = board::team_heading(ui, label, tint, board, &team);
-                // Same id scope as the window uses, for the same reason.
-                ui.push_id(&team, |ui| {
-                    board::headings(ui, ui.available_width(), &settings.hidden_columns, sort);
-                });
-                let brackets = board::brackets(&players);
-                for (at, player) in players.iter().enumerate() {
-                    let style = RowStyle {
-                        team: tint,
-                        selected: player.name.as_deref() == selected,
-                        height,
-                        noted: player.puuid.as_deref().is_some_and(|id| notes.has(id)),
-                        bracket: brackets.get(at).copied().flatten(),
-                        arrive: 1.0,
-                        pace: Pace {
-                            hover: overseer_ui::motion::EFFICIENT,
-                            select: overseer_ui::motion::EFFICIENT,
-                        },
-                    };
-                    board::row(ui, player, &style, &settings.hidden_columns);
-                }
-                board::close_block(ui, block, false);
-                ui.add_space(space::XL);
-            }
-            board::board_foot(ui, board, false);
+            // The fixture names who is chosen, because a fixture is written by
+            // a person; the board keys by account, as the window does.
+            let chosen = selected
+                .and_then(|name| {
+                    board
+                        .players
+                        .iter()
+                        .find(|p| p.name.as_deref() == Some(name))
+                })
+                .and_then(|p| p.puuid.as_deref());
+            // The same door the window goes through. A lobby that landed a
+            // while ago, so the picture is of a settled board.
+            let _touched = board::draw(
+                ui,
+                &board::Scene {
+                    board,
+                    sort,
+                    filter: "",
+                    selected: chosen,
+                    notes,
+                    hidden: &settings.hidden_columns,
+                    enemies_first: settings.enemies_first,
+                    place: board::Place::Window,
+                    still: false,
+                    since: 10.0,
+                },
+            );
         });
 }

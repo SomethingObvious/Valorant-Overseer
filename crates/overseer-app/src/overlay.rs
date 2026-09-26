@@ -22,9 +22,8 @@
 //! the whole of its relationship with the game.
 
 use egui::{Pos2, Ui, Vec2, ViewportBuilder, ViewportId, pos2, vec2};
+use overseer_ui::colour;
 use serde::{Deserialize, Serialize};
-
-use overseer_ui::{colour, space};
 
 /// How far the overlay sits from the edges of the screen.
 const MARGIN: f32 = 16.0;
@@ -45,19 +44,6 @@ const TASKBAR: f32 = 48.0;
 /// the agent, the name, the rank, the K/D and the last five results, which
 /// is the whole of what can be read in the seconds this is looked at.
 pub(crate) const WIDTH: f32 = 540.0;
-/// What to assume the screen is, on the one frame of a window's life before
-/// anybody has said. Only ever wrong for a moment: the frame after it, the
-/// real size arrives and the overlay is placed again.
-const FALLBACK_SCREEN: Vec2 = vec2(1920.0, 1080.0);
-/// Everything in the overlay that is not a player row: two team bands,
-/// two column heading rows, the air above the first and the gap between
-/// the blocks. Measured from the same tokens the board draws with, so a
-/// band that grows cannot leave the overlay clipping its own last row.
-const CHROME: f32 = space::MD                       // the air above the first band
-    + (space::ROW + space::MD) * 2.0                // two team bands
-    + space::XL * 2.0                               // two rows of column headings
-    + space::XL * 2.0; // the gap after each block
-
 /// Which corner of the screen the overlay lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -118,23 +104,9 @@ pub(crate) fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
     }
 }
 
-/// How tall to make the overlay before anything has been drawn in it.
-///
-/// A guess, and only a guess: the window is resized to whatever the board
-/// actually drew as soon as it has drawn once. Adding the pieces up by hand
-/// is how this clipped its own last player twice, because the sum has to be
-/// revisited every time a band grows a point, and nobody revisits a sum.
-///
-/// No rows at all is a single line saying so. The full sized empty state
-/// belongs in a window somebody is looking at; over a game it would be a
-/// large dark rectangle announcing that it has nothing to tell you.
-pub(crate) fn size_for(rows: usize) -> Vec2 {
-    if rows == 0 {
-        return vec2(WIDTH, space::ROW + space::MD);
-    }
-    let body = space::ROW_TIGHT * rows as f32;
-    vec2(WIDTH, body + CHROME)
-}
+/// How tall the overlay is designed to be: the enemy's plate and five
+/// rows. Where it is placed from, whatever it measures.
+pub(crate) const DESIGNED: f32 = crate::board::OVERLAY_HEIGHT;
 
 /// The tallest the overlay is allowed to get, whatever it measures.
 ///
@@ -149,24 +121,37 @@ pub(crate) const CEILING: f32 = 620.0;
 /// that is not a preference. A window moved after it has been shown stops
 /// being composited on this machine: it keeps its handle, reports itself
 /// visible, sits at exactly the rectangle it was told to, and shows nothing
-/// at all. Resizing is fine, moving is not. So the position is decided
-/// before the window exists and never changed afterwards, and choosing a
-/// different corner throws the window away and builds another one, which is
-/// what the corner in the id is for.
+/// at all. Resizing is fine; moving is not.
 ///
-/// The main window is left alone, which also means the board is still there
-/// on a second monitor while the overlay runs on the first.
-pub(crate) fn show(ctx: &egui::Context, corner: Corner, height: f32, draw: impl FnMut(&mut Ui)) {
-    let size = vec2(WIDTH, height.clamp(space::ROW, CEILING));
-    let monitor = ctx
-        .input(|i| i.viewport().monitor_size)
-        .unwrap_or(FALLBACK_SCREEN);
-    let at = place(corner, monitor, size);
-    let mut draw = draw;
+/// So it is placed once, as if it were always its designed height, and then
+/// only ever resized to what the board actually drew. In a bottom corner
+/// that means the bottom edge floats a row's height at most, and the window
+/// never moves. It used to be placed from its measured height, which for the
+/// bottom corners moved it every time a roster changed.
+///
+/// It is exactly as tall as the board rather than a fixed size with the
+/// board inside it, because this adapter presents opaque: a transparent
+/// window here is a black one, and a fixed tall overlay would lay a black
+/// slab across the game under its last row.
+///
+/// Not built until the monitor's size is known, because building it against
+/// a guessed screen and correcting it the next frame was a move too.
+pub(crate) fn show(
+    ctx: &egui::Context,
+    corner: Corner,
+    height: f32,
+    mut board: impl FnMut(&mut Ui),
+) {
+    let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
+        ctx.request_repaint();
+        return;
+    };
+    let at = place(corner, monitor, vec2(WIDTH, DESIGNED));
+    let size = vec2(WIDTH, height.clamp(DESIGNED / 4.0, CEILING));
     ctx.show_viewport_immediate(id_for(corner), attributes(at, size), |ui, _class| {
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(colour::BG_OVERLAY))
-            .show(ui, &mut draw);
+            .frame(egui::Frame::NONE.fill(colour::BG))
+            .show(ui, |ui| board(ui));
     });
 }
 
@@ -198,7 +183,7 @@ fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
 mod tests {
     use egui::vec2;
 
-    use super::{Corner, MARGIN, TASKBAR, place, size_for};
+    use super::{Corner, MARGIN, TASKBAR, place};
 
     /// Each corner is a window of its own.
     ///
@@ -246,18 +231,5 @@ mod tests {
         let at = place(Corner::BottomRight, vec2(300.0, 200.0), vec2(460.0, 400.0));
         assert!((at.x - MARGIN).abs() < f32::EPSILON, "pushed off the left");
         assert!((at.y - MARGIN).abs() < f32::EPSILON, "pushed off the top");
-    }
-
-    /// More players is a taller overlay, and an empty one is still a window.
-    #[test]
-    fn the_height_follows_the_roster() {
-        let ten = size_for(10);
-        let five = size_for(5);
-        assert!(ten.y > five.y, "ten players fitted in five players of room");
-        assert!(
-            (ten.x - five.x).abs() < f32::EPSILON,
-            "the width is not the roster's business"
-        );
-        assert!(size_for(0).y > 0.0, "an empty lobby has no window at all");
     }
 }

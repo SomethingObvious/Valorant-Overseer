@@ -13,6 +13,7 @@
 use egui::{Align2, Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
+use crate::board;
 use crate::career::{self, Career};
 use crate::notes::{self, Notes};
 use overseer_ui::{
@@ -46,15 +47,10 @@ pub(crate) fn show(
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(space::MD);
-            let plate = ui.painter().add(egui::Shape::Noop);
-            let top = ui.cursor().top();
-            name(ui, player);
-            identity(ui, player);
-            identity_plate(ui, player, plate, top);
-            ui.add_space(space::MD);
+            ui.add_space(space::LG);
+            card(ui, player);
             if !player.smurf_reasons.is_empty() {
-                flags(ui, player);
+                verdict(ui, player);
             }
             save = notes(ui, player, store);
             ranks(ui, player);
@@ -180,152 +176,127 @@ fn hint(text: &str) -> RichText {
         .font(Face::Body.at(size::MICRO))
 }
 
-/// The player's name, at the top, in the brightest thing there is.
-fn name(ui: &mut Ui, player: &Player) {
-    let (rect, _response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), space::XXL + space::MD),
-        Sense::hover(),
-    );
+/// How tall the player card is.
+const CARD: f32 = 132.0;
+
+/// The player as a broadcast card: their agent's killfeed crop across the
+/// whole panel, dark at the foot, with their name set over it.
+///
+/// The panel is the one place a face can be large, and it used to be a
+/// column of text with a forty point thumbnail in the corner. The crop is
+/// Riot's own two by one cut, scaled to the panel's width and cropped to the
+/// face rather than stretched; the name sits in the dark it fades to, so it
+/// reads on any agent.
+fn card(ui: &mut Ui, player: &Player) {
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), CARD), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    // No rail down the side any more: the plate behind this block is washed
-    // in the agent's own colour, which ties the panel to the row it came
-    // from more plainly than three points of bar ever did, and two marks
-    // saying the same thing is one mark too many.
-    // The tag is part of the name and not part of the point, so it is drawn
-    // quieter rather than dropped: two people with the same name is exactly
-    // when the tag matters.
-    let full = player.display_name().to_owned();
-    let (stem, tag) = full
-        .split_once('#')
-        .map_or((full.as_str(), ""), |(a, b)| (a, b));
+    let card = Rect::from_min_max(
+        pos2(rect.left() + space::LG, rect.top()),
+        pos2(rect.right() - space::LG, rect.bottom()),
+    );
     let painter = ui.painter().clone();
-    // Cut rather than run off the edge. Riot allow sixteen characters and
-    // this column is three hundred points wide with a face in the first
-    // sixty of them, so the long ones do not fit and never did.
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        stem.to_owned(),
-        Face::Body.at(size::DISPLAY),
+    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::BG_INSET);
+    painter.rect_filled(card, 0, shape::blend(tint, colour::BG, 0.55));
+    if let Some(face) = art::killfeed(ui.ctx(), player.agent.as_deref().unwrap_or("")) {
+        // Fit the width, keep the top of the crop, which is where the eyes
+        // are, and let the chin go.
+        let texture = face.size_vec2();
+        let shown = (card.height() / card.width()) * (texture.x / texture.y.max(1.0));
+        let mut mesh = egui::Mesh::with_texture(face.id());
+        mesh.add_rect_with_uv(
+            card,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, shown.clamp(0.0, 1.0))),
+            Color32::WHITE,
+        );
+        painter.add(egui::Shape::mesh(mesh));
+    }
+    let mut fade = egui::Mesh::default();
+    let dark = Color32::from_rgba_unmultiplied(10, 11, 14, 235);
+    for (x, y, colour) in [
+        (
+            card.left(),
+            card.top() + card.height() * 0.35,
+            Color32::TRANSPARENT,
+        ),
+        (
+            card.right(),
+            card.top() + card.height() * 0.35,
+            Color32::TRANSPARENT,
+        ),
+        (card.right(), card.bottom(), dark),
+        (card.left(), card.bottom(), dark),
+    ] {
+        fade.colored_vertex(pos2(x, y), colour);
+    }
+    fade.add_triangle(0, 1, 2);
+    fade.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(fade));
+    if player.smurf {
+        painter.rect_filled(
+            Rect::from_min_size(card.min, vec2(4.0, card.height())),
+            0,
+            colour::WARN,
+        );
+    }
+    card_words(&painter, card, player);
+}
+
+/// The name and what is known about them, set in the dark at the foot of
+/// the card.
+fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
+    let full = player.display_name();
+    let (name, tag) = full.split_once('#').unwrap_or((full, ""));
+    let drawn = caps_text(
+        painter,
+        pos2(card.left() + space::LG, card.bottom() - 34.0),
+        Align2::LEFT_CENTER,
+        name,
+        Face::Heavy.at(30.0),
         colour::TEXT_STRONG,
     );
-    job.wrap = egui::text::TextWrapping {
-        max_width: rect.width() - BESIDE_FACE - space::LG - 44.0,
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('\u{2026}'),
-    };
-    let galley = painter.layout_job(job);
-    let after = Rect::from_min_size(
-        pos2(
-            rect.left() + BESIDE_FACE,
-            rect.center().y - galley.size().y / 2.0,
-        ),
-        galley.size(),
-    );
-    painter.galley(after.min, galley, colour::TEXT_STRONG);
-    if !tag.is_empty() {
-        painter.text(
-            pos2(after.right() + space::SM, rect.center().y + 1.0),
-            Align2::LEFT_CENTER,
-            format!("#{tag}"),
-            Face::Body.at(size::LABEL),
-            colour::TEXT_FAINT,
-        );
-    }
     if player.name_hidden {
-        caps_at(
-            &painter,
-            pos2(rect.right() - space::LG, rect.center().y),
-            Align2::RIGHT_CENTER,
+        let _hidden = caps_text(
+            painter,
+            pos2(drawn.right() + space::MD, card.bottom() - 32.0),
+            Align2::LEFT_CENTER,
             "hidden",
-            Face::Display.at(size::MICRO),
+            Face::Display.at(size::LABEL),
             colour::TEXT_FAINT,
         );
     }
-}
-
-/// How big the portrait on the panel's own plate is.
-const FACE: f32 = 42.0;
-
-/// Where everything beside that portrait starts.
-const BESIDE_FACE: f32 = space::MD + FACE + space::XL;
-
-/// The surface the name and the line under it sit on, in the agent's own
-/// colour.
-///
-/// The panel is the one part of the window with nothing behind it: a column
-/// of text and hairlines, which is what a document looks like rather than
-/// what a card about a person looks like. Its top is now a plate washed from
-/// the colour of whoever it is about, which does two jobs at once. It gives
-/// the column something to start on, and it is the second place the agent's
-/// colour appears, so moving the pointer down the roster changes the colour
-/// of the panel and you can see the subject change out of the corner of your
-/// eye without reading a word.
-fn identity_plate(ui: &Ui, player: &Player, at: egui::layers::ShapeIdx, top: f32) {
-    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::BG_RAISED);
-    let plate = Rect::from_min_max(
-        pos2(ui.max_rect().left() + space::LG, top),
-        pos2(
-            ui.max_rect().right() - space::LG,
-            ui.cursor().top() - space::SM,
-        ),
-    );
-    if plate.height() < space::ROW {
-        return;
+    let mut about: Vec<String> = Vec::new();
+    if !tag.is_empty() {
+        about.push(format!("#{tag}"));
     }
-    let mut shapes = vec![shape::lit(
-        plate,
-        shape::CHAMFER,
-        shape::blend(colour::BG_RAISED, tint, 0.20),
-        shape::blend(colour::BG_RAISED, tint, 0.04),
-    )];
-    // The face, at the size a face is worth drawing at. On the board it is
-    // twenty points and doing the job of a letter; here there is room for
-    // it to be the thing you recognise the panel by.
-    let face = Rect::from_center_size(
-        pos2(plate.left() + space::MD + FACE / 2.0, plate.center().y),
-        vec2(FACE, FACE),
-    );
-    shapes.push(shape::lit(
-        face,
-        5.0,
-        shape::blend(tint, colour::TEXT_STRONG, 0.30),
-        shape::blend(tint, colour::VOID, 0.20),
-    ));
-    if let Some(portrait) = art::agent(ui.ctx(), player.agent.as_deref().unwrap_or("")) {
-        shapes.push(shape::cut_image(face, 5.0, portrait.id()));
-    }
-    ui.painter().set(at, egui::Shape::Vec(shapes));
-}
-
-/// Level, role, agent and title, because they are one thought.
-fn identity(ui: &mut Ui, player: &Player) {
-    let mut parts: Vec<String> = Vec::new();
     if let Some(level) = player.level {
-        parts.push(if player.level_hidden {
-            "Level hidden".to_owned()
+        about.push(if player.level_hidden {
+            "level hidden".to_owned()
         } else {
-            format!("Level {level}")
+            format!("level {level}")
         });
     }
-    if let Some(role) = player.role.as_deref() {
-        parts.push(role.to_owned());
-    }
-    if let Some(agent) = player.agent.as_deref() {
-        parts.push(agent.to_owned());
-    }
-    if !parts.is_empty() {
-        line_at(
-            ui,
-            &parts.join("  \u{b7}  "),
-            colour::TEXT_DIM,
-            size::BODY,
-            BESIDE_FACE,
-        );
-    }
+    about.extend(player.role.iter().cloned());
+    about.extend(player.agent.iter().cloned());
+    let _line = caps_text(
+        painter,
+        pos2(card.left() + space::LG, card.bottom() - 13.0),
+        Align2::LEFT_CENTER,
+        &about.join("  \u{b7}  "),
+        Face::Number.at(size::BODY),
+        colour::TEXT,
+    );
     if let Some(title) = player.title.as_deref() {
-        line_at(ui, title, colour::TEXT_FAINT, size::MICRO, BESIDE_FACE);
+        let _title = caps_text(
+            painter,
+            pos2(card.right() - space::LG, card.top() + space::LG),
+            Align2::RIGHT_CENTER,
+            title,
+            Face::Display.at(size::LABEL),
+            colour::TEXT_STRONG.gamma_multiply(0.8),
+        );
     }
 }
 
@@ -334,35 +305,88 @@ fn identity(ui: &mut Ui, player: &Player) {
 /// Gold, and only gold: this and the encounter count are the two things in
 /// the app that are claims about a person rather than measurements of one,
 /// and they share a colour so that the colour means something.
-fn flags(ui: &mut Ui, player: &Player) {
-    ui.add_space(space::LG);
-    heading_tinted(
-        ui,
-        if player.smurf {
-            "smurf"
-        } else {
-            "worth a look"
-        },
-        colour::WARN,
-    );
-    for reason in &player.smurf_reasons {
-        line(ui, reason, colour::WARN, size::BODY);
-    }
-    if !player.smurf {
-        line(
-            ui,
-            "One signal only, so not a flag.",
-            colour::TEXT_FAINT,
-            size::MICRO,
+fn verdict(ui: &mut Ui, player: &Player) {
+    ui.add_space(space::MD);
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let band = Rect::from_min_max(
+            pos2(rect.left() + space::LG, rect.top()),
+            pos2(rect.right() - space::LG, rect.bottom()),
+        );
+        let solid = player.smurf;
+        let painter = ui.painter();
+        painter.add(board::paint::slant(
+            band,
+            false,
+            true,
+            if solid {
+                colour::WARN
+            } else {
+                colour::WARN.gamma_multiply(0.18)
+            },
+        ));
+        let _drawn = caps_text(
+            painter,
+            pos2(band.left() + space::LG, band.center().y),
+            Align2::LEFT_CENTER,
+            if solid {
+                "worth a look"
+            } else {
+                "one signal only"
+            },
+            Face::Heavy.at(15.0),
+            if solid { colour::BG } else { colour::WARN },
         );
     }
+    ui.add_space(space::SM);
+    for reason in &player.smurf_reasons {
+        reason_line(ui, reason);
+    }
+}
+
+/// One reason, in the reading face, its numbers in the flag's amber.
+fn reason_line(ui: &mut Ui, reason: &str) {
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::XL + space::SM),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let mut job = egui::text::LayoutJob::default();
+    for (run, numeric) in board::paint::split_numbers(reason) {
+        job.append(
+            run,
+            0.0,
+            egui::TextFormat::simple(
+                Face::Body.at(size::BODY),
+                if numeric {
+                    colour::WARN
+                } else {
+                    colour::TEXT_STRONG
+                },
+            ),
+        );
+    }
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        pos2(
+            rect.left() + space::LG,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        colour::TEXT_STRONG,
+    );
 }
 
 /// Where they are now, and the best they have ever been.
 fn ranks(ui: &mut Ui, player: &Player) {
     ui.add_space(space::LG);
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), EMBLEM + space::MD),
+        Sense::hover(),
+    );
     if ui.is_rect_visible(rect) {
         rank_line(ui, player, rect);
     }
@@ -399,70 +423,56 @@ fn ranks(ui: &mut Ui, player: &Player) {
 /// Rank, rating, what the last match did to it, and how far through they are.
 fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
     let painter = ui.painter().clone();
+    let tier = player.rank_tier.unwrap_or(0);
     let tint = rank(player.rank_tier);
-    let name = player.rank.clone().unwrap_or_else(|| "Unranked".to_owned());
-    let galley = painter.layout_no_wrap(name, Face::Body.at(size::BODY), tint);
-    let plate = Rect::from_min_size(
-        pos2(rect.left() + space::LG, rect.center().y - 10.0),
-        vec2(galley.size().x + space::MD * 2.0, 20.0),
-    );
-    if player.rank_tier.unwrap_or(0) > 0 {
-        painter.add(shape::cut_wash(
-            plate,
-            5.0,
-            tint.gamma_multiply(0.26),
-            tint.gamma_multiply(0.10),
-        ));
+    let emblem = pos2(rect.left() + space::LG + EMBLEM / 2.0, rect.center().y);
+    if tier >= 3 {
+        board::paint::emblem(&painter, tier, emblem, EMBLEM, 1.0);
     }
-    painter.galley(
-        pos2(
-            plate.left() + space::MD,
-            plate.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        tint,
-    );
-
-    let Some(rr) = player.rr else { return };
-    let after = painter.text(
-        pos2(plate.right() + space::LG, rect.center().y),
+    let x = rect.left() + space::LG + if tier >= 3 { EMBLEM + space::LG } else { 0.0 };
+    let name = player.rank.clone().unwrap_or_else(|| "Unranked".to_owned());
+    let _tier = caps_text(
+        &painter,
+        pos2(x, rect.center().y - 12.0),
         Align2::LEFT_CENTER,
-        rr.to_string(),
-        Face::Number.at(size::TITLE),
+        &name,
+        Face::Heavy.at(24.0),
+        if tier >= 3 { tint } else { colour::TEXT_DIM },
+    );
+    let Some(rr) = player.rr else { return };
+    let after = caps_text(
+        &painter,
+        pos2(x, rect.center().y + 14.0),
+        Align2::LEFT_CENTER,
+        &rr.to_string(),
+        Face::Heavy.at(18.0),
         colour::TEXT_STRONG,
     );
     let after = caps_text(
         &painter,
-        pos2(after.right() + space::SM, rect.center().y + 1.0),
+        pos2(after.right() + space::SM, rect.center().y + 15.0),
         Align2::LEFT_CENTER,
         "rr",
-        Face::Display.at(size::MICRO),
+        Face::Display.at(size::LABEL),
         colour::TEXT_FAINT,
     );
     if let Some(delta) = player.rr_earned.filter(|d| *d != 0) {
         let tint = if delta > 0 { colour::GOOD } else { colour::BAD };
-        let text = if delta > 0 {
-            format!("+{delta}")
-        } else {
-            delta.to_string()
-        };
-        painter.text(
-            pos2(after.right() + space::LG, rect.center().y),
+        let _delta = caps_text(
+            &painter,
+            pos2(after.right() + space::LG, rect.center().y + 14.0),
             Align2::LEFT_CENTER,
-            text,
-            Face::Number.at(size::BODY),
+            &format!("{delta:+}"),
+            Face::Heavy.at(16.0),
             tint,
         );
     }
 }
 
-/// How far through the rank they are, across the whole panel.
-///
-/// A bar rather than a second number, because the number is already on the
-/// line above and the bar is the thing that is read without being read. It
-/// slides to its new length over the better part of a second: long, and
-/// decelerating, so the length reads as a measurement being taken rather
-/// than a value being set.
+/// How big the emblem is in the panel: the size at which Riot's art stops
+/// being an icon and becomes the thing itself.
+const EMBLEM: f32 = 64.0;
+
 fn rank_bar(ui: &mut Ui, player: &Player) {
     let Some(rr) = player.rr else { return };
     let (rect, _response) =
@@ -479,8 +489,8 @@ fn rank_bar(ui: &mut Ui, player: &Player) {
         motion::MEASURE,
     );
     let track = Rect::from_min_max(
-        pos2(rect.left() + space::LG, rect.center().y - 2.0),
-        pos2(rect.right() - space::LG, rect.center().y + 2.0),
+        pos2(rect.left() + space::LG, rect.center().y - 3.0),
+        pos2(rect.right() - space::LG, rect.center().y + 3.0),
     );
     let painter = ui.painter();
     painter.rect_filled(track, 0, colour::BG_INSET);
@@ -768,7 +778,7 @@ fn named(ui: &mut Ui, label: &str, value: &str) {
 
 /// A section heading: caps, tracked, faint, with air above it.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
-    heading_tinted(ui, text, colour::TEXT_FAINT);
+    heading_tinted(ui, text, colour::TEXT);
 }
 
 /// A section heading in a colour, for the sections that are claims.
@@ -778,31 +788,26 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
 /// values under them, and the eye needs somewhere to start each time it
 /// comes back to the panel.
 fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
-    ui.add_space(space::MD);
+    ui.add_space(space::LG);
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
     let painter = ui.painter();
-    painter.add(shape::tick(
-        pos2(rect.left() + space::LG, rect.center().y - 5.0),
-        10.0,
-        tint,
-    ));
     let drawn = caps_text(
         painter,
-        pos2(rect.left() + space::LG + space::MD, rect.center().y),
+        pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         text,
-        Face::Display.at(size::LABEL),
+        Face::Heavy.at(15.0),
         tint,
     );
     let from = drawn.right() + space::MD;
     if from < rect.right() - space::LG {
         painter.hline(
             from..=rect.right() - space::LG,
-            rect.center().y,
+            rect.center().y + 1.0,
             (1.0, colour::LINE),
         );
     }

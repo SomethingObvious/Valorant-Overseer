@@ -16,11 +16,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use eframe::{App, CreationContext, Frame};
-use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Bridge, Event, Player, Profile, Status};
 
-use crate::board::{self, GUTTER, Pace, RowStyle};
+use crate::board::{self, GUTTER, Place, Scene};
 use crate::career::Career;
+use crate::header;
 use crate::hotkey::{self, Hotkey};
 use crate::notes::{self, Notes};
 use crate::overlay;
@@ -28,7 +29,7 @@ use crate::settings::{self, Quality, Settings};
 use crate::sort::{self, Sort};
 use crate::tray::{self, Action, Tray};
 use crate::{panel, view};
-use overseer_ui::{self, Face, caps_at, caps_text, colour, motion, shape, size, space};
+use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 
 /// Under this width there is no room for the panel beside the board.
 pub(crate) const COMPACT: f32 = 720.0;
@@ -42,9 +43,6 @@ const PANEL_WIDE: f32 = 340.0;
 /// for. Short enough to feel immediate, long enough that crossing the board
 /// asks nothing.
 const DWELL: f64 = 0.25;
-/// How tall the title bar is. Room for a thirty point score without the bar
-/// becoming a second thing to look at.
-const HEADER: f32 = 44.0;
 /// A frame over this many seconds is a frame that missed, at 60Hz with room
 /// to spare for the compositor.
 const SLOW_FRAME: f32 = 1.0 / 45.0;
@@ -91,6 +89,10 @@ pub(crate) struct Overseer {
     /// Set when a key asked for the search box, so the next frame can hand
     /// it the keyboard.
     focus_search: bool,
+    /// Whether the search row is open. It used to be a permanent row under
+    /// the masthead, a full-width empty field on every frame of every match
+    /// for the handful of times anybody searches.
+    searching: bool,
     /// What you have written about the accounts you have met.
     notes: Notes,
     /// The one key combination the whole machine listens for, or why not.
@@ -205,6 +207,7 @@ impl Overseer {
             sort: Sort::default(),
             filter: String::new(),
             focus_search: false,
+            searching: false,
             notes: notes::load(root),
             // Both of these own a window of their own, and Windows delivers
             // their messages to the queue of the thread that made them. This
@@ -382,71 +385,6 @@ impl Overseer {
         self.keyboard_owns = true;
     }
 
-    /// How far the row at a given place has landed.
-    ///
-    /// Staggered, so ten rows read as a roster arriving rather than a block
-    /// appearing. The window asks for frames while any of them is still on
-    /// its way and stops the moment the last one is home.
-    /// One side's rows, and what the pointer did to them.
-    ///
-    /// Its own function because the loop and the frame around it are two
-    /// different jobs: this one is a row at a time, the caller is a side at
-    /// a time, and reading either while the other is in the way is how a
-    /// board ends up with a bug nobody can see.
-    fn team_rows(
-        &self,
-        ui: &mut Ui,
-        players: &[&Player],
-        look: &Look<'_>,
-        landing: &impl Fn(usize) -> f32,
-        at: &mut usize,
-    ) -> (Option<String>, Option<String>) {
-        let brackets = board::brackets(players);
-        let (mut clicked, mut hovered) = (None, None);
-        for (where_in_team, player) in players.iter().enumerate() {
-            let style = RowStyle {
-                team: look.tint,
-                selected: player.puuid.is_some() && player.puuid.as_deref() == look.selected,
-                height: look.height,
-                pace: look.pace,
-                noted: player.puuid.as_deref().is_some_and(|id| self.notes.has(id)),
-                bracket: brackets.get(where_in_team).copied().flatten(),
-                arrive: landing(*at),
-            };
-            *at += 1;
-            let touch = board::row(ui, player, &style, look.hidden);
-            if touch.clicked() {
-                clicked.clone_from(&player.puuid);
-            }
-            if touch.hovered() {
-                hovered.clone_from(&player.puuid);
-            }
-        }
-        (clicked, hovered)
-    }
-
-    /// The parts of a row's look that every row on a side shares.
-    fn landing(&self, now: f64) -> impl Fn(usize) -> f32 + use<> {
-        let since = (now - self.roster_at) as f32;
-        let still = self.quality() == Quality::Efficient;
-        move |at| {
-            if still {
-                return 1.0;
-            }
-            let start = at as f32 * motion::STAGGER;
-            motion::eased(((since - start) / motion::ARRIVE).clamp(0.0, 1.0))
-        }
-    }
-
-    /// Whether any row is still on its way in.
-    fn landing_now(&self, now: f64) -> bool {
-        if self.quality() == Quality::Efficient {
-            return false;
-        }
-        let last = self.board.players.len() as f32 * motion::STAGGER + motion::ARRIVE;
-        (now - self.roster_at) < f64::from(last)
-    }
-
     /// Whose history to ask for.
     ///
     /// The panel follows the pointer instantly because everything on it came
@@ -483,6 +421,7 @@ impl Overseer {
             // One key, two jobs, in the order somebody expects: clear what
             // you typed, and then leave the screen you are on.
             if self.filter.is_empty() {
+                self.searching = false;
                 self.screen = Screen::Board;
             } else {
                 self.filter.clear();
@@ -495,6 +434,7 @@ impl Overseer {
         }
         if find {
             self.focus_search = true;
+            self.searching = true;
             self.screen = Screen::Board;
             return;
         }
@@ -549,7 +489,7 @@ impl Overseer {
     /// comes after what.
     fn visible_order(&self) -> Vec<String> {
         let mut order = Vec::with_capacity(self.board.players.len());
-        for (_label, _tint, team) in board::teams(&self.board, self.settings.enemies_first) {
+        for (_side, team) in board::teams(&self.board, self.settings.enemies_first) {
             let mut players = self.board.team(&team);
             sort::apply(&mut players, &self.sort);
             players.retain(|p| sort::matches(p, &self.filter));
@@ -688,263 +628,16 @@ impl Overseer {
         }
     }
 
-    /// The title bar: who is playing what, and whether we can see it.
-    ///
-    /// Three zones, laid out from both ends towards the middle: the app on
-    /// the left, the connection on the right, and the state of the match in
-    /// between. The score is the only thing here allowed to be large,
-    /// because it is the only thing here that changes while you are looking
-    /// at it.
+    /// The masthead: the match as a scorebug, and the connection.
     fn header(&self, ui: &mut Ui) {
-        let (rect, _response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), HEADER), Sense::hover());
-        if !ui.is_rect_visible(rect) {
-            return;
-        }
-        let painter = ui.painter().clone();
-        let middle = rect.center().y;
-        painter.add(egui::Shape::gradient_rect(
-            rect,
-            egui::Direction::TopDown,
-            [colour::BG_INSET, colour::BG_RAISED],
-        ));
-        painter.hline(
-            rect.x_range(),
-            rect.top() + 0.5,
-            (1.0, colour::TEXT_STRONG.gamma_multiply(0.09)),
+        header::draw(
+            ui,
+            &header::Masthead {
+                board: &self.board,
+                light: self.connection(),
+                still: self.quality() == Quality::Efficient,
+            },
         );
-        painter.extend(shape::drop_shadow(
-            Rect::from_min_max(
-                pos2(rect.left(), rect.bottom() - 2.0),
-                pos2(rect.right(), rect.bottom()),
-            ),
-            2.0,
-        ));
-
-        // The accent, once, at the very edge. Riot spends red on punctuation
-        // and nothing else, and a companion app that spends it on panels has
-        // spent the one colour that was supposed to mean something.
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
-            0,
-            colour::ENEMY,
-        );
-        let right = self.header_light(&painter, rect, middle);
-        let left = self.header_match(&painter, middle, rect.left() + space::XL, right - space::LG);
-        self.header_progress(&painter, middle, left, right);
-        painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
-    }
-
-    /// The app, then the match: wordmark, state, map, queue, side.
-    ///
-    /// Each piece is measured before it is drawn and dropped if it would
-    /// reach the connection light on the other side. A title bar that
-    /// overlaps itself on a narrow window is the one kind of layout fault
-    /// that cannot be explained away, and everything here is also on the
-    /// board underneath.
-    fn header_match(&self, painter: &egui::Painter, middle: f32, start: f32, limit: f32) -> f32 {
-        let mut x = start;
-        let valorant = painter.layout_job(overseer_ui::caps(
-            "valorant",
-            Face::Display.at(size::TITLE),
-            colour::ENEMY,
-        ));
-        if x + valorant.size().x > limit {
-            return x;
-        }
-        painter.galley(
-            pos2(x, middle - valorant.size().y / 2.0),
-            valorant.clone(),
-            colour::ENEMY,
-        );
-        x += valorant.size().x + space::SM;
-        let after = caps_text(
-            painter,
-            pos2(x, middle),
-            Align2::LEFT_CENTER,
-            "overseer",
-            Face::Display.at(size::TITLE),
-            colour::TEXT_STRONG,
-        );
-        x = after.right() + space::XXL;
-
-        let state = self
-            .board
-            .state_label
-            .as_deref()
-            .or(self.board.state.as_deref())
-            .unwrap_or("waiting");
-        let plate = board::chip(painter, pos2(x, middle), state, colour::TEXT_DIM);
-        x = plate.right() + space::LG;
-
-        if let Some(map) = self.board.map.as_deref() {
-            let galley = painter.layout_no_wrap(
-                map.to_owned(),
-                Face::Body.at(size::TITLE),
-                colour::TEXT_STRONG,
-            );
-            let room = galley.size().x + space::MD;
-            if x + room <= limit {
-                painter.galley(
-                    pos2(x, middle - galley.size().y / 2.0),
-                    galley,
-                    colour::TEXT_STRONG,
-                );
-                x += room;
-            }
-        }
-        for (text, tint, size_of) in [
-            (self.board.mode.clone(), colour::TEXT_FAINT, size::MICRO),
-            (self.board.side.clone(), self.side_tint(), size::LABEL),
-        ] {
-            let Some(text) = text else { continue };
-            let galley =
-                painter.layout_job(overseer_ui::caps(&text, Face::Display.at(size_of), tint));
-            let room = galley.size().x + space::LG;
-            if x + room > limit {
-                continue;
-            }
-            painter.galley(pos2(x, middle - galley.size().y / 2.0), galley, tint);
-            x += room;
-        }
-        x
-    }
-
-    /// A flare behind a score digit, for as long as it takes the animator to
-    /// catch up with it.
-    ///
-    /// Nothing else in this window flashes, because nothing else in it is a
-    /// thing that happens. A round being won is a thing that happens, and it
-    /// is the one event the person watching would want to feel rather than
-    /// read.
-    fn round_won(&self, painter: &egui::Painter, digit: Rect, score: u32, tint: egui::Color32) {
-        if self.quality() == Quality::Efficient {
-            return;
-        }
-        let settled = painter.ctx().animate_value_with_time(
-            egui::Id::new(("score", tint.to_array())),
-            score as f32,
-            motion::MEASURE,
-        );
-        let flare = (score as f32 - settled).abs().min(1.0);
-        if flare > 0.01 {
-            painter.extend(shape::halo(digit, tint, flare));
-        }
-    }
-
-    /// Attack is the game's red and defence is its green, the same way round
-    /// as the game draws them.
-    fn side_tint(&self) -> egui::Color32 {
-        match self.board.side.as_deref() {
-            Some(side) if side.eq_ignore_ascii_case("attack") => colour::ENEMY,
-            _ => colour::ALLY,
-        }
-    }
-
-    /// The score, or how far through agent select the lobby is: whichever of
-    /// the two is the number that changes while you are watching.
-    ///
-    /// Dropped entirely rather than overlapped when the window is too narrow
-    /// to hold it between the two ends. A score printed over the word next
-    /// to it is worse than no score, and the board underneath carries the
-    /// same match anyway.
-    fn header_progress(&self, painter: &egui::Painter, middle: f32, left: f32, right: f32) {
-        if let Some(score) = self.board.score.as_ref() {
-            let (ally, enemy) = (score.ally.unwrap_or(0), score.enemy.unwrap_or(0));
-            let font = Face::Display.at(size::HERO);
-            if right - left < 112.0 {
-                return;
-            }
-            let at = left + space::LG;
-            let after = painter.text(
-                pos2(at, middle - 1.0),
-                Align2::LEFT_CENTER,
-                format!("{ally}"),
-                font.clone(),
-                colour::ALLY,
-            );
-            // The one number on screen that changes while you are watching,
-            // and the only thing in the window that has earned a flare. It
-            // comes off the animator rather than off a timestamp kept for
-            // the purpose: how far the eased value still is from the real
-            // one is exactly how recently the round was won.
-            self.round_won(painter, after, ally, colour::ALLY);
-            // Two numbers with a gap between them are two numbers. The game
-            // puts a rule between its own, and this is that rule cut at the
-            // angle everything else in this window is cut at, so the score
-            // reads as one thing with two halves.
-            let cut = after.right() + space::MD;
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    pos2(cut + 5.0, middle - 11.0),
-                    pos2(cut + 7.0, middle - 11.0),
-                    pos2(cut + 2.0, middle + 11.0),
-                    pos2(cut, middle + 11.0),
-                ],
-                colour::TEXT_FAINT,
-                egui::Stroke::NONE,
-            ));
-            let after = painter.text(
-                pos2(cut + 7.0 + space::MD, middle - 1.0),
-                Align2::LEFT_CENTER,
-                format!("{enemy}"),
-                font,
-                colour::ENEMY,
-            );
-            self.round_won(painter, after, enemy, colour::ENEMY);
-            if let Some(round) = score.round {
-                caps_at(
-                    painter,
-                    pos2(after.right() + space::LG, middle + 1.0),
-                    Align2::LEFT_CENTER,
-                    &format!("round {round}"),
-                    Face::Display.at(size::MICRO),
-                    colour::TEXT_FAINT,
-                );
-            }
-        } else if let Some(lock) = self.board.lock_progress.as_ref() {
-            let (locked, total) = (lock.locked.unwrap_or(0), lock.total.unwrap_or(0));
-            if right - left < 120.0 {
-                return;
-            }
-            board::chip(
-                painter,
-                pos2(left + space::LG, middle),
-                &format!("{locked} of {total} locked"),
-                colour::WARN,
-            );
-        }
-    }
-
-    /// Whether the bridge is answering: on the right, where a status light
-    /// belongs, and quiet enough to ignore while it is green.
-    fn header_light(&self, painter: &egui::Painter, rect: Rect, middle: f32) -> f32 {
-        let (radius, tint, text) = self.connection();
-        let drawn = caps_text(
-            painter,
-            pos2(rect.right() - space::XL, middle),
-            Align2::RIGHT_CENTER,
-            &text,
-            Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT,
-        );
-        let dot = pos2(drawn.left() - space::MD, middle);
-        // A halo behind it, so a green light reads as lit rather than as a
-        // full stop. Three shapes, because the only blur here is an
-        // oversized feather and one of them alone has a hard edge.
-        for (blur, alpha) in [(9.0_f32, 0.30_f32), (4.0, 0.45)] {
-            painter.add(
-                egui::epaint::RectShape::filled(
-                    Rect::from_center_size(dot, vec2(radius * 2.0, radius * 2.0))
-                        .expand(blur * 0.5),
-                    egui::CornerRadius::same(255),
-                    tint.gamma_multiply(alpha),
-                )
-                .with_blur_width(blur),
-            );
-        }
-        painter.circle_filled(dot, radius, tint);
-        dot.x - radius - space::MD
     }
 
     /// The connection light: a radius, a colour, and the reason behind it.
@@ -993,7 +686,7 @@ impl Overseer {
                 let settled = ui.ctx().animate_value_with_time(
                     egui::Id::new("panel-subject"),
                     f32::from(wanted == self.panel_showing),
-                    motion::QUICK / 2.0,
+                    self.pace(motion::QUICK) / 2.0,
                 );
                 if settled <= 0.02 && wanted != self.panel_showing {
                     self.panel_showing = wanted;
@@ -1046,14 +739,6 @@ impl Overseer {
     /// The windowed empty state is three lines of reassurance in the middle
     /// of a large rectangle, which is right for a window somebody opened on
     /// purpose and wrong for something sitting over a game.
-    /// How tall the overlay should be: what it measured, or a guess until
-    /// it has measured anything.
-    fn overlay_height(&self) -> f32 {
-        self.overlay_drew
-            .unwrap_or_else(|| overlay::size_for(self.board.players.len()).y)
-    }
-
-    /// The overlay's whole contents, and how tall they came out.
     fn overlay_view(&self, ui: &mut Ui) -> f32 {
         if self.board.players.is_empty() {
             let (rect, _response) =
@@ -1072,12 +757,12 @@ impl Overseer {
         }
         // No foot in the overlay: the session belongs in a window somebody
         // is looking at, and the overlay is exactly as tall as its rows.
-        self.rows(ui, false).drew
+        self.rows(ui, Place::Overlay).drew
     }
 
     /// The board, both teams, with the headings each side needs.
     fn board_view(&mut self, ui: &mut Ui) {
-        let touched = self.rows(ui, true);
+        let touched = self.rows(ui, Place::Window);
         let typing = ui.memory(egui::Memory::focused).is_some();
         // Read a frame late, which nobody can see: the panel is drawn before
         // the board, so what the pointer was on last frame is what the panel
@@ -1097,147 +782,38 @@ impl Overseer {
         }
     }
 
-    /// The search as a board in this window applies it.
+    /// Draws the board, or what to say instead of one.
     ///
-    /// The overlay has no search box, so it never inherits the window's: a
-    /// board over a game that says nobody matches is a board that has
-    /// quietly stopped working.
-    fn filter_for(&self, windowed: bool) -> String {
-        if windowed {
-            self.filter.clone()
-        } else {
-            String::new()
-        }
-    }
-
-    /// Draws every row, and reports what was clicked.
-    ///
-    /// Read only, so that the overlay can call it too: the overlay is its
-    /// own window and takes no clicks, and nothing that only draws can be
-    /// the reason two windows disagree about what is selected.
-    ///
-    /// `windowed` is false in the overlay, which takes no clicks and has no
-    /// room to spare. A column heading is a sort button and a reminder, and
-    /// over a game it can be neither: nothing there can be clicked, and an
-    /// agent tile, a name, a rank chip and one number do not need labelling
-    /// twice. Two rows of the five in front of somebody is too much to spend
-    /// on saying what they can already see.
-    fn rows(&self, ui: &mut Ui, windowed: bool) -> Touched {
+    /// Read only, so the overlay can call it too: the overlay is its own
+    /// window and takes no clicks, and nothing that only draws can be the
+    /// reason two windows disagree about who is selected.
+    fn rows(&self, ui: &mut Ui, place: Place) -> board::Touched {
         if self.board.players.is_empty() {
             empty(ui, &self.status, self.reason());
-            return Touched::default();
+            return board::Touched::default();
         }
-        let height = if ui.available_width() < COMPACT {
-            space::ROW_TIGHT
-        } else {
-            space::ROW
-        };
-        let selected = self.selected.clone();
-        let hidden = self.settings.hidden_columns.clone();
-        let pace = Pace {
-            hover: self.pace(motion::INSTANT),
-            select: self.pace(motion::QUICK),
-        };
-        let sort = self.sort.clone();
-        let filter = self.filter_for(windowed);
         let now = ui.input(|i| i.time);
-        let landing = self.landing(now);
-        let mut at = 0_usize;
-        let mut clicked: Option<String> = None;
-        let mut hovered: Option<String> = None;
-        let mut heading: Option<&'static str> = None;
-        let mut worth: Option<String> = None;
-        let mut shown = 0_usize;
-        let scrolled = ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.add_space(space::MD);
-                for (label, tint, team) in board::teams(&self.board, self.settings.enemies_first) {
-                    let mut players = self.board.team(&team);
-                    if players.is_empty() {
-                        continue;
-                    }
-                    sort::apply(&mut players, &sort);
-                    players.retain(|p| sort::matches(p, &filter));
-                    // Its own id scope: both blocks have a column called
-                    // K/D, and without this they ask egui for the same
-                    // widget id and it says so, loudly, across the board.
-                    let block = board::open_block(ui);
-                    ui.push_id(&team, |ui| {
-                        if board::team_heading(ui, label, tint, &self.board, &team) {
-                            worth = Some(team.clone());
-                        }
-                        if windowed
-                            && let Some(head) =
-                                board::headings(ui, ui.available_width(), &hidden, &sort)
-                        {
-                            heading = Some(head);
-                        }
-                        let look = Look {
-                            tint,
-                            height,
-                            pace,
-                            selected: selected.as_deref(),
-                            hidden: &hidden,
-                        };
-                        let (hit, over) = self.team_rows(ui, &players, &look, &landing, &mut at);
-                        shown += players.len();
-                        if hit.is_some() {
-                            clicked = hit;
-                        }
-                        if over.is_some() {
-                            hovered = over;
-                        }
-                    });
-                    board::close_block(ui, block, self.quality() == Quality::Efficient);
-                    ui.add_space(if windowed { space::XL } else { space::LG });
-                }
-                if windowed && shown > 0 {
-                    board::board_foot(ui, &self.board, self.quality() == Quality::Efficient);
-                }
-                if shown == 0 {
-                    nobody(ui, &filter);
-                }
-            });
-        Touched {
-            drew: scrolled.content_size.y,
-            clicked,
-            hovered,
-            heading,
-            worth,
-        }
+        let scene = Scene {
+            board: &self.board,
+            sort: &self.sort,
+            // The overlay has no search box, so it never inherits the
+            // window's: a board over a game that says nobody matches is a
+            // board that has quietly stopped working.
+            filter: if place == Place::Window {
+                &self.filter
+            } else {
+                ""
+            },
+            selected: self.selected.as_deref(),
+            notes: &self.notes,
+            hidden: &self.settings.hidden_columns,
+            enemies_first: self.settings.enemies_first,
+            place,
+            still: self.quality() == Quality::Efficient,
+            since: (now - self.roster_at) as f32,
+        };
+        board::draw(ui, &scene)
     }
-}
-
-/// What every row on one side has in common.
-#[derive(Debug, Clone, Copy)]
-struct Look<'a> {
-    /// The side's colour, behind the agent's own.
-    tint: egui::Color32,
-    /// How tall a row is at this width.
-    height: f32,
-    /// How long the hover and selection tints take.
-    pace: Pace,
-    /// Who is selected, if anybody.
-    selected: Option<&'a str>,
-    /// Which columns are switched off.
-    hidden: &'a [String],
-}
-
-/// What the pointer did to the board this frame, and how tall it came out.
-#[derive(Debug, Default)]
-struct Touched {
-    /// The height the rows actually took, which is what the overlay sizes
-    /// itself from.
-    drew: f32,
-    /// The account whose row was clicked.
-    clicked: Option<String>,
-    /// The account whose row the pointer is over.
-    hovered: Option<String>,
-    /// The column heading that was clicked.
-    heading: Option<&'static str>,
-    /// The side whose "worth a look" chip was clicked.
-    worth: Option<String>,
 }
 
 impl App for Overseer {
@@ -1298,7 +874,10 @@ impl App for Overseer {
         // for: the rows are painted from a timestamp rather than from
         // egui's own animator, so the window has to keep itself awake until
         // the last of them is home.
-        if self.landing_now(now) {
+        if board::settling(
+            (now - self.roster_at) as f32,
+            self.quality() == Quality::Efficient,
+        ) {
             ui.ctx().request_repaint();
         }
 
@@ -1306,11 +885,11 @@ impl App for Overseer {
             // Its own window, drawn before this one so that a frame where
             // the board changed reaches both. Read only: nothing in it takes
             // a click, so nothing in it can change anything.
-            let asked = self.overlay_height();
-            let mut drew = asked;
+            let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
+            let mut drew = last;
             {
                 let this = &*self;
-                overlay::show(ui.ctx(), this.settings.corner, asked, |ui| {
+                overlay::show(ui.ctx(), this.settings.corner, last, |ui| {
                     drew = this.overlay_view(ui);
                 });
             }
@@ -1318,7 +897,7 @@ impl App for Overseer {
             // follows the board rather than a sum kept by hand, which is the
             // only arrangement that cannot go stale.
             let drew = drew.min(overlay::CEILING);
-            if (drew - asked).abs() > 0.5 {
+            if (drew - last).abs() > 0.5 {
                 self.overlay_drew = Some(drew);
                 ui.ctx().request_repaint();
             }
@@ -1326,7 +905,7 @@ impl App for Overseer {
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
         Panel::top("header")
-            .exact_size(HEADER)
+            .exact_size(header::HEIGHT)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.header(ui));
         Panel::bottom("footer")
@@ -1334,7 +913,7 @@ impl App for Overseer {
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.footer(ui));
 
-        if self.screen == Screen::Board {
+        if self.screen == Screen::Board && (self.searching || !self.filter.is_empty()) {
             Panel::top("search")
                 .exact_size(space::ROW + space::MD)
                 .frame(egui::Frame::NONE.fill(colour::BG))
@@ -1344,7 +923,7 @@ impl App for Overseer {
         let turning = ui.ctx().animate_value_with_time(
             egui::Id::new("screen"),
             f32::from(self.screen == self.screen_showing),
-            motion::QUICK / 2.0,
+            self.pace(motion::QUICK) / 2.0,
         );
         if turning <= 0.02 && self.screen != self.screen_showing {
             self.screen_showing = self.screen;
@@ -1531,18 +1110,6 @@ impl Overseer {
     }
 }
 
-/// What to say when the filter has hidden everybody.
-fn nobody(ui: &mut Ui, filter: &str) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(space::XXL);
-        ui.label(
-            RichText::new(format!("Nobody here matches \"{}\"", filter.trim()))
-                .color(colour::TEXT_DIM)
-                .font(Face::Body.at(size::BODY)),
-        );
-    });
-}
-
 /// What to say while there is no board.
 ///
 /// An empty screen is a place to say what is happening and what to do about
@@ -1552,21 +1119,19 @@ fn nobody(ui: &mut Ui, filter: &str) {
 /// menus, and costing a player frames while they are not even in a match is
 /// the one thing this app has promised not to do.
 fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
-    let (state, title, detail, reached): (&str, &str, &str, usize) = match (trouble, status) {
-        (Some(why), _) => ("blocked", "This build cannot read the bridge", why, 0),
+    let (title, detail, reached): (&str, &str, usize) = match (trouble, status) {
+        (Some(why), _) => ("This build cannot read the bridge", why, 0),
         (None, Status::Live) => (
-            "waiting",
             "Signed in, nothing in progress",
             "Open VALORANT and this fills in by itself.",
             2,
         ),
         (None, Status::Connecting(_)) => (
-            "connecting",
             "Looking for the backend",
             "It writes down its port once it is listening.",
             0,
         ),
-        (None, Status::Lost(why)) => ("lost", "Not connected", why, 0),
+        (None, Status::Lost(why)) => ("Not connected", why, 0),
     };
     let broken = trouble.is_some() || matches!(status, Status::Lost(_));
     let room = ui.available_rect_before_wrap();
@@ -1599,60 +1164,37 @@ fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
             rect.center().x,
             rect.top() + (rect.height() * 0.44).max(120.0),
         ),
-        vec2(width, 74.0 + sentence.size().y + space::XL + 48.0),
+        vec2(width, 50.0 + sentence.size().y + space::XL + 48.0),
     );
-    painter.extend(shape::drop_shadow(plate, 6.0));
-    painter.add(shape::cut_wash(
-        plate,
-        shape::CHAMFER,
-        colour::BG_RAISED,
-        colour::BG_INSET,
-    ));
+    board::paint::slab(&painter, plate, colour::BG_RAISED, 0.0, false);
     let accent = if broken { colour::ENEMY } else { colour::ALLY };
-    words(&painter, plate, Said { state, title }, sentence, accent);
+    painter.rect_filled(
+        Rect::from_min_size(plate.min, vec2(4.0, plate.height())),
+        0,
+        accent,
+    );
+    words(&painter, plate, title, sentence);
     chain(&painter, plate, reached, broken);
 }
 
-/// The two short things the empty screen says before its sentence.
-#[derive(Debug, Clone, Copy)]
-struct Said<'a> {
-    /// One word for the state, beside the tick.
-    state: &'a str,
-    /// The headline: what is true right now.
-    title: &'a str,
-}
-
-/// The words on the plate: a state, a headline and the sentence already laid
+/// The words on the plate: the headline, and the sentence already laid
 /// out to decide how tall the plate had to be.
 fn words(
     painter: &egui::Painter,
     plate: Rect,
-    said: Said<'_>,
+    title: &str,
     sentence: std::sync::Arc<egui::Galley>,
-    accent: egui::Color32,
 ) {
-    painter.add(shape::tick(
-        pos2(plate.left() + space::XL, plate.top() + space::XL),
-        11.0,
-        accent,
-    ));
-    caps_at(
+    let _title = caps_text(
         painter,
-        pos2(plate.left() + space::XL + space::MD, plate.top() + 21.0),
+        pos2(plate.left() + space::XL, plate.top() + 28.0),
         Align2::LEFT_CENTER,
-        said.state,
-        Face::Display.at(size::LABEL),
-        accent,
-    );
-    painter.text(
-        pos2(plate.left() + space::XL, plate.top() + 56.0),
-        Align2::LEFT_CENTER,
-        said.title,
-        Face::Display.at(size::DISPLAY),
+        title,
+        Face::Heavy.at(24.0),
         colour::TEXT_STRONG,
     );
     painter.galley(
-        pos2(plate.left() + space::XL, plate.top() + 74.0),
+        pos2(plate.left() + space::XL, plate.top() + 48.0),
         sentence,
         colour::TEXT_DIM,
     );
@@ -1679,17 +1221,17 @@ fn chain(painter: &egui::Painter, plate: Rect, reached: usize, broken: bool) {
             (true, _) => colour::ALLY,
             (false, _) => colour::TEXT_FAINT,
         };
-        let pip = Rect::from_center_size(pos2(x + 4.0, middle), vec2(8.0, 8.0));
-        if step < reached {
-            painter.add(shape::cut_filled(pip, 2.0, tint));
-        } else {
-            painter.rect_stroke(
-                pip,
-                0,
-                egui::Stroke::new(1.0, tint),
-                egui::StrokeKind::Inside,
-            );
-        }
+        let pip = Rect::from_center_size(pos2(x + 5.0, middle), vec2(10.0, 14.0));
+        painter.add(board::paint::slant(
+            pip,
+            true,
+            true,
+            if step < reached {
+                tint
+            } else {
+                tint.gamma_multiply(0.35)
+            },
+        ));
         let after = caps_text(
             painter,
             pos2(x + space::XL, middle),
@@ -1776,7 +1318,7 @@ pub(crate) fn snapshot_empty(ui: &mut Ui) {
 /// it: the title bar, the search row and the footer.
 #[cfg(test)]
 pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
-    let mut shown = Overseer {
+    let shown = Overseer {
         bridge: Bridge::start(Path::new("."), || {}),
         root: PathBuf::new(),
         settings: Settings::default(),
@@ -1793,6 +1335,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         sort: Sort::default(),
         filter: String::new(),
         focus_search: false,
+        searching: false,
         notes: Notes::default(),
         // Neither in a test: one would take a key combination off the
         // machine and the other would put an icon beside the clock.
@@ -1813,17 +1356,16 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         histories: HashMap::new(),
     };
     Panel::top("header")
-        .exact_size(HEADER)
+        .exact_size(header::HEIGHT)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.header(ui));
     Panel::bottom("footer")
         .exact_size(space::XL + space::SM)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.footer(ui));
-    Panel::top("search")
-        .exact_size(space::ROW + space::MD)
-        .frame(egui::Frame::NONE.fill(colour::BG))
-        .show(ui, |ui| shown.search(ui));
+    // No search row: the window only has one while somebody is searching,
+    // and a picture of a row the window does not draw is a picture of
+    // nothing.
 }
 
 #[cfg(test)]

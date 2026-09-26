@@ -11,6 +11,7 @@
 mod app;
 mod board;
 mod career;
+mod header;
 mod hotkey;
 mod notes;
 mod overlay;

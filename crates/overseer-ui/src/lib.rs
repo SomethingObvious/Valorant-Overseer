@@ -170,15 +170,17 @@ pub mod colour {
     /// Bad for you.
     pub const BAD: Color32 = Color32::from_rgb(0xFF, 0x80, 0x88);
 
-    /// One colour per party, never red or green.
+    /// One colour per party, never red, green or amber.
     ///
     /// A party bracket in the enemy's red on your own side says the wrong
-    /// thing about who is in it, and the old code did exactly that.
+    /// thing about who is in it, and the old code did exactly that. Amber is
+    /// the flag's, and a yellow bracket beside an amber rail is two marks
+    /// that look like one.
     pub const PARTY: [Color32; 4] = [
         Color32::from_rgb(0x7A, 0xA2, 0xFF),
         Color32::from_rgb(0xC5, 0x8B, 0xFF),
-        Color32::from_rgb(0xFF, 0xD1, 0x66),
         Color32::from_rgb(0x5C, 0xE1, 0xE6),
+        Color32::from_rgb(0xF2, 0x8D, 0xD5),
     ];
 
     /// How much of a threat an enemy's number is, as a colour: neutral, then

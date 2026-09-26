@@ -31,10 +31,22 @@ pub(crate) use grid::COLUMNS;
 /// against the window's edge it would look like a rendering fault.
 pub(crate) const GUTTER: f32 = 18.0;
 
-/// How tall the overlay's board is with a full enemy team: the plate and
-/// five rows, each with its gap, and the air under the last.
-pub(crate) const OVERLAY_HEIGHT: f32 =
-    space::MD + heads::PLATE - 8.0 + space::SM + (OVERLAY.height + rows::GAP) * 5.0 + space::MD;
+/// How tall the overlay's board is with a full enemy team: the gutter's
+/// width above and below, the plate, and five rows with the four gaps
+/// between them.
+///
+/// Every widget also pays egui's own spacing under it. Left out, this came
+/// to 28 points short of what the board drew, so a bottom corner was placed
+/// for a shorter window than it grew into.
+pub(crate) const OVERLAY_HEIGHT: f32 = GUTTER + heads::PLATE - 8.0
+    + ITEM
+    + space::SM
+    + OVERLAY.height * 5.0
+    + (ITEM + rows::GAP) * 4.0
+    + GUTTER;
+
+/// egui's spacing under every widget: `item_spacing.y` in the style.
+const ITEM: f32 = space::SM;
 
 /// Under this content width the board draws its narrow rows.
 const NARROW: f32 = 640.0;
@@ -232,7 +244,8 @@ pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
 /// Everything inside the margins.
 fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched: &mut Touched) {
     let overlay = scene.place == Place::Overlay;
-    ui.add_space(if overlay { space::MD } else { space::LG });
+    // The overlay's edges are all the gutter's width, top and bottom too.
+    ui.add_space(if overlay { GUTTER } else { space::LG });
     // Narrow is the overlay and any window too small for the full row:
     // the smaller face, and a name column that gives up its last forty
     // points before the numbers give up anything.
@@ -273,7 +286,13 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
             }
             block(ui, scene, (*side, narrow), &players, &grid, touched);
         });
-        ui.add_space(if overlay { space::MD } else { space::XL });
+        // Under the last row are its own gap, egui's spacing under it and
+        // under this team's block, so the gutter is what is left.
+        ui.add_space(if overlay {
+            GUTTER - ITEM * 2.0 - rows::GAP
+        } else {
+            space::XL
+        });
     }
     if shown == 0 {
         nobody(ui, scene.filter);

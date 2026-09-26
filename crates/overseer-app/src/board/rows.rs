@@ -8,7 +8,7 @@
 
 use egui::{Align2, Color32, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
-use overseer_ui::{Face, caps_text, colour, motion, shape, size, space};
+use overseer_ui::{Face, caps_text, caps_width, colour, motion, shape, size, space};
 
 use super::Side;
 use super::grid::{Grid, Placed};
@@ -165,7 +165,19 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
         );
         return response;
     }
-    identity(&painter, player, line, look);
+    // The emblem's light and the crop stay on their own slab: through the
+    // painter's wider clip, meant for the shadow and the bracket, the glow
+    // left faint dots in the gap between two rows.
+    let inside = painter.with_clip_rect(rect);
+    // The name stops at the first column, measured. An ally worth a look
+    // says so past the last column when there is room, else in place of
+    // their tag.
+    let (first, last) = grid.span().unwrap_or_else(|| (line.width(), 0.0));
+    let limit = line.left() + first - space::MD;
+    let flagged = player.smurf && !enemy;
+    let room = line.width() - space::LG - last - space::LG;
+    let at_end = flagged && caps_width(&painter, FLAG, paint::label()) <= room;
+    identity(&inside, player, (line, limit), look, flagged && !at_end);
     // The flag's rail goes over the crop's left edge, after it, rather than
     // pushing the crop right: moved by four points, a flagged row's face and
     // name stopped lining up with every row above and below it.
@@ -177,7 +189,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
         );
     }
     for placed in &grid.placed {
-        cell(&painter, player, line, *placed, look);
+        cell(&inside, player, line, *placed, look);
     }
     if look.noted {
         paint::dog_ear(&painter, rect);
@@ -185,12 +197,12 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
     if reasons {
         why(&painter, player, rect, look.metrics.crop() + space::LG);
     }
-    if player.smurf && !enemy {
+    if at_end {
         let _tag = caps_text(
             &painter,
             pos2(line.right() - space::LG, line.center().y),
             Align2::RIGHT_CENTER,
-            "worth a look",
+            FLAG,
             paint::label(),
             colour::WARN,
         );
@@ -214,8 +226,18 @@ fn gutter(painter: &egui::Painter, player: &Player, look: &Look, rect: Rect) {
     }
 }
 
-/// The face and the name.
-fn identity(painter: &egui::Painter, player: &Player, line: Rect, look: &Look) {
+/// What an ally worth a look is tagged with.
+const FLAG: &str = "worth a look";
+
+/// The face and the name, the name stopping at `limit`. `flag` puts the
+/// ally's tag where the Riot tag would go.
+fn identity(
+    painter: &egui::Painter,
+    player: &Player,
+    (line, limit): (Rect, f32),
+    look: &Look,
+    flag: bool,
+) {
     let m = look.metrics;
     let crop = Rect::from_min_size(line.min, vec2(m.crop(), m.height));
     paint::crop(painter, player, crop);
@@ -233,23 +255,37 @@ fn identity(painter: &egui::Painter, player: &Player, line: Rect, look: &Look) {
     } else {
         line.center().y
     };
-    let limit = line.left() + look.metrics.crop() + 200.0;
+    let font = Face::Display.at(m.name);
     let drawn = caps_text(
         painter,
         pos2(x, middle),
         Align2::LEFT_CENTER,
-        &clip(name, 14),
-        Face::Display.at(m.name),
+        &fit(painter, name, &font, limit - x),
+        font,
         name_colour,
     );
-    if !tag.is_empty() && drawn.right() + 40.0 < limit {
-        painter.text(
-            pos2(drawn.right() + space::SM, middle + 1.0),
-            Align2::LEFT_CENTER,
+    let after = drawn.right() + space::SM;
+    if flag {
+        if after + caps_width(painter, FLAG, paint::label()) <= limit {
+            let _tag = caps_text(
+                painter,
+                pos2(after, middle),
+                Align2::LEFT_CENTER,
+                FLAG,
+                paint::label(),
+                colour::WARN,
+            );
+        }
+    } else if !tag.is_empty() {
+        let galley = painter.layout_no_wrap(
             format!("#{tag}"),
             Face::Number.at(m.name * 0.62),
             colour::TEXT_FAINT,
         );
+        if after + galley.size().x <= limit {
+            let top = middle + 1.0 - galley.size().y / 2.0;
+            painter.galley(pos2(after, top), galley, colour::TEXT_FAINT);
+        }
     }
     if m.agent_line
         && let Some(agent) = player.agent.as_deref()
@@ -475,8 +511,20 @@ fn split_name(full: &str) -> (&str, &str) {
     full.split_once('#').unwrap_or((full, ""))
 }
 
-/// A name cut to a length a caps name can hold in its column, with an
-/// ellipsis if it had to be.
+/// The longest cut of a name that fits in `room`, measured in the face it
+/// is drawn in: a count of letters let a wide name run into the rank.
+fn fit(painter: &egui::Painter, name: &str, font: &egui::FontId, room: f32) -> String {
+    let mut keep = name.chars().count();
+    loop {
+        let cut = clip(name, keep);
+        if keep <= 4 || caps_width(painter, &cut, font.clone()) <= room {
+            return cut;
+        }
+        keep -= 1;
+    }
+}
+
+/// A name cut to a length, with an ellipsis if it had to be.
 fn clip(name: &str, keep: usize) -> String {
     if name.chars().count() <= keep {
         return name.to_owned();

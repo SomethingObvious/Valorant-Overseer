@@ -1164,7 +1164,7 @@ fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
             rect.center().x,
             rect.top() + (rect.height() * 0.44).max(120.0),
         ),
-        vec2(width, 50.0 + sentence.size().y + space::XL + 48.0),
+        vec2(width, 54.0 + sentence.size().y + space::XL + 48.0),
     );
     board::paint::slab(&painter, plate, colour::BG_RAISED, 0.0, false);
     words(&painter, plate, title, sentence);
@@ -1188,7 +1188,7 @@ fn words(
         colour::TEXT_STRONG,
     );
     painter.galley(
-        pos2(plate.left() + space::XL, plate.top() + 48.0),
+        pos2(plate.left() + space::XL, plate.top() + 52.0),
         sentence,
         colour::TEXT_DIM,
     );
@@ -1249,10 +1249,8 @@ fn chain(painter: &egui::Painter, plate: Rect, reached: usize, broken: bool) {
 /// The same words with no furniture, for a window too short to hold any.
 fn plain(ui: &mut Ui, title: &str, detail: &str) {
     ui.add_space(space::XXL);
-    let (rect, _response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), space::XXL + space::XL),
-        Sense::hover(),
-    );
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XXL * 2.0), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1266,7 +1264,7 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
         colour::TEXT_STRONG,
     );
     painter.text(
-        pos2(rect.center().x, rect.bottom() - space::MD),
+        pos2(rect.center().x, rect.bottom() - space::LG),
         Align2::CENTER_CENTER,
         detail,
         Face::Body.at(size::BODY),

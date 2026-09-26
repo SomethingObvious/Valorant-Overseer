@@ -43,7 +43,7 @@ pub fn card(ctx: &Context, name: &str) -> Option<TextureHandle> {
     named(ctx, "card", &CARDS, name)
 }
 
-/// A map's list strip, for behind the header.
+/// A map's band of art, for behind the header.
 #[must_use]
 pub fn map(ctx: &Context, name: &str) -> Option<TextureHandle> {
     named(ctx, "map", &MAPS, name)

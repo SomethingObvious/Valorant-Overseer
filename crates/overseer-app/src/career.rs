@@ -19,7 +19,7 @@ use overseer_core::{Bridge, CareerMatch, Profile};
 
 use crate::board::{self, Side};
 use crate::panel::{heading, line, stat};
-use overseer_ui::{Face, caps_text, colour, shape, size, space};
+use overseer_ui::{Face, caps_text, colour, size, space};
 
 /// How tall a chart is. Enough for a shape to be a shape, not so much that
 /// the numbers under it fall off the bottom of the panel.
@@ -188,7 +188,7 @@ fn history(ui: &mut Ui, profile: &Profile, side: Side) {
         return;
     }
     averages(ui, profile, side);
-    rating(ui, profile);
+    rating(ui, profile, side);
     per_match_kd(ui, profile, side);
     guns(ui, profile);
     matches(ui, profile, side);
@@ -242,7 +242,7 @@ fn averages(ui: &mut Ui, profile: &Profile, side: Side) {
 /// Plotted against a ladder position rather than the rating itself, because
 /// rating restarts at zero in every tier and a raw line drops off a cliff on
 /// the promotion it should be celebrating.
-fn rating(ui: &mut Ui, profile: &Profile) {
+fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
     let run = profile.rating_run();
     if run.len() < 2 {
         return;
@@ -258,9 +258,7 @@ fn rating(ui: &mut Ui, profile: &Profile) {
         .zip(points.first())
         .map_or(0.0, |(end, start)| end - start);
     let tint = if moved > 0.0 {
-        colour::GOOD
-    } else if moved < 0.0 {
-        colour::BAD
+        board::paint::win(side)
     } else {
         colour::TEXT_DIM
     };
@@ -331,11 +329,15 @@ fn guns(ui: &mut Ui, profile: &Profile) {
         );
         let start = numeral.right() + space::MD;
         let room = rect.right() - space::LG - start;
-        let bar = Rect::from_min_size(
-            pos2(start, rect.center().y - 9.0),
-            vec2((room * share / 100.0).max(space::XL), 18.0),
-        );
-        painter.add(board::paint::slant(bar, false, true, colour::BG_INSET));
+        let track = Rect::from_min_size(pos2(start, rect.center().y - 9.0), vec2(room, 18.0));
+        painter.add(board::paint::slant(track, false, true, colour::BG_RAISED));
+        let bar = Rect::from_min_size(track.min, vec2((room * share / 100.0).max(space::SM), 18.0));
+        painter.add(board::paint::slant(
+            bar,
+            false,
+            true,
+            overseer_ui::shape::blend(colour::LINE, colour::TEXT_DIM, 0.22),
+        ));
         let _name = caps_text(
             &painter,
             pos2(start + space::SM, rect.center().y),
@@ -526,7 +528,7 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>, hot: egui::Color32) 
                 pos2(middle + half, top.max(y)),
             );
             let tint = if v >= rule { hot } else { colour::TEXT_FAINT };
-            painter.add(shape::pip(bar, tint));
+            painter.rect_filled(bar, 0, tint);
         }
         return;
     }

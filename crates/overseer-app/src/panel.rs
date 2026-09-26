@@ -52,7 +52,7 @@ pub(crate) fn show(
                 verdict(ui, player);
             }
             save = notes(ui, player, store);
-            ranks(ui, player);
+            ranks(ui, player, side);
             form(ui, player, side);
             numbers(ui, player, side);
             group(ui, player);
@@ -397,14 +397,14 @@ fn reason_line(ui: &mut Ui, reason: &str) {
 }
 
 /// Where they are now, and the best they have ever been.
-fn ranks(ui: &mut Ui, player: &Player) {
+fn ranks(ui: &mut Ui, player: &Player, side: Side) {
     ui.add_space(space::LG);
     let (rect, _response) = ui.allocate_exact_size(
         vec2(ui.available_width(), EMBLEM + space::MD),
         Sense::hover(),
     );
     if ui.is_rect_visible(rect) {
-        rank_line(ui, player, rect);
+        rank_line(ui, player, rect, side);
     }
     rank_bar(ui, player);
     // Zero is not a place. The backend sends it for anybody who is not
@@ -437,7 +437,7 @@ fn ranks(ui: &mut Ui, player: &Player) {
 }
 
 /// Rank, rating, what the last match did to it, and how far through they are.
-fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
+fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side) {
     let painter = ui.painter().clone();
     let tier = player.rank_tier.unwrap_or(0);
     let emblem = pos2(rect.left() + space::LG + EMBLEM / 2.0, rect.center().y);
@@ -476,7 +476,11 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
         colour::TEXT_FAINT,
     );
     if let Some(delta) = player.rr_earned.filter(|d| *d != 0) {
-        let tint = if delta > 0 { colour::GOOD } else { colour::BAD };
+        let tint = if delta > 0 {
+            board::paint::win(side)
+        } else {
+            colour::TEXT_DIM
+        };
         let _delta = caps_text(
             &painter,
             pos2(after.right() + space::LG, rect.center().y + 14.0),

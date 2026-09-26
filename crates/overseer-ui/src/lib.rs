@@ -582,9 +582,10 @@ pub fn say(ui: &mut egui::Ui, gutter: f32, tint: Color32, message: &str, aside: 
 /// chosen row and the settings screen did not, so the same control looked
 /// like two controls in one product. This is the only one now.
 ///
-/// `one_of` picks the mark. A disc for a choice among siblings, a square for
-/// a switch that stands alone: drawing a region as a square is how somebody
-/// ends up trying to pick two of them. A chosen disc also lights its row,
+/// `one_of` picks the mark. An outline that fills for a choice among
+/// siblings, a solid pip for a switch that stands alone: drawing a region as
+/// a switch is how somebody ends up trying to pick two of them. A chosen
+/// sibling also lights its row,
 /// because one row in a group being the answer is worth saying twice, while
 /// twelve lit rows of switches would say nothing at all.
 pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
@@ -618,28 +619,11 @@ pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool
         slab.top() + 0.5,
         (1.0, colour::TEXT_STRONG.gamma_multiply(0.05 + 0.05 * lift)),
     );
-    // The mark: a slanted pip, lit when on. A disc and a square used to
-    // tell a choice among siblings from a switch; the lit row does that now,
-    // and the pip is the broadcast's own mark rather than a form control's.
     let pip = egui::Rect::from_center_size(
         egui::pos2(slab.left() + space::XL + 6.0, slab.center().y),
         egui::vec2(12.0, 16.0),
     );
-    let run = pip.height() * 0.21;
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            egui::pos2(pip.left() + run, pip.top()),
-            egui::pos2(pip.right(), pip.top()),
-            egui::pos2(pip.right() - run, pip.bottom()),
-            egui::pos2(pip.left(), pip.bottom()),
-        ],
-        if on {
-            colour::TEXT_STRONG
-        } else {
-            colour::LINE
-        },
-        Stroke::NONE,
-    ));
+    mark(&painter, pip, on, one_of);
     let drawn = caps_text(
         &painter,
         egui::pos2(pip.right() + space::LG, slab.center().y),
@@ -664,7 +648,7 @@ pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool
     job.wrap = egui::text::TextWrapping {
         max_width: slab.right() - space::LG - at,
         max_rows: 1,
-        break_anywhere: false,
+        break_anywhere: true,
         overflow_character: Some('\u{2026}'),
     };
     let galley = painter.layout_job(job);
@@ -674,6 +658,53 @@ pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool
         colour::TEXT_FAINT,
     );
     response.clicked()
+}
+
+/// The mark, the broadcast's slanted pip rather than a form control. A
+/// switch is a solid pip, cream when on. A choice among siblings is an
+/// outline that fills when it is the answer: drawn the same, the corners
+/// read as four switches, which is how somebody tries to pick two.
+fn mark(painter: &egui::Painter, pip: egui::Rect, on: bool, one_of: bool) {
+    // The same lean at every size, so the fill sits parallel in its outline.
+    let slanted = |r: egui::Rect| {
+        let run = r.height() * 0.21;
+        vec![
+            egui::pos2(r.left() + run, r.top()),
+            egui::pos2(r.right(), r.top()),
+            egui::pos2(r.right() - run, r.bottom()),
+            egui::pos2(r.left(), r.bottom()),
+        ]
+    };
+    if one_of {
+        painter.add(egui::Shape::closed_line(
+            slanted(pip.shrink(0.75)),
+            Stroke::new(
+                1.5,
+                if on {
+                    colour::TEXT_STRONG
+                } else {
+                    colour::TEXT_FAINT
+                },
+            ),
+        ));
+        if on {
+            painter.add(egui::Shape::convex_polygon(
+                slanted(pip.shrink(3.0)),
+                colour::TEXT_STRONG,
+                Stroke::NONE,
+            ));
+        }
+    } else {
+        painter.add(egui::Shape::convex_polygon(
+            slanted(pip),
+            if on {
+                colour::TEXT_STRONG
+            } else {
+                colour::LINE
+            },
+            Stroke::NONE,
+        ));
+    }
 }
 
 /// How tall a switch's slab is.

@@ -47,21 +47,21 @@ pub(crate) const COLUMNS: [Column; 9] = [
         width: 164.0,
         priority: Priority::Core,
         numeric: false,
-        about: "Now, and their peak when it was higher",
+        about: "Now, and their peak",
     },
     Column {
         head: "k/d",
         width: 72.0,
         priority: Priority::Core,
         numeric: true,
-        about: "Kills over deaths, last few matches",
+        about: "Kills per death, recently",
     },
     Column {
         head: "hs",
         width: 52.0,
         priority: Priority::Low,
         numeric: true,
-        about: "Headshots, over those same matches",
+        about: "Headshot share, recently",
     },
     Column {
         head: "win",
@@ -75,35 +75,35 @@ pub(crate) const COLUMNS: [Column; 9] = [
         width: 48.0,
         priority: Priority::High,
         numeric: true,
-        about: "Account level, which is the first smurf tell",
+        about: "Account level, a smurf tell",
     },
     Column {
         head: "met",
         width: 44.0,
         priority: Priority::Mid,
         numeric: true,
-        about: "Lobbies you have shared with them",
+        about: "Lobbies shared with you",
     },
     Column {
         head: "map",
         width: 60.0,
         priority: Priority::Low,
         numeric: true,
-        about: "How they do on the map being played",
+        about: "Their record on this map",
     },
     Column {
         head: "rr",
         width: 60.0,
         priority: Priority::Low,
         numeric: true,
-        about: "Rating, and what the last match did to it",
+        about: "Rating, and its last change",
     },
     Column {
         head: "last 5",
         width: 60.0,
         priority: Priority::High,
         numeric: false,
-        about: "Their recent results, newest first",
+        about: "Recent results, newest first",
     },
 ];
 
@@ -166,6 +166,12 @@ impl Grid {
             })
             .collect();
         Self { placed }
+    }
+
+    /// Where the first column starts and the last one ends, from the row's
+    /// left edge.
+    pub(crate) fn span(&self) -> Option<(f32, f32)> {
+        Some((self.placed.first()?.left, self.placed.last()?.right))
     }
 }
 

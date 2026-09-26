@@ -149,3 +149,57 @@ fn a_full_board_stays_inside_its_shape_budget() {
         "a full board draws {count} shapes against a budget of {SHAPE_BUDGET}, which is no longer a budget"
     );
 }
+
+/// The overlay draws exactly the height it was placed for.
+///
+/// It is placed once, from this constant, and then only resized, because a
+/// window moved after it is shown stops being drawn here. When the constant
+/// was short of what the board really drew, a bottom corner grew past where
+/// it had been put.
+#[test]
+fn the_overlay_is_as_tall_as_it_was_placed_for() {
+    let ctx = egui::Context::default();
+    design::install_fonts(&ctx);
+    ctx.set_style_of(egui::Theme::Dark, design::style());
+    // Everybody seen: a player Riot said nothing about is a short row, and
+    // the overlay is placed for a full one.
+    let mut board = board();
+    for player in &mut board.players {
+        player.name.get_or_insert_with(|| "Seen#0000".to_owned());
+    }
+    let notes = crate::notes::Notes::default();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            vec2(crate::overlay::WIDTH, 800.0),
+        )),
+        ..Default::default()
+    };
+    let mut drew = 0.0;
+    for _frame in 0..2 {
+        let mut output = ctx.run_ui(input(), |ui| {
+            drew = crate::board::draw(
+                ui,
+                &crate::board::Scene {
+                    board: &board,
+                    sort: &Sort::default(),
+                    filter: "",
+                    selected: None,
+                    notes: &notes,
+                    hidden: &[],
+                    enemies_first: true,
+                    place: crate::board::Place::Overlay,
+                    still: true,
+                    since: 10.0,
+                },
+            )
+            .drew;
+        });
+        output.textures_delta.clear();
+    }
+    assert!(
+        (drew - crate::board::OVERLAY_HEIGHT).abs() < 0.5,
+        "the overlay drew {drew} points and was placed for {}",
+        crate::board::OVERLAY_HEIGHT
+    );
+}

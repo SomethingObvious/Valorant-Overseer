@@ -268,7 +268,7 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
             pos2(rect.left() + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
             text,
-            Face::Display.at(size::DISPLAY),
+            Face::Heavy.at(size::DISPLAY),
             colour::TEXT_STRONG,
         );
     }
@@ -321,8 +321,8 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
 /// One switch: a mark, a name, and what it is for. True when clicked.
 ///
 /// `one_of` says whether this is a choice among siblings or a thing that is
-/// simply on or off, and it changes the mark: a disc for a choice, a square
-/// for a switch. Drawing both the same way is how a settings screen ends up
+/// simply on or off, and it changes the mark: an outline that fills for a
+/// choice, a solid pip for a switch. Drawing both the same way is how a settings screen ends up
 /// with somebody trying to turn two corners on at once.
 fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
     overseer_ui::choice(ui, name, about, on, one_of)

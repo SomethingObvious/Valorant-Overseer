@@ -193,7 +193,7 @@ not distributed.
 | `agents/` | agent `displayIcon` | Trimmed to its content, fitted to 128 px square |
 | `killfeed/` | agent `killfeedPortrait` | Unchanged, 256 by 128 |
 | `ranks/` | competitive tier `largeIcon`, latest episode | Trimmed, fitted to 96 px square |
-| `maps/` | map `listViewIcon` | Resized to 304 by 67, blurred by 0.8 px, 64-colour palette |
+| `maps/` | map `listViewIconTall`, at the band Riot's `listViewIcon` shows | 1280 by 80 (16:1) from the middle of that band, 128-colour palette; the Range and basic training keep the old 304 by 67 strip, because their tall art is a different picture |
 
 The map strips are palettes because a photograph behind the dimming costs
 three hundred kilobytes as RGBA and about nine as sixty four colours, and

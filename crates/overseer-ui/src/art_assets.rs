@@ -117,7 +117,7 @@ pub(crate) const CARDS: [(&str, &[u8]); 29] = [
     ("yoru", include_bytes!("../assets/cards/yoru.png")),
 ];
 
-/// Every map's list strip, dimmed behind the header.
+/// Every map's band of art, 16:1, dimmed behind the header.
 pub(crate) const MAPS: [(&str, &[u8]); 26] = [
     ("abyss", include_bytes!("../assets/maps/abyss.png")),
     ("ascent", include_bytes!("../assets/maps/ascent.png")),

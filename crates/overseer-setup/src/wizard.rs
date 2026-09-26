@@ -277,7 +277,6 @@ pub(crate) fn choose(ui: &mut Ui, profile: &mut Profile, region: &mut usize) {
                     *profile = option;
                 }
             }
-            ui.add_space(space::XL);
             heading(ui, "where you play");
             note(
                 ui,
@@ -285,7 +284,7 @@ pub(crate) fn choose(ui: &mut Ui, profile: &mut Profile, region: &mut usize) {
                 colour::TEXT_FAINT,
             );
             for (index, (key, name)) in REGIONS.iter().enumerate() {
-                if option_row(ui, name, key, *region == index) {
+                if option_row(ui, name, &key.to_uppercase(), *region == index) {
                     *region = index;
                 }
             }
@@ -368,7 +367,7 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
             pos2(rect.left() + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
             text,
-            Face::Display.at(size::DISPLAY),
+            Face::Heavy.at(size::DISPLAY),
             colour::TEXT_STRONG,
         );
     }
@@ -385,25 +384,20 @@ fn heading(ui: &mut Ui, text: &str) {
         return;
     }
     let painter = ui.painter();
-    painter.add(shape::tick(
-        pos2(rect.left() + space::XL, rect.center().y - 5.0),
-        10.0,
-        colour::ENEMY,
-    ));
     let drawn = caps_text(
         painter,
-        pos2(rect.left() + space::XL + space::MD, rect.center().y),
+        pos2(rect.left() + space::XL, rect.center().y),
         Align2::LEFT_CENTER,
         text,
-        Face::Display.at(size::LABEL),
-        colour::TEXT_DIM,
+        Face::Heavy.at(17.0),
+        colour::TEXT_STRONG,
     );
     let from = drawn.right() + space::MD;
     if from < rect.right() - space::XL {
         painter.hline(
             from..=rect.right() - space::XL,
-            rect.center().y,
-            (1.0, colour::LINE_SOFT),
+            rect.center().y + 1.0,
+            (1.0, colour::LINE),
         );
     }
 }

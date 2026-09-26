@@ -4,7 +4,7 @@
 //! for them, with a sentence saying what each one is for. A setting whose
 //! effect you have to discover by toggling it is a setting nobody touches.
 
-use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, Rect, ScrollArea, Sense, Ui, pos2, vec2};
 
 use crate::board::{COLUMNS, Column};
 use crate::overlay::Corner;
@@ -290,16 +290,30 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
         return;
     }
     let painter = ui.painter().clone();
-    painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
+    // A band rather than a rule. A settings screen is a stack of groups, and
+    // a hairline says where one ends without saying that the next one is a
+    // thing: the eye reads a page of hairlines as one long list. The same
+    // lit surface the team headings get, at the same width as the switches
+    // under it, and the screen becomes a stack of cards instead.
     let middle = rect.center().y + space::SM;
+    let band = Rect::from_min_max(
+        pos2(rect.left() + space::LG, middle - 11.0),
+        pos2(rect.right() - space::LG, middle + 11.0),
+    );
+    painter.add(shape::lit(
+        band,
+        shape::CHAMFER,
+        colour::BG_RAISED,
+        shape::blend(colour::BG_RAISED, colour::BG, 0.55),
+    ));
     painter.add(shape::tick(
-        pos2(rect.left() + space::XL, middle - 5.0),
+        pos2(band.left() + space::MD, middle - 5.0),
         10.0,
         colour::ENEMY,
     ));
     let drawn = caps_text(
         &painter,
-        pos2(rect.left() + space::XL + space::MD, middle),
+        pos2(band.left() + space::MD + space::MD, middle),
         Align2::LEFT_CENTER,
         text,
         Face::Display.at(size::LABEL),

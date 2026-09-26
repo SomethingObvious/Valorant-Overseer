@@ -624,14 +624,10 @@ fn record(wins: Option<u32>, losses: Option<u32>, draws: Option<u32>) -> String 
 
 /// What they are carrying, when the backend could see it.
 fn loadout(ui: &mut Ui, player: &Player) {
-    let skins: Vec<String> = player
+    let skins: Vec<(String, String)> = player
         .weapons
         .iter()
-        .filter_map(|w| {
-            let weapon = w.weapon.clone()?;
-            let skin = w.skin.as_ref()?.name.clone()?;
-            Some(format!("{weapon}  {skin}"))
-        })
+        .filter_map(|w| Some((w.weapon.clone()?, w.skin.as_ref()?.name.clone()?)))
         .take(4)
         .collect();
     if skins.is_empty() {
@@ -639,9 +635,53 @@ fn loadout(ui: &mut Ui, player: &Player) {
     }
     ui.add_space(space::LG);
     heading(ui, "carrying");
-    for skin in skins {
-        line(ui, &skin, colour::TEXT_DIM, size::MICRO);
+    for (weapon, skin) in skins {
+        named(ui, &weapon, &skin);
     }
+}
+
+/// A label and a word, on the grid the numbers beside it are already on.
+///
+/// Four rows of "Vandal Heartstopper" set as one phrase each start at four
+/// different places, which is four rows that do not line up with the two
+/// sections above and below them. The weapon is the label and the skin is
+/// the value, and both sit where every other label and value in this panel
+/// sits. Set in the reading face rather than the mono one: digits line up
+/// under each other and words do not, and a word in mono looks like a file
+/// name.
+fn named(ui: &mut Ui, label: &str, value: &str) {
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    caps_at(
+        &painter,
+        pos2(rect.left() + space::LG, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    let at = rect.left() + space::LG + VALUE_X;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        value.to_owned(),
+        Face::Body.at(size::MICRO),
+        colour::TEXT_DIM,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: rect.right() - space::LG - at,
+        max_rows: 1,
+        break_anywhere: false,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = painter.layout_job(job);
+    painter.galley(
+        pos2(at, rect.center().y - galley.size().y / 2.0),
+        galley,
+        colour::TEXT_DIM,
+    );
 }
 
 /// A section heading: caps, tracked, faint, with air above it.

@@ -9,9 +9,12 @@
 //! `crates/README.md`.
 
 mod app;
+mod board;
+mod design;
+mod panel;
+mod perf;
 mod probe;
 mod shot;
-mod theme;
 
 use std::path::PathBuf;
 

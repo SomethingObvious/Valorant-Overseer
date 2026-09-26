@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::overlay::Corner;
+
 /// How much the window is allowed to spend on looking good.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,6 +46,14 @@ pub(crate) struct Settings {
     pub(crate) hidden_columns: Vec<String>,
     /// Whether the detail panel takes the right of the window.
     pub(crate) panel: bool,
+    /// Whether the window is currently dressed as an overlay.
+    ///
+    /// Remembered rather than reset, because somebody who plays with the
+    /// overlay on wants it on the next time as well, and the hotkey is how
+    /// it goes away.
+    pub(crate) overlay: bool,
+    /// Which corner the overlay parks in.
+    pub(crate) corner: Corner,
 }
 
 impl Default for Settings {
@@ -55,6 +65,10 @@ impl Default for Settings {
             quality: Quality::Auto,
             hidden_columns: Vec::new(),
             panel: true,
+            // Off: an app that put itself on top of everything the first
+            // time it ran would be an app somebody uninstalled.
+            overlay: false,
+            corner: Corner::default(),
         }
     }
 }

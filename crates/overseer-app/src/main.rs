@@ -10,13 +10,16 @@
 
 mod app;
 mod board;
+mod hotkey;
 mod notes;
+mod overlay;
 mod panel;
 mod perf;
 mod probe;
 mod settings;
 mod shot;
 mod sort;
+mod tray;
 mod view;
 
 use std::path::PathBuf;

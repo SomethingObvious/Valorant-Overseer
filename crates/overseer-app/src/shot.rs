@@ -421,11 +421,23 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
     // Same first frame rule as the board: fonts land on the frame after they
     // are installed, so the first one draws nothing.
     let mut shot = Harness::builder()
-        .with_size(vec2(880.0, 460.0))
+        .with_size(vec2(880.0, 1020.0))
         .build_ui_state(
             |ui, state: &mut (bool, Settings)| {
                 if state.0 {
-                    view::settings(ui, &mut state.1, Quality::Rich, false);
+                    view::settings(
+                        ui,
+                        &mut state.1,
+                        Quality::Rich,
+                        false,
+                        // Both broken, because a settings screen that has
+                        // only ever been drawn with nothing wrong is a
+                        // settings screen nobody has checked the wrapping of.
+                        view::Trouble {
+                            hotkey: Some("Ctrl+Alt+O is taken: hotkey already registered"),
+                            tray: Some("assets/overseer.ico: not found"),
+                        },
+                    );
                 }
             },
             (false, Settings::default()),

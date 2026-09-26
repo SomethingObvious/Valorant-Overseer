@@ -19,9 +19,12 @@ use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, po
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
+use crate::hotkey::{self, Hotkey};
 use crate::notes::{self, Notes};
+use crate::overlay;
 use crate::settings::{self, Quality, Settings};
 use crate::sort::{self, Sort};
+use crate::tray::{self, Action, Tray};
 use crate::{panel, view};
 use overseer_ui::{self, Face, colour, label_text, motion, size, space};
 
@@ -71,6 +74,12 @@ pub(crate) struct Overseer {
     focus_search: bool,
     /// What you have written about the accounts you have met.
     notes: Notes,
+    /// The one key combination the whole machine listens for, or why not.
+    hotkey: Result<Hotkey, String>,
+    /// The icon beside the clock, or why there isn't one.
+    tray: Result<Tray, String>,
+    /// Set when the window has been closed to the tray rather than quit.
+    hidden: bool,
 }
 
 /// What the middle of the window is showing.
@@ -129,11 +138,47 @@ impl Overseer {
             filter: String::new(),
             focus_search: false,
             notes: notes::load(root),
+            // Both of these own a window of their own, and Windows delivers
+            // their messages to the queue of the thread that made them. This
+            // runs on the thread with the message loop; nowhere else would
+            // ever hear from either of them.
+            hotkey: report("hotkey", hotkey::start(waker(&cc.egui_ctx))),
+            tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
+            hidden: false,
         }
     }
 
-    /// Takes everything the bridge has queued since the last frame.
-    fn pump(&mut self) {
+    /// Takes everything queued since the last frame, from all three of the
+    /// things that can wake this window up.
+    fn pump(&mut self, ctx: &egui::Context) {
+        let pressed = self.hotkey.as_ref().map_or(0, |k| k.presses().count());
+        if pressed % 2 == 1 {
+            let on = !self.settings.overlay;
+            self.set_overlay(on);
+            self.reveal(ctx, !on);
+        }
+        let actions: Vec<Action> = self
+            .tray
+            .as_ref()
+            .map(|t| t.actions().collect())
+            .unwrap_or_default();
+        for action in actions {
+            match action {
+                Action::Window => {
+                    self.set_overlay(false);
+                    self.reveal(ctx, true);
+                }
+                Action::Overlay => {
+                    self.set_overlay(true);
+                    self.reveal(ctx, false);
+                }
+                Action::Quit => {
+                    settings::save(&self.root, &self.settings);
+                    notes::save(&self.root, &self.notes);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
         for event in self.bridge.drain() {
             match event {
                 Event::Status(status) => self.status = status,
@@ -189,13 +234,14 @@ impl Overseer {
         // Nothing here fires while the search box has the keyboard: a
         // person typing a name is not asking to change screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
-        let (up, down, settings, escape, find) = ui.input(|i| {
+        let (up, down, settings, escape, find, overlay) = ui.input(|i| {
             (
                 i.key_pressed(Key::ArrowUp),
                 i.key_pressed(Key::ArrowDown),
                 i.key_pressed(Key::Comma),
                 i.key_pressed(Key::Escape),
                 i.key_pressed(Key::Slash) || (i.modifiers.command && i.key_pressed(Key::F)),
+                i.key_pressed(Key::O),
             )
         });
         if escape {
@@ -216,6 +262,9 @@ impl Overseer {
         }
         if typing {
             return;
+        }
+        if overlay {
+            self.set_overlay(!self.settings.overlay);
         }
         if settings {
             self.screen = if self.screen == Screen::Settings {
@@ -241,6 +290,51 @@ impl Overseer {
         if let Some(id) = order.get(next.min(order.len().saturating_sub(1))) {
             self.selected.clone_from(id);
         }
+    }
+
+    /// Puts the window back on screen, and optionally asks for the
+    /// keyboard with it.
+    ///
+    /// The focus is withheld for the overlay: taking the foreground away
+    /// from a game mid round is exactly what an overlay is supposed to avoid
+    /// doing.
+    fn reveal(&mut self, ctx: &egui::Context, focus: bool) {
+        self.hidden = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        if focus {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+    }
+
+    /// Closing the window puts it in the tray instead of ending the session.
+    ///
+    /// Only while there is a tray to put it in. Without one this would be a
+    /// window that cannot be closed and has nowhere to be reopened from.
+    fn closing(&mut self, ctx: &egui::Context) {
+        if self.tray.is_err() || !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.hidden = true;
+        settings::save(&self.root, &self.settings);
+        notes::save(&self.root, &self.notes);
+    }
+
+    /// Switches the overlay on or off and remembers the answer.
+    ///
+    /// Remembered immediately rather than at exit, because the way out of
+    /// the overlay is a hotkey pressed in the middle of a game and the way
+    /// out of the game is often the power button.
+    pub(crate) fn set_overlay(&mut self, on: bool) {
+        if self.settings.overlay == on {
+            return;
+        }
+        self.settings.overlay = on;
+        // Nothing in the overlay is clickable, so leaving a half finished
+        // search or a settings screen behind it would be a trap.
+        self.screen = Screen::Board;
+        settings::save(&self.root, &self.settings);
     }
 
     /// How long an animation is allowed to take, given the tier.
@@ -433,11 +527,51 @@ impl Overseer {
         }
     }
 
+    /// The overlay's whole contents: the board, or one line saying there
+    /// is no board.
+    ///
+    /// The windowed empty state is three lines of reassurance in the middle
+    /// of a large rectangle, which is right for a window somebody opened on
+    /// purpose and wrong for something sitting over a game.
+    fn overlay_view(&self, ui: &mut Ui) {
+        if self.board.players.is_empty() {
+            let (rect, _response) =
+                ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                let (_radius, tint, text) = self.connection();
+                ui.painter().text(
+                    pos2(rect.left() + space::LG, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    format!("overseer {text}"),
+                    Face::Body.at(size::MICRO),
+                    tint,
+                );
+            }
+            return;
+        }
+        drop(self.rows(ui));
+    }
+
     /// The board, both teams, with the headings each side needs.
     fn board_view(&mut self, ui: &mut Ui) {
+        let (clicked, heading) = self.rows(ui);
+        if clicked.is_some() {
+            self.selected = clicked;
+        }
+        if let Some(head) = heading {
+            self.sort.clicked(head);
+        }
+    }
+
+    /// Draws every row, and reports what was clicked.
+    ///
+    /// Read only, so that the overlay can call it too: the overlay is its
+    /// own window and takes no clicks, and nothing that only draws can be
+    /// the reason two windows disagree about what is selected.
+    fn rows(&self, ui: &mut Ui) -> (Option<String>, Option<&'static str>) {
         if self.board.players.is_empty() {
             empty(ui, &self.status, self.stopped.as_deref());
-            return;
+            return (None, None);
         }
         let height = if ui.available_width() < COMPACT {
             space::ROW_TIGHT
@@ -496,12 +630,7 @@ impl Overseer {
                     nobody(ui, &filter);
                 }
             });
-        if clicked.is_some() {
-            self.selected = clicked;
-        }
-        if let Some(head) = heading {
-            self.sort.clicked(head);
-        }
+        (clicked, heading)
     }
 }
 
@@ -517,9 +646,23 @@ impl App for Overseer {
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
-        self.pump();
+        self.pump(ui.ctx());
+        self.closing(ui.ctx());
         self.keys(ui);
         self.watch_frames(ui);
+
+        if self.settings.overlay {
+            // Its own window, drawn before this one so that a frame where
+            // the board changed reaches both. Read only: nothing in it takes
+            // a click, so nothing in it can change anything.
+            let this = &*self;
+            overlay::show(
+                ui.ctx(),
+                this.settings.corner,
+                this.board.players.len(),
+                |ui| this.overlay_view(ui),
+            );
+        }
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
         Panel::top("header")
@@ -544,8 +687,17 @@ impl App for Overseer {
             let quality = self.quality();
             let dropped = self.dropped;
             let mut changed = false;
+            // Copied out before the screen borrows the settings it sits
+            // beside. Failing quietly would leave somebody pressing a key
+            // that does nothing with no way to find out why.
+            let no_hotkey = self.hotkey.as_ref().err().cloned();
+            let no_tray = self.tray.as_ref().err().cloned();
+            let trouble = view::Trouble {
+                hotkey: no_hotkey.as_deref(),
+                tray: no_tray.as_deref(),
+            };
             CentralPanel::default().frame(chrome).show(ui, |ui| {
-                changed = view::settings(ui, &mut self.settings, quality, dropped);
+                changed = view::settings(ui, &mut self.settings, quality, dropped, trouble);
             });
             if changed {
                 settings::save(&self.root, &self.settings);
@@ -705,6 +857,31 @@ fn empty(ui: &mut Ui, status: &Status, stopped: Option<&str>) {
     });
 }
 
+/// Prints whether one of the two machine wide things started, and hands it
+/// back untouched.
+///
+/// Both are registrations with Windows that another program can refuse, and
+/// both are invisible when they fail. The settings screen says so too; this
+/// is the line you can read without opening anything, beside the one saying
+/// which adapter the window got.
+fn report<T>(what: &str, outcome: Result<T, String>) -> Result<T, String> {
+    match outcome.as_ref() {
+        Ok(_) => println!("{what} ok"),
+        Err(why) => println!("{what} unavailable: {why}"),
+    }
+    outcome
+}
+
+/// A closure that asks egui for a frame.
+///
+/// The bridge, the hotkey and the tray all run on their own schedule, and
+/// this window is asleep whenever nothing is happening. This is how each of
+/// them reaches it.
+fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<> {
+    let ctx = ctx.clone();
+    move || ctx.request_repaint()
+}
+
 /// The header's connection text, which has no detail on the first attempt.
 fn connecting_text(detail: &str) -> String {
     if detail.is_empty() {
@@ -737,6 +914,11 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         filter: String::new(),
         focus_search: false,
         notes: Notes::default(),
+        // Neither in a test: one would take a key combination off the
+        // machine and the other would put an icon beside the clock.
+        hotkey: Err(String::new()),
+        tray: Err(String::new()),
+        hidden: false,
     };
     Panel::top("header")
         .exact_size(space::XXL + space::MD)

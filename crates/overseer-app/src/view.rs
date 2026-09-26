@@ -7,10 +7,25 @@
 use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
 use crate::board::COLUMNS;
+use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
 use overseer_ui::{Face, colour, label_text, size, space};
+
+/// What did not start, and why, for the screen to say out loud.
+///
+/// Both are things the machine can refuse rather than things the app got
+/// wrong, and both change what the rest of the screen promises: without a
+/// hotkey the overlay can only be switched off from here, and without a tray
+/// the close button still means close.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Trouble<'a> {
+    /// Why there is no global hotkey.
+    pub(crate) hotkey: Option<&'a str>,
+    /// Why there is no icon beside the clock.
+    pub(crate) tray: Option<&'a str>,
+}
 
 /// Draws the settings screen. True when something changed and wants saving.
 pub(crate) fn settings(
@@ -18,54 +33,142 @@ pub(crate) fn settings(
     settings: &mut Settings,
     quality: Quality,
     dropped: bool,
+    trouble: Trouble<'_>,
 ) -> bool {
     let mut changed = false;
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        ui.add_space(space::LG);
-        title(ui, "settings", "Everything the window can be told. Press comma to go back.");
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add_space(space::LG);
+            title(
+                ui,
+                "settings",
+                "Everything the window can be told. Press comma to go back.",
+            );
 
-        section(ui, "columns", "What the board shows about each player.");
-        for column in &COLUMNS {
-            let hidden = settings.hidden_columns.iter().any(|h| h == column.head);
-            if switch(ui, column.head, column.about, !hidden) {
+            changed |= columns(ui, settings);
+
+            section(ui, "layout", "How much of the window the board gets.");
+            if switch(
+                ui,
+                "detail panel",
+                "The selected player, in full, on the right",
+                settings.panel,
+            ) {
+                settings.panel = !settings.panel;
                 changed = true;
-                if hidden {
-                    settings.hidden_columns.retain(|h| h != column.head);
-                } else {
-                    settings.hidden_columns.push(column.head.to_owned());
-                }
+            }
+
+            changed |= overlay(ui, settings, trouble);
+
+            changed |= effort(ui, settings, quality, dropped);
+            ui.add_space(space::XXL);
+        });
+    changed
+}
+
+/// Which columns the board shows. True when one was switched.
+fn columns(ui: &mut Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    section(ui, "columns", "What the board shows about each player.");
+    for column in &COLUMNS {
+        let hidden = settings.hidden_columns.iter().any(|h| h == column.head);
+        if switch(ui, column.head, column.about, !hidden) {
+            changed = true;
+            if hidden {
+                settings.hidden_columns.retain(|h| h != column.head);
+            } else {
+                settings.hidden_columns.push(column.head.to_owned());
             }
         }
+    }
+    changed
+}
 
-        section(ui, "layout", "How much of the window the board gets.");
-        if switch(ui, "detail panel", "The selected player, in full, on the right", settings.panel)
-        {
-            settings.panel = !settings.panel;
+/// The overlay and the tray, which are one thought: what the app looks like
+/// while the game has the screen.
+fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>) -> bool {
+    let mut changed = false;
+    section(
+        ui,
+        "overlay",
+        "A second window in a corner of the screen, over the game, taking no clicks.",
+    );
+    if switch(
+        ui,
+        "overlay",
+        "No title bar, always on top, and the board stays where it is. [o]",
+        settings.overlay,
+    ) {
+        settings.overlay = !settings.overlay;
+        changed = true;
+    }
+    for corner in Corner::ALL {
+        if switch(
+            ui,
+            corner.label(),
+            corner.about(),
+            settings.corner == corner,
+        ) {
+            settings.corner = corner;
             changed = true;
         }
+    }
+    note(
+        ui,
+        &format!(
+            "{} switches it from inside the game, because nothing in the overlay takes a click. Run VALORANT borderless: nothing can draw over true fullscreen.",
+            crate::hotkey::LABEL
+        ),
+    );
+    if let Some(why) = trouble.hotkey {
+        note(
+            ui,
+            &format!("No hotkey, so the overlay only goes away from here. {why}"),
+        );
+    }
 
-        section(ui, "effort", "How much the window is allowed to spend on looking good.");
-        for option in [Quality::Auto, Quality::Efficient, Quality::Rich] {
-            let about = match option {
-                Quality::Auto => "Rich, until three frames in a row miss their budget",
-                Quality::Efficient => "No movement at all. Same information, calmer",
-                Quality::Rich => "Every animation the design allows",
-            };
-            if switch(ui, option.label(), about, settings.quality == option) {
-                settings.quality = option;
-                changed = true;
-            }
+    section(ui, "tray", "The icon beside the clock.");
+    match trouble.tray {
+        None => note(
+            ui,
+            "Closing the window hides it there rather than quitting. Left click brings it back, and Quit is in its menu.",
+        ),
+        Some(why) => note(
+            ui,
+            &format!("There isn't one, so closing the window quits. {why}"),
+        ),
+    }
+    changed
+}
+
+/// How much the window may spend on looking good. True when it changed.
+fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, dropped: bool) -> bool {
+    let mut changed = false;
+    section(
+        ui,
+        "effort",
+        "How much the window is allowed to spend on looking good.",
+    );
+    for option in [Quality::Auto, Quality::Efficient, Quality::Rich] {
+        let about = match option {
+            Quality::Auto => "Rich, until three frames in a row miss their budget",
+            Quality::Efficient => "No movement at all. Same information, calmer",
+            Quality::Rich => "Every animation the design allows",
+        };
+        if switch(ui, option.label(), about, settings.quality == option) {
+            settings.quality = option;
+            changed = true;
         }
-        if dropped && settings.quality == Quality::Auto {
-            note(
-                ui,
-                "Dropped to efficient: three frames in a row missed their budget. Choosing a tier by hand ends this.",
-            );
-        } else {
-            note(ui, &format!("Running {}.", quality.label()));
-        }
-        ui.add_space(space::XXL);
-    });
+    }
+    if dropped && settings.quality == Quality::Auto {
+        note(
+            ui,
+            "Dropped to efficient: three frames in a row missed their budget. Choosing a tier by hand ends this.",
+        );
+    } else {
+        note(ui, &format!("Running {}.", quality.label()));
+    }
     changed
 }
 

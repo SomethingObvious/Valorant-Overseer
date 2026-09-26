@@ -78,6 +78,14 @@ pub mod colour {
 
     /// The window's background.
     pub const BG: Color32 = Color32::from_rgb(0x0B, 0x11, 0x19);
+    /// The window's background in overlay mode.
+    ///
+    /// The same colour as [`BG`], letting enough of the game through that you
+    /// can tell it is an overlay and little enough that the text still reads
+    /// at a glance. Only ever used as a clear colour, where the window itself
+    /// is transparent. Premultiplied, because that is the only constructor
+    /// that is const: each channel scaled by the 0xD8 alpha beside it.
+    pub const BG_OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x09, 0x0E, 0x15, 0xD8);
     /// A surface that sits above the background: a header, a panel.
     pub const BG_RAISED: Color32 = Color32::from_rgb(0x11, 0x1A, 0x24);
     /// The tint under the cursor.

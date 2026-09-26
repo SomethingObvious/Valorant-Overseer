@@ -36,11 +36,6 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) {
     }
     let painter = ui.painter().clone();
     backdrop(&painter, rect, head.board.map.as_deref());
-    painter.rect_filled(
-        Rect::from_min_size(rect.min, vec2(4.0, rect.height())),
-        0,
-        colour::ENEMY,
-    );
     let middle = rect.center().y;
     let right = light(&painter, rect, &head.light, head.still);
     let left = title(
@@ -68,18 +63,18 @@ fn backdrop(painter: &egui::Painter, rect: Rect, map: Option<&str>) {
         mesh.add_rect_with_uv(
             rect,
             Rect::from_min_max(pos2(0.0, top), pos2(1.0, top + band)),
-            Color32::from_gray(96),
+            Color32::from_gray(150),
         );
         painter.add(Shape::mesh(mesh));
     }
     let mut ramp = Mesh::default();
     for (x, y, alpha) in [
-        (rect.left(), rect.top(), 235_u8),
-        (rect.center().x, rect.top(), 120),
-        (rect.center().x, rect.bottom(), 120),
-        (rect.left(), rect.bottom(), 235),
-        (rect.right(), rect.top(), 170),
-        (rect.right(), rect.bottom(), 170),
+        (rect.left(), rect.top(), 215_u8),
+        (rect.center().x, rect.top(), 90),
+        (rect.center().x, rect.bottom(), 90),
+        (rect.left(), rect.bottom(), 215),
+        (rect.right(), rect.top(), 140),
+        (rect.right(), rect.bottom(), 140),
     ] {
         ramp.vertices.push(Vertex {
             pos: pos2(x, y),
@@ -113,15 +108,12 @@ fn title(painter: &egui::Painter, board: &Board, start: f32, middle: f32, limit:
         .as_deref()
         .or(board.state.as_deref())
         .unwrap_or("waiting");
-    let side = board.side.as_deref();
-    let side_tint = match side {
-        Some(s) if s.eq_ignore_ascii_case("attack") => colour::ENEMY,
-        _ => colour::ALLY,
-    };
+    // The side as a cream plate. Red is the enemy's, and a red ATTACK
+    // chip beside a red enemy plate was the same colour meaning two things.
     for (text, tint, solid) in [
         (Some(state), colour::TEXT_DIM, false),
         (board.mode.as_deref(), colour::TEXT, false),
-        (side, side_tint, true),
+        (board.side.as_deref(), colour::TEXT_STRONG, true),
     ] {
         let Some(text) = text else { continue };
         let width = overseer_ui::caps_width(painter, text, paint::label()) + space::XL * 2.0;

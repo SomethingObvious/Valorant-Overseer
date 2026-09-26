@@ -14,7 +14,7 @@
 
 use egui::{Context, TextureHandle, TextureOptions};
 
-use crate::art_assets::{KILLFEED, MAPS, PORTRAITS, RANKS};
+use crate::art_assets::{CARDS, KILLFEED, MAPS, PORTRAITS, RANKS};
 
 /// The square portrait for an agent, for the panel and the ladder.
 ///
@@ -31,6 +31,16 @@ pub fn agent(ctx: &Context, name: &str) -> Option<TextureHandle> {
 #[must_use]
 pub fn killfeed(ctx: &Context, name: &str) -> Option<TextureHandle> {
     named(ctx, "killfeed", &KILLFEED, name)
+}
+
+/// An agent's player card: eyes to chin at 2.4 wide to 1 tall, cut from
+/// Riot's full portrait for the top of the panel.
+///
+/// The panel used to stretch the killfeed crop across itself, which is 256
+/// pixels wide and came out visibly soft at twice that.
+#[must_use]
+pub fn card(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    named(ctx, "card", &CARDS, name)
 }
 
 /// A map's list strip, for behind the header.
@@ -123,7 +133,7 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KILLFEED, MAPS, PORTRAITS, RANKS, decode, slug};
+    use super::{CARDS, KILLFEED, MAPS, PORTRAITS, RANKS, decode, slug};
 
     /// The slug has to survive the one agent with punctuation in its name.
     #[test]
@@ -138,7 +148,7 @@ mod tests {
     /// silently missing picture.
     #[test]
     fn every_bound_picture_decodes() {
-        for table in [&PORTRAITS[..], &KILLFEED[..], &MAPS[..]] {
+        for table in [&PORTRAITS[..], &KILLFEED[..], &CARDS[..], &MAPS[..]] {
             for (name, bytes) in table {
                 assert!(decode(bytes).is_some(), "{name} did not decode");
             }
@@ -154,14 +164,16 @@ mod tests {
     fn every_agent_has_both_pictures() {
         let portraits: Vec<&str> = PORTRAITS.iter().map(|(name, _)| *name).collect();
         let crops: Vec<&str> = KILLFEED.iter().map(|(name, _)| *name).collect();
+        let cards: Vec<&str> = CARDS.iter().map(|(name, _)| *name).collect();
         assert_eq!(portraits, crops);
+        assert_eq!(portraits, cards);
     }
 
     /// The tables are keyed by the slug, so a key that is not already one
     /// could never be found.
     #[test]
     fn every_key_is_already_a_slug() {
-        for table in [&PORTRAITS[..], &KILLFEED[..], &MAPS[..]] {
+        for table in [&PORTRAITS[..], &KILLFEED[..], &CARDS[..], &MAPS[..]] {
             for (name, _) in table {
                 assert_eq!(slug(name), *name);
             }

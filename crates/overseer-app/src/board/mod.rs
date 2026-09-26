@@ -34,7 +34,7 @@ pub(crate) const GUTTER: f32 = 18.0;
 /// How tall the overlay's board is with a full enemy team: the plate and
 /// five rows, each with its gap, and the air under the last.
 pub(crate) const OVERLAY_HEIGHT: f32 =
-    heads::PLATE - 8.0 + space::SM + (OVERLAY.height + rows::GAP) * 5.0 + space::MD;
+    space::MD + heads::PLATE - 8.0 + space::SM + (OVERLAY.height + rows::GAP) * 5.0 + space::MD;
 
 /// Under this content width the board draws its narrow rows.
 const NARROW: f32 = 640.0;
@@ -121,6 +121,18 @@ pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, String); 2] {
         [(Side::Enemy, theirs), (Side::Ally, ours)]
     } else {
         [(Side::Ally, ours), (Side::Enemy, theirs)]
+    }
+}
+
+/// Whose side an account is on: yours if it shares your team, the
+/// enemy's otherwise, including when the backend has not said which team
+/// you are, because the other five are the ones worth being careful about.
+pub(crate) fn side_of(board: &Board, player: &overseer_core::Player) -> Side {
+    let ours = board.self_team.as_deref();
+    if ours.is_some() && player.team.as_deref() == ours {
+        Side::Ally
+    } else {
+        Side::Enemy
     }
 }
 
@@ -220,13 +232,13 @@ pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
 /// Everything inside the margins.
 fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched: &mut Touched) {
     let overlay = scene.place == Place::Overlay;
-    ui.add_space(if overlay { 0.0 } else { space::LG });
+    ui.add_space(if overlay { space::MD } else { space::LG });
     // Narrow is the overlay and any window too small for the full row:
     // the smaller face, and a name column that gives up its last forty
     // points before the numbers give up anything.
     let narrow = overlay || ui.available_width() < NARROW;
     let identity = if narrow {
-        OVERLAY.crop() + space::LG + 132.0
+        OVERLAY.crop() + space::LG + 116.0
     } else {
         ENEMY.crop() + space::LG + 196.0
     };

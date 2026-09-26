@@ -19,7 +19,7 @@ use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Bridge, Event, Player, Profile, Status};
 
-use crate::board::{self, GUTTER, Place, Scene};
+use crate::board::{self, GUTTER, Place, Scene, Side};
 use crate::career::Career;
 use crate::header;
 use crate::hotkey::{self, Hotkey};
@@ -288,12 +288,18 @@ impl Overseer {
                     self.board = *board;
                     self.boards = self.boards.saturating_add(1);
                     self.keep_selection();
-                    let roster: Vec<String> = self
+                    // Sorted, so a reorder is not a new lobby, and the
+                    // enemy's only, so the stinger lands when the other five
+                    // are revealed rather than once for agent select and
+                    // again when the game starts.
+                    let mut roster: Vec<String> = self
                         .board
                         .players
                         .iter()
+                        .filter(|p| board::side_of(&self.board, p) == Side::Enemy)
                         .filter_map(|p| p.puuid.clone())
                         .collect();
+                    roster.sort_unstable();
                     if roster != self.roster {
                         self.roster = roster;
                         self.roster_at = ctx.input(|i| i.time);
@@ -630,7 +636,7 @@ impl Overseer {
     fn connection(&self) -> (f32, egui::Color32, String) {
         match (&self.stopped, &self.status) {
             (Some(why), _) | (None, Status::Lost(why)) => (3.0, colour::ENEMY, why.clone()),
-            (None, Status::Live) => (3.0, colour::ALLY, "live".to_owned()),
+            (None, Status::Live) => (3.0, colour::ALLY, "connected".to_owned()),
             (None, Status::Connecting(detail)) => (2.0, colour::WARN, connecting_text(detail)),
         }
     }
@@ -689,7 +695,8 @@ impl Overseer {
                         .iter()
                         .find(|p| p.puuid.as_ref() == Some(id))
                 });
-                if panel::show(ui, showing, &mut lent, &self.career) {
+                let side = showing.map_or(Side::Enemy, |p| board::side_of(&self.board, p));
+                if panel::show(ui, showing, side, &mut lent, &self.career) {
                     notes::save(&self.root, &lent);
                 }
                 self.notes = lent;
@@ -1041,9 +1048,16 @@ impl Overseer {
         // which read as a rendering fault rather than as a narrow window.
         let (bad, _why) = &self.unreadable;
         let mut right = rect.right() - GUTTER;
+        // The tier only once it has fallen to efficient, which is the one
+        // state of it anybody needs told; the board count was a developer's
+        // heartbeat, and "rich" on every frame said nothing at all.
+        let tier = if self.quality() == Quality::Efficient {
+            "efficient".to_owned()
+        } else {
+            String::new()
+        };
         for (text, tint) in [
-            (self.quality().label().to_owned(), colour::TEXT_FAINT),
-            (format!("{} boards", self.boards), colour::TEXT_FAINT),
+            (tier, colour::TEXT_FAINT),
             (
                 if *bad == 0 {
                     String::new()
@@ -1153,12 +1167,6 @@ fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
         vec2(width, 50.0 + sentence.size().y + space::XL + 48.0),
     );
     board::paint::slab(&painter, plate, colour::BG_RAISED, 0.0, false);
-    let accent = if broken { colour::ENEMY } else { colour::ALLY };
-    painter.rect_filled(
-        Rect::from_min_size(plate.min, vec2(4.0, plate.height())),
-        0,
-        accent,
-    );
     words(&painter, plate, title, sentence);
     chain(&painter, plate, reached, broken);
 }
@@ -1240,20 +1248,30 @@ fn chain(painter: &egui::Painter, plate: Rect, reached: usize, broken: bool) {
 
 /// The same words with no furniture, for a window too short to hold any.
 fn plain(ui: &mut Ui, title: &str, detail: &str) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(space::XXL);
-        ui.label(
-            RichText::new(title)
-                .color(colour::TEXT_STRONG)
-                .font(Face::Display.at(size::DISPLAY)),
-        );
-        ui.add_space(space::SM);
-        ui.label(
-            RichText::new(detail)
-                .color(colour::TEXT_FAINT)
-                .font(Face::Body.at(size::BODY)),
-        );
-    });
+    ui.add_space(space::XXL);
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::XXL + space::XL),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let _title = caps_text(
+        painter,
+        pos2(rect.center().x, rect.top() + space::LG),
+        Align2::CENTER_CENTER,
+        title,
+        Face::Heavy.at(22.0),
+        colour::TEXT_STRONG,
+    );
+    painter.text(
+        pos2(rect.center().x, rect.bottom() - space::MD),
+        Align2::CENTER_CENTER,
+        detail,
+        Face::Body.at(size::BODY),
+        colour::TEXT_DIM,
+    );
 }
 
 /// Prints whether one of the two machine wide things started, and hands it

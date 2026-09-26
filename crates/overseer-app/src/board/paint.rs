@@ -10,6 +10,8 @@ use egui::{Align2, Color32, FontId, Mesh, Pos2, Rect, Shape, pos2, vec2};
 use overseer_core::Player;
 use overseer_ui::{Face, art, colour, hex, rank, shape, size};
 
+use super::Side;
+
 /// How far the slant leans: the run of the cut per point of its height.
 ///
 /// About twelve degrees, the angle a broadcast graphic cuts its plates at.
@@ -322,4 +324,31 @@ pub(crate) fn split_numbers(text: &str) -> Vec<(&str, bool)> {
         out.push((run, kind));
     }
     out
+}
+
+/// How hot a number is for the side it belongs to.
+///
+/// On the enemy's side a good number is bad news and runs to the enemy's
+/// red; on yours it runs to your green. `t` is nothing to worry about at 0
+/// and as good as it gets at 1. One rule, used by the rows, the panel and
+/// the career alike: the panel used to colour an enemy's K/D green while the
+/// row beside it coloured the same number red.
+pub(crate) fn heat(side: Side, t: f32) -> Color32 {
+    match side {
+        Side::Enemy => colour::threat(t),
+        Side::Ally => colour::strength(t),
+    }
+}
+
+/// What a win looks like for this side: the enemy's red, or your green.
+pub(crate) const fn win(side: Side) -> Color32 {
+    match side {
+        Side::Enemy => colour::ENEMY,
+        Side::Ally => colour::ALLY,
+    }
+}
+
+/// A K/D as heat, on the scale the rows use.
+pub(crate) fn kd_heat(side: Side, kd: Option<f64>) -> Color32 {
+    kd.map_or(colour::TEXT_FAINT, |v| heat(side, (v as f32 - 0.9) / 0.8))
 }

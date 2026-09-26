@@ -17,8 +17,9 @@ use std::collections::HashMap;
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Bridge, CareerMatch, Profile};
 
+use crate::board::{self, Side};
 use crate::panel::{heading, line, stat};
-use overseer_ui::{Face, colour, kd, shape, size, space};
+use overseer_ui::{Face, colour, shape, size, space};
 
 /// How tall a chart is. Enough for a shape to be a shape, not so much that
 /// the numbers under it fall off the bottom of the panel.
@@ -156,7 +157,7 @@ impl Career {
 }
 
 /// Draws whatever there is for this account.
-pub(crate) fn show(ui: &mut Ui, career: &Career, puuid: &str) {
+pub(crate) fn show(ui: &mut Ui, career: &Career, puuid: &str, side: Side) {
     match career {
         Career::Asking { puuid: who, .. } if who == puuid => {
             heading(ui, "career");
@@ -174,29 +175,29 @@ pub(crate) fn show(ui: &mut Ui, career: &Career, puuid: &str) {
         Career::Have {
             puuid: who,
             profile,
-        } if who == puuid => history(ui, profile),
+        } if who == puuid => history(ui, profile, side),
         _ => {}
     }
 }
 
 /// Everything a full history has to say, in the order it is worth reading.
-fn history(ui: &mut Ui, profile: &Profile) {
+fn history(ui: &mut Ui, profile: &Profile, side: Side) {
     if profile.matches.is_empty() {
         heading(ui, "career");
         line(ui, "No matches on record.", colour::TEXT_DIM, size::MICRO);
         return;
     }
-    averages(ui, profile);
+    averages(ui, profile, side);
     rating(ui, profile);
-    per_match_kd(ui, profile);
+    per_match_kd(ui, profile, side);
     guns(ui, profile);
-    matches(ui, profile);
+    matches(ui, profile, side);
     together(ui, profile);
     habits(ui, profile);
 }
 
 /// The whole history in four numbers, with the sample size beside them.
-fn averages(ui: &mut Ui, profile: &Profile) {
+fn averages(ui: &mut Ui, profile: &Profile, side: Side) {
     let a = &profile.averages;
     let games = a.games.unwrap_or(profile.matches.len() as u32);
     heading(ui, "career");
@@ -205,7 +206,7 @@ fn averages(ui: &mut Ui, profile: &Profile) {
         ui,
         "k/d",
         &a.kd.map_or_else(dash, |v| format!("{v:.2}")),
-        kd(a.kd),
+        board::paint::kd_heat(side, a.kd),
         &over,
     );
     stat(
@@ -232,7 +233,7 @@ fn averages(ui: &mut Ui, profile: &Profile) {
             a.assists.unwrap_or(0.0)
         ),
         colour::TEXT_DIM,
-        "k d a",
+        "kills, deaths, assists a game",
     );
 }
 
@@ -248,7 +249,7 @@ fn rating(ui: &mut Ui, profile: &Profile) {
     }
     heading(ui, "rating");
     let points: Vec<f32> = run.iter().map(|m| ladder(m)).collect();
-    plot(ui, &points, None);
+    plot(ui, &points, None, colour::TEXT_STRONG);
 
     let first = run.first().and_then(|m| m.rank_after.clone());
     let last = run.last().and_then(|m| m.rank_after.clone());
@@ -279,7 +280,7 @@ fn ladder(m: &CareerMatch) -> f32 {
 }
 
 /// How often they were the problem, as bars against an even ratio.
-fn per_match_kd(ui: &mut Ui, profile: &Profile) {
+fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
     let mut values: Vec<f32> = profile
         .matches
         .iter()
@@ -291,10 +292,10 @@ fn per_match_kd(ui: &mut Ui, profile: &Profile) {
     }
     values.reverse();
     heading(ui, "k/d per match");
-    plot(ui, &values, Some(1.0));
+    plot(ui, &values, Some(1.0), board::paint::win(side));
     line(
         ui,
-        "oldest left, even is the rule",
+        "Oldest first. The line is a K/D of one.",
         colour::TEXT_FAINT,
         size::MICRO,
     );
@@ -326,12 +327,7 @@ fn guns(ui: &mut Ui, profile: &Profile) {
         );
         // Tinted rather than grey, because the length of it is a number and
         // a grey bar behind a word reads as a text field.
-        painter.add(shape::cut_wash(
-            bar,
-            3.0,
-            colour::INFO.gamma_multiply(0.30),
-            colour::INFO.gamma_multiply(0.12),
-        ));
+        painter.add(board::paint::slant(bar, false, true, colour::BG_INSET));
         painter.text(
             pos2(rect.left() + space::LG + space::SM, rect.center().y),
             Align2::LEFT_CENTER,
@@ -350,7 +346,7 @@ fn guns(ui: &mut Ui, profile: &Profile) {
 }
 
 /// The last few matches, one line each.
-fn matches(ui: &mut Ui, profile: &Profile) {
+fn matches(ui: &mut Ui, profile: &Profile, side: Side) {
     heading(ui, "last matches");
     for m in profile.matches.iter().take(LISTED) {
         let (rect, _response) =
@@ -360,7 +356,11 @@ fn matches(ui: &mut Ui, profile: &Profile) {
         }
         let painter = ui.painter().clone();
         let won = m.won();
-        let tint = if won { colour::ALLY } else { colour::ENEMY };
+        let tint = if won {
+            board::paint::win(side)
+        } else {
+            colour::TEXT_FAINT
+        };
         // A rail rather than a word: the result is the first thing the eye
         // needs and the last thing worth spending space on.
         painter.rect_filled(
@@ -394,9 +394,9 @@ fn matches(ui: &mut Ui, profile: &Profile) {
                 format!("{delta:+}"),
                 Face::Number.at(size::MICRO),
                 if delta >= 0 {
-                    colour::GOOD
+                    board::paint::win(side)
                 } else {
-                    colour::BAD
+                    colour::TEXT_DIM
                 },
             );
             right = drawn.left() - space::MD;
@@ -485,7 +485,7 @@ fn habits(ui: &mut Ui, profile: &Profile) {
 /// One function for both because they are the same picture: points across a
 /// box, scaled to fit. Passing a baseline turns it into bars measured from
 /// that value, which is what a ratio wants and what a rating does not.
-fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
+fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>, hot: egui::Color32) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), CHART), Sense::hover());
     if !ui.is_rect_visible(rect) || values.len() < 2 {
@@ -515,7 +515,7 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
                 pos2(middle - half, top.min(y)),
                 pos2(middle + half, top.max(y)),
             );
-            let tint = if v >= rule { colour::GOOD } else { colour::BAD };
+            let tint = if v >= rule { hot } else { colour::TEXT_FAINT };
             painter.add(shape::pip(bar, tint));
         }
         return;
@@ -531,26 +531,15 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
     // The area under the line, fading to nothing at the floor. A bare
     // polyline is a diagram; the same line with weight under it is a
     // quantity, and which of the two this is happens to be the question.
-    let mut area = egui::Mesh::default();
-    for point in &points {
-        area.colored_vertex(*point, colour::INFO.gamma_multiply(0.22));
-        area.colored_vertex(pos2(point.x, inner.bottom()), egui::Color32::TRANSPARENT);
-    }
-    for i in 0..points.len().saturating_sub(1) {
-        let a = (i * 2) as u32;
-        area.add_triangle(a, a + 1, a + 2);
-        area.add_triangle(a + 1, a + 3, a + 2);
-    }
-    painter.add(egui::Shape::mesh(area));
     painter.add(egui::Shape::line(
         points.clone(),
-        egui::Stroke::new(2.0, colour::INFO),
+        egui::Stroke::new(2.0, hot),
     ));
     // Only the ends get a dot. A dot on every point turns a shape into a
     // row of beads, and the two that matter are where it started and where
     // it got to.
     for point in [points.first(), points.last()].into_iter().flatten() {
-        painter.circle_filled(*point, 2.5, colour::INFO);
+        painter.circle_filled(*point, 3.0, hot);
     }
 }
 

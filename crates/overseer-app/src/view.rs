@@ -197,18 +197,21 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>) -> bool {
             changed = true;
         }
     }
-    note(
-        ui,
-        &format!(
-            "{} switches it from inside the game, because nothing in the overlay takes a click. Run VALORANT borderless: nothing can draw over true fullscreen.",
-            crate::hotkey::LABEL
-        ),
-    );
-    if let Some(why) = trouble.hotkey {
-        note(
+    match trouble.hotkey {
+        None => note(
             ui,
-            &format!("No hotkey, so the overlay only goes away from here. {why}"),
-        );
+            &format!(
+                "{} switches it from inside the game, because nothing in the overlay takes a click. Run VALORANT borderless: nothing can draw over true fullscreen.",
+                crate::hotkey::LABEL
+            ),
+        ),
+        Some(_) => note(
+            ui,
+            &format!(
+                "{} is already taken by another program, so the overlay can only be switched from here. Close whatever holds it and restart Overseer.",
+                crate::hotkey::LABEL
+            ),
+        ),
     }
 
     section(ui, "tray", "The icon beside the clock.");
@@ -217,9 +220,9 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>) -> bool {
             ui,
             "Closing the window hides it there rather than quitting. Left click brings it back, and Quit is in its menu.",
         ),
-        Some(why) => note(
+        Some(_) => note(
             ui,
-            &format!("There isn't one, so closing the window quits. {why}"),
+            "The tray icon could not be made, so closing the window quits Overseer. Reinstalling puts the icon back.",
         ),
     }
     changed
@@ -408,7 +411,8 @@ fn beside(
             ui.add_space(space::MD);
             let player = selected
                 .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
-            panel::show(ui, player, notes, career);
+            let side = player.map_or(board::Side::Enemy, |p| board::side_of(board, p));
+            panel::show(ui, player, side, notes, career);
         });
 }
 

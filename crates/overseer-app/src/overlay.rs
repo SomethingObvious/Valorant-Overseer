@@ -48,14 +48,16 @@ pub(crate) const WIDTH: f32 = 540.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Corner {
-    /// Above the minimap, which is where your eyes already go.
-    #[default]
+    /// Over the minimap. It used to be the default, which put an opaque
+    /// board over the one part of the screen a player looks at most.
     TopLeft,
     /// Above the scoreboard side of the screen.
     TopRight,
     /// Out of the way of everything the game draws at the top.
     BottomLeft,
-    /// The quietest corner in VALORANT's own layout.
+    /// The quietest corner in VALORANT's own layout, and where the
+    /// overlay starts.
+    #[default]
     BottomRight,
 }
 

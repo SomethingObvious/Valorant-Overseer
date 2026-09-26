@@ -9,7 +9,7 @@
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::Board;
-use overseer_ui::{Face, caps_text, colour, rank, space};
+use overseer_ui::{Face, caps_text, colour, space};
 
 use super::Side;
 use super::grid::Grid;
@@ -168,11 +168,7 @@ fn averages(
         (
             "avg",
             stats.avg_rank.clone(),
-            if on_plate {
-                ink
-            } else {
-                rank(stats.avg_rank_tier.map(|t| t.round() as u32))
-            },
+            if on_plate { ink } else { colour::TEXT },
         ),
     ] {
         let Some(value) = value else { continue };

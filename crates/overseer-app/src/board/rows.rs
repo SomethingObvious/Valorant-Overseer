@@ -8,7 +8,7 @@
 
 use egui::{Align2, Color32, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
-use overseer_ui::{Face, caps_text, colour, motion, rank, shape, size, space};
+use overseer_ui::{Face, caps_text, colour, motion, shape, size, space};
 
 use super::Side;
 use super::grid::{Grid, Placed};
@@ -118,7 +118,8 @@ pub(crate) struct Look {
 /// row would jump.
 pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Response {
     let unseen = player.name.is_none() && player.agent.is_none() && player.rank.is_none();
-    let reasons = look.reasons && player.smurf && !player.smurf_reasons.is_empty();
+    let enemy = look.side == Side::Enemy;
+    let reasons = look.reasons && enemy && player.smurf && !player.smurf_reasons.is_empty();
     let height = if unseen {
         UNSEEN
     } else {
@@ -141,32 +142,14 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
     ));
     let fill = if look.selected {
         colour::BG_SELECTED
-    } else if player.smurf {
+    } else if player.smurf && enemy {
         shape::blend(colour::BG_RAISED, colour::WARN, 0.07)
     } else {
         colour::BG_RAISED
     };
     let fill = shape::blend(fill, colour::BG_HOVER, lift * 0.8);
     paint::slab(&painter, rect, fill, lift, look.still);
-    if player.smurf {
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(4.0, rect.height())),
-            0,
-            colour::WARN,
-        );
-    }
-    if let Some(bracket) = look.bracket {
-        paint::bracket(&painter, bracket, rect.left() - 10.0, rect);
-    }
-    if player.stack_guess.is_some() && player.party.is_none() && look.bracket.is_none() {
-        let guess = Bracket {
-            tint: colour::TEXT_FAINT,
-            top: true,
-            bottom: true,
-            guessed: true,
-        };
-        paint::bracket(&painter, guess, rect.left() - 10.0, rect);
-    }
+    gutter(&painter, player, look, rect);
     let line = Rect::from_min_size(rect.min, vec2(rect.width(), look.metrics.height));
     // An account the backend could not see at all. Ten columns of dashes
     // reads as the app being broken, and a full slab spent saying nothing
@@ -183,6 +166,16 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
         return response;
     }
     identity(&painter, player, line, look);
+    // The flag's rail goes over the crop's left edge, after it, rather than
+    // pushing the crop right: moved by four points, a flagged row's face and
+    // name stopped lining up with every row above and below it.
+    if player.smurf && enemy {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, vec2(4.0, rect.height())),
+            0,
+            colour::WARN,
+        );
+    }
     for placed in &grid.placed {
         cell(&painter, player, line, *placed, look);
     }
@@ -192,19 +185,39 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
     if reasons {
         why(&painter, player, rect, look.metrics.crop() + space::LG);
     }
+    if player.smurf && !enemy {
+        let _tag = caps_text(
+            &painter,
+            pos2(line.right() - space::LG, line.center().y),
+            Align2::RIGHT_CENTER,
+            "worth a look",
+            paint::label(),
+            colour::WARN,
+        );
+    }
     response
+}
+
+/// The party bracket down the gutter, Riot's or the app's guess.
+fn gutter(painter: &egui::Painter, player: &Player, look: &Look, rect: Rect) {
+    if let Some(bracket) = look.bracket {
+        paint::bracket(painter, bracket, rect.left() - 10.0, rect);
+    }
+    if player.stack_guess.is_some() && player.party.is_none() && look.bracket.is_none() {
+        let guess = Bracket {
+            tint: colour::TEXT_FAINT,
+            top: true,
+            bottom: true,
+            guessed: true,
+        };
+        paint::bracket(painter, guess, rect.left() - 10.0, rect);
+    }
 }
 
 /// The face and the name.
 fn identity(painter: &egui::Painter, player: &Player, line: Rect, look: &Look) {
     let m = look.metrics;
-    let crop = Rect::from_min_size(
-        pos2(
-            line.left() + if player.smurf { 4.0 } else { 0.0 },
-            line.top(),
-        ),
-        vec2(m.crop(), m.height),
-    );
+    let crop = Rect::from_min_size(line.min, vec2(m.crop(), m.height));
     paint::crop(painter, player, crop);
     let x = crop.right() + space::LG;
     let (name, tag) = split_name(player.display_name());
@@ -270,37 +283,25 @@ fn cell(painter: &egui::Painter, player: &Player, line: Rect, placed: Placed, lo
     };
     match placed.column.head {
         "rank" if right - left < 100.0 => {
-            let tier = player.rank_tier.unwrap_or(0);
-            if tier >= 3 {
-                paint::emblem(
-                    painter,
-                    tier,
-                    pos2(left + (right - left) / 2.0, y),
-                    m.emblem,
-                    if look.still { 0.0 } else { 1.0 },
-                );
-            }
+            emblem_only(painter, player, pos2(f32::midpoint(left, right), y), look);
         }
         "rank" => rank_cell(painter, player, pos2(left, y), look),
-        "k/d" => {
-            let Some(kd) = player.kd else {
-                return stat("-".to_owned(), colour::TEXT_FAINT);
-            };
-            let shown = kd * f64::from(look.counted);
-            let _landed = paint::numeral(
-                painter,
-                &format!("{shown:.2}"),
-                pos2(right, y + 1.0),
-                &Face::Heavy.at(m.kd),
-                heat(side, (kd as f32 - 0.9) / 0.8),
-            );
-        }
+        "k/d" => match player.kd {
+            Some(kd) => kd_cell(painter, kd, pos2(right, y), look),
+            None => stat("-".to_owned(), colour::TEXT_FAINT),
+        },
         "hs" => match player.hs_pct {
-            Some(v) => stat(format!("{v:.0}%"), heat(side, (v as f32 - 16.0) / 16.0)),
+            Some(v) => stat(
+                format!("{v:.0}%"),
+                paint::heat(side, (v as f32 - 16.0) / 16.0),
+            ),
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
         "win" => match player.win_rate {
-            Some(v) => stat(format!("{v:.0}%"), heat(side, (v as f32 - 46.0) / 14.0)),
+            Some(v) => stat(
+                format!("{v:.0}%"),
+                paint::heat(side, (v as f32 - 46.0) / 14.0),
+            ),
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
         "lvl" => match player.level {
@@ -318,7 +319,10 @@ fn cell(painter: &egui::Painter, player: &Player, line: Rect, placed: Placed, lo
             n => stat(format!("{n}x"), colour::INFO),
         },
         "map" => match player.map_win_rate.as_ref().and_then(|m| m.win_rate) {
-            Some(v) => stat(format!("{v:.0}%"), heat(side, (v as f32 - 46.0) / 14.0)),
+            Some(v) => stat(
+                format!("{v:.0}%"),
+                paint::heat(side, (v as f32 - 46.0) / 14.0),
+            ),
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
         "rr" => match player.rr {
@@ -326,27 +330,43 @@ fn cell(painter: &egui::Painter, player: &Player, line: Rect, placed: Placed, lo
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
         "last 5" => {
-            let win = if side == Side::Enemy {
-                colour::ENEMY
-            } else {
-                colour::ALLY
-            };
-            paint::pips(painter, &player.form, pos2(left, y), m.pip, win);
+            paint::pips(
+                painter,
+                &player.form,
+                pos2(left, y),
+                m.pip,
+                paint::win(side),
+            );
         }
         _ => {}
     }
 }
 
-/// How hot a number is for the side it belongs to.
-///
-/// On the enemy's side a good number is bad news and runs to the enemy's
-/// red; on yours it runs to your green. `t` is nothing to worry about at 0
-/// and as good as it gets at 1.
-fn heat(side: Side, t: f32) -> Color32 {
-    match side {
-        Side::Enemy => colour::threat(t),
-        Side::Ally => colour::strength(t),
+/// The rank as its emblem alone, for a row too narrow for its word.
+fn emblem_only(painter: &egui::Painter, player: &Player, centre: egui::Pos2, look: &Look) {
+    let tier = player.rank_tier.unwrap_or(0);
+    if tier >= 3 {
+        paint::emblem(
+            painter,
+            tier,
+            pos2(centre.x, centre.y + 1.5),
+            look.metrics.emblem,
+            if look.still { 0.0 } else { 1.0 },
+        );
     }
+}
+
+/// The K/D as the row's largest numeral, counting up while a lobby lands,
+/// sat on its cap height rather than its line box.
+fn kd_cell(painter: &egui::Painter, kd: f64, right: egui::Pos2, look: &Look) {
+    let shown = kd * f64::from(look.counted);
+    let _landed = paint::numeral(
+        painter,
+        &format!("{shown:.2}"),
+        pos2(right.x, right.y - 1.5),
+        &Face::Heavy.at(look.metrics.kd),
+        paint::heat(look.side, (kd as f32 - 0.9) / 0.8),
+    );
 }
 
 /// The emblem, the tier, and the peak under it when the peak is the more
@@ -364,12 +384,11 @@ fn rank_cell(painter: &egui::Painter, player: &Player, at: egui::Pos2, look: &Lo
         );
         return;
     };
-    let tint = rank(player.rank_tier);
     if tier >= 3 {
         paint::emblem(
             painter,
             tier,
-            pos2(at.x + m.emblem / 2.0, at.y),
+            pos2(at.x + m.emblem / 2.0, at.y + 1.5),
             m.emblem,
             if look.still { 0.0 } else { 1.0 },
         );
@@ -387,7 +406,11 @@ fn rank_cell(painter: &egui::Painter, player: &Player, at: egui::Pos2, look: &Lo
         Align2::LEFT_CENTER,
         name,
         Face::Display.at(m.tier),
-        if tier >= 3 { tint } else { colour::TEXT_DIM },
+        if tier >= 3 {
+            colour::TEXT
+        } else {
+            colour::TEXT_DIM
+        },
     );
     if let Some(peak) = peak {
         let _drawn = caps_text(
@@ -419,14 +442,7 @@ fn why(painter: &egui::Painter, player: &Player, rect: Rect, indent: f32) {
     let y = rect.bottom() - REASON / 2.0 - 2.0;
     let left = rect.left() + indent;
     let mut job = egui::text::LayoutJob::default();
-    for (i, reason) in player.smurf_reasons.iter().enumerate() {
-        if i > 0 {
-            job.append(
-                "   ",
-                0.0,
-                egui::TextFormat::simple(Face::Body.at(size::MICRO + 2.0), colour::TEXT_FAINT),
-            );
-        }
+    for reason in player.smurf_reasons.iter().take(1) {
         for piece in paint::split_numbers(reason) {
             let tint = if piece.1 {
                 colour::WARN

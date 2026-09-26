@@ -589,9 +589,10 @@ pub fn say(ui: &mut egui::Ui, gutter: f32, tint: Color32, message: &str, aside: 
 /// twelve lit rows of switches would say nothing at all.
 pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), space::ROW + space::SM),
+        egui::vec2(ui.available_width(), ROW_CHOICE),
         egui::Sense::click(),
     );
+    ui.add_space(space::SM);
     if !ui.is_rect_visible(rect) {
         return response.clicked();
     }
@@ -601,50 +602,50 @@ pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool
         response.hovered(),
         motion::INSTANT,
     ));
+    let slab = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + space::LG, rect.top()),
+        egui::pos2(rect.right() - space::LG, rect.bottom()),
+    );
     let answer = on && one_of;
-    if answer {
-        painter.add(egui::Shape::gradient_rect(
-            rect,
-            egui::Direction::LeftToRight,
-            [colour::BG_SELECTED, colour::BG_RAISED],
-        ));
-    } else if lift > 0.0 {
-        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
-    }
-    // The accent, only on the row that is the answer or the row under the
-    // pointer. It is the one mark in these screens that says "this is a
-    // control" rather than "this is a value".
-    if answer || lift > 0.0 {
-        painter.rect_filled(
-            egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0,
-            colour::ENEMY.gamma_multiply(if answer { 1.0 } else { lift }),
-        );
-    }
-    let centre = egui::pos2(rect.left() + space::XL + 5.0, rect.center().y);
-    if one_of {
-        painter.circle_stroke(centre, 5.0, Stroke::new(1.0, colour::LINE));
-        if on {
-            painter.circle_filled(centre, 3.0, colour::TEXT_STRONG);
-        }
+    let ground = if answer {
+        colour::BG_SELECTED
     } else {
-        let box_rect = egui::Rect::from_center_size(centre, egui::vec2(10.0, 10.0));
+        colour::BG_RAISED
+    };
+    painter.rect_filled(slab, 0, shape::blend(ground, colour::BG_HOVER, lift * 0.7));
+    painter.hline(
+        slab.x_range(),
+        slab.top() + 0.5,
+        (1.0, colour::TEXT_STRONG.gamma_multiply(0.05 + 0.05 * lift)),
+    );
+    // The mark: a slanted pip, lit when on. A disc and a square used to
+    // tell a choice among siblings from a switch; the lit row does that now,
+    // and the pip is the broadcast's own mark rather than a form control's.
+    let pip = egui::Rect::from_center_size(
+        egui::pos2(slab.left() + space::XL + 6.0, slab.center().y),
+        egui::vec2(12.0, 16.0),
+    );
+    let run = pip.height() * 0.21;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(pip.left() + run, pip.top()),
+            egui::pos2(pip.right(), pip.top()),
+            egui::pos2(pip.right() - run, pip.bottom()),
+            egui::pos2(pip.left(), pip.bottom()),
+        ],
         if on {
-            painter.rect_filled(box_rect, 0, colour::TEXT_STRONG);
+            colour::TEXT_STRONG
         } else {
-            painter.rect_stroke(
-                box_rect,
-                0,
-                Stroke::new(1.0, colour::LINE),
-                egui::StrokeKind::Inside,
-            );
-        }
-    }
-    let drawn = painter.text(
-        egui::pos2(centre.x + 5.0 + space::LG, rect.center().y),
+            colour::LINE
+        },
+        Stroke::NONE,
+    ));
+    let drawn = caps_text(
+        &painter,
+        egui::pos2(pip.right() + space::LG, slab.center().y),
         egui::Align2::LEFT_CENTER,
         name,
-        Face::Body.at(size::BODY),
+        Face::Display.at(size::BODY + 1.0),
         if on || lift > 0.0 {
             colour::TEXT_STRONG
         } else {
@@ -654,26 +655,29 @@ pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool
     // Cut to what is left of the row rather than run off the end of it: two
     // of these side by side leave half the width each, and the longest
     // explanation is wider than half.
-    let at = drawn.right().max(rect.left() + 190.0) + space::LG;
+    let at = drawn.right().max(slab.left() + 190.0) + space::LG;
     let mut job = egui::text::LayoutJob::simple_singleline(
         about.to_owned(),
-        Face::Body.at(size::MICRO),
+        Face::Body.at(size::LABEL + 1.0),
         colour::TEXT_FAINT,
     );
     job.wrap = egui::text::TextWrapping {
-        max_width: rect.right() - space::XL - at,
+        max_width: slab.right() - space::LG - at,
         max_rows: 1,
         break_anywhere: false,
         overflow_character: Some('\u{2026}'),
     };
     let galley = painter.layout_job(job);
     painter.galley(
-        egui::pos2(at, rect.center().y - galley.size().y / 2.0),
+        egui::pos2(at, slab.center().y - galley.size().y / 2.0),
         galley,
         colour::TEXT_FAINT,
     );
     response.clicked()
 }
+
+/// How tall a switch's slab is.
+const ROW_CHOICE: f32 = 32.0;
 
 /// One key, drawn as a key: a plate with a letter on it.
 ///

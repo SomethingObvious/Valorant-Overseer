@@ -100,7 +100,7 @@ pub(crate) const COLUMNS: [Column; 9] = [
     },
     Column {
         head: "last 5",
-        width: 72.0,
+        width: 60.0,
         priority: Priority::High,
         numeric: false,
         about: "Their recent results, newest first",

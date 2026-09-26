@@ -13,12 +13,10 @@
 use egui::{Align2, Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
-use crate::board;
+use crate::board::{self, Side};
 use crate::career::{self, Career};
 use crate::notes::{self, Notes};
-use overseer_ui::{
-    Face, art, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space,
-};
+use overseer_ui::{Face, art, caps_at, caps_text, colour, hex, motion, rank, shape, size, space};
 
 /// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;
@@ -30,6 +28,7 @@ const VALUE_X: f32 = 60.0;
 pub(crate) fn show(
     ui: &mut Ui,
     player: Option<&Player>,
+    side: Side,
     store: &mut Notes,
     career: &Career,
 ) -> bool {
@@ -54,8 +53,8 @@ pub(crate) fn show(
             }
             save = notes(ui, player, store);
             ranks(ui, player);
-            form(ui, player);
-            numbers(ui, player);
+            form(ui, player, side);
+            numbers(ui, player, side);
             group(ui, player);
             met(ui, player);
             loadout(ui, player);
@@ -63,7 +62,7 @@ pub(crate) fn show(
             // that is longest. Everything above it is on the board already
             // and should not move when an answer lands.
             if let Some(puuid) = player.puuid.as_deref() {
-                career::show(ui, career, puuid);
+                career::show(ui, career, puuid, side);
             }
             ui.add_space(space::XL);
         });
@@ -200,7 +199,8 @@ fn card(ui: &mut Ui, player: &Player) {
     let painter = ui.painter().clone();
     let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::BG_INSET);
     painter.rect_filled(card, 0, shape::blend(tint, colour::BG, 0.55));
-    if let Some(face) = art::killfeed(ui.ctx(), player.agent.as_deref().unwrap_or("")) {
+    let named = player.agent.as_deref().unwrap_or("");
+    if let Some(face) = art::card(ui.ctx(), named).or_else(|| art::killfeed(ui.ctx(), named)) {
         // Fit the width, keep the top of the crop, which is where the eyes
         // are, and let the chin go.
         let texture = face.size_vec2();
@@ -289,13 +289,29 @@ fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
         colour::TEXT,
     );
     if let Some(title) = player.title.as_deref() {
+        // On its own chip, because over the art a title in cream is cream on
+        // whatever the agent's hair happens to be.
+        let width = overseer_ui::caps_width(painter, title, Face::Display.at(size::LABEL));
+        let chip = Rect::from_min_size(
+            pos2(
+                card.right() - space::MD - width - space::XL,
+                card.top() + space::MD,
+            ),
+            vec2(width + space::XL, 20.0),
+        );
+        painter.add(board::paint::slant(
+            chip,
+            true,
+            false,
+            colour::BG.gamma_multiply(0.85),
+        ));
         let _title = caps_text(
             painter,
-            pos2(card.right() - space::LG, card.top() + space::LG),
-            Align2::RIGHT_CENTER,
+            pos2(chip.center().x + 2.0, chip.center().y),
+            Align2::CENTER_CENTER,
             title,
             Face::Display.at(size::LABEL),
-            colour::TEXT_STRONG.gamma_multiply(0.8),
+            colour::TEXT_STRONG,
         );
     }
 }
@@ -424,7 +440,6 @@ fn ranks(ui: &mut Ui, player: &Player) {
 fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
     let painter = ui.painter().clone();
     let tier = player.rank_tier.unwrap_or(0);
-    let tint = rank(player.rank_tier);
     let emblem = pos2(rect.left() + space::LG + EMBLEM / 2.0, rect.center().y);
     if tier >= 3 {
         board::paint::emblem(&painter, tier, emblem, EMBLEM, 1.0);
@@ -437,7 +452,11 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
         Align2::LEFT_CENTER,
         &name,
         Face::Heavy.at(24.0),
-        if tier >= 3 { tint } else { colour::TEXT_DIM },
+        if tier >= 3 {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT_DIM
+        },
     );
     let Some(rr) = player.rr else { return };
     let after = caps_text(
@@ -500,7 +519,7 @@ fn rank_bar(ui: &mut Ui, player: &Player) {
 }
 
 /// Recent results, the run they are on, and what they play.
-fn form(ui: &mut Ui, player: &Player) {
+fn form(ui: &mut Ui, player: &Player, side: Side) {
     if player.form.is_empty() && player.top_agents.is_empty() {
         return;
     }
@@ -510,7 +529,7 @@ fn form(ui: &mut Ui, player: &Player) {
         let (rect, _response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
         if ui.is_rect_visible(rect) {
-            pips(ui, player, rect);
+            pips(ui, player, rect, side);
         }
     }
     let mains: Vec<String> = player
@@ -531,22 +550,18 @@ fn form(ui: &mut Ui, player: &Player) {
 }
 
 /// The last ten results, and the run if there is one worth saying.
-fn pips(ui: &Ui, player: &Player, rect: Rect) {
+fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
     let painter = ui.painter().clone();
-    let mut x = rect.left() + space::LG;
-    for result in player.form.iter().take(10) {
-        let tint = match result.chars().next() {
-            Some('W' | 'w') => colour::ALLY,
-            Some('D' | 'd') => colour::WARN,
-            _ => colour::ENEMY,
-        };
-        let pip = Rect::from_min_size(
-            pos2(x, rect.center().y - space::PIP / 2.0),
-            vec2(space::PIP - 2.0, space::PIP),
-        );
-        painter.add(shape::pip(pip, tint));
-        x += space::PIP + 2.0;
-    }
+    // The row's own pips, at the panel's size: a win in the colour of what
+    // it means for you, a loss dim.
+    board::paint::pips(
+        &painter,
+        &player.form,
+        pos2(rect.left() + space::LG, rect.center().y),
+        11.0,
+        board::paint::win(side),
+    );
+    let x = rect.left() + space::LG + 5.0 * 13.0;
     let Some(streak) = player.streak.as_ref() else {
         return;
     };
@@ -559,8 +574,12 @@ fn pips(ui: &Ui, player: &Player, rect: Rect) {
         pos2(x + space::MD, rect.center().y),
         Align2::LEFT_CENTER,
         format!("{count} {} in a row", if won { "won" } else { "lost" }),
-        Face::Body.at(size::MICRO),
-        if won { colour::ALLY } else { colour::ENEMY },
+        Face::Body.at(size::LABEL + 1.0),
+        if won {
+            board::paint::win(side)
+        } else {
+            colour::TEXT_DIM
+        },
     );
 }
 
@@ -568,7 +587,7 @@ fn pips(ui: &Ui, player: &Player, rect: Rect) {
 ///
 /// A number with nothing behind it reads as a career average, and the K/D
 /// here is the last few matches. Saying so costs four characters.
-fn numbers(ui: &mut Ui, player: &Player) {
+fn numbers(ui: &mut Ui, player: &Player, side: Side) {
     ui.add_space(space::LG);
     heading(ui, "numbers");
     let over = if player.form.is_empty() {
@@ -580,7 +599,7 @@ fn numbers(ui: &mut Ui, player: &Player) {
         ui,
         "k/d",
         &player.kd.map_or_else(dash, |v| format!("{v:.2}")),
-        kd(player.kd),
+        board::paint::kd_heat(side, player.kd),
         &over,
     );
     stat(
@@ -617,11 +636,11 @@ fn group(ui: &mut Ui, player: &Player) {
         .filter(|s| *s > 1)
     {
         ui.add_space(space::LG);
-        heading_tinted(ui, "party", colour::INFO);
+        heading(ui, "party");
         line(
             ui,
-            &format!("{}, and Riot says so", stack_word(size)),
-            colour::INFO,
+            &format!("{}, confirmed by Riot", stack_word(size)),
+            colour::TEXT,
             size::BODY,
         );
         return;

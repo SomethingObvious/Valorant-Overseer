@@ -435,7 +435,7 @@ fn rank_bar(ui: &mut Ui, player: &Player) {
     painter.rect_filled(track, 0, colour::BG_INSET);
     let mut filled = track;
     filled.set_width(track.width() * share);
-    painter.rect_filled(filled, 0, rank(player.rank_tier));
+    painter.add(shape::pip(filled, rank(player.rank_tier)));
 }
 
 /// Recent results, the run they are on, and what they play.
@@ -483,7 +483,7 @@ fn pips(ui: &Ui, player: &Player, rect: Rect) {
             pos2(x, rect.center().y - space::PIP / 2.0),
             vec2(space::PIP - 2.0, space::PIP),
         );
-        painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
+        painter.add(shape::pip(pip, tint));
         x += space::PIP + 2.0;
     }
     let Some(streak) = player.streak.as_ref() else {

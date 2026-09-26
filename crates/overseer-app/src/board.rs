@@ -888,7 +888,7 @@ fn form_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
             pos2(x, rect.center().y - space::PIP / 2.0),
             vec2(space::PIP - 2.0, space::PIP),
         );
-        painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
+        painter.add(shape::pip(pip, tint));
         x += space::PIP + 2.0;
     }
     // Only if the pips left room for it. On a narrow window this column is
@@ -1156,7 +1156,7 @@ fn results(painter: &egui::Painter, session: &overseer_core::Session, band: Rect
         if block.right() > band.right() - 140.0 {
             break;
         }
-        painter.rect_filled(block, 0, tint.gamma_multiply(0.85));
+        painter.add(shape::pip(block, tint));
         x = block.right() + 3.0;
     }
 }

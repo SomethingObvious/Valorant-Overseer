@@ -1280,6 +1280,16 @@ impl Overseer {
                             .font(Face::Body.at(size::BODY)),
                     ),
             );
+            // A field is a hole in the surface rather than a plate on it, so
+            // the light lands on the far side of it: one hairline inside the
+            // bottom edge and it reads as cut in rather than drawn on. It
+            // goes on after the widget because the widget paints its own
+            // ground, and it sits on the edge where no glyph reaches.
+            ui.painter().hline(
+                response.rect.x_range(),
+                response.rect.bottom() - 1.0,
+                (1.0, colour::TEXT_STRONG.gamma_multiply(0.07)),
+            );
             if self.focus_search {
                 response.request_focus();
                 self.focus_search = false;
@@ -1318,7 +1328,21 @@ impl Overseer {
             return;
         }
         let painter = ui.painter().clone();
-        painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
+        painter.add(egui::Shape::gradient_rect(
+            rect,
+            egui::Direction::TopDown,
+            [colour::BG_RAISED, colour::BG_INSET],
+        ));
+        painter.hline(
+            rect.x_range(),
+            rect.top(),
+            (1.0, colour::VOID.gamma_multiply(0.6)),
+        );
+        painter.hline(
+            rect.x_range(),
+            rect.top() + 1.0,
+            (1.0, colour::TEXT_STRONG.gamma_multiply(0.08)),
+        );
 
         // What the window is spending is drawn first, because the hints are
         // the half that can be dropped. At four hundred and sixty points the

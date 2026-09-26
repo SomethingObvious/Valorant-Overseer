@@ -345,6 +345,28 @@ pub mod shape {
         }
     }
 
+    /// One result, as a block of colour with a light on its top edge.
+    ///
+    /// There are fifty of these on a full board and eight more under it, and
+    /// fifty flat squares is the single largest run of undesigned colour
+    /// left in the window. They are too small for a hairline, so the light
+    /// is the gradient itself: bright at the top, the colour at the bottom.
+    /// It costs the same triangles the flat one cost.
+    ///
+    /// Shared, because the board, the panel and the session strip all draw
+    /// the same mark and three sizes of the same mark is the sort of thing
+    /// nobody sees and everybody feels.
+    pub fn pip(rect: Rect, tint: Color32) -> Shape {
+        Shape::gradient_rect(
+            rect,
+            egui::Direction::TopDown,
+            [
+                blend(tint, super::colour::TEXT_STRONG, 0.28),
+                tint.gamma_multiply(0.78),
+            ],
+        )
+    }
+
     /// A chamfered surface with a light on it: a wash down the face, a bright
     /// hairline along the top edge and a dark one along the bottom.
     ///

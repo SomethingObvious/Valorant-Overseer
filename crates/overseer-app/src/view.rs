@@ -304,15 +304,38 @@ use overseer_core::Board;
 #[cfg(test)]
 use overseer_ui::motion;
 
+/// One frame of the app, for the snapshot and budget tests to draw.
+///
+/// A struct rather than a parameter list because the list is now everything
+/// the window holds, and seven positional arguments is a call nobody can
+/// read at the site.
 #[cfg(test)]
-pub(crate) fn snapshot(
-    ui: &mut Ui,
-    board: &Board,
-    selected: Option<&str>,
-    settings: &Settings,
-    sort: &Sort,
-    notes: &mut crate::notes::Notes,
-) {
+pub(crate) struct Shown<'a> {
+    /// What the bridge last sent.
+    pub(crate) board: &'a Board,
+    /// Who the panel is about, by name rather than by id, because a fixture
+    /// is written by a person.
+    pub(crate) selected: Option<&'a str>,
+    /// Every switch.
+    pub(crate) settings: &'a Settings,
+    /// How the board is ordered.
+    pub(crate) sort: &'a Sort,
+    /// What has been written about them.
+    pub(crate) notes: &'a mut crate::notes::Notes,
+    /// The selected player's history.
+    pub(crate) career: &'a crate::career::Career,
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
+    let Shown {
+        board,
+        selected,
+        settings,
+        sort,
+        notes,
+        career,
+    } = shown;
     let width = ui.available_width();
     app::snapshot_header(ui, board);
     if width >= app::COMPACT && settings.panel {
@@ -328,7 +351,7 @@ pub(crate) fn snapshot(
                 ui.add_space(space::MD);
                 let player = selected
                     .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
-                panel::show(ui, player, notes);
+                panel::show(ui, player, notes, career);
             });
     }
     CentralPanel::default()

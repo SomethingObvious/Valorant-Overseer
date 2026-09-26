@@ -21,6 +21,7 @@ use egui::{Ui, vec2};
 use egui_kittest::Harness;
 use overseer_core::{Board, Player};
 
+use crate::career::Career;
 use crate::notes::{Note, Notes};
 use crate::settings::{Quality, Settings};
 use crate::sort::{Direction, Sort};
@@ -36,11 +37,52 @@ struct Scene {
     sort: Sort,
     /// What has been written about the people on the board.
     notes: Notes,
+    /// The selected player's history, which is the tallest thing the panel
+    /// draws and the only part of it with a chart in.
+    career: Career,
     /// False on the very first frame. Fonts only materialise once a frame has
     /// run, and the app names its own font families on every line it draws,
     /// so the first frame installs them and draws nothing rather than laying
     /// out a glyph in a family that is not bound yet.
     ready: bool,
+}
+
+impl Scene {
+    /// The sample board, with somebody selected and nothing else set.
+    fn of(selected: Option<&'static str>) -> Self {
+        Self {
+            board: sample(),
+            selected,
+            sort: Sort::default(),
+            notes: Notes::default(),
+            career: Career::default(),
+            ready: true,
+        }
+    }
+
+    /// No board at all, which is what the app opens on.
+    fn empty() -> Self {
+        Self {
+            board: Board::default(),
+            selected: None,
+            ..Self::of(None)
+        }
+    }
+
+    /// Ordered by a heading somebody clicked.
+    fn sorted(self, sort: Sort) -> Self {
+        Self { sort, ..self }
+    }
+
+    /// With something written about one of them.
+    fn noted(self, notes: Notes) -> Self {
+        Self { notes, ..self }
+    }
+
+    /// With the selected player's history in hand.
+    fn lived(self, career: Career) -> Self {
+        Self { career, ..self }
+    }
 }
 
 /// A board with the shapes worth looking at in one frame: a flagged low level
@@ -55,7 +97,7 @@ pub(crate) fn sample() -> Board {
         "Blue".to_owned(),
         overseer_core::TeamStats {
             avg_rank: Some("Gold 1".to_owned()),
-            avg_rank_tier: Some(12),
+            avg_rank_tier: Some(12.6),
             avg_kd: Some(1.27),
             avg_win_rate: Some(56.0),
             smurf_count: Some(1),
@@ -262,12 +304,71 @@ fn plain() -> Vec<Player> {
 fn draw(ui: &mut Ui, scene: &mut Scene) {
     view::snapshot(
         ui,
-        &scene.board,
-        scene.selected,
-        &Settings::default(),
-        &scene.sort,
-        &mut scene.notes,
+        view::Shown {
+            board: &scene.board,
+            selected: scene.selected,
+            settings: &Settings::default(),
+            sort: &scene.sort,
+            notes: &mut scene.notes,
+            career: &scene.career,
+        },
     );
+}
+
+/// A history to draw the charts from.
+///
+/// Built out of the JSON the backend actually sends rather than out of struct
+/// literals, so the picture and the parser are tested by the same fixture.
+/// Eight matches, a promotion in the middle of them, and a K/D that goes both
+/// ways: the three things the two charts have to get right.
+fn a_history() -> Career {
+    let raw = r#"{
+        "source": "demo", "puuid": "b",
+        "matches": [
+          {"map":"Icebox","mode":"Competitive","result":"Victory","agent":"Chamber",
+           "kills":24,"deaths":13,"assists":4,"kd":1.85,"hsPct":33,
+           "rrDelta":21,"rrAfter":36,"tierAfter":18,"rankAfter":"Diamond 3"},
+          {"map":"Lotus","mode":"Competitive","result":"Victory","agent":"Chamber",
+           "kills":19,"deaths":15,"assists":6,"kd":1.27,"hsPct":27,
+           "rrDelta":18,"rrAfter":15,"tierAfter":18,"rankAfter":"Diamond 3"},
+          {"map":"Ascent","mode":"Competitive","result":"Defeat","agent":"Jett",
+           "kills":12,"deaths":18,"assists":2,"kd":0.67,"hsPct":19,
+           "rrDelta":-17,"rrAfter":97,"tierAfter":17,"rankAfter":"Diamond 2"},
+          {"map":"Bind","mode":"Competitive","result":"Victory","agent":"Chamber",
+           "kills":21,"deaths":16,"assists":3,"kd":1.31,"hsPct":29,
+           "rrDelta":20,"rrAfter":114,"tierAfter":17,"rankAfter":"Diamond 2"},
+          {"map":"Split","mode":"Competitive","result":"Defeat","agent":"Chamber",
+           "kills":14,"deaths":19,"assists":7,"kd":0.74,"hsPct":22,
+           "rrDelta":-15,"rrAfter":94,"tierAfter":17,"rankAfter":"Diamond 2"},
+          {"map":"Haven","mode":"Competitive","result":"Victory","agent":"Jett",
+           "kills":26,"deaths":14,"assists":1,"kd":1.86,"hsPct":35,
+           "rrDelta":22,"rrAfter":109,"tierAfter":17,"rankAfter":"Diamond 2"},
+          {"map":"Sunset","mode":"Unrated","result":"Defeat","agent":"Clove",
+           "kills":9,"deaths":17,"assists":8,"kd":0.53,"hsPct":15},
+          {"map":"Pearl","mode":"Competitive","result":"Victory","agent":"Chamber",
+           "kills":18,"deaths":15,"assists":5,"kd":1.2,"hsPct":26,
+           "rrDelta":16,"rrAfter":87,"tierAfter":17,"rankAfter":"Diamond 2"}
+        ],
+        "averages": {"games":8,"wins":5,"winRate":63,"kills":17.9,"deaths":15.9,
+                     "assists":4.5,"kd":1.13,"hsPct":26},
+        "coPlayers": [
+          {"puuid":"a","name":"SilentEnt#GG","sharedMatches":5,"agents":["KAY/O"],"isParty":true},
+          {"puuid":"d","name":"NeonLock#VAL","sharedMatches":2,"agents":["Clove"],"isParty":false}
+        ],
+        "topGuns": [
+          {"name":"Vandal","kills":92,"share":58},
+          {"name":"Operator","kills":31,"share":19},
+          {"name":"Sheriff","kills":18,"share":11},
+          {"name":"Ghost","kills":12,"share":8}
+        ],
+        "forceHabit": {"forced":5,"chances":7,"pct":71},
+        "bonusBuys": [{"name":"Spectre","rounds":4,"share":57}],
+        "bonusRounds": 7
+    }"#;
+    Career::Have {
+        puuid: "b".to_owned(),
+        profile: Box::new(serde_json::from_str(raw).expect("the fixture is the wire format")),
+    }
 }
 
 /// A note about somebody on the sample board, so the panel's boxes and the
@@ -288,82 +389,37 @@ fn remembered() -> Notes {
 /// Every frame worth pinning: the three layouts, a sorted board, and the
 /// screen a new install opens on. Data rather than test, so that adding one
 /// is adding a line here.
-fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
+fn scenes() -> [(&'static str, egui::Vec2, Scene); 7] {
     [
-        (
-            "wide",
-            vec2(1200.0, 340.0),
-            Scene {
-                board: sample(),
-                selected: Some("SilentEnt#GG"),
-                sort: Sort::default(),
-                notes: Notes::default(),
-                ready: true,
-            },
-        ),
+        ("wide", vec2(1200.0, 340.0), Scene::of(Some("SilentEnt#GG"))),
         // Sorted by K/D, best first, which is the question a heading gets
         // clicked to answer. The arrow belongs in a picture somebody looks
         // at rather than only in a unit test.
         (
             "sorted",
             vec2(1200.0, 300.0),
-            Scene {
-                board: sample(),
-                selected: Some("NeonLock#VAL"),
-                sort: Sort {
-                    column: Some("k/d".to_owned()),
-                    direction: Some(Direction::Down),
-                },
-                notes: Notes::default(),
-                ready: true,
-            },
+            Scene::of(Some("NeonLock#VAL")).sorted(Sort {
+                column: Some("k/d".to_owned()),
+                direction: Some(Direction::Down),
+            }),
         ),
         // A player you have written about: the mark on their row, and the
         // boxes in the panel with something in them.
         (
             "noted",
             vec2(1200.0, 300.0),
-            Scene {
-                board: sample(),
-                selected: Some("Day#9932"),
-                sort: Sort::default(),
-                notes: remembered(),
-                ready: true,
-            },
+            Scene::of(Some("Day#9932")).noted(remembered()),
         ),
+        ("normal", vec2(860.0, 340.0), Scene::of(Some("Day#9932"))),
+        ("compact", vec2(460.0, 320.0), Scene::of(Some("Day#9932"))),
+        // A full history, which is the only thing in the app with a chart in
+        // it and therefore the only thing a number alone cannot check.
         (
-            "normal",
-            vec2(860.0, 340.0),
-            Scene {
-                board: sample(),
-                selected: Some("Day#9932"),
-                sort: Sort::default(),
-                notes: Notes::default(),
-                ready: true,
-            },
+            "career",
+            vec2(1200.0, 1240.0),
+            Scene::of(Some("Day#9932")).lived(a_history()),
         ),
-        (
-            "compact",
-            vec2(460.0, 320.0),
-            Scene {
-                board: sample(),
-                selected: Some("Day#9932"),
-                sort: Sort::default(),
-                notes: Notes::default(),
-                ready: true,
-            },
-        ),
-        (
-            "waiting",
-            vec2(860.0, 240.0),
-            Scene {
-                board: Board::default(),
-                selected: None,
-                sort: Sort::default(),
-                notes: Notes::default(),
-                ready: true,
-            },
-        ),
+        ("waiting", vec2(860.0, 240.0), Scene::empty()),
     ]
 }
 
@@ -383,11 +439,8 @@ fn every_layout_is_unchanged() {
                 }
             },
             Scene {
-                board: sample(),
-                selected: None,
-                sort: Sort::default(),
-                notes: Notes::default(),
                 ready: false,
+                ..Scene::of(None)
             },
         );
     design::install_fonts(&harness.ctx);

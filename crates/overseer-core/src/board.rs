@@ -13,6 +13,43 @@
 
 use serde::Deserialize;
 
+/// Reads a whole number that may not have arrived as one.
+///
+/// Python has one number type and the backend rounds some of these to two
+/// places and some to none, so an average tier is `12.6` and a round count is
+/// `13`. Serde refuses the first against a `u32`, and because a board that
+/// will not parse is dropped, one loose `round(x, 2)` anywhere in the backend
+/// used to blank the whole scoreboard and read as "no match in progress".
+///
+/// So numbers are read as numbers. This is a trust boundary, and the shape a
+/// value arrived in is not something to be strict about when the meaning is
+/// unambiguous.
+mod number {
+    use serde::{Deserialize, Deserializer};
+
+    /// A whole number, from whatever number arrived.
+    pub(super) fn whole<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+        Ok(real(d)?.map(|v| v.round().clamp(0.0, f64::from(u32::MAX)) as u32))
+    }
+
+    /// A whole number that can be negative: rating earned, a session's net.
+    pub(super) fn signed<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+        Ok(real(d)?.map(|v| v.round() as i64))
+    }
+
+    /// Whatever number it was, as one this can work with.
+    ///
+    /// A null or a missing field is nothing. A string is still an error, and
+    /// deliberately: the rule here is that a number is a number whatever
+    /// shape it arrived in, not that anything at all will do.
+    fn real<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+        let Some(number) = Option::<serde_json::Number>::deserialize(d)? else {
+            return Ok(None);
+        };
+        Ok(number.as_f64())
+    }
+}
+
 /// A weapon skin, as the store names it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,8 +77,10 @@ pub struct Party {
     /// Which of the coloured rails this party gets.
     pub color: Option<String>,
     /// First party, second party, and so on down the board.
+    #[serde(deserialize_with = "number::whole")]
     pub number: Option<u32>,
     /// How many of them there are.
+    #[serde(deserialize_with = "number::whole")]
     pub size: Option<u32>,
 }
 
@@ -55,12 +94,16 @@ pub struct Party {
 #[serde(rename_all = "camelCase", default)]
 pub struct StackGuess {
     /// How many the app thinks are together.
+    #[serde(deserialize_with = "number::whole")]
     pub size: Option<u32>,
     /// How sure it is, as a percentage.
+    #[serde(deserialize_with = "number::whole")]
     pub confidence: Option<u32>,
     /// How many lobbies the two accounts have shared.
+    #[serde(deserialize_with = "number::whole")]
     pub shared: Option<u32>,
     /// How many of those they were on the same side for.
+    #[serde(deserialize_with = "number::whole")]
     pub same: Option<u32>,
 }
 
@@ -72,6 +115,7 @@ pub struct Streak {
     #[serde(rename = "type")]
     pub kind: Option<String>,
     /// How long it has been going.
+    #[serde(deserialize_with = "number::whole")]
     pub count: Option<u32>,
 }
 
@@ -82,6 +126,7 @@ pub struct TopAgent {
     /// The agent's name.
     pub agent: Option<String>,
     /// Matches on it.
+    #[serde(deserialize_with = "number::whole")]
     pub games: Option<u32>,
 }
 
@@ -92,6 +137,7 @@ pub struct MapWinRate {
     /// Percentage won.
     pub win_rate: Option<f64>,
     /// Out of how many.
+    #[serde(deserialize_with = "number::whole")]
     pub games: Option<u32>,
 }
 
@@ -103,20 +149,28 @@ pub struct MapWinRate {
 #[serde(rename_all = "camelCase", default)]
 pub struct Encounter {
     /// Times on your team.
+    #[serde(deserialize_with = "number::whole")]
     pub with_count: Option<u32>,
     /// Times against you.
+    #[serde(deserialize_with = "number::whole")]
     pub against_count: Option<u32>,
     /// Won together.
+    #[serde(deserialize_with = "number::whole")]
     pub wins_with: Option<u32>,
     /// Lost together.
+    #[serde(deserialize_with = "number::whole")]
     pub losses_with: Option<u32>,
     /// Beaten them.
+    #[serde(deserialize_with = "number::whole")]
     pub wins_against: Option<u32>,
     /// Lost to them.
+    #[serde(deserialize_with = "number::whole")]
     pub losses_against: Option<u32>,
     /// Drawn together.
+    #[serde(deserialize_with = "number::whole")]
     pub draws_with: Option<u32>,
     /// Drawn against.
+    #[serde(deserialize_with = "number::whole")]
     pub draws_against: Option<u32>,
 }
 
@@ -155,16 +209,21 @@ pub struct Player {
     /// Rank name, for example `Gold 2`.
     pub rank: Option<String>,
     /// Rank tier, three per group from Iron at 3. The colour comes off this.
+    #[serde(deserialize_with = "number::whole")]
     pub rank_tier: Option<u32>,
     /// Ranked rating within the current tier.
+    #[serde(deserialize_with = "number::signed")]
     pub rr: Option<i64>,
     /// What the last match did to that rating.
+    #[serde(deserialize_with = "number::signed")]
     pub rr_earned: Option<i64>,
     /// Their place on the leaderboard, for the ranks that have one.
+    #[serde(deserialize_with = "number::whole")]
     pub leaderboard: Option<u32>,
     /// Best rank ever reached.
     pub peak_rank: Option<String>,
     /// Tier of that peak.
+    #[serde(deserialize_with = "number::whole")]
     pub peak_rank_tier: Option<u32>,
     /// The act it was reached in, as Riot labels acts.
     pub peak_act: Option<String>,
@@ -178,6 +237,7 @@ pub struct Player {
     /// Win rate over the career the backend could see.
     pub win_rate: Option<f64>,
     /// Matches behind that win rate.
+    #[serde(deserialize_with = "number::whole")]
     pub games: Option<u32>,
     /// One letter per recent match, newest first.
     pub form: Vec<String>,
@@ -189,6 +249,7 @@ pub struct Player {
     pub map_win_rate: Option<MapWinRate>,
 
     /// Account level, or zero when they have hidden it.
+    #[serde(deserialize_with = "number::whole")]
     pub level: Option<u32>,
     /// True when the level is hidden rather than unknown.
     pub level_hidden: bool,
@@ -229,12 +290,13 @@ pub struct TeamStats {
     /// The average rank, in words.
     pub avg_rank: Option<String>,
     /// That average as a tier, for the colour.
-    pub avg_rank_tier: Option<u32>,
+    pub avg_rank_tier: Option<f64>,
     /// The average K/D across the side.
     pub avg_kd: Option<f64>,
     /// The average win rate across the side.
     pub avg_win_rate: Option<f64>,
     /// How many of them came back flagged.
+    #[serde(deserialize_with = "number::whole")]
     pub smurf_count: Option<u32>,
 }
 
@@ -247,8 +309,10 @@ pub struct SessionPoint {
     /// Victory, Defeat or Draw, in Riot's words.
     pub result: Option<String>,
     /// What it did to the rating.
+    #[serde(deserialize_with = "number::signed")]
     pub delta: Option<i64>,
     /// The rating after it.
+    #[serde(deserialize_with = "number::signed")]
     pub rr: Option<i64>,
 }
 
@@ -257,6 +321,7 @@ pub struct SessionPoint {
 #[serde(rename_all = "camelCase", default)]
 pub struct Session {
     /// The sum of the deltas below.
+    #[serde(deserialize_with = "number::signed")]
     pub net: Option<i64>,
     /// One entry per match, oldest first.
     pub points: Vec<SessionPoint>,
@@ -267,10 +332,13 @@ pub struct Session {
 #[serde(rename_all = "camelCase", default)]
 pub struct Score {
     /// Rounds your side has won.
+    #[serde(deserialize_with = "number::whole")]
     pub ally: Option<u32>,
     /// Rounds the other side has won.
+    #[serde(deserialize_with = "number::whole")]
     pub enemy: Option<u32>,
     /// Which round is being played.
+    #[serde(deserialize_with = "number::whole")]
     pub round: Option<u32>,
 }
 
@@ -279,8 +347,10 @@ pub struct Score {
 #[serde(rename_all = "camelCase", default)]
 pub struct LockProgress {
     /// How many have locked in.
+    #[serde(deserialize_with = "number::whole")]
     pub locked: Option<u32>,
     /// Out of how many.
+    #[serde(deserialize_with = "number::whole")]
     pub total: Option<u32>,
 }
 
@@ -448,5 +518,40 @@ mod tests {
     fn a_wrong_type_is_an_error() {
         let json = r#"{"players": [{"kd": "one and a half"}]}"#;
         assert!(serde_json::from_str::<Board>(json).is_err());
+        // The same rule for the lenient fields: a number in any shape, but
+        // still a number.
+        let json = r#"{"players": [{"level": "four hundred"}]}"#;
+        assert!(serde_json::from_str::<Board>(json).is_err());
+    }
+
+    /// A whole number that arrived with a decimal point is still that number.
+    ///
+    /// The backend is Python and rounds some of these to two places. Before
+    /// this, one `round(x, 2)` on a team's average tier made the entire board
+    /// unreadable, and an unreadable board was dropped without a word: the
+    /// window sat there saying there was no match in progress, during a
+    /// match. Every whole number on the board is read this way now, so the
+    /// next loose rounding anywhere in the backend is a rounding rather than
+    /// a blank scoreboard.
+    #[test]
+    fn a_whole_number_with_a_decimal_point_still_arrives() {
+        let json = r#"{
+            "players": [{"level": 154.0, "rr": 37.4, "rrEarned": -12.6,
+                         "rankTier": 12.0, "games": 118.0}],
+            "teamStats": {"Blue": {"avgRankTier": 12.6, "smurfCount": 1.0}},
+            "score": {"ally": 3.0, "enemy": 1.0, "round": 5.0}
+        }"#;
+        let board: Board = serde_json::from_str(json).expect("a rounded board would not read");
+        let player = board.players.first().expect("no player");
+        assert_eq!(player.level, Some(154));
+        assert_eq!(player.rr, Some(37), "37.4 did not round to 37");
+        assert_eq!(player.rr_earned, Some(-13), "-12.6 did not round to -13");
+        assert_eq!(player.games, Some(118));
+        assert_eq!(
+            board.team_stats.get("Blue").and_then(|s| s.avg_rank_tier),
+            Some(12.6),
+            "an average tier is an average and should not be rounded away"
+        );
+        assert_eq!(board.score.and_then(|s| s.round), Some(5));
     }
 }

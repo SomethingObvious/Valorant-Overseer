@@ -10,6 +10,7 @@
 
 mod app;
 mod board;
+mod career;
 mod hotkey;
 mod notes;
 mod overlay;

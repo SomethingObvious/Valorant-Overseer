@@ -690,7 +690,10 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
     // good somebody is, it is how good they are next to the other five.
     if let Some(stats) = board.stats(team) {
         for (text, tint) in [
-            (stats.avg_rank.clone(), rank(stats.avg_rank_tier)),
+            (
+                stats.avg_rank.clone(),
+                rank(stats.avg_rank_tier.map(|t| t.round() as u32)),
+            ),
             (
                 stats.avg_kd.map(|v| format!("{v:.2} K/D")),
                 kd(stats.avg_kd),

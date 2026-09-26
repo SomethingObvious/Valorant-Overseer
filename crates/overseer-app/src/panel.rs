@@ -13,6 +13,7 @@
 use egui::{Align2, Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
+use crate::career::{self, Career};
 use crate::notes::{self, Notes};
 use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
 
@@ -23,7 +24,12 @@ const VALUE_X: f32 = 60.0;
 ///
 /// Returns whether the notes want writing to disk, which is the one thing in
 /// here that changes anything outside the window.
-pub(crate) fn show(ui: &mut Ui, player: Option<&Player>, store: &mut Notes) -> bool {
+pub(crate) fn show(
+    ui: &mut Ui,
+    player: Option<&Player>,
+    store: &mut Notes,
+    career: &Career,
+) -> bool {
     let Some(player) = player else {
         heading(ui, "no one selected");
         line(
@@ -50,6 +56,12 @@ pub(crate) fn show(ui: &mut Ui, player: Option<&Player>, store: &mut Notes) -> b
             group(ui, player);
             met(ui, player);
             loadout(ui, player);
+            // Last, because it is the part that arrives late and the part
+            // that is longest. Everything above it is on the board already
+            // and should not move when an answer lands.
+            if let Some(puuid) = player.puuid.as_deref() {
+                career::show(ui, career, puuid);
+            }
             ui.add_space(space::XL);
         });
     save
@@ -576,7 +588,7 @@ fn loadout(ui: &mut Ui, player: &Player) {
 }
 
 /// A section heading: caps, tracked, faint, with air above it.
-fn heading(ui: &mut Ui, text: &str) {
+pub(crate) fn heading(ui: &mut Ui, text: &str) {
     heading_tinted(ui, text, colour::TEXT_FAINT);
 }
 
@@ -597,7 +609,7 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
 }
 
 /// One line of prose, at the panel's left margin.
-fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
+pub(crate) fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -613,7 +625,7 @@ fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
 }
 
 /// A label, a value, and a quieter note after it.
-fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &str) {
+pub(crate) fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
     if !ui.is_rect_visible(rect) {

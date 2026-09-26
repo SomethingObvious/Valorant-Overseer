@@ -19,6 +19,7 @@ use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, po
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
+use crate::career::Career;
 use crate::hotkey::{self, Hotkey};
 use crate::notes::{self, Notes};
 use crate::overlay;
@@ -80,6 +81,13 @@ pub(crate) struct Overseer {
     tray: Result<Tray, String>,
     /// Set when the window has been closed to the tray rather than quit.
     hidden: bool,
+    /// The selected player's history, or where the request for it has got to.
+    career: Career,
+    /// Frames the bridge sent that this build could not read, and the last
+    /// reason. Counted rather than ignored: a board that will not parse
+    /// looks exactly like no match in progress, and that cost an evening
+    /// once already.
+    unreadable: (u64, Option<String>),
 }
 
 /// What the middle of the window is showing.
@@ -145,6 +153,8 @@ impl Overseer {
             hotkey: report("hotkey", hotkey::start(waker(&cc.egui_ctx))),
             tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
             hidden: false,
+            career: Career::default(),
+            unreadable: (0, None),
         }
     }
 
@@ -181,7 +191,19 @@ impl Overseer {
         }
         for event in self.bridge.drain() {
             match event {
-                Event::Status(status) => self.status = status,
+                Event::Status(status) => {
+                    // A socket that has just come back cannot answer a
+                    // question asked down the one before it.
+                    if status == Status::Live {
+                        self.career.reconnected();
+                    }
+                    self.status = status;
+                }
+                Event::Answer { id, result } => self.career.answered(id, result),
+                Event::Unreadable(why) => {
+                    self.unreadable.0 = self.unreadable.0.saturating_add(1);
+                    self.unreadable.1 = Some(why);
+                }
                 Event::Board(board) => {
                     self.board = *board;
                     self.boards = self.boards.saturating_add(1);
@@ -290,6 +312,19 @@ impl Overseer {
         if let Some(id) = order.get(next.min(order.len().saturating_sub(1))) {
             self.selected.clone_from(id);
         }
+    }
+
+    /// Why there is no board, when the plain answer would be misleading.
+    ///
+    /// A build that cannot read what the backend is sending is connected,
+    /// signed in, and showing nothing. Saying "nothing in progress" there is
+    /// the wrong sentence, and it is the sentence that hid this for months.
+    fn reason(&self) -> Option<&str> {
+        self.stopped.as_deref().or_else(|| {
+            (self.boards == 0)
+                .then_some(self.unreadable.1.as_deref())
+                .flatten()
+        })
     }
 
     /// Puts the window back on screen, and optionally asks for the
@@ -570,7 +605,7 @@ impl Overseer {
     /// the reason two windows disagree about what is selected.
     fn rows(&self, ui: &mut Ui) -> (Option<String>, Option<&'static str>) {
         if self.board.players.is_empty() {
-            empty(ui, &self.status, self.stopped.as_deref());
+            empty(ui, &self.status, self.reason());
             return (None, None);
         }
         let height = if ui.available_width() < COMPACT {
@@ -650,6 +685,13 @@ impl App for Overseer {
         self.closing(ui.ctx());
         self.keys(ui);
         self.watch_frames(ui);
+        // After the keys, because an arrow key moves the selection and the
+        // history for the new one may as well be on its way this frame.
+        self.career.follow(
+            &self.bridge,
+            self.selected.as_deref(),
+            self.status == Status::Live,
+        );
 
         if self.settings.overlay {
             // Its own window, drawn before this one so that a frame where
@@ -725,7 +767,7 @@ impl App for Overseer {
                     // the panel edits the notes while reading the player, and
                     // both live on this struct.
                     let mut lent = std::mem::take(&mut self.notes);
-                    if panel::show(ui, self.current(), &mut lent) {
+                    if panel::show(ui, self.current(), &mut lent, &self.career) {
                         notes::save(&self.root, &lent);
                     }
                     self.notes = lent;
@@ -804,12 +846,22 @@ impl Overseer {
             colour::TEXT_FAINT,
         );
         let quality = self.quality().label();
+        let (bad, _why) = &self.unreadable;
+        let unreadable = if *bad == 0 {
+            String::new()
+        } else {
+            format!("{bad} unreadable   ")
+        };
         painter.text(
             pos2(rect.right() - space::LG, rect.center().y),
             Align2::RIGHT_CENTER,
-            format!("{} boards   {quality}", self.boards),
+            format!("{} boards   {unreadable}{quality}", self.boards),
             Face::Number.at(size::MICRO),
-            colour::TEXT_FAINT,
+            if *bad == 0 {
+                colour::TEXT_FAINT
+            } else {
+                colour::WARN
+            },
         );
     }
 }
@@ -828,9 +880,9 @@ fn nobody(ui: &mut Ui, filter: &str) {
 
 /// What to say while there is no board. An empty screen is a place to say
 /// what is happening and what to do about it, not a place to say nothing.
-fn empty(ui: &mut Ui, status: &Status, stopped: Option<&str>) {
-    let (title, detail): (&str, &str) = match (stopped, status) {
-        (Some(why), _) => ("The bridge refused this build", why),
+fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
+    let (title, detail): (&str, &str) = match (trouble, status) {
+        (Some(why), _) => ("This build cannot read the bridge", why),
         (None, Status::Live) => (
             "Signed in, nothing in progress",
             "Open VALORANT and this fills in by itself.",
@@ -919,6 +971,8 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         hotkey: Err(String::new()),
         tray: Err(String::new()),
         hidden: false,
+        career: Career::default(),
+        unreadable: (0, None),
     };
     Panel::top("header")
         .exact_size(space::XXL + space::MD)

@@ -48,11 +48,14 @@ fn harness() -> Harness<'static, bool> {
                 if *ready {
                     view::snapshot(
                         ui,
-                        &board(),
-                        Some("Day#9932"),
-                        &Settings::default(),
-                        &Sort::default(),
-                        &mut crate::notes::Notes::default(),
+                        view::Shown {
+                            board: &board(),
+                            selected: Some("Day#9932"),
+                            settings: &Settings::default(),
+                            sort: &Sort::default(),
+                            notes: &mut crate::notes::Notes::default(),
+                            career: &crate::career::Career::default(),
+                        },
                     );
                 }
             },
@@ -119,11 +122,14 @@ fn a_full_board_stays_inside_its_shape_budget() {
     let shapes = harness.ctx.run_ui(egui::RawInput::default(), |ui| {
         view::snapshot(
             ui,
-            &board(),
-            Some("Day#9932"),
-            &Settings::default(),
-            &Sort::default(),
-            &mut crate::notes::Notes::default(),
+            view::Shown {
+                board: &board(),
+                selected: Some("Day#9932"),
+                settings: &Settings::default(),
+                sort: &Sort::default(),
+                notes: &mut crate::notes::Notes::default(),
+                career: &crate::career::Career::default(),
+            },
         );
     });
     let count = shapes.shapes.len();

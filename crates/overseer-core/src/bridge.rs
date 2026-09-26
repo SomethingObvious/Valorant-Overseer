@@ -6,9 +6,14 @@
 //! channel, and the only thing crossing between them is an [`Event`].
 //!
 //! The protocol is `backend/ws_server.py`, and the reference implementation is
-//! `tui/src/bridge.ts`. Both front ends therefore speak the same four
-//! messages: send `auth` on connect, answer `ping` with `pong`, read `state`
-//! for a board, read `response` for an answered request.
+//! `tui/src/bridge.ts`. Both front ends therefore speak the same messages:
+//! send `auth` on connect, answer `ping` with `pong`, read `state` for a
+//! board, send `request` for anything the board does not carry, and read
+//! `response` for the answer to one.
+//!
+//! Requests are how everything larger than a board arrives: a career, a match,
+//! a session. The board is pushed once a second and has to stay small, so the
+//! expensive things are asked for when somebody looks at them.
 //!
 //! No `Origin` header is sent, which matters: the bridge closes any connection
 //! that arrives with one, so that a page in a browser cannot talk to it. That
@@ -17,6 +22,7 @@
 use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
@@ -33,8 +39,15 @@ const PROTOCOL: u32 = 1;
 const RETRY_BASE: Duration = Duration::from_millis(500);
 /// The longest gap between reconnect attempts.
 const RETRY_CEILING: Duration = Duration::from_secs(10);
-/// How long a read blocks before the loop checks whether it should still run.
-const READ_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long a read blocks before the loop checks whether it should still run,
+/// and therefore the longest a question waits before it is asked.
+///
+/// The thread cannot write while it is blocked on a read, so this is the
+/// latency of clicking a player and the panel starting to fill. A tenth of a
+/// second is under what anybody notices, and ten timeouts a second on a thread
+/// that then goes straight back to sleep is not a cost worth having latency
+/// for.
+const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Where the connection has got to, in the words the header uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +70,29 @@ pub enum Event {
     /// The thread has given up and will not retry. A bad token or an
     /// unsupported protocol does not fix itself by reconnecting.
     Stopped(String),
+    /// A frame arrived that this build could not read. Not fatal, and not
+    /// nothing either: it means the backend is saying something in a shape
+    /// this build does not know, and the window has to be able to say so.
+    Unreadable(String),
+    /// The answer to a question, matched to it by the id [`Bridge::ask`]
+    /// handed back.
+    Answer {
+        /// Which question this answers.
+        id: u64,
+        /// The payload, or why there isn't one.
+        result: Result<serde_json::Value, String>,
+    },
+}
+
+/// A question waiting to go out.
+#[derive(Debug)]
+struct Ask {
+    /// The id the answer will carry.
+    id: u64,
+    /// Which request, in the backend's words: `profile`, `match`, `recap`.
+    request: String,
+    /// Whatever that request needs.
+    params: serde_json::Value,
 }
 
 /// What the backend writes once it is listening.
@@ -76,6 +112,12 @@ struct Envelope {
     data: Option<serde_json::Value>,
     message: Option<String>,
     code: Option<String>,
+    /// Set on a `response`, matching the id the question went out with.
+    id: Option<u64>,
+    /// Set on a `response`: whether the backend managed it.
+    ok: Option<bool>,
+    /// Set on a `response` that did not.
+    error: Option<String>,
 }
 
 /// A running connection. Dropping it asks the thread to stop.
@@ -83,6 +125,11 @@ struct Envelope {
 pub struct Bridge {
     events: Receiver<Event>,
     stop: Sender<()>,
+    /// Questions on their way to the thread.
+    outbox: Sender<Ask>,
+    /// The next question's id. Never reused inside one run, so a late answer
+    /// to an abandoned question cannot be mistaken for the current one.
+    next: AtomicU64,
 }
 
 impl Bridge {
@@ -100,18 +147,42 @@ impl Bridge {
     {
         let (events_tx, events) = channel();
         let (stop, stop_rx) = channel();
+        let (outbox, asks) = channel();
         let path = credentials_path(root);
         let failed = events_tx.clone();
         if let Err(e) = thread::Builder::new()
             .name("overseer-bridge".to_owned())
-            .spawn(move || run(&path, &events_tx, &stop_rx, &wake))
+            .spawn(move || run(&path, &events_tx, &stop_rx, &asks, &wake))
         {
             // A machine that cannot spawn a thread cannot run the app, but it
             // can still say so rather than disappearing. No wake is needed:
             // this happens before the first frame, which drains the queue.
             drop(failed.send(Event::Stopped(format!("no bridge thread: {e}"))));
         }
-        Self { events, stop }
+        Self {
+            events,
+            stop,
+            outbox,
+            next: AtomicU64::new(1),
+        }
+    }
+
+    /// Asks the backend something, and hands back the id its answer will
+    /// carry.
+    ///
+    /// Nothing blocks and nothing is guaranteed: a question asked while the
+    /// socket is down goes out when it comes back, and one that was in flight
+    /// when the socket dropped is never answered. The caller keeps the id it
+    /// is waiting on and asks again when the connection returns, which is the
+    /// only honest way to do this over a socket that reconnects.
+    pub fn ask(&self, request: &str, params: serde_json::Value) -> u64 {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        drop(self.outbox.send(Ask {
+            id,
+            request: request.to_owned(),
+            params,
+        }));
+        id
     }
 
     /// Everything that has arrived since the last call, oldest first.
@@ -162,7 +233,13 @@ fn wake_now<W: Fn()>(wake: &W) {
 }
 
 /// The thread body: connect, pump, reconnect, until asked to stop.
-fn run<W: Fn()>(path: &Path, events: &Sender<Event>, stop: &Receiver<()>, wake: &W) {
+fn run<W: Fn()>(
+    path: &Path,
+    events: &Sender<Event>,
+    stop: &Receiver<()>,
+    asks: &Receiver<Ask>,
+    wake: &W,
+) {
     let mut attempt: u32 = 0;
     loop {
         if stop.try_recv().is_ok() {
@@ -180,7 +257,7 @@ fn run<W: Fn()>(path: &Path, events: &Sender<Event>, stop: &Receiver<()>, wake: 
         match connect(path) {
             Ok(mut socket) => {
                 attempt = 0;
-                match pump(&mut socket, events, stop, wake) {
+                match pump(&mut socket, events, stop, asks, wake) {
                     Pumped::Stopped => return,
                     Pumped::Rejected(why) => {
                         drop(socket.close(None));
@@ -272,11 +349,15 @@ fn pump<W: Fn()>(
     socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
     events: &Sender<Event>,
     stop: &Receiver<()>,
+    asks: &Receiver<Ask>,
     wake: &W,
 ) -> Pumped {
     loop {
         if stop.try_recv().is_ok() {
             return Pumped::Stopped;
+        }
+        if let Err(why) = send_asks(socket, asks) {
+            return Pumped::Dropped(why);
         }
         match socket.read() {
             Ok(Message::Text(text)) => match handle(&text, socket) {
@@ -302,6 +383,29 @@ fn pump<W: Fn()>(
             Err(e) => return Pumped::Dropped(format!("bridge read failed: {e}")),
         }
     }
+}
+
+/// Sends everything the UI has queued since the last look.
+///
+/// Between reads rather than on its own thread, because the socket is one
+/// thing and cannot be written from two places. That puts a read timeout of
+/// latency on every question, which is what [`READ_TIMEOUT`] is sized for.
+fn send_asks(
+    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    asks: &Receiver<Ask>,
+) -> Result<(), String> {
+    for ask in asks.try_iter() {
+        let frame = serde_json::json!({
+            "type": "request",
+            "id": ask.id,
+            "request": ask.request,
+            "params": ask.params,
+        });
+        socket
+            .send(Message::Text(frame.to_string().into()))
+            .map_err(|e| format!("cannot ask the bridge: {e}"))?;
+    }
+    Ok(())
 }
 
 /// What one frame meant.
@@ -332,11 +436,23 @@ fn handle(text: &str, socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Hand
         ),
         // A board this build cannot read is worth ignoring rather than
         // disconnecting over: the next frame is a second away.
-        Some("state") => envelope.data.map_or(Handled::Nothing, |value| {
-            serde_json::from_value::<Board>(value).map_or(Handled::Nothing, |board| {
-                Handled::Event(Event::Board(Box::new(board)))
+        // A board this build cannot read used to be dropped in silence,
+        // which on screen is indistinguishable from no match in progress.
+        // One `round(x, 2)` in the backend could therefore blank the whole
+        // scoreboard and look like an idle evening. Now it says so.
+        Some("state") => {
+            envelope.data.map_or(Handled::Nothing, |value| {
+                match serde_json::from_value::<Board>(value) {
+                    Ok(board) => Handled::Event(Event::Board(Box::new(board))),
+                    Err(e) => Handled::Event(Event::Unreadable(e.to_string())),
+                }
             })
-        }),
+        }
+        // An answer with no id is an answer to nobody. The backend echoes
+        // back whatever it was sent, so this only happens if it lost it.
+        Some("response") => envelope
+            .id
+            .map_or(Handled::Nothing, |id| Handled::Event(answer(id, envelope))),
         Some("ping") => match socket.send(Message::Text(r#"{"type":"pong"}"#.into())) {
             Ok(()) => Handled::Nothing,
             Err(e) => Handled::Broken(format!("cannot answer a ping: {e}")),
@@ -345,11 +461,91 @@ fn handle(text: &str, socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Hand
     }
 }
 
+/// Turns a `response` frame into the event the UI reads.
+///
+/// Two ways to fail and both end up in the same place: the bridge saying it
+/// could not, and the bridge saying it could while handing back a payload
+/// whose only field is an error. The second is how the backend reports "open
+/// VALORANT and sign in", and a caller that only checked the first would show
+/// an empty panel instead of the sentence explaining it.
+fn answer(id: u64, envelope: Envelope) -> Event {
+    if envelope.ok == Some(false) {
+        return Event::Answer {
+            id,
+            result: Err(envelope
+                .error
+                .unwrap_or_else(|| "the bridge would not say why".to_owned())),
+        };
+    }
+    let Some(data) = envelope.data else {
+        return Event::Answer {
+            id,
+            result: Err("the bridge answered with nothing".to_owned()),
+        };
+    };
+    if let Some(why) = data.get("error").and_then(serde_json::Value::as_str) {
+        return Event::Answer {
+            id,
+            result: Err(why.to_owned()),
+        };
+    }
+    Event::Answer {
+        id,
+        result: Ok(data),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{RETRY_CEILING, backoff, credentials_path, read_credentials};
+    use super::{
+        Envelope, Event, RETRY_CEILING, answer, backoff, credentials_path, read_credentials,
+    };
+
+    /// Both shapes of failure, and a success, read the way the panel needs.
+    #[test]
+    fn an_answer_carries_its_own_bad_news() {
+        let envelope = |raw: &str| serde_json::from_str::<Envelope>(raw).unwrap();
+
+        let Event::Answer { id, result } = answer(
+            7,
+            envelope(r#"{"type":"response","id":7,"ok":true,"data":{"puuid":"x"}}"#),
+        ) else {
+            panic!("not an answer");
+        };
+        assert_eq!(id, 7);
+        assert_eq!(
+            result.unwrap().get("puuid").and_then(|v| v.as_str()),
+            Some("x")
+        );
+
+        // The bridge refusing outright.
+        let Event::Answer { result, .. } = answer(
+            8,
+            envelope(r#"{"type":"response","id":8,"ok":false,"error":"boom"}"#),
+        ) else {
+            panic!("not an answer");
+        };
+        assert_eq!(result.unwrap_err(), "boom");
+
+        // The bridge succeeding at saying no, which is what "open VALORANT
+        // and sign in" looks like on the wire.
+        let Event::Answer { result, .. } = answer(
+            9,
+            envelope(r#"{"type":"response","id":9,"ok":true,"data":{"error":"sign in"}}"#),
+        ) else {
+            panic!("not an answer");
+        };
+        assert_eq!(result.unwrap_err(), "sign in");
+
+        let Event::Answer { result, .. } =
+            answer(10, envelope(r#"{"type":"response","id":10,"ok":true}"#))
+        else {
+            panic!("not an answer");
+        };
+        assert!(result.is_err(), "an answer with no payload read as one");
+    }
 
     #[test]
     fn credentials_live_beside_the_install() {

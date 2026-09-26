@@ -492,7 +492,61 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
         }
         x += column.width + space::MD;
     }
+    why(ui, player, style.arrive);
     response
+}
+
+/// Why a flagged account is flagged, on a line of its own under their row.
+///
+/// The mark at the end of a row says "look at this one" and nothing else,
+/// and until now the answer lived in the panel, one account at a time. That
+/// is five hovers to read five reasons, and in the overlay, which has no
+/// panel, it was not readable at all. The reasons are short, there are
+/// rarely more than two accounts carrying them, and the question the mark
+/// raises is answered on the next line down where it was asked.
+fn why(ui: &mut Ui, player: &Player, arrive: f32) {
+    if !player.smurf || player.smurf_reasons.is_empty() {
+        return;
+    }
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::LG + space::SM),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let slide = (1.0 - arrive) * 12.0;
+    let left = rect.left() + GUTTER + space::LG + slide;
+    // The same gutter mark the rows above and below carry, so the line reads
+    // as belonging to the row rather than as a second row.
+    painter.add(shape::tick(
+        pos2(left, rect.top() + 1.0),
+        rect.height() - 4.0,
+        colour::WARN.gamma_multiply(0.7 * arrive),
+    ));
+    // As many reasons as the width holds, cut at a word with an ellipsis
+    // rather than at a letter: the backend sends four of these and a narrow
+    // window has room for one. The panel carries all of them in full, which
+    // is what the ellipsis is pointing at.
+    let tint = colour::WARN.gamma_multiply(0.85 * arrive);
+    let mut job = LayoutJob::simple_singleline(
+        player.smurf_reasons.join("  \u{b7}  "),
+        Face::Body.at(size::MICRO),
+        tint,
+    );
+    job.wrap = TextWrapping {
+        max_width: rect.right() - GUTTER - space::LG - (left + space::MD),
+        max_rows: 1,
+        break_anywhere: false,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = painter.layout_job(job);
+    painter.galley(
+        pos2(left + space::MD, rect.center().y - galley.size().y / 2.0),
+        galley,
+        tint,
+    );
 }
 
 /// Everything on a row that is not a value: the tints, the rail and the

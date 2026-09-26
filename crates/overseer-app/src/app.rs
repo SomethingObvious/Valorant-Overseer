@@ -745,22 +745,35 @@ impl Overseer {
     fn header_progress(&self, painter: &egui::Painter, middle: f32, left: f32, right: f32) {
         if let Some(score) = self.board.score.as_ref() {
             let (ally, enemy) = (score.ally.unwrap_or(0), score.enemy.unwrap_or(0));
-            let text = format!("{ally}");
             let font = Face::Display.at(size::HERO);
-            let width = 96.0;
-            if right - left < width {
+            if right - left < 112.0 {
                 return;
             }
             let at = left + space::LG;
             let after = painter.text(
                 pos2(at, middle - 1.0),
                 Align2::LEFT_CENTER,
-                text,
+                format!("{ally}"),
                 font.clone(),
                 colour::ALLY,
             );
+            // Two numbers with a gap between them are two numbers. The game
+            // puts a rule between its own, and this is that rule cut at the
+            // angle everything else in this window is cut at, so the score
+            // reads as one thing with two halves.
+            let cut = after.right() + space::MD;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    pos2(cut + 5.0, middle - 11.0),
+                    pos2(cut + 7.0, middle - 11.0),
+                    pos2(cut + 2.0, middle + 11.0),
+                    pos2(cut, middle + 11.0),
+                ],
+                colour::TEXT_FAINT,
+                egui::Stroke::NONE,
+            ));
             let after = painter.text(
-                pos2(after.right() + space::MD, middle - 1.0),
+                pos2(cut + 7.0 + space::MD, middle - 1.0),
                 Align2::LEFT_CENTER,
                 format!("{enemy}"),
                 font,
@@ -966,7 +979,14 @@ impl Overseer {
     /// Read only, so that the overlay can call it too: the overlay is its
     /// own window and takes no clicks, and nothing that only draws can be
     /// the reason two windows disagree about what is selected.
-    fn rows(&self, ui: &mut Ui, foot: bool) -> Touched {
+    ///
+    /// `windowed` is false in the overlay, which takes no clicks and has no
+    /// room to spare. A column heading is a sort button and a reminder, and
+    /// over a game it can be neither: nothing there can be clicked, and an
+    /// agent tile, a name, a rank chip and one number do not need labelling
+    /// twice. Two rows of the five in front of somebody is too much to spend
+    /// on saying what they can already see.
+    fn rows(&self, ui: &mut Ui, windowed: bool) -> Touched {
         if self.board.players.is_empty() {
             empty(ui, &self.status, self.reason());
             return Touched::default();
@@ -1010,8 +1030,9 @@ impl Overseer {
                         if board::team_heading(ui, label, tint, &self.board, &team) {
                             worth = Some(team.clone());
                         }
-                        if let Some(head) =
-                            board::headings(ui, ui.available_width(), &hidden, &sort)
+                        if windowed
+                            && let Some(head) =
+                                board::headings(ui, ui.available_width(), &hidden, &sort)
                         {
                             heading = Some(head);
                         }
@@ -1031,9 +1052,9 @@ impl Overseer {
                             hovered = over;
                         }
                     });
-                    ui.add_space(space::XL);
+                    ui.add_space(if windowed { space::XL } else { space::LG });
                 }
-                if foot && shown > 0 {
+                if windowed && shown > 0 {
                     board::board_foot(ui, &self.board);
                 }
                 if shown == 0 {

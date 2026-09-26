@@ -19,7 +19,7 @@ use overseer_core::{Bridge, CareerMatch, Profile};
 
 use crate::board::{self, Side};
 use crate::panel::{heading, line, stat};
-use overseer_ui::{Face, colour, shape, size, space};
+use overseer_ui::{Face, caps_text, colour, shape, size, space};
 
 /// How tall a chart is. Enough for a shape to be a shape, not so much that
 /// the numbers under it fall off the bottom of the panel.
@@ -312,34 +312,44 @@ fn guns(ui: &mut Ui, profile: &Profile) {
             continue;
         };
         let (rect, _response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+            ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
         if !ui.is_rect_visible(rect) {
             continue;
         }
         let painter = ui.painter().clone();
         let share = f32::from(u16::try_from(gun.share.unwrap_or(0).min(100)).unwrap_or(0));
-        // The bar sits behind the name rather than beside it, so five guns
-        // read as one shape rather than as five rows of furniture.
-        let full = rect.width() - space::LG * 2.0;
-        let bar = Rect::from_min_size(
-            pos2(rect.left() + space::LG, rect.center().y - 7.0),
-            vec2(full * share / 100.0, 14.0),
+        // The share as the numeral and the bar as its length, the way the
+        // board sets a K/D: the number is the point, and the bar is how far
+        // it reaches against the others.
+        let numeral = caps_text(
+            &painter,
+            pos2(rect.left() + space::LG + 44.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            &format!("{}%", share as u32),
+            Face::Heavy.at(size::TITLE + 2.0),
+            colour::TEXT_STRONG,
         );
-        // Tinted rather than grey, because the length of it is a number and
-        // a grey bar behind a word reads as a text field.
+        let start = numeral.right() + space::MD;
+        let room = rect.right() - space::LG - start;
+        let bar = Rect::from_min_size(
+            pos2(start, rect.center().y - 9.0),
+            vec2((room * share / 100.0).max(space::XL), 18.0),
+        );
         painter.add(board::paint::slant(bar, false, true, colour::BG_INSET));
-        painter.text(
-            pos2(rect.left() + space::LG + space::SM, rect.center().y),
+        let _name = caps_text(
+            &painter,
+            pos2(start + space::SM, rect.center().y),
             Align2::LEFT_CENTER,
             name,
-            Face::Body.at(size::MICRO),
+            Face::Display.at(size::LABEL + 1.0),
             colour::TEXT,
         );
-        painter.text(
+        let _kills = caps_text(
+            &painter,
             pos2(rect.right() - space::LG, rect.center().y),
             Align2::RIGHT_CENTER,
-            format!("{}%  {} kills", share as u32, gun.kills.unwrap_or(0)),
-            Face::Number.at(size::MICRO),
+            &format!("{} kills", gun.kills.unwrap_or(0)),
+            Face::Number.at(size::LABEL),
             colour::TEXT_FAINT,
         );
     }

@@ -162,6 +162,27 @@ value that changes every second must never animate.
   height the board drew last frame. Adding the pieces up by hand means the
   sum has to be revisited whenever a band grows a point, and nobody revisits
   a sum: that is twice it clipped its own last player.
+- **A mark that raises a question answers it on the next line.** The flag at
+  the end of a row says "look at this one" and nothing else. The reasons sit
+  under the row that raised the question, in the colour of the mark, cut at a
+  word when the width runs out. Putting them in the detail panel instead cost
+  five hovers to read five of them, and the overlay has no panel at all.
+- **A scale beats ten readings of it.** The ladder under the roster is every
+  account in the lobby on Riot's own tier colours, enemies above it and
+  allies below, each carrying the same agent tile they have out on their row.
+  It is the only block in the window that says nothing the rows do not
+  already say, which is why it is also the first one dropped when the window
+  is short.
+- **One control, drawn once.** The window and the installer ask the same
+  question in the same shape, so there is one `choice` in the design crate
+  and no copy in either. Two copies had already drifted: one lit the chosen
+  row and one did not.
+- **Stillness is a feature on the screen nobody is looking at.** The empty
+  state names the three things that have to happen before there is anything
+  to show and which of them have, because from in here all three failures
+  look identical. None of it pulses. A pulse would wake the compositor every
+  frame for as long as somebody sits in the game's menus, which is the one
+  cost this app has promised not to have.
 - **A guess presented as a fact is a lie.** A party Riot confirmed gets a
   bracket; a stack the app inferred gets a question mark and its evidence in
   the panel. An account the backend cannot see says "not visible" rather than
@@ -170,16 +191,27 @@ value that changes every second must never animate.
 ## What it costs
 
 Measured on the release build against a live backend, on the integrated
-adapter the window deliberately asks for:
+adapter the window deliberately asks for, with the window at 2264 by 1464
+device pixels:
 
 | | |
 | --- | --- |
-| Idle | 0% of a core |
-| Pointer swept down the roster as fast as it moves | 0.8% of a core |
-| Memory | 77 MB |
+| Idle | 0.2% of a core |
+| Pointer swept down the roster as fast as it moves | 0.2% of a core |
+| Committed | 445 MB |
+| Resident | 390 MB, or 16 MB once Windows has trimmed it |
 
-Idle is zero because the window is reactive: nothing asks for a frame unless
-something happened. The bridge thread wakes it when a board arrives, egui's
+Take the two memory figures together or neither. The resident number is not
+reproducible on its own: six samples across one run came out 391, 13, 16, 16,
+16 and 17 megabytes, because Windows trims the working set of a window
+nobody is touching and pages it straight back the moment anything is. The
+committed figure was 444.6 in every one of those samples and in every run.
+Almost none of it is this app's own data, which is one board of ten players
+and a career of a few dozen matches; the rest is wgpu and the adapter's
+driver, and it moves when they do rather than when this window does.
+
+Idle is near zero because the window is reactive: nothing asks for a frame
+unless something happened. The bridge thread wakes it when a board arrives, egui's
 own animator asks while a tint is in flight and stops when it settles, and
 the two things painted from a timestamp rather than from the animator — the
 roster landing and the hover dwell — ask for exactly as long as they run.

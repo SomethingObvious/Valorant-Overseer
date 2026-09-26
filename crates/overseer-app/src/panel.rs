@@ -3,29 +3,49 @@
 //! The board answers "who is here". This answers "what about them", and it is
 //! the only place in the app where a paragraph is allowed. Its hierarchy is
 //! deliberately steep: a name, then the one thing worth knowing, then the
-//! numbers, then the small print. If a person reads only the first two lines
-//! they should still have got the point.
+//! numbers, then the small print. Somebody who reads only the first two lines
+//! should still have got the point.
+//!
+//! Everything the backend knows is in here somewhere, which is the answer to
+//! "where did that field go": the board shows what fits, and this shows the
+//! rest.
 
-use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
 use crate::design::{Face, colour, kd, label_text, rank, size, space};
+
+/// Where a value starts, so labels and values have a spine down the middle.
+const VALUE_X: f32 = 60.0;
 
 /// Draws the panel for a player, or the reason there is nobody to draw.
 pub(crate) fn show(ui: &mut Ui, player: Option<&Player>) {
     let Some(player) = player else {
         heading(ui, "no one selected");
-        paragraph(ui, "Click a row, or press up and down.");
+        line(
+            ui,
+            "Click a row, or use the arrow keys.",
+            colour::TEXT_DIM,
+            size::BODY,
+        );
         return;
     };
-
-    name(ui, player);
-    identity(ui, player);
-    if !player.smurf_reasons.is_empty() {
-        flags(ui, player);
-    }
-    ranks(ui, player);
-    numbers(ui, player);
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            name(ui, player);
+            identity(ui, player);
+            if !player.smurf_reasons.is_empty() {
+                flags(ui, player);
+            }
+            ranks(ui, player);
+            form(ui, player);
+            numbers(ui, player);
+            group(ui, player);
+            met(ui, player);
+            loadout(ui, player);
+            ui.add_space(space::XL);
+        });
 }
 
 /// The player's name, at the top, in the brightest thing there is.
@@ -36,13 +56,13 @@ fn name(ui: &mut Ui, player: &Player) {
         return;
     }
     // The tag is part of the name and not part of the point, so it is drawn
-    // quieter rather than dropped: a player with the same name as somebody
-    // else is exactly when you need to see it.
-    let full = player.name.clone().unwrap_or_else(|| "-".to_owned());
+    // quieter rather than dropped: two people with the same name is exactly
+    // when the tag matters.
+    let full = player.display_name().to_owned();
     let (stem, tag) = full
         .split_once('#')
         .map_or((full.as_str(), ""), |(a, b)| (a, b));
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     let after = painter.text(
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
@@ -59,13 +79,26 @@ fn name(ui: &mut Ui, player: &Player) {
             colour::TEXT_FAINT,
         );
     }
+    if player.name_hidden {
+        painter.text(
+            pos2(rect.right() - space::LG, rect.center().y),
+            Align2::RIGHT_CENTER,
+            label_text("hidden"),
+            Face::Display.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+    }
 }
 
-/// Level, role and agent on one line, because they are one thought.
+/// Level, role, agent and title, because they are one thought.
 fn identity(ui: &mut Ui, player: &Player) {
     let mut parts: Vec<String> = Vec::new();
     if let Some(level) = player.level {
-        parts.push(format!("Level {level}"));
+        parts.push(if player.level_hidden {
+            "Level hidden".to_owned()
+        } else {
+            format!("Level {level}")
+        });
     }
     if let Some(role) = player.role.as_deref() {
         parts.push(role.to_owned());
@@ -73,39 +106,81 @@ fn identity(ui: &mut Ui, player: &Player) {
     if let Some(agent) = player.agent.as_deref() {
         parts.push(agent.to_owned());
     }
-    if parts.is_empty() {
-        return;
+    if !parts.is_empty() {
+        line(ui, &parts.join("  \u{b7}  "), colour::TEXT_DIM, size::BODY);
     }
-    line(ui, &parts.join("  ·  "), colour::TEXT_DIM, size::BODY);
+    if let Some(title) = player.title.as_deref() {
+        line(ui, title, colour::TEXT_FAINT, size::MICRO);
+    }
 }
 
 /// Why this account is worth a second look, in the backend's words.
 ///
-/// Gold, and only gold: this and the encounter count are the two things in the
-/// app that are claims about a person rather than measurements of one, and
-/// they share a colour so that colour means something.
+/// Gold, and only gold: this and the encounter count are the two things in
+/// the app that are claims about a person rather than measurements of one,
+/// and they share a colour so that the colour means something.
 fn flags(ui: &mut Ui, player: &Player) {
     ui.add_space(space::LG);
-    let title = if player.smurf {
-        "smurf"
-    } else {
-        "worth a look"
-    };
-    heading_tinted(ui, title, colour::WARN);
+    heading_tinted(
+        ui,
+        if player.smurf {
+            "smurf"
+        } else {
+            "worth a look"
+        },
+        colour::WARN,
+    );
     for reason in &player.smurf_reasons {
         line(ui, reason, colour::WARN, size::BODY);
+    }
+    if !player.smurf {
+        line(
+            ui,
+            "One signal only, so not a flag.",
+            colour::TEXT_FAINT,
+            size::MICRO,
+        );
     }
 }
 
 /// Where they are now, and the best they have ever been.
 fn ranks(ui: &mut Ui, player: &Player) {
     ui.add_space(space::LG);
-    let width = ui.available_width();
-    let (rect, _response) = ui.allocate_exact_size(vec2(width, space::ROW), Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        rank_line(ui, player, rect);
     }
-    let painter = ui.painter();
+    if let Some(place) = player.leaderboard {
+        line(
+            ui,
+            &format!("Leaderboard #{place}"),
+            colour::WARN,
+            size::BODY,
+        );
+    }
+    if let Some(peak) = player.peak_rank.as_deref() {
+        let act = player.peak_act.as_deref().unwrap_or("");
+        let text = if act.is_empty() {
+            format!("Peak {peak}")
+        } else {
+            format!("Peak {peak}  {act}")
+        };
+        line(ui, &text, colour::TEXT_DIM, size::BODY);
+    }
+    if let Some(previous) = player.previous_rank.as_deref() {
+        line(
+            ui,
+            &format!("Last act {previous}"),
+            colour::TEXT_FAINT,
+            size::MICRO,
+        );
+    }
+}
+
+/// Rank, rating, what the last match did to it, and how far through they are.
+fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
+    let painter = ui.painter().clone();
     let mut x = rect.left() + space::LG;
     let after = painter.text(
         pos2(x, rect.center().y),
@@ -116,77 +191,290 @@ fn ranks(ui: &mut Ui, player: &Player) {
     );
     x = after.right() + space::MD;
 
-    if let Some(rr) = player.rr {
-        let after = painter.text(
-            pos2(x, rect.center().y),
-            Align2::LEFT_CENTER,
-            format!("{rr}"),
-            Face::Number.at(size::BODY),
-            colour::TEXT,
-        );
-        let after = painter.text(
-            pos2(after.right() + space::SM, rect.center().y),
-            Align2::LEFT_CENTER,
-            "RR",
-            Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT,
-        );
-        x = after.right() + space::MD;
-        // How far through the rank they are, as a bar rather than a second
-        // number: the number is already there, and the bar is the thing you
-        // read without reading.
-        let track = Rect::from_min_size(
-            pos2(x, rect.center().y - 2.0),
-            vec2((rect.right() - space::LG - x).clamp(0.0, 80.0), 4.0),
-        );
-        painter.rect_filled(track, 0, colour::LINE);
-        let share = (rr as f32 / 100.0).clamp(0.0, 1.0);
-        let mut filled = track;
-        filled.set_width(track.width() * share);
-        painter.rect_filled(filled, 0, colour::INFO);
-    }
-
-    if let Some(peak) = player.peak_rank.as_deref() {
-        let act = player.peak_act.as_deref().unwrap_or("");
-        let text = if act.is_empty() {
-            format!("Peak {peak}")
+    let Some(rr) = player.rr else { return };
+    let after = painter.text(
+        pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        rr.to_string(),
+        Face::Number.at(size::BODY),
+        colour::TEXT,
+    );
+    let mut after = painter.text(
+        pos2(after.right() + space::SM, rect.center().y),
+        Align2::LEFT_CENTER,
+        "RR",
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    if let Some(delta) = player.rr_earned.filter(|d| *d != 0) {
+        let tint = if delta > 0 { colour::GOOD } else { colour::BAD };
+        let text = if delta > 0 {
+            format!("+{delta}")
         } else {
-            format!("Peak {peak}  {act}")
+            delta.to_string()
         };
-        line(ui, &text, colour::TEXT_DIM, size::BODY);
+        after = painter.text(
+            pos2(after.right() + space::MD, rect.center().y),
+            Align2::LEFT_CENTER,
+            text,
+            Face::Number.at(size::MICRO),
+            tint,
+        );
+    }
+    // How far through the rank they are, as a bar rather than a second
+    // number: the number is already there, and the bar is the thing that is
+    // read without being read.
+    let x = after.right() + space::MD;
+    let track = Rect::from_min_size(
+        pos2(x, rect.center().y - 2.0),
+        vec2((rect.right() - space::LG - x).clamp(0.0, 72.0), 4.0),
+    );
+    painter.rect_filled(track, 0, colour::LINE);
+    let mut filled = track;
+    filled.set_width(track.width() * (rr as f32 / 100.0).clamp(0.0, 1.0));
+    painter.rect_filled(filled, 0, colour::INFO);
+}
+
+/// Recent results, the run they are on, and what they play.
+fn form(ui: &mut Ui, player: &Player) {
+    if player.form.is_empty() && player.top_agents.is_empty() {
+        return;
+    }
+    ui.add_space(space::LG);
+    heading(ui, "form");
+    if !player.form.is_empty() {
+        let (rect, _response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+        if ui.is_rect_visible(rect) {
+            pips(ui, player, rect);
+        }
+    }
+    let mains: Vec<String> = player
+        .top_agents
+        .iter()
+        .take(3)
+        .map(|a| {
+            format!(
+                "{} {}",
+                a.agent.clone().unwrap_or_else(|| "?".to_owned()),
+                a.games.unwrap_or(0)
+            )
+        })
+        .collect();
+    if !mains.is_empty() {
+        stat(ui, "mains", &mains.join("   "), colour::TEXT, "");
     }
 }
 
-/// The three numbers the board could not fit, with their sample sizes.
+/// The last ten results, and the run if there is one worth saying.
+fn pips(ui: &Ui, player: &Player, rect: Rect) {
+    let painter = ui.painter().clone();
+    let mut x = rect.left() + space::LG;
+    for result in player.form.iter().take(10) {
+        let tint = match result.chars().next() {
+            Some('W' | 'w') => colour::ALLY,
+            Some('D' | 'd') => colour::WARN,
+            _ => colour::ENEMY,
+        };
+        let pip = Rect::from_min_size(pos2(x, rect.center().y - 4.0), vec2(6.0, 8.0));
+        painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
+        x += 8.0;
+    }
+    let Some(streak) = player.streak.as_ref() else {
+        return;
+    };
+    let count = streak.count.unwrap_or(0);
+    if count < 2 {
+        return;
+    }
+    let won = streak.kind.as_deref() == Some("W");
+    painter.text(
+        pos2(x + space::MD, rect.center().y),
+        Align2::LEFT_CENTER,
+        format!("{count} {} in a row", if won { "won" } else { "lost" }),
+        Face::Body.at(size::MICRO),
+        if won { colour::ALLY } else { colour::ENEMY },
+    );
+}
+
+/// The numbers, with the sample size behind each one.
 ///
-/// A number with no sample size behind it reads as a career average, and the
-/// K/D here is the last few matches. Saying so costs four characters.
+/// A number with nothing behind it reads as a career average, and the K/D
+/// here is the last few matches. Saying so costs four characters.
 fn numbers(ui: &mut Ui, player: &Player) {
     ui.add_space(space::LG);
-    heading(ui, "form");
+    heading(ui, "numbers");
+    let over = if player.form.is_empty() {
+        String::new()
+    } else {
+        format!("last {}", player.form.len())
+    };
     stat(
         ui,
         "k/d",
-        &player
-            .kd
-            .map_or_else(|| "-".to_owned(), |v| format!("{v:.2}")),
+        &player.kd.map_or_else(dash, |v| format!("{v:.2}")),
         kd(player.kd),
+        &over,
+    );
+    stat(
+        ui,
+        "hs",
+        &player.hs_pct.map_or_else(dash, |v| format!("{v:.1}%")),
+        colour::TEXT,
+        &over,
     );
     let win = player
         .win_rate
-        .map_or_else(|| "-".to_owned(), |v| format!("{}%", v.round()));
-    let over = player
+        .map_or_else(dash, |v| format!("{}%", v.round()));
+    let games = player
         .games
         .map_or_else(String::new, |g| format!("over {g}"));
-    stat_with_note(ui, "win", &win, colour::TEXT, &over);
+    stat(ui, "win", &win, colour::TEXT, &games);
+    if let Some(map) = player
+        .map_win_rate
+        .as_ref()
+        .filter(|m| m.games.unwrap_or(0) > 0)
+    {
+        let rate = format!("{}%", map.win_rate.unwrap_or(0.0).round());
+        let note = format!("this map, over {}", map.games.unwrap_or(0));
+        stat(ui, "map", &rate, colour::TEXT, &note);
+    }
 }
 
-/// A section heading: caps, tracked, dim, with air above it.
+/// Who they came with, and how sure we are.
+fn group(ui: &mut Ui, player: &Player) {
+    if let Some(size) = player
+        .party
+        .as_ref()
+        .and_then(|p| p.size)
+        .filter(|s| *s > 1)
+    {
+        ui.add_space(space::LG);
+        heading_tinted(ui, "party", colour::INFO);
+        line(
+            ui,
+            &format!("{}, and Riot says so", stack_word(size)),
+            colour::INFO,
+            size::BODY,
+        );
+        return;
+    }
+    let Some(guess) = player.stack_guess.as_ref() else {
+        return;
+    };
+    ui.add_space(space::LG);
+    heading_tinted(ui, "probably together", colour::WARN);
+    line(
+        ui,
+        &stack_word(guess.size.unwrap_or(0)),
+        colour::WARN,
+        size::BODY,
+    );
+    // The evidence, always. A guess presented as a fact is a lie, and this
+    // one accuses strangers of queueing together.
+    line(
+        ui,
+        &format!(
+            "{} of {} lobbies on the same side, {}% sure",
+            guess.same.unwrap_or(0),
+            guess.shared.unwrap_or(0),
+            guess.confidence.unwrap_or(0)
+        ),
+        colour::TEXT_FAINT,
+        size::MICRO,
+    );
+}
+
+/// How a group of that size is said out loud.
+fn stack_word(size: u32) -> String {
+    match size {
+        0 | 1 => "On their own".to_owned(),
+        2 => "A duo".to_owned(),
+        3 => "A trio".to_owned(),
+        n => format!("A {n} stack"),
+    }
+}
+
+/// What history you have with them.
+fn met(ui: &mut Ui, player: &Player) {
+    let Some(encounter) = player.encounter.as_ref().filter(|e| e.total() > 0) else {
+        return;
+    };
+    ui.add_space(space::LG);
+    heading_tinted(
+        ui,
+        &format!("met {} times before", encounter.total()),
+        colour::WARN,
+    );
+    let with = encounter.with_count.unwrap_or(0);
+    if with > 0 {
+        stat(
+            ui,
+            "with",
+            &record(
+                encounter.wins_with,
+                encounter.losses_with,
+                encounter.draws_with,
+            ),
+            colour::TEXT,
+            &format!("over {with}"),
+        );
+    }
+    let against = encounter.against_count.unwrap_or(0);
+    if against > 0 {
+        stat(
+            ui,
+            "against",
+            &record(
+                encounter.wins_against,
+                encounter.losses_against,
+                encounter.draws_against,
+            ),
+            colour::TEXT,
+            &format!("over {against}"),
+        );
+    }
+}
+
+/// A win, loss and draw record, said the way a player says it.
+fn record(wins: Option<u32>, losses: Option<u32>, draws: Option<u32>) -> String {
+    let draws = draws.unwrap_or(0);
+    let base = format!("{}W-{}L", wins.unwrap_or(0), losses.unwrap_or(0));
+    if draws > 0 {
+        format!("{base}-{draws}D")
+    } else {
+        base
+    }
+}
+
+/// What they are carrying, when the backend could see it.
+fn loadout(ui: &mut Ui, player: &Player) {
+    let skins: Vec<String> = player
+        .weapons
+        .iter()
+        .filter_map(|w| {
+            let weapon = w.weapon.clone()?;
+            let skin = w.skin.as_ref()?.name.clone()?;
+            Some(format!("{weapon}  {skin}"))
+        })
+        .take(4)
+        .collect();
+    if skins.is_empty() {
+        return;
+    }
+    ui.add_space(space::LG);
+    heading(ui, "carrying");
+    for skin in skins {
+        line(ui, &skin, colour::TEXT_DIM, size::MICRO);
+    }
+}
+
+/// A section heading: caps, tracked, faint, with air above it.
 fn heading(ui: &mut Ui, text: &str) {
     heading_tinted(ui, text, colour::TEXT_FAINT);
 }
 
-/// A section heading in a colour, for the two sections that are claims.
+/// A section heading in a colour, for the sections that are claims.
 fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
@@ -218,24 +506,14 @@ fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
     );
 }
 
-/// A paragraph, which is the one thing the board may not have.
-fn paragraph(ui: &mut Ui, text: &str) {
-    line(ui, text, colour::TEXT_DIM, size::BODY);
-}
-
-/// A label and its value, on one line, value in the mono face.
-fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32) {
-    stat_with_note(ui, label, value, tint, "");
-}
-
 /// A label, a value, and a quieter note after it.
-fn stat_with_note(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &str) {
+fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     painter.text(
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
@@ -243,11 +521,8 @@ fn stat_with_note(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &s
         Face::Display.at(size::MICRO),
         colour::TEXT_FAINT,
     );
-    // The values start at one column, not wherever their label ended, so the
-    // panel has a spine down the middle instead of a ragged edge.
-    let value_x = rect.left() + space::LG + 52.0;
     let after = painter.text(
-        pos2(value_x, rect.center().y),
+        pos2(rect.left() + space::LG + VALUE_X, rect.center().y),
         Align2::LEFT_CENTER,
         value,
         Face::Number.at(size::BODY),
@@ -261,5 +536,31 @@ fn stat_with_note(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &s
             Face::Body.at(size::MICRO),
             colour::TEXT_FAINT,
         );
+    }
+}
+
+/// What a missing value looks like, in one place.
+fn dash() -> String {
+    "-".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{record, stack_word};
+
+    #[test]
+    fn a_record_only_mentions_draws_when_there_were_some() {
+        assert_eq!(record(Some(3), Some(1), Some(0)), "3W-1L");
+        assert_eq!(record(Some(3), Some(1), Some(2)), "3W-1L-2D");
+        assert_eq!(record(None, None, None), "0W-0L");
+    }
+
+    /// The words a player would use, rather than the number the code has.
+    #[test]
+    fn a_group_is_named_the_way_it_is_said() {
+        assert_eq!(stack_word(1), "On their own");
+        assert_eq!(stack_word(2), "A duo");
+        assert_eq!(stack_word(3), "A trio");
+        assert_eq!(stack_word(5), "A 5 stack");
     }
 }

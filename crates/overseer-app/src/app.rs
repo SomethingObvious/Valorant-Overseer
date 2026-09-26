@@ -2,49 +2,73 @@
 //!
 //! Three layouts out of one set of parts. Under `COMPACT` the board is alone
 //! and sheds columns; above it the detail panel takes the right; above `WIDE`
-//! the panel gets room to breathe. There is no separate compact build, because
-//! two builds diverge and a person dragging a window edge should not watch the
-//! app turn into a different app.
+//! the panel gets room to breathe. There is no separate compact build,
+//! because two builds diverge and a person dragging a window edge should not
+//! watch the app turn into a different app.
 //!
 //! The idle cost is the part worth reading carefully. egui repaints when
-//! something asks it to, and the only thing asking here is the bridge thread,
-//! which wakes the UI when a board arrives. There is no timer and no polling,
-//! so a window nobody is touching draws no frames at all.
+//! something asks it to, and the things asking here are the bridge thread,
+//! which wakes the UI when a board arrives, and an animation while it runs.
+//! There is no timer and no polling, so a window nobody is touching settles
+//! to no frames at all.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use eframe::{App, CreationContext, Frame};
-use egui::{Align2, CentralPanel, Panel, RichText, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
-use crate::board::{self, RowStyle};
-use crate::design::{self, Face, colour, label_text, size, space};
-use crate::panel;
+use crate::board::{self, Pace, RowStyle};
+use crate::design::{self, Face, colour, label_text, motion, size, space};
+use crate::settings::{self, Quality, Settings};
+use crate::{panel, view};
 
 /// Under this width there is no room for the panel beside the board.
-const COMPACT: f32 = 720.0;
+pub(crate) const COMPACT: f32 = 720.0;
 /// Above this the panel can afford its full width.
-const WIDE: f32 = 1100.0;
+pub(crate) const WIDE: f32 = 1100.0;
 /// The panel's width between those two.
-const PANEL_NARROW: f32 = 260.0;
+const PANEL_NARROW: f32 = 280.0;
 /// The panel's width above [`WIDE`].
-const PANEL_WIDE: f32 = 320.0;
+const PANEL_WIDE: f32 = 340.0;
+/// A frame over this many seconds is a frame that missed, at 60Hz with room
+/// to spare for the compositor.
+const SLOW_FRAME: f32 = 1.0 / 45.0;
+/// This many missed frames in a row and the window stops trying to be rich.
+const SLOW_STREAK: u32 = 3;
 
 /// The window's state.
 pub(crate) struct Overseer {
     bridge: Bridge,
+    root: PathBuf,
+    settings: Settings,
     board: Board,
     status: Status,
-    /// Set when the bridge has given up, which is a different thing from being
-    /// disconnected: a bad token will not fix itself, so the window says so
-    /// rather than showing a spinner for ever.
+    /// Set when the bridge has given up, which is a different thing from
+    /// being disconnected: a bad token will not fix itself, so the window
+    /// says so rather than showing a spinner for ever.
     stopped: Option<String>,
-    /// Who the panel is about. Kept by account id rather than by index,
+    /// Who the panel is about. Kept by account id rather than by position,
     /// because the backend reorders the board between frames.
     selected: Option<String>,
+    /// Which screen is showing.
+    screen: Screen,
     /// How many boards have arrived, which is the cheapest proof that the
     /// socket is alive and the frame on screen is not stale.
     boards: u64,
+    /// Consecutive frames over budget, for the automatic quality drop.
+    slow: u32,
+    /// Set when the window dropped its own quality, so it can say so.
+    dropped: bool,
+}
+
+/// What the middle of the window is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Screen {
+    /// The board.
+    Board,
+    /// Every switch there is.
+    Settings,
 }
 
 impl std::fmt::Debug for Overseer {
@@ -53,6 +77,7 @@ impl std::fmt::Debug for Overseer {
             .field("status", &self.status)
             .field("players", &self.board.players.len())
             .field("boards", &self.boards)
+            .field("screen", &self.screen)
             .finish_non_exhaustive()
     }
 }
@@ -78,11 +103,16 @@ impl Overseer {
         let bridge = Bridge::start(root, move || ctx.request_repaint());
         Self {
             bridge,
+            root: root.to_path_buf(),
+            settings: settings::load(root),
             board: Board::default(),
             status: Status::Connecting(String::new()),
             stopped: None,
             selected: None,
+            screen: Screen::Board,
             boards: 0,
+            slow: 0,
+            dropped: false,
         }
     }
 
@@ -138,6 +168,84 @@ impl Overseer {
             .find(|p| p.puuid.as_ref() == Some(id))
     }
 
+    /// Keys, which are the fastest way through a board and cost nothing.
+    fn keys(&mut self, ui: &Ui) {
+        let (up, down, tab, escape) = ui.input(|i| {
+            (
+                i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K),
+                i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J),
+                i.key_pressed(Key::Comma),
+                i.key_pressed(Key::Escape),
+            )
+        });
+        if tab {
+            self.screen = if self.screen == Screen::Settings {
+                Screen::Board
+            } else {
+                Screen::Settings
+            };
+        }
+        if escape && self.screen == Screen::Settings {
+            self.screen = Screen::Board;
+        }
+        if !(up || down) || self.board.players.is_empty() {
+            return;
+        }
+        let order: Vec<Option<String>> =
+            self.board.players.iter().map(|p| p.puuid.clone()).collect();
+        let at = order
+            .iter()
+            .position(|id| id == &self.selected)
+            .unwrap_or(0);
+        let next = if down {
+            at.saturating_add(1)
+        } else {
+            at.saturating_sub(1)
+        };
+        if let Some(id) = order.get(next.min(order.len().saturating_sub(1))) {
+            self.selected.clone_from(id);
+        }
+    }
+
+    /// How long an animation is allowed to take, given the tier.
+    fn pace(&self, base: f32) -> f32 {
+        if self.quality() == Quality::Efficient {
+            motion::EFFICIENT
+        } else {
+            base
+        }
+    }
+
+    /// The tier in force, once auto has made up its mind.
+    const fn quality(&self) -> Quality {
+        match self.settings.quality {
+            Quality::Auto if self.dropped => Quality::Efficient,
+            Quality::Auto => Quality::Rich,
+            other => other,
+        }
+    }
+
+    /// Watches the frame clock, and gives up on the rich tier if the machine
+    /// cannot keep up.
+    ///
+    /// Three consecutive frames over budget rather than one, because one slow
+    /// frame is a window being dragged onto another monitor. The drop is said
+    /// out loud in the settings screen, and choosing a tier by hand ends it.
+    fn watch_frames(&mut self, ui: &Ui) {
+        if self.settings.quality != Quality::Auto || self.dropped {
+            return;
+        }
+        let dt = ui.input(|i| i.unstable_dt);
+        if dt > SLOW_FRAME {
+            self.slow = self.slow.saturating_add(1);
+            if self.slow >= SLOW_STREAK {
+                self.dropped = true;
+            }
+        } else {
+            self.slow = 0;
+        }
+    }
+
     /// The title bar: who is playing what, and whether we can see it.
     fn header(&self, ui: &mut Ui) {
         let height = space::XXL + space::MD;
@@ -146,10 +254,19 @@ impl Overseer {
         if !ui.is_rect_visible(rect) {
             return;
         }
-        let painter = ui.painter();
+        let painter = ui.painter().clone();
         let middle = rect.center().y;
-        let mut x = rect.left() + space::LG;
 
+        let x = self.header_match(&painter, middle, rect.left() + space::LG);
+        self.header_progress(&painter, middle, x);
+        self.header_light(&painter, rect, middle);
+        painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
+    }
+
+    /// The wordmark, the state, the map, the queue and the side, left to
+    /// right in the order somebody reads them.
+    fn header_match(&self, painter: &egui::Painter, middle: f32, start: f32) -> f32 {
+        let mut x = start;
         // The wordmark, in the one place the accent is allowed to be loud.
         let after = painter.text(
             pos2(x, middle),
@@ -202,15 +319,64 @@ impl Overseer {
             } else {
                 colour::ALLY
             };
-            painter.text(
+            let after = painter.text(
                 pos2(x, middle),
                 Align2::LEFT_CENTER,
                 label_text(side),
                 Face::Display.at(size::LABEL),
                 tint,
             );
+            x = after.right() + space::LG;
         }
+        x
+    }
 
+    /// The score, or how far through agent select the lobby is: whichever of
+    /// the two is the number that changes while you are watching.
+    fn header_progress(&self, painter: &egui::Painter, middle: f32, x: f32) {
+        if let Some(score) = self.board.score.as_ref() {
+            let (ally, enemy) = (score.ally.unwrap_or(0), score.enemy.unwrap_or(0));
+            let after = painter.text(
+                pos2(x, middle),
+                Align2::LEFT_CENTER,
+                format!("{ally}"),
+                Face::Number.at(size::TITLE),
+                colour::ALLY,
+            );
+            let after = painter.text(
+                pos2(after.right() + space::SM, middle),
+                Align2::LEFT_CENTER,
+                format!("{enemy}"),
+                Face::Number.at(size::TITLE),
+                colour::ENEMY,
+            );
+            if let Some(round) = score.round {
+                painter.text(
+                    pos2(after.right() + space::MD, middle),
+                    Align2::LEFT_CENTER,
+                    format!("round {round}"),
+                    Face::Body.at(size::MICRO),
+                    colour::TEXT_FAINT,
+                );
+            }
+        } else if let Some(lock) = self.board.lock_progress.as_ref() {
+            painter.text(
+                pos2(x, middle),
+                Align2::LEFT_CENTER,
+                format!(
+                    "{}/{} locked",
+                    lock.locked.unwrap_or(0),
+                    lock.total.unwrap_or(0)
+                ),
+                Face::Body.at(size::MICRO),
+                colour::WARN,
+            );
+        }
+    }
+
+    /// Whether the bridge is answering: on the right, where a status light
+    /// belongs, and quiet enough to ignore while it is green.
+    fn header_light(&self, painter: &egui::Painter, rect: egui::Rect, middle: f32) {
         let (radius, tint, text) = self.connection();
         let drawn = painter.text(
             pos2(rect.right() - space::LG, middle),
@@ -220,7 +386,6 @@ impl Overseer {
             colour::TEXT_FAINT,
         );
         painter.circle_filled(pos2(drawn.left() - space::MD, middle), radius, tint);
-        painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
     }
 
     /// The connection light: a radius, a colour, and the reason behind it.
@@ -244,24 +409,31 @@ impl Overseer {
             space::ROW
         };
         let selected = self.selected.clone();
+        let hidden = self.settings.hidden_columns.clone();
+        let pace = Pace {
+            hover: self.pace(motion::INSTANT),
+            select: self.pace(motion::QUICK),
+        };
         let mut clicked: Option<String> = None;
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(space::MD);
-                for (label, tint, players) in board::teams(&self.board) {
+                for (label, tint, team) in board::teams(&self.board) {
+                    let players = self.board.team(&team);
                     if players.is_empty() {
                         continue;
                     }
-                    board::team_heading(ui, label, tint, &players);
-                    board::headings(ui, ui.available_width());
+                    board::team_heading(ui, label, tint, &self.board, &team);
+                    board::headings(ui, ui.available_width(), &hidden);
                     for player in players {
                         let style = RowStyle {
                             team: tint,
                             selected: player.puuid.is_some() && player.puuid == selected,
                             height,
+                            pace,
                         };
-                        if board::row(ui, player, &style).clicked() {
+                        if board::row(ui, player, &style, &hidden).clicked() {
                             clicked.clone_from(&player.puuid);
                         }
                     }
@@ -277,6 +449,8 @@ impl Overseer {
 impl App for Overseer {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         self.pump();
+        self.keys(ui);
+        self.watch_frames(ui);
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
         Panel::top("header")
@@ -286,10 +460,25 @@ impl App for Overseer {
         Panel::bottom("footer")
             .exact_size(space::XL + space::SM)
             .frame(chrome)
-            .show(ui, |ui| footer(ui, self.boards));
+            .show(ui, |ui| self.footer(ui));
+
+        if self.screen == Screen::Settings {
+            // Both read out before the screen borrows the settings, because
+            // the tier is worked out from the settings it is about to edit.
+            let quality = self.quality();
+            let dropped = self.dropped;
+            let mut changed = false;
+            CentralPanel::default().frame(chrome).show(ui, |ui| {
+                changed = view::settings(ui, &mut self.settings, quality, dropped);
+            });
+            if changed {
+                settings::save(&self.root, &self.settings);
+            }
+            return;
+        }
 
         let width = ui.available_width();
-        if width >= COMPACT {
+        if width >= COMPACT && self.settings.panel {
             let panel_width = if width >= WIDE {
                 PANEL_WIDE
             } else {
@@ -313,20 +502,31 @@ impl App for Overseer {
     }
 }
 
-/// The footer: the one counter worth keeping while the app is this young.
-fn footer(ui: &mut Ui, boards: u64) {
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
+impl Overseer {
+    /// The footer: what to press, and what the window is spending.
+    fn footer(&self, ui: &mut Ui) {
+        let (rect, _response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let painter = ui.painter().clone();
+        painter.text(
+            pos2(rect.left() + space::LG, rect.center().y),
+            Align2::LEFT_CENTER,
+            "[,] settings    [up] [down] pick a player",
+            Face::Body.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+        let quality = self.quality().label();
+        painter.text(
+            pos2(rect.right() - space::LG, rect.center().y),
+            Align2::RIGHT_CENTER,
+            format!("{} boards   {quality}", self.boards),
+            Face::Number.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
     }
-    ui.painter().text(
-        pos2(rect.left() + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        format!("{boards} boards"),
-        Face::Number.at(size::MICRO),
-        colour::TEXT_FAINT,
-    );
 }
 
 /// What to say while there is no board. An empty screen is a place to say
@@ -369,73 +569,30 @@ fn connecting_text(detail: &str) -> String {
     }
 }
 
-/// The board and the panel, drawn the way the window draws them, for the
-/// snapshot test. One door, so the test cannot drift away from the app.
+/// The header, drawn for the snapshot test without a window behind it.
+///
+/// The header is the only place the accent colour appears, so leaving it out
+/// of the image would mean the loudest thing in the app was the one thing
+/// nothing checked.
 #[cfg(test)]
-pub(crate) fn snapshot_view(ui: &mut Ui, board: &Board, selected: Option<&str>) {
-    let width = ui.available_width();
-    let header = Overseer {
+pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
+    let shown = Overseer {
         bridge: Bridge::start(Path::new("."), || {}),
+        root: PathBuf::new(),
+        settings: Settings::default(),
         board: board.clone(),
         status: Status::Live,
         stopped: None,
         selected: None,
+        screen: Screen::Board,
         boards: 0,
+        slow: 0,
+        dropped: false,
     };
     Panel::top("header")
         .exact_size(space::XXL + space::MD)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
-        .show(ui, |ui| header.header(ui));
-    if width >= COMPACT {
-        let panel_width = if width >= WIDE {
-            PANEL_WIDE
-        } else {
-            PANEL_NARROW
-        };
-        Panel::right("detail")
-            .exact_size(panel_width)
-            .frame(
-                egui::Frame::NONE
-                    .fill(colour::BG_RAISED)
-                    .stroke(egui::Stroke::new(1.0, colour::LINE)),
-            )
-            .show(ui, |ui| {
-                ui.add_space(space::MD);
-                let player = selected
-                    .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
-                panel::show(ui, player);
-            });
-    }
-    CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(colour::BG))
-        .show(ui, |ui| {
-            if board.players.is_empty() {
-                empty(ui, &Status::Connecting(String::new()), None);
-                return;
-            }
-            ui.add_space(space::MD);
-            let height = if width < COMPACT {
-                space::ROW_TIGHT
-            } else {
-                space::ROW
-            };
-            for (label, tint, players) in board::teams(board) {
-                if players.is_empty() {
-                    continue;
-                }
-                board::team_heading(ui, label, tint, &players);
-                board::headings(ui, ui.available_width());
-                for player in players {
-                    let style = RowStyle {
-                        team: tint,
-                        selected: player.name.as_deref() == selected,
-                        height,
-                    };
-                    board::row(ui, player, &style);
-                }
-                ui.add_space(space::XL);
-            }
-        });
+        .show(ui, |ui| shown.header(ui));
 }
 
 #[cfg(test)]

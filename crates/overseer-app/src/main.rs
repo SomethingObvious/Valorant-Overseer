@@ -14,7 +14,9 @@ mod design;
 mod panel;
 mod perf;
 mod probe;
+mod settings;
 mod shot;
+mod view;
 
 use std::path::PathBuf;
 

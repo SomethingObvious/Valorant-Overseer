@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 overseer-core = { path = "../overseer-core", version = "2.34.0" }
 
 [lints]

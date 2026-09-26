@@ -21,19 +21,21 @@ use egui::{Ui, vec2};
 use egui_kittest::Harness;
 use overseer_core::Board;
 
-use crate::{app, design};
+use crate::settings::Settings;
+use crate::{design, view};
 
-/// A ten player board is the worst case the app ever draws. It came to 128
-/// shapes when this was written: ten rows with a rule and a state bar each,
-/// two team headings, two heading rows, the header, and the panel.
+/// A ten player board is the worst case the app ever draws, and it comes to
+/// 235 shapes: ten rows with a rule, a state bar and up to five result pips
+/// each, twelve columns of text, two team headings with their averages, two
+/// heading rows, the title bar and the panel.
 ///
-/// The budget is that figure with a quarter of headroom. Raising it is
-/// allowed and sometimes right; raising it without noticing is the thing
-/// being prevented, because at sixty frames a second twice the shapes is
-/// twice the tessellation and twice the vertex upload, for something nobody
-/// asked for. The first number here was a guess at 260 and the test below
-/// rejected it for not being a budget at all.
-const SHAPE_BUDGET: usize = 160;
+/// The budget is that figure with a quarter of headroom. It has moved once,
+/// from 160, when the board went from six columns to twelve and grew the
+/// form pips. That is the process working rather than failing: the number
+/// makes an increase a decision somebody took, and this comment is where the
+/// reason goes. What it is really guarding against is the other kind of
+/// increase, where a shadow lands on every row and nothing says so.
+const SHAPE_BUDGET: usize = 300;
 
 /// Builds the harness the way the app is built, on a full board.
 fn harness() -> Harness<'static, bool> {
@@ -42,7 +44,7 @@ fn harness() -> Harness<'static, bool> {
         .build_ui_state(
             |ui: &mut Ui, ready: &mut bool| {
                 if *ready {
-                    app::snapshot_view(ui, &board(), Some("Day#9932"));
+                    view::snapshot(ui, &board(), Some("Day#9932"), &Settings::default());
                 }
             },
             false,
@@ -84,12 +86,16 @@ fn board() -> Board {
 /// look at when there is one.
 #[test]
 fn a_still_window_asks_for_nothing() {
-    let harness = harness();
-    // Two more frames, so that anything with a one frame delay has had its
-    // chance to ask.
-    let mut harness = harness;
-    harness.run();
-    harness.run();
+    let mut harness = harness();
+    // Animations are a reason to draw, so the window is given time to finish
+    // whatever it started before being asked whether it is still asking. If
+    // it never stops, that is the bug this test is for.
+    let mut frames = 0;
+    while harness.ctx.has_requested_repaint() && frames < 120 {
+        harness.run();
+        frames += 1;
+    }
+    assert!(frames < 120, "the board never stopped asking for frames");
     assert!(
         !harness.ctx.has_requested_repaint(),
         "the board asked for another frame with nothing to draw"
@@ -102,7 +108,7 @@ fn a_full_board_stays_inside_its_shape_budget() {
     let mut harness = harness();
     harness.run();
     let shapes = harness.ctx.run_ui(egui::RawInput::default(), |ui| {
-        app::snapshot_view(ui, &board(), Some("Day#9932"));
+        view::snapshot(ui, &board(), Some("Day#9932"), &Settings::default());
     });
     let count = shapes.shapes.len();
     let mut shapes = shapes;

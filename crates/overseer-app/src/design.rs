@@ -51,6 +51,21 @@ pub(crate) mod space {
     pub(crate) const ROW_TIGHT: f32 = 20.0;
 }
 
+/// How long things take. Four durations, because a fifth would be a fifth
+/// opinion about the same question, and the whole point of a system is that
+/// the same question has one answer.
+pub(crate) mod motion {
+    /// A hover tint. Fast enough to feel like the cursor rather than an
+    /// animation somebody wrote.
+    pub(crate) const INSTANT: f32 = 0.06;
+    /// A selection moving, a value changing.
+    pub(crate) const QUICK: f32 = 0.12;
+
+    /// The same durations when the window is being careful: fast enough to
+    /// still say what changed, short enough to cost nothing.
+    pub(crate) const EFFICIENT: f32 = 0.0;
+}
+
 /// Colour by the job it does, never by what it looks like.
 ///
 /// The same values as `tui/src/theme.ts`, so the window and the terminal are

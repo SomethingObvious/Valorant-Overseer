@@ -12,5 +12,8 @@
 pub mod board;
 pub mod bridge;
 
-pub use board::{Board, Player};
+pub use board::{
+    Board, Encounter, LockProgress, MapWinRate, Notice, Party, Player, Score, Session,
+    SessionPoint, Skin, StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
+};
 pub use bridge::{Bridge, Event, Status};

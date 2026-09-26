@@ -128,6 +128,15 @@ allow_attributes_without_reason = "deny"
 # sprinkling the crate with the attributes this repository forbids.
 redundant_pub_crate = "allow"
 
+# Four bools in `Player`: is this me, is the name hidden, is the level hidden,
+# is this account flagged. The lint is aimed at a domain type where a pile of
+# flags is a missing enum, and this is not one: it is a mirror of a JSON
+# payload the backend defines, field for field and name for name, and the
+# whole point of that mirror is that it can be checked against the other side
+# by reading the two next to each other. Grouping the flags into a sub-struct
+# would invent a nesting that does not exist in the data.
+struct_excessive_bools = "allow"
+
 # A UI is arithmetic between integers that count things and floats that measure
 # pixels: a row index becomes a y offset, a round count becomes a bar width, a
 # percentage becomes an alpha. Casting every one of those through a wrapper

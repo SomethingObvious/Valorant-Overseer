@@ -539,7 +539,7 @@ fn remembered() -> Notes {
 /// Every frame worth pinning: the three layouts, a sorted board, and the
 /// screen a new install opens on. Data rather than test, so that adding one
 /// is adding a line here.
-fn scenes() -> [(&'static str, egui::Vec2, Scene); 7] {
+fn scenes() -> [(&'static str, egui::Vec2, Scene); 8] {
     [
         ("wide", vec2(1200.0, 480.0), Scene::of(Some("SilentEnt#GG"))),
         // Sorted by K/D, best first, which is the question a heading gets
@@ -569,6 +569,11 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 7] {
             vec2(1200.0, 1240.0),
             Scene::of(Some("Day#9932")).lived(a_history()),
         ),
+        // The screen the app opens on, at the size it opens at: the state
+        // plate with the three steps on it.
+        ("opening", vec2(860.0, 420.0), Scene::empty()),
+        // The same thing in a window too short for any furniture, which is
+        // the fallback the plate is allowed to give up to.
         ("waiting", vec2(860.0, 240.0), Scene::empty()),
     ]
 }

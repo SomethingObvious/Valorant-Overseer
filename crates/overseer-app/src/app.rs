@@ -27,7 +27,7 @@ use crate::settings::{self, Quality, Settings};
 use crate::sort::{self, Sort};
 use crate::tray::{self, Action, Tray};
 use crate::{panel, view};
-use overseer_ui::{self, Face, caps_at, caps_text, colour, motion, size, space};
+use overseer_ui::{self, Face, caps_at, caps_text, colour, motion, shape, size, space};
 
 /// Under this width there is no room for the panel beside the board.
 pub(crate) const COMPACT: f32 = 720.0;
@@ -629,7 +629,7 @@ impl Overseer {
             egui::Direction::TopDown,
             [colour::BG_INSET, colour::BG_RAISED],
         ));
-        painter.extend(overseer_ui::shape::drop_shadow(
+        painter.extend(shape::drop_shadow(
             Rect::from_min_max(
                 pos2(rect.left(), rect.bottom() - 2.0),
                 pos2(rect.right(), rect.bottom()),
@@ -1357,23 +1357,177 @@ fn nobody(ui: &mut Ui, filter: &str) {
     });
 }
 
-/// What to say while there is no board. An empty screen is a place to say
-/// what is happening and what to do about it, not a place to say nothing.
+/// What to say while there is no board.
+///
+/// An empty screen is a place to say what is happening and what to do about
+/// it, not a place to say nothing. It is also the screen this window spends
+/// most of its life on, so nothing on it moves: a pulse here would wake the
+/// compositor every frame for as long as somebody is sitting in the game's
+/// menus, and costing a player frames while they are not even in a match is
+/// the one thing this app has promised not to do.
 fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>) {
-    let (title, detail): (&str, &str) = match (trouble, status) {
-        (Some(why), _) => ("This build cannot read the bridge", why),
+    let (state, title, detail, reached): (&str, &str, &str, usize) = match (trouble, status) {
+        (Some(why), _) => ("blocked", "This build cannot read the bridge", why, 0),
         (None, Status::Live) => (
+            "waiting",
             "Signed in, nothing in progress",
             "Open VALORANT and this fills in by itself.",
+            2,
         ),
         (None, Status::Connecting(_)) => (
+            "connecting",
             "Looking for the backend",
             "It writes down its port once it is listening.",
+            0,
         ),
-        (None, Status::Lost(why)) => ("Not connected", why),
+        (None, Status::Lost(why)) => ("lost", "Not connected", why, 0),
     };
+    let broken = trouble.is_some() || matches!(status, Status::Lost(_));
+    let room = ui.available_rect_before_wrap();
+    if room.height() < 210.0 {
+        plain(ui, title, detail);
+        return;
+    }
+    let (rect, _response) = ui.allocate_exact_size(room.size(), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    let width = 420.0_f32.min(rect.width() - space::XXL * 2.0);
+    // Laid out before the plate is drawn, because the plate is as tall as
+    // its sentence. A box built to a number that happens to fit today is a
+    // box that crops the first message longer than the one it was measured
+    // against, and the longest of these is whatever the bridge last refused
+    // to do.
+    let mut job = egui::text::LayoutJob::simple(
+        detail.to_owned(),
+        Face::Body.at(size::BODY),
+        colour::TEXT_DIM,
+        width - space::XL * 2.0,
+    );
+    job.wrap.max_rows = 3;
+    job.wrap.overflow_character = Some('\u{2026}');
+    let sentence = painter.layout_job(job);
+    let plate = Rect::from_center_size(
+        pos2(
+            rect.center().x,
+            rect.top() + (rect.height() * 0.44).max(120.0),
+        ),
+        vec2(width, 74.0 + sentence.size().y + space::XL + 48.0),
+    );
+    painter.extend(shape::drop_shadow(plate, 6.0));
+    painter.add(shape::cut_wash(
+        plate,
+        shape::CHAMFER,
+        colour::BG_RAISED,
+        colour::BG_INSET,
+    ));
+    let accent = if broken { colour::ENEMY } else { colour::ALLY };
+    words(&painter, plate, Said { state, title }, sentence, accent);
+    chain(&painter, plate, reached, broken);
+}
+
+/// The two short things the empty screen says before its sentence.
+#[derive(Debug, Clone, Copy)]
+struct Said<'a> {
+    /// One word for the state, beside the tick.
+    state: &'a str,
+    /// The headline: what is true right now.
+    title: &'a str,
+}
+
+/// The words on the plate: a state, a headline and the sentence already laid
+/// out to decide how tall the plate had to be.
+fn words(
+    painter: &egui::Painter,
+    plate: Rect,
+    said: Said<'_>,
+    sentence: std::sync::Arc<egui::Galley>,
+    accent: egui::Color32,
+) {
+    painter.add(shape::tick(
+        pos2(plate.left() + space::XL, plate.top() + space::XL),
+        11.0,
+        accent,
+    ));
+    caps_at(
+        painter,
+        pos2(plate.left() + space::XL + space::MD, plate.top() + 21.0),
+        Align2::LEFT_CENTER,
+        said.state,
+        Face::Display.at(size::LABEL),
+        accent,
+    );
+    painter.text(
+        pos2(plate.left() + space::XL, plate.top() + 56.0),
+        Align2::LEFT_CENTER,
+        said.title,
+        Face::Display.at(size::DISPLAY),
+        colour::TEXT_STRONG,
+    );
+    painter.galley(
+        pos2(plate.left() + space::XL, plate.top() + 74.0),
+        sentence,
+        colour::TEXT_DIM,
+    );
+    painter.hline(
+        plate.left() + space::XL..=plate.right() - space::XL,
+        plate.bottom() - 48.0,
+        (1.0, colour::LINE),
+    );
+}
+
+/// The three things that have to happen before there is anything to show,
+/// and which of them have.
+///
+/// Every one of them can fail on its own and the failures look identical
+/// from here: an empty window. Naming them turns "nothing is happening" into
+/// a place in a sequence, which is the difference between waiting and being
+/// stuck.
+fn chain(painter: &egui::Painter, plate: Rect, reached: usize, broken: bool) {
+    let middle = plate.bottom() - 22.0;
+    let mut x = plate.left() + space::XL;
+    for (step, name) in ["backend", "riot", "match"].into_iter().enumerate() {
+        let tint = match (step < reached, broken && step == 0) {
+            (_, true) => colour::ENEMY,
+            (true, _) => colour::ALLY,
+            (false, _) => colour::TEXT_FAINT,
+        };
+        let pip = Rect::from_center_size(pos2(x + 4.0, middle), vec2(8.0, 8.0));
+        if step < reached {
+            painter.add(shape::cut_filled(pip, 2.0, tint));
+        } else {
+            painter.rect_stroke(
+                pip,
+                0,
+                egui::Stroke::new(1.0, tint),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let after = caps_text(
+            painter,
+            pos2(x + space::XL, middle),
+            Align2::LEFT_CENTER,
+            name,
+            Face::Display.at(size::MICRO),
+            if step < reached {
+                colour::TEXT
+            } else {
+                colour::TEXT_FAINT
+            },
+        );
+        x = after.right() + space::LG;
+        if step < 2 {
+            painter.hline(x..=x + space::LG, middle, (1.0, colour::LINE));
+            x += space::LG + space::LG;
+        }
+    }
+}
+
+/// The same words with no furniture, for a window too short to hold any.
+fn plain(ui: &mut Ui, title: &str, detail: &str) {
     ui.vertical_centered(|ui| {
-        ui.add_space(space::XXL * 2.0);
+        ui.add_space(space::XXL);
         ui.label(
             RichText::new(title)
                 .color(colour::TEXT_STRONG)

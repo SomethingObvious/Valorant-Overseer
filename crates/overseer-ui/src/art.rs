@@ -59,6 +59,87 @@ pub fn rank(ctx: &Context, tier: u32) -> Option<TextureHandle> {
     texture(ctx, &format!("rank:{tier}"), bytes)
 }
 
+/// The light behind a tier's emblem: the emblem's own silhouette, blurred
+/// and white, for the caller to tint with the tier's colour.
+///
+/// A disc of colour behind the emblem read as a smudge: it had an edge you
+/// could see and it lit the empty corners of a square. A bloom of the shape
+/// itself is how the game lights a rank, and it falls off the way light
+/// does. Made once per tier from the emblem already in the binary, at the
+/// emblem's pixel scale with [`GLOW_PAD`] of room on every side.
+#[must_use]
+pub fn rank_glow(ctx: &Context, tier: u32) -> Option<TextureHandle> {
+    let bytes = RANKS
+        .iter()
+        .find(|(known, _)| *known == tier)
+        .map(|(_, bytes)| *bytes)?;
+    cached(ctx, &format!("rank-glow:{tier}"), || {
+        decode(bytes).map(|e| bloom(&e))
+    })
+}
+
+/// How far the glow reaches past the emblem, in the emblem's pixels. The
+/// glow's picture is this much bigger than the emblem's on every side.
+pub const GLOW_PAD: usize = 48;
+
+/// The emblem's alpha, spread by three box blurs (close to a gaussian) and
+/// set in white.
+///
+/// Wide enough to read as light rather than as an outline, and narrow enough
+/// to be gone before the edge of the row it is clipped to, where a glow
+/// still lit would end in a hard line.
+fn bloom(emblem: &egui::ColorImage) -> egui::ColorImage {
+    const RADIUS: usize = 14;
+    let [w, h] = emblem.size;
+    let (width, height) = (w + 2 * GLOW_PAD, h + 2 * GLOW_PAD);
+    let mut alpha = vec![0.0_f32; width * height];
+    for (row, source) in alpha
+        .chunks_mut(width)
+        .skip(GLOW_PAD)
+        .zip(emblem.pixels.chunks(w))
+    {
+        for (to, pixel) in row.iter_mut().skip(GLOW_PAD).zip(source) {
+            *to = f32::from(pixel.a()) / 255.0;
+        }
+    }
+    for _pass in 0..3 {
+        blur_rows(&mut alpha, width, RADIUS);
+        let mut down = transpose(&alpha, width);
+        blur_rows(&mut down, height, RADIUS);
+        alpha = transpose(&down, height);
+    }
+    let pixels = alpha
+        .iter()
+        .map(|a| egui::Color32::from_white_alpha((a.clamp(0.0, 1.0) * 255.0).round() as u8))
+        .collect();
+    egui::ColorImage::new([width, height], pixels)
+}
+
+/// One box blur of `radius` along every row, with nothing past either end.
+fn blur_rows(values: &mut [f32], width: usize, radius: usize) {
+    let span = (2 * radius + 1) as f32;
+    for row in values.chunks_mut(width) {
+        let sums: Vec<f32> = std::iter::once(0.0)
+            .chain(row.iter().scan(0.0, |total, v| {
+                *total += v;
+                Some(*total)
+            }))
+            .collect();
+        let sum = |at: usize| sums.get(at).copied().unwrap_or(0.0);
+        for (j, out) in row.iter_mut().enumerate() {
+            let (from, to) = (j.saturating_sub(radius), (j + radius + 1).min(width));
+            *out = (sum(to) - sum(from)) / span;
+        }
+    }
+}
+
+/// Rows become columns, for a picture `width` wide.
+fn transpose(values: &[f32], width: usize) -> Vec<f32> {
+    (0..width)
+        .flat_map(|x| values.iter().skip(x).step_by(width).copied())
+        .collect()
+}
+
 /// One of the tables keyed by name, looked up by what the backend sent.
 fn named(ctx: &Context, kind: &str, table: &[(&str, &[u8])], name: &str) -> Option<TextureHandle> {
     let key = slug(name);
@@ -84,6 +165,16 @@ fn slug(name: &str) -> String {
 /// Decodes a PNG the first time it is asked for and hands back the texture
 /// every time after.
 fn texture(ctx: &Context, key: &str, bytes: &[u8]) -> Option<TextureHandle> {
+    cached(ctx, key, || decode(bytes))
+}
+
+/// A texture made the first time it is asked for and handed back every time
+/// after.
+fn cached(
+    ctx: &Context,
+    key: &str,
+    make: impl FnOnce() -> Option<egui::ColorImage>,
+) -> Option<TextureHandle> {
     // Kept in the context's own store rather than in a static of this
     // module. A texture id only means anything to the context that handed it
     // out, and a cache shared between contexts hands the second one an id
@@ -96,7 +187,7 @@ fn texture(ctx: &Context, key: &str, bytes: &[u8]) -> Option<TextureHandle> {
     // Linear filtering both ways: these are drawn at about half the size
     // they are stored at and the window can be on a display at any scale, so
     // there is no size at which nearest would be the honest one.
-    let handle = ctx.load_texture(key, decode(bytes)?, TextureOptions::LINEAR);
+    let handle = ctx.load_texture(key, make()?, TextureOptions::LINEAR);
     ctx.data_mut(|store| store.insert_temp(id, handle.clone()));
     Some(handle)
 }
@@ -133,7 +224,7 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CARDS, KILLFEED, MAPS, PORTRAITS, RANKS, decode, slug};
+    use super::{CARDS, GLOW_PAD, KILLFEED, MAPS, PORTRAITS, RANKS, bloom, decode, slug};
 
     /// The slug has to survive the one agent with punctuation in its name.
     #[test]
@@ -155,6 +246,27 @@ mod tests {
         }
         for (tier, bytes) in RANKS {
             assert!(decode(bytes).is_some(), "tier {tier} did not decode");
+        }
+    }
+
+    /// The glow is brightest where the emblem is, fades away from it, and
+    /// has nothing left at the edge of its own picture, where a hard cut
+    /// would show.
+    #[test]
+    fn the_glow_falls_off_like_light() {
+        let (_tier, bytes) = RANKS
+            .iter()
+            .find(|(tier, _)| *tier == 12)
+            .expect("gold has an emblem");
+        let glow = bloom(&decode(bytes).expect("an emblem decodes"));
+        let [w, h] = glow.size;
+        let at = |x: usize, y: usize| glow.pixels.get(y * w + x).map_or(0, egui::Color32::a);
+        let (mx, my) = (w.div_ceil(2), h.div_ceil(2));
+        assert!(at(mx, my) > 200, "the middle is {}", at(mx, my));
+        assert!(at(mx, my) > at(mx, GLOW_PAD.div_ceil(2) + 8));
+        for x in 0..w {
+            assert_eq!(at(x, 0), 0, "the top edge is lit at {x}");
+            assert_eq!(at(x, h - 1), 0, "the bottom edge is lit at {x}");
         }
     }
 

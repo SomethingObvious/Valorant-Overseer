@@ -26,10 +26,10 @@ pub(crate) use grid::COLUMNS;
 
 /// The margin down both sides of the board.
 ///
-/// Wide enough on the left for a party bracket to sit in it without
-/// touching a row: a bracket inside the rows would be one more column, and
+/// Wide enough on the left for a party's tab to sit in it without
+/// touching a row: a tab inside the rows would be one more column, and
 /// against the window's edge it would look like a rendering fault.
-pub(crate) const GUTTER: f32 = 18.0;
+pub(crate) const GUTTER: f32 = 22.0;
 
 /// How tall the overlay's board is with a full enemy team: the gutter's
 /// width above and below, the plate, and five rows with the four gaps
@@ -250,11 +250,7 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
     // the smaller face, and a name column that gives up its last forty
     // points before the numbers give up anything.
     let narrow = overlay || ui.available_width() < NARROW;
-    let identity = if narrow {
-        OVERLAY.crop() + space::LG + 116.0
-    } else {
-        ENEMY.crop() + space::LG + 196.0
-    };
+    let identity = identity(narrow);
     // A column with nothing in it for anybody in the lobby is dropped for
     // this lobby, which gives its room to one that has something to say.
     // Only for a column whose emptiness cannot change mid-match: who you
@@ -305,6 +301,15 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
     }
 }
 
+/// How wide the face and the name are, before the first column.
+fn identity(narrow: bool) -> f32 {
+    if narrow {
+        OVERLAY.crop() + space::LG + 116.0
+    } else {
+        ENEMY.crop() + space::LG + 196.0
+    }
+}
+
 /// One side's rows, with the stinger over the enemy's while a lobby lands.
 fn block(
     ui: &mut Ui,
@@ -324,26 +329,31 @@ fn block(
     } else {
         motion::eased(((scene.since - COUNT_DELAY) / COUNT).clamp(0.0, 1.0))
     };
-    let brackets = paint::brackets(players);
     let top = ui.cursor().top();
-    for (i, player) in players.iter().enumerate() {
+    let mut placed = Vec::with_capacity(players.len());
+    for player in players {
         let id = player.puuid.as_deref();
         let look = Look {
             side,
             metrics,
             selected: id.is_some() && id == scene.selected,
             noted: id.is_some_and(|id| scene.notes.has(id)),
-            bracket: brackets.get(i).copied().flatten(),
             counted,
             still: scene.still,
             reasons: scene.place == Place::Window,
         };
         let response = rows::row(ui, player, grid, &look);
+        placed.push(response.rect);
         if response.clicked() {
             touched.clicked.clone_from(&player.puuid);
         }
         if response.hovered() {
             touched.hovered.clone_from(&player.puuid);
+        }
+    }
+    for party in paint::spines(players) {
+        if let (Some(first), Some(last)) = (placed.get(party.rows.0), placed.get(party.rows.1)) {
+            paint::spine(ui.painter(), &party, first.union(*last));
         }
     }
     if side == Side::Enemy && !scene.still && scene.since < STINGER {
@@ -378,7 +388,22 @@ fn nobody(ui: &mut Ui, filter: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_after, step};
+    use super::{GUTTER, grid::Grid, identity, next_after, step};
+
+    /// The overlay is as wide as what it is for: the rank, the K/D and the
+    /// last five. When the gutter grew to hold a party's tab, the rows lost
+    /// the room and the last five quietly gave way to the headshot rate.
+    #[test]
+    fn the_overlay_keeps_the_kd_and_the_last_five() {
+        let room = crate::overlay::WIDTH - 2.0 * GUTTER;
+        for hidden in [vec![], vec!["met".to_owned()]] {
+            let grid = Grid::new(room, identity(true), &hidden);
+            let heads: Vec<&str> = grid.placed.iter().map(|p| p.column.head).collect();
+            for wanted in ["rank", "k/d", "last 5"] {
+                assert!(heads.contains(&wanted), "the overlay shows {heads:?}");
+            }
+        }
+    }
 
     fn ids(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| (*n).to_owned()).collect()

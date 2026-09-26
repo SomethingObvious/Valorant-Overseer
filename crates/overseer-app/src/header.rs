@@ -197,7 +197,9 @@ fn score(painter: &egui::Painter, head: &Masthead<'_>, centre: f32, middle: f32,
                 Align2::LEFT_CENTER,
                 &format!("round {round}"),
                 paint::label(),
-                colour::TEXT_DIM,
+                // Brighter than a label usually is: it sits on the map's
+                // art, and dim grey on a bright map dropped under 4.5 to 1.
+                colour::TEXT,
             );
         }
     } else if let Some(lock) = board.lock_progress.as_ref() {

@@ -42,8 +42,9 @@ const TASKBAR: f32 = 48.0;
 /// Enough for the columns that matter at a glance and no more: an overlay
 /// as wide as the board is a board. At this width the priority list keeps
 /// the agent, the name, the rank, the K/D and the last five results, which
-/// is the whole of what can be read in the seconds this is looked at.
-pub(crate) const WIDTH: f32 = 540.0;
+/// is the whole of what can be read in the seconds this is looked at. Rows
+/// of 504 points and the gutter either side, which holds a party's tab.
+pub(crate) const WIDTH: f32 = 504.0 + 2.0 * crate::board::GUTTER;
 /// Which corner of the screen the overlay lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

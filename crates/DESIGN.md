@@ -59,7 +59,8 @@ What it refuses:
    light along its top edge, and a shadow with an offset below it. A shadow
    with no offset is a glow, and a glow round everything is decoration.
 5. **Light only where something is lit.** Three things carry light and
-   nothing else does: a rank emblem (the tier's colour falling off round it),
+   nothing else does: a rank emblem (a bloom of its own shape in the tier's
+   colour turned up, stronger up the ladder),
    the connection light, and a score digit for as long as it takes the
    animator to catch up with a round just won.
 6. **The slant is punctuation.** About twelve degrees (`paint::LEAN`), on the
@@ -98,7 +99,7 @@ a decision somebody made alone.
 | `ENEMY` | `#FF4655` | The enemy's plate and nothing else loud |
 | `ALLY` | `#18E5A7` | Your side |
 | `WARN` | `#FFC845` | Worth a look: the one colour meaning "this one" |
-| `PARTY` | `#7AA2FF #C58BFF #5CE1E6 #F28DD5` | Party brackets, never red, green or amber |
+| `PARTY` | `#7AA2FF #C58BFF #5CE1E6 #F28DD5` | Party tabs, never red, green or amber |
 
 Rank colours are Riot's, from their own competitive tier data, and appear only
 in the emblem's light and the tier's name.
@@ -148,6 +149,11 @@ shortens every one of them to nothing and draws no shadow and no light.
   last five as slanted pips. A flagged account gets an amber rail, a faint
   amber wash, and its reasons as a second line in Inter with the numbers in
   amber. An account the backend could not see is one short quiet line.
+- **Party tab** (`paint::spine`): one tab down the gutter the height of the
+  party's rows, its ends cut at the lean, its size (DUO, TRIO, 4 STACK) set
+  sideways in black. The app's guess is a dashed outline with a question mark,
+  a row at a time, because the backend guesses a size and not who with. The
+  gutter is 22 points so the tab has air on both sides.
 - **Rank cell**: the emblem in its light, the tier's name, and the peak under
   it when the peak is two ranks or more above today. When room is tight the
   rank keeps its emblem and gives up its word, because the emblem is the rank
@@ -173,8 +179,10 @@ shortens every one of them to nothing and draws no shadow and no light.
   shed, and hiding one can never take a different one away.
 - **A row reserves its whole height before it asks whether it is on screen**,
   reasons line included, so nothing jumps as the board scrolls.
-- **The overlay** is enemies only, at the narrow measurements. It is placed
-  once, as if it were always its designed height (the plate and five rows),
+- **The overlay** is enemies only, at the narrow measurements, with the
+  gutter on all four sides: rows of 504 points, so it keeps the rank, the K/D
+  and the last five (a test holds that). It is placed once, as if it were
+  always its designed height (the plate and five rows, a test holds that too),
   and only ever resized after that: a window moved after it is shown stops
   being composited on this machine. It is exactly as tall as its board
   because this adapter presents opaque, and a fixed tall overlay would lay a

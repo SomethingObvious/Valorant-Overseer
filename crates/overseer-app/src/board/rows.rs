@@ -12,7 +12,7 @@ use overseer_ui::{Face, caps_text, caps_width, colour, motion, shape, size, spac
 
 use super::Side;
 use super::grid::{Grid, Placed};
-use super::paint::{self, Bracket};
+use super::paint;
 
 /// The measurements of one kind of row.
 #[derive(Debug, Clone, Copy)]
@@ -99,8 +99,6 @@ pub(crate) struct Look {
     pub(crate) selected: bool,
     /// Whether you have written about them.
     pub(crate) noted: bool,
-    /// Its share of a party bracket.
-    pub(crate) bracket: Option<Bracket>,
     /// How far the numerals have counted up, from nothing to all of it.
     pub(crate) counted: f32,
     /// The efficient tier: no motion, no blur.
@@ -149,7 +147,6 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
     };
     let fill = shape::blend(fill, colour::BG_HOVER, lift * 0.8);
     paint::slab(&painter, rect, fill, lift, look.still);
-    gutter(&painter, player, look, rect);
     let line = Rect::from_min_size(rect.min, vec2(rect.width(), look.metrics.height));
     // An account the backend could not see at all. Ten columns of dashes
     // reads as the app being broken, and a full slab spent saying nothing
@@ -166,7 +163,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
         return response;
     }
     // The emblem's light and the crop stay on their own slab: through the
-    // painter's wider clip, meant for the shadow and the bracket, the glow
+    // painter's wider clip, meant for the shadow, the glow
     // left faint dots in the gap between two rows.
     let inside = painter.with_clip_rect(rect);
     // The name stops at the first column, measured. An ally worth a look
@@ -208,22 +205,6 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look) -> Res
         );
     }
     response
-}
-
-/// The party bracket down the gutter, Riot's or the app's guess.
-fn gutter(painter: &egui::Painter, player: &Player, look: &Look, rect: Rect) {
-    if let Some(bracket) = look.bracket {
-        paint::bracket(painter, bracket, rect.left() - 10.0, rect);
-    }
-    if player.stack_guess.is_some() && player.party.is_none() && look.bracket.is_none() {
-        let guess = Bracket {
-            tint: colour::TEXT_FAINT,
-            top: true,
-            bottom: true,
-            guessed: true,
-        };
-        paint::bracket(painter, guess, rect.left() - 10.0, rect);
-    }
 }
 
 /// What an ally worth a look is tagged with.

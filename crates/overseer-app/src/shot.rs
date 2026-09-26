@@ -128,6 +128,19 @@ pub(crate) fn sample() -> Board {
             round: Some(5),
         }),
         team_stats: stats,
+        session: Some(overseer_core::Session {
+            net: Some(37),
+            points: ["W", "W", "L", "W", "L", "W"]
+                .iter()
+                .enumerate()
+                .map(|(i, result)| overseer_core::SessionPoint {
+                    map: Some("Icebox".to_owned()),
+                    result: Some(if *result == "W" { "Victory" } else { "Defeat" }.to_owned()),
+                    delta: Some(if *result == "W" { 19 } else { -16 }),
+                    rr: Some(40 + i64::try_from(i).unwrap_or(0) * 6),
+                })
+                .collect(),
+        }),
         players,
         ..Board::default()
     }

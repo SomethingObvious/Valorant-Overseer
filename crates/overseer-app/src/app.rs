@@ -18,7 +18,7 @@ use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
-use crate::board::{self, Pace, RowStyle};
+use crate::board::{self, GUTTER, Pace, RowStyle};
 use crate::career::Career;
 use crate::hotkey::{self, Hotkey};
 use crate::notes::{self, Notes};
@@ -37,6 +37,40 @@ pub(crate) const WIDE: f32 = 1100.0;
 const PANEL_NARROW: f32 = 280.0;
 /// The panel's width above [`WIDE`].
 const PANEL_WIDE: f32 = 340.0;
+/// One key, drawn as a key: a plate with a letter on it.
+///
+/// The display face is caps only and has no arrows, so anything that is not
+/// a letter is set in the reading face. A keycap with a box on it is worse
+/// than no keycap.
+fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> Rect {
+    let face = if key.is_ascii() {
+        Face::Display.at(size::MICRO)
+    } else {
+        Face::Body.at(size::MICRO)
+    };
+    let galley = painter.layout_no_wrap(key.to_uppercase(), face, colour::TEXT_DIM);
+    let plate = Rect::from_min_size(
+        pos2(at.x, at.y - 8.0),
+        vec2((galley.size().x + space::MD).max(16.0), 16.0),
+    );
+    painter.rect_filled(plate, 0, colour::BG_INSET);
+    painter.rect_stroke(
+        plate,
+        0,
+        egui::Stroke::new(1.0, colour::LINE),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        pos2(
+            plate.center().x - galley.size().x / 2.0,
+            plate.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        colour::TEXT_DIM,
+    );
+    plate
+}
+
 /// How long the pointer has to rest on a row before its history is asked
 /// for. Short enough to feel immediate, long enough that crossing the board
 /// asks nothing.
@@ -829,6 +863,9 @@ impl Overseer {
                     });
                     ui.add_space(space::XL);
                 }
+                if shown > 0 {
+                    board::board_foot(ui, &self.board);
+                }
                 if shown == 0 {
                     nobody(ui, &filter);
                 }
@@ -913,7 +950,7 @@ impl App for Overseer {
             .show(ui, |ui| self.header(ui));
         Panel::bottom("footer")
             .exact_size(space::XL + space::SM)
-            .frame(chrome)
+            .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.footer(ui));
 
         if self.screen == Screen::Board {
@@ -1012,38 +1049,66 @@ impl Overseer {
     }
 
     /// The footer: what to press, and what the window is spending.
+    ///
+    /// Keys as keycaps rather than as prose. A line of bracketed letters
+    /// is something to read; a row of caps is something to recognise, and
+    /// the difference matters on a bar nobody should spend time on.
     fn footer(&self, ui: &mut Ui) {
-        let (rect, _response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+        let (rect, _response) = ui.allocate_exact_size(
+            vec2(ui.available_width(), space::XL + space::SM),
+            Sense::hover(),
+        );
         if !ui.is_rect_visible(rect) {
             return;
         }
         let painter = ui.painter().clone();
-        painter.text(
-            pos2(rect.left() + space::LG, rect.center().y),
-            Align2::LEFT_CENTER,
-            "[/] find   [,] settings   [up] [down] pick   click a heading to sort",
-            Face::Body.at(size::MICRO),
-            colour::TEXT_FAINT,
-        );
-        let quality = self.quality().label();
+        painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
+        let mut x = rect.left() + GUTTER;
+        for (key, what) in [
+            ("/", "find"),
+            (",", "settings"),
+            ("o", "overlay"),
+            ("\u{2191}\u{2193}", "pick"),
+        ] {
+            x = keycap(&painter, pos2(x, rect.center().y), key).right() + space::SM;
+            let after = caps_text(
+                &painter,
+                pos2(x, rect.center().y),
+                Align2::LEFT_CENTER,
+                what,
+                Face::Display.at(size::MICRO),
+                colour::TEXT_FAINT,
+            );
+            x = after.right() + space::XL;
+        }
+
         let (bad, _why) = &self.unreadable;
-        let unreadable = if *bad == 0 {
-            String::new()
-        } else {
-            format!("{bad} unreadable   ")
-        };
-        painter.text(
-            pos2(rect.right() - space::LG, rect.center().y),
-            Align2::RIGHT_CENTER,
-            format!("{} boards   {unreadable}{quality}", self.boards),
-            Face::Number.at(size::MICRO),
-            if *bad == 0 {
-                colour::TEXT_FAINT
-            } else {
-                colour::WARN
-            },
-        );
+        let mut right = rect.right() - GUTTER;
+        for (text, tint) in [
+            (self.quality().label().to_owned(), colour::TEXT_FAINT),
+            (format!("{} boards", self.boards), colour::TEXT_FAINT),
+            (
+                if *bad == 0 {
+                    String::new()
+                } else {
+                    format!("{bad} unreadable")
+                },
+                colour::WARN,
+            ),
+        ] {
+            if text.is_empty() {
+                continue;
+            }
+            let drawn = caps_text(
+                &painter,
+                pos2(right, rect.center().y),
+                Align2::RIGHT_CENTER,
+                &text,
+                Face::Display.at(size::MICRO),
+                tint,
+            );
+            right = drawn.left() - space::XL;
+        }
     }
 }
 
@@ -1130,8 +1195,15 @@ fn connecting_text(detail: &str) -> String {
 /// of the image would mean the loudest thing in the app was the one thing
 /// nothing checked.
 #[cfg(test)]
-pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
-    let shown = Overseer {
+pub(crate) fn snapshot_empty(ui: &mut Ui) {
+    empty(ui, &Status::Live, None);
+}
+
+/// The window's chrome, drawn for the snapshot test without a window behind
+/// it: the title bar, the search row and the footer.
+#[cfg(test)]
+pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
+    let mut shown = Overseer {
         bridge: Bridge::start(Path::new("."), || {}),
         root: PathBuf::new(),
         settings: Settings::default(),
@@ -1140,7 +1212,7 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         stopped: None,
         selected: None,
         screen: Screen::Board,
-        boards: 0,
+        boards,
         slow: 0,
         dropped: false,
         sort: Sort::default(),
@@ -1163,6 +1235,14 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         .exact_size(HEADER)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.header(ui));
+    Panel::bottom("footer")
+        .exact_size(space::XL + space::SM)
+        .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
+        .show(ui, |ui| shown.footer(ui));
+    Panel::top("search")
+        .exact_size(space::ROW + space::MD)
+        .frame(egui::Frame::NONE.fill(colour::BG))
+        .show(ui, |ui| shown.search(ui));
 }
 
 #[cfg(test)]

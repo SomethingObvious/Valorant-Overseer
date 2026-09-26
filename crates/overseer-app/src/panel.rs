@@ -285,7 +285,9 @@ fn ranks(ui: &mut Ui, player: &Player) {
         rank_line(ui, player, rect);
     }
     rank_bar(ui, player);
-    if let Some(place) = player.leaderboard {
+    // Zero is not a place. The backend sends it for anybody who is not
+    // on the leaderboard at all, and "Leaderboard #0" reads as a rank.
+    if let Some(place) = player.leaderboard.filter(|p| *p > 0) {
         line(
             ui,
             &format!("Leaderboard #{place}"),

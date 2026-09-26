@@ -11,7 +11,8 @@ use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
-use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
+use egui::Rect;
+use overseer_ui::{Face, caps_at, caps_text, colour, motion, shape, size, space};
 
 /// What did not start, and why, for the screen to say out loud.
 ///
@@ -54,6 +55,7 @@ pub(crate) fn settings(
                 "detail panel",
                 "Whoever the pointer is over, in full, on the right",
                 settings.panel,
+                false,
             ) {
                 settings.panel = !settings.panel;
                 changed = true;
@@ -63,6 +65,7 @@ pub(crate) fn settings(
                 "enemies first",
                 "The other five above your own, because the game already shows you yours",
                 settings.enemies_first,
+                false,
             ) {
                 settings.enemies_first = !settings.enemies_first;
                 changed = true;
@@ -82,7 +85,7 @@ fn columns(ui: &mut Ui, settings: &mut Settings) -> bool {
     section(ui, "columns", "What the board shows about each player.");
     for column in &COLUMNS {
         let hidden = settings.hidden_columns.iter().any(|h| h == column.head);
-        if switch(ui, column.head, column.about, !hidden) {
+        if switch(ui, column.head, column.about, !hidden, false) {
             changed = true;
             if hidden {
                 settings.hidden_columns.retain(|h| h != column.head);
@@ -108,6 +111,7 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>) -> bool {
         "overlay",
         "No title bar, always on top, and the board stays where it is. [o]",
         settings.overlay,
+        false,
     ) {
         settings.overlay = !settings.overlay;
         changed = true;
@@ -118,6 +122,7 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>) -> bool {
             corner.label(),
             corner.about(),
             settings.corner == corner,
+            true,
         ) {
             settings.corner = corner;
             changed = true;
@@ -165,7 +170,7 @@ fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, dropped: bool)
             Quality::Efficient => "No movement at all. Same information, calmer",
             Quality::Rich => "Every animation the design allows",
         };
-        if switch(ui, option.label(), about, settings.quality == option) {
+        if switch(ui, option.label(), about, settings.quality == option, true) {
             settings.quality = option;
             changed = true;
         }
@@ -208,7 +213,7 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
     }
 }
 
-/// A group of switches, with a rule over it.
+/// A group of switches, with a rule over it and a tick before it.
 fn section(ui: &mut Ui, text: &str, about: &str) {
     ui.add_space(space::XL);
     let (rect, _response) =
@@ -218,16 +223,22 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
     }
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
+    let middle = rect.center().y + space::SM;
+    painter.add(shape::tick(
+        pos2(rect.left() + space::XL, middle - 5.0),
+        10.0,
+        colour::ENEMY,
+    ));
     let drawn = caps_text(
         &painter,
-        pos2(rect.left() + space::XL, rect.center().y + space::SM),
+        pos2(rect.left() + space::XL + space::MD, middle),
         Align2::LEFT_CENTER,
         text,
         Face::Display.at(size::LABEL),
         colour::TEXT_DIM,
     );
     painter.text(
-        pos2(drawn.right() + space::LG, rect.center().y + space::SM),
+        pos2(drawn.right() + space::LG, middle),
         Align2::LEFT_CENTER,
         about,
         Face::Body.at(size::MICRO),
@@ -236,38 +247,61 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
 }
 
 /// One switch: a mark, a name, and what it is for. True when clicked.
-fn switch(ui: &mut Ui, name: &str, about: &str, on: bool) -> bool {
+///
+/// `one_of` says whether this is a choice among siblings or a thing that is
+/// simply on or off, and it changes the mark: a disc for a choice, a square
+/// for a switch. Drawing both the same way is how a settings screen ends up
+/// with somebody trying to turn two corners on at once.
+fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::click());
     if !ui.is_rect_visible(rect) {
         return response.clicked();
     }
     let painter = ui.painter().clone();
-    if response.hovered() {
-        painter.rect_filled(rect, 0, colour::BG_HOVER);
-    }
-    // A filled square is on and an outlined one is off, which reads at a
-    // glance and needs no label of its own.
-    let box_rect = egui::Rect::from_min_size(
-        pos2(rect.left() + space::XL, rect.center().y - 5.0),
-        vec2(10.0, 10.0),
+    let lift = ui.ctx().animate_bool_with_time_and_easing(
+        response.id,
+        response.hovered(),
+        motion::INSTANT,
+        ease,
     );
-    if on {
-        painter.rect_filled(box_rect, 0, colour::INFO);
-    } else {
-        painter.rect_stroke(
-            box_rect,
+    if lift > 0.0 {
+        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
+        // The accent, only under the pointer, only on the thing that can be
+        // acted on. It is the one mark in this window that says "this is a
+        // control" rather than "this is a value".
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, vec2(2.0, rect.height())),
             0,
-            egui::Stroke::new(1.0, colour::LINE),
-            egui::StrokeKind::Inside,
+            colour::ENEMY.gamma_multiply(lift),
         );
     }
+    let centre = pos2(rect.left() + space::XL + 5.0, rect.center().y);
+    let mark = colour::TEXT_STRONG;
+    if one_of {
+        painter.circle_stroke(centre, 5.0, egui::Stroke::new(1.0, colour::LINE));
+        if on {
+            painter.circle_filled(centre, 3.0, mark);
+        }
+    } else {
+        let box_rect = Rect::from_center_size(centre, vec2(10.0, 10.0));
+        if on {
+            painter.rect_filled(box_rect, 0, mark);
+        } else {
+            painter.rect_stroke(
+                box_rect,
+                0,
+                egui::Stroke::new(1.0, colour::LINE),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
     let drawn = painter.text(
-        pos2(box_rect.right() + space::LG, rect.center().y),
+        pos2(centre.x + 5.0 + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         name,
         Face::Body.at(size::BODY),
-        if on {
+        if on || lift > 0.0 {
             colour::TEXT_STRONG
         } else {
             colour::TEXT_DIM
@@ -275,7 +309,7 @@ fn switch(ui: &mut Ui, name: &str, about: &str, on: bool) -> bool {
     );
     painter.text(
         pos2(
-            drawn.right().max(rect.left() + 180.0) + space::LG,
+            drawn.right().max(rect.left() + 190.0) + space::LG,
             rect.center().y,
         ),
         Align2::LEFT_CENTER,
@@ -284,6 +318,11 @@ fn switch(ui: &mut Ui, name: &str, about: &str, on: bool) -> bool {
         colour::TEXT_FAINT,
     );
     response.clicked()
+}
+
+/// The one curve this app eases with.
+fn ease(t: f32) -> f32 {
+    egui::emath::easing::cubic_out(t)
 }
 
 /// A line of explanation under a group.
@@ -312,9 +351,6 @@ use crate::{app, panel};
 use egui::{CentralPanel, Panel};
 #[cfg(test)]
 use overseer_core::Board;
-#[cfg(test)]
-use overseer_ui::motion;
-
 /// One frame of the app, for the snapshot and budget tests to draw.
 ///
 /// A struct rather than a parameter list because the list is now everything
@@ -348,7 +384,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
         career,
     } = shown;
     let width = ui.available_width();
-    app::snapshot_header(ui, board);
+    app::snapshot_chrome(ui, board, 12);
     if width >= app::COMPACT && settings.panel {
         let panel_width = if width >= app::WIDE { 340.0 } else { 280.0 };
         Panel::right("detail")
@@ -374,6 +410,10 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
             } else {
                 space::ROW
             };
+            if board.players.is_empty() {
+                app::snapshot_empty(ui);
+                return;
+            }
             for (label, tint, team) in board::teams(board, settings.enemies_first) {
                 let mut players = board.team(&team);
                 crate::sort::apply(&mut players, sort);
@@ -403,5 +443,6 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 }
                 ui.add_space(space::XL);
             }
+            board::board_foot(ui, board);
         });
 }

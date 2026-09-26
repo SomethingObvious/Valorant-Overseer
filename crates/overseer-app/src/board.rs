@@ -17,7 +17,9 @@ use egui::{Align2, Color32, FontId, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 
 use crate::sort::{Direction, Sort};
-use overseer_ui::{Face, caps, caps_text, colour, hex, kd, motion, rank, shape, size, space};
+use overseer_ui::{
+    Face, caps, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space,
+};
 
 /// The margin down both sides of the board.
 ///
@@ -25,7 +27,7 @@ use overseer_ui::{Face, caps, caps_text, colour, hex, kd, motion, rank, shape, s
 /// touching a row, which is the whole reason it is not the default gap: a
 /// bracket drawn inside the rows would be a twelfth column, and drawn
 /// against the window edge it would look like a rendering fault.
-const GUTTER: f32 = 18.0;
+pub(crate) const GUTTER: f32 = 18.0;
 
 /// Which way a column's content sits against its own width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -632,6 +634,7 @@ fn rr_cell(ui: &Ui, player: &Player, rect: Rect) {
 fn form_cell(ui: &Ui, player: &Player, rect: Rect) {
     let painter = ui.painter();
     let mut x = rect.left();
+    let pips = player.form.len().min(5) as f32 * (PIP + 2.0);
     for result in player.form.iter().take(5) {
         let tint = match result.chars().next() {
             Some('W' | 'w') => colour::ALLY,
@@ -642,7 +645,15 @@ fn form_cell(ui: &Ui, player: &Player, rect: Rect) {
         painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
         x += PIP + 2.0;
     }
-    if let Some(streak) = player.streak.as_ref().filter(|s| s.count.unwrap_or(0) >= 3) {
+    // Only if the pips left room for it. On a narrow window this column is
+    // the one that gets squeezed, and a streak count printed over the flag
+    // beside it is worse than no streak count.
+    let room = rect.width() - pips > 18.0;
+    if let Some(streak) = player
+        .streak
+        .as_ref()
+        .filter(|s| room && s.count.unwrap_or(0) >= 3)
+    {
         let count = streak.count.unwrap_or(0);
         let tint = if streak.kind.as_deref() == Some("W") {
             colour::ALLY
@@ -792,6 +803,181 @@ const fn level_colour(player: &Player) -> Color32 {
     match player.level {
         Some(l) if l < 60 && !player.level_hidden => colour::WARN,
         _ => colour::TEXT_FAINT,
+    }
+}
+
+/// Today, under the board: what the session has cost or paid.
+///
+/// The board is ten rows tall and a window is not, so there is always space
+/// under it. Air is the honest thing to put there only if nothing useful
+/// fits, and something does: every match you have played since you sat down,
+/// which is the one number that decides whether to queue again and the one
+/// the game itself will not show you until you go looking.
+pub(crate) fn session(ui: &mut Ui, board: &Board) {
+    let Some(session) = board.session.as_ref().filter(|s| !s.points.is_empty()) else {
+        return;
+    };
+    ui.add_space(space::XL);
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::ROW + space::MD),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    let band = Rect::from_min_max(
+        pos2(rect.left() + GUTTER, rect.top()),
+        pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
+    );
+    painter.hline(band.x_range(), band.top(), (1.0, colour::LINE));
+
+    let mut x = band.left() + space::SM;
+    let after = caps_text(
+        &painter,
+        pos2(x, band.center().y),
+        Align2::LEFT_CENTER,
+        "session",
+        Face::Display.at(size::LABEL),
+        colour::TEXT_DIM,
+    );
+    x = after.right() + space::LG;
+
+    let net = session
+        .net
+        .unwrap_or_else(|| session.points.iter().filter_map(|p| p.delta).sum());
+    let tint = match net.signum() {
+        1 => colour::GOOD,
+        -1 => colour::BAD,
+        _ => colour::TEXT_DIM,
+    };
+    let after = painter.text(
+        pos2(x, band.center().y),
+        Align2::LEFT_CENTER,
+        format!("{net:+}"),
+        Face::Number.at(size::TITLE),
+        tint,
+    );
+    let after = caps_text(
+        &painter,
+        pos2(after.right() + space::SM, band.center().y + 1.0),
+        Align2::LEFT_CENTER,
+        "rr",
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    x = after.right() + space::XL;
+
+    results(&painter, session, band, x);
+
+    let won = session
+        .points
+        .iter()
+        .filter(|p| {
+            p.result
+                .as_deref()
+                .is_some_and(|r| r.eq_ignore_ascii_case("victory"))
+        })
+        .count();
+    let played = session.points.len();
+    caps_at(
+        &painter,
+        pos2(band.right() - space::SM, band.center().y),
+        Align2::RIGHT_CENTER,
+        &format!("{won} of {played} won"),
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+}
+
+/// One block per match of the session, oldest left, in the colour of the
+/// result.
+///
+/// Five greens and a red is a session you can read at a glance. "+37" on
+/// its own is a number you have to think about.
+fn results(painter: &egui::Painter, session: &overseer_core::Session, band: Rect, from: f32) {
+    let mut x = from;
+    for point in &session.points {
+        let tint = match point.delta.unwrap_or(0).signum() {
+            1 => colour::ALLY,
+            -1 => colour::ENEMY,
+            _ => colour::TEXT_FAINT,
+        };
+        let block = Rect::from_min_size(pos2(x, band.center().y - 5.0), vec2(14.0, 10.0));
+        if block.right() > band.right() - 140.0 {
+            break;
+        }
+        painter.rect_filled(block, 0, tint.gamma_multiply(0.85));
+        x = block.right() + 3.0;
+    }
+}
+
+/// Whatever the backend wants said, and what the session has cost, at the
+/// foot of the board.
+///
+/// Pushed to the bottom of whatever room is left rather than sitting
+/// directly under the last row. Ten rows never fill a window, and a strip
+/// floating in the middle of the space reads as the board having stopped
+/// early; the same strip against the bottom edge reads as a footer.
+pub(crate) fn board_foot(ui: &mut Ui, board: &Board) {
+    let wanted = space::ROW + space::MD + space::XL;
+    let spare = ui.available_height() - wanted;
+    if spare > 0.0 {
+        ui.add_space(spare);
+    }
+    notice(ui, board);
+    session(ui, board);
+}
+
+/// Anything the backend needs to say about the board itself.
+///
+/// It is the only place in the window where the app speaks rather than
+/// reports, so it gets the accent and it gets to interrupt the layout. A
+/// message the backend sent and nothing displayed is a message nobody will
+/// ever see.
+fn notice(ui: &mut Ui, board: &Board) {
+    let Some(notice) = board.notice.as_ref() else {
+        return;
+    };
+    let Some(message) = notice.message.as_deref().filter(|m| !m.is_empty()) else {
+        return;
+    };
+    let tint = match notice.level.as_deref() {
+        Some("error") => colour::ENEMY,
+        Some("warn" | "warning") => colour::WARN,
+        _ => colour::INFO,
+    };
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter().clone();
+    let band = Rect::from_min_max(
+        pos2(rect.left() + GUTTER, rect.top()),
+        pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
+    );
+    painter.add(shape::cut_filled(band, 4.0, tint.gamma_multiply(0.10)));
+    painter.rect_filled(
+        Rect::from_min_size(band.min, vec2(2.0, band.height())),
+        0,
+        tint,
+    );
+    let after = painter.text(
+        pos2(band.left() + space::LG, band.center().y),
+        Align2::LEFT_CENTER,
+        message,
+        Face::Body.at(size::MICRO),
+        tint,
+    );
+    if let Some(action) = notice.action.as_deref().filter(|a| !a.is_empty()) {
+        painter.text(
+            pos2(after.right() + space::LG, band.center().y),
+            Align2::LEFT_CENTER,
+            action,
+            Face::Body.at(size::MICRO),
+            colour::TEXT_DIM,
+        );
     }
 }
 

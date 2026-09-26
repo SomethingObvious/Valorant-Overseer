@@ -430,16 +430,26 @@ pub fn style() -> Style {
     let mut visuals = Visuals::dark();
     visuals.panel_fill = colour::BG;
     visuals.window_fill = colour::BG;
-    visuals.extreme_bg_color = Color32::from_rgb(0x07, 0x0C, 0x12);
+    // Every text field in the app is this colour: the search box and both
+    // note boxes. An input has to look like somewhere to put something,
+    // which means a step darker than the surface it sits on and an edge.
+    visuals.extreme_bg_color = colour::VOID;
     visuals.faint_bg_color = colour::BG_RAISED;
     visuals.override_text_color = Some(colour::TEXT);
     visuals.window_stroke = Stroke::new(1.0, colour::LINE);
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, colour::LINE);
-    visuals.widgets.inactive.bg_fill = colour::BG_RAISED;
+    visuals.widgets.inactive.bg_fill = colour::BG_INSET;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, colour::LINE);
+    visuals.widgets.inactive.weak_bg_fill = colour::BG_INSET;
     visuals.widgets.hovered.bg_fill = colour::BG_HOVER;
-    visuals.widgets.active.bg_fill = colour::INFO;
-    visuals.selection.bg_fill = colour::BG_SELECTED;
-    visuals.selection.stroke = Stroke::new(1.0, colour::INFO);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, colour::TEXT_FAINT);
+    visuals.widgets.hovered.weak_bg_fill = colour::BG_HOVER;
+    visuals.widgets.active.bg_fill = colour::BG_SELECTED;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, colour::ENEMY);
+    visuals.widgets.active.weak_bg_fill = colour::BG_SELECTED;
+    visuals.selection.bg_fill = colour::ENEMY.gamma_multiply(0.35);
+    visuals.selection.stroke = Stroke::new(1.0, colour::TEXT_STRONG);
+    visuals.text_cursor.stroke = Stroke::new(2.0, colour::ENEMY);
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,

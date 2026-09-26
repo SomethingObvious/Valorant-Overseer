@@ -22,6 +22,7 @@ use egui_kittest::Harness;
 use overseer_core::Board;
 
 use crate::settings::Settings;
+use crate::sort::Sort;
 use crate::view;
 use overseer_ui as design;
 
@@ -45,7 +46,13 @@ fn harness() -> Harness<'static, bool> {
         .build_ui_state(
             |ui: &mut Ui, ready: &mut bool| {
                 if *ready {
-                    view::snapshot(ui, &board(), Some("Day#9932"), &Settings::default());
+                    view::snapshot(
+                        ui,
+                        &board(),
+                        Some("Day#9932"),
+                        &Settings::default(),
+                        &Sort::default(),
+                    );
                 }
             },
             false,
@@ -109,7 +116,13 @@ fn a_full_board_stays_inside_its_shape_budget() {
     let mut harness = harness();
     harness.run();
     let shapes = harness.ctx.run_ui(egui::RawInput::default(), |ui| {
-        view::snapshot(ui, &board(), Some("Day#9932"), &Settings::default());
+        view::snapshot(
+            ui,
+            &board(),
+            Some("Day#9932"),
+            &Settings::default(),
+            &Sort::default(),
+        );
     });
     let count = shapes.shapes.len();
     let mut shapes = shapes;

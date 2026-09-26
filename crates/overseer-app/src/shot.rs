@@ -22,6 +22,7 @@ use egui_kittest::Harness;
 use overseer_core::{Board, Player};
 
 use crate::settings::{Quality, Settings};
+use crate::sort::{Direction, Sort};
 use crate::view;
 use overseer_ui as design;
 
@@ -29,6 +30,9 @@ use overseer_ui as design;
 struct Scene {
     board: Board,
     selected: Option<&'static str>,
+    /// How the board is ordered, so the arrow on a heading is in the picture
+    /// rather than only in the code.
+    sort: Sort,
     /// False on the very first frame. Fonts only materialise once a frame has
     /// run, and the app names its own font families on every line it draws,
     /// so the first frame installs them and draws nothing rather than laying
@@ -253,21 +257,59 @@ fn plain() -> Vec<Player> {
 /// here, because `set_fonts` lands on the next frame and a style naming a
 /// family that is not bound yet panics inside epaint.
 fn draw(ui: &mut Ui, scene: &Scene) {
-    view::snapshot(ui, &scene.board, scene.selected, &Settings::default());
+    view::snapshot(
+        ui,
+        &scene.board,
+        scene.selected,
+        &Settings::default(),
+        &scene.sort,
+    );
 }
 
-#[test]
-fn every_layout_is_unchanged() {
-    // Wide enough for the panel at its full width, then the middle layout,
-    // then narrow enough that the board is alone and shedding columns. The
-    // three are the whole responsive story, so all three are pinned.
-    let scenes: [(&str, egui::Vec2, Scene); 4] = [
+/// Every frame worth pinning: the three layouts, a sorted board, and the
+/// screen a new install opens on. Data rather than test, so that adding one
+/// is adding a line here.
+fn scenes() -> [(&'static str, egui::Vec2, Scene); 6] {
+    [
         (
             "wide",
             vec2(1200.0, 340.0),
             Scene {
                 board: sample(),
                 selected: Some("SilentEnt#GG"),
+                sort: Sort::default(),
+                ready: true,
+            },
+        ),
+        // Sorted by K/D, best first, which is the question a heading gets
+        // clicked to answer. The arrow belongs in a picture somebody looks
+        // at rather than only in a unit test.
+        (
+            "sorted",
+            vec2(1200.0, 300.0),
+            Scene {
+                board: sample(),
+                selected: Some("NeonLock#VAL"),
+                sort: Sort {
+                    column: Some("k/d".to_owned()),
+                    direction: Some(Direction::Down),
+                },
+                ready: true,
+            },
+        ),
+        // Sorted by K/D, best first, which is the question a heading gets
+        // clicked to answer. The arrow belongs in a picture somebody looks
+        // at rather than only in a unit test.
+        (
+            "sorted",
+            vec2(1200.0, 300.0),
+            Scene {
+                board: sample(),
+                selected: Some("NeonLock#VAL"),
+                sort: Sort {
+                    column: Some("k/d".to_owned()),
+                    direction: Some(Direction::Down),
+                },
                 ready: true,
             },
         ),
@@ -277,6 +319,7 @@ fn every_layout_is_unchanged() {
             Scene {
                 board: sample(),
                 selected: Some("Day#9932"),
+                sort: Sort::default(),
                 ready: true,
             },
         ),
@@ -286,6 +329,7 @@ fn every_layout_is_unchanged() {
             Scene {
                 board: sample(),
                 selected: Some("Day#9932"),
+                sort: Sort::default(),
                 ready: true,
             },
         ),
@@ -295,10 +339,19 @@ fn every_layout_is_unchanged() {
             Scene {
                 board: Board::default(),
                 selected: None,
+                sort: Sort::default(),
                 ready: true,
             },
         ),
-    ];
+    ]
+}
+
+#[test]
+fn every_layout_is_unchanged() {
+    // Wide enough for the panel at its full width, then the middle layout,
+    // then narrow enough that the board is alone and shedding columns. The
+    // three are the whole responsive story, so all three are pinned.
+    let scenes = scenes();
 
     let mut harness = Harness::builder()
         .with_size(vec2(1200.0, 340.0))
@@ -311,6 +364,7 @@ fn every_layout_is_unchanged() {
             Scene {
                 board: sample(),
                 selected: None,
+                sort: Sort::default(),
                 ready: false,
             },
         );

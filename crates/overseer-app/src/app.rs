@@ -20,6 +20,7 @@ use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
 use crate::settings::{self, Quality, Settings};
+use crate::sort::{self, Sort};
 use crate::{panel, view};
 use overseer_ui::{self, Face, colour, label_text, motion, size, space};
 
@@ -60,6 +61,13 @@ pub(crate) struct Overseer {
     slow: u32,
     /// Set when the window dropped its own quality, so it can say so.
     dropped: bool,
+    /// How the board is ordered, if a heading has been clicked.
+    sort: Sort,
+    /// What has been typed into the search box.
+    filter: String,
+    /// Set when a key asked for the search box, so the next frame can hand
+    /// it the keyboard.
+    focus_search: bool,
 }
 
 /// What the middle of the window is showing.
@@ -114,6 +122,9 @@ impl Overseer {
             boards: 0,
             slow: 0,
             dropped: false,
+            sort: Sort::default(),
+            filter: String::new(),
+            focus_search: false,
         }
     }
 
@@ -171,23 +182,43 @@ impl Overseer {
 
     /// Keys, which are the fastest way through a board and cost nothing.
     fn keys(&mut self, ui: &Ui) {
-        let (up, down, tab, escape) = ui.input(|i| {
+        // Nothing here fires while the search box has the keyboard: a
+        // person typing a name is not asking to change screens.
+        let typing = ui.memory(egui::Memory::focused).is_some();
+        let (up, down, settings, escape, find) = ui.input(|i| {
             (
-                i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K),
-                i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J),
+                i.key_pressed(Key::ArrowUp),
+                i.key_pressed(Key::ArrowDown),
                 i.key_pressed(Key::Comma),
                 i.key_pressed(Key::Escape),
+                i.key_pressed(Key::Slash) || (i.modifiers.command && i.key_pressed(Key::F)),
             )
         });
-        if tab {
+        if escape {
+            // One key, two jobs, in the order somebody expects: clear what
+            // you typed, and then leave the screen you are on.
+            if self.filter.is_empty() {
+                self.screen = Screen::Board;
+            } else {
+                self.filter.clear();
+            }
+            ui.memory_mut(egui::Memory::stop_text_input);
+            return;
+        }
+        if find {
+            self.focus_search = true;
+            self.screen = Screen::Board;
+            return;
+        }
+        if typing {
+            return;
+        }
+        if settings {
             self.screen = if self.screen == Screen::Settings {
                 Screen::Board
             } else {
                 Screen::Settings
             };
-        }
-        if escape && self.screen == Screen::Settings {
-            self.screen = Screen::Board;
         }
         if !(up || down) || self.board.players.is_empty() {
             return;
@@ -415,34 +446,56 @@ impl Overseer {
             hover: self.pace(motion::INSTANT),
             select: self.pace(motion::QUICK),
         };
+        let sort = self.sort.clone();
+        let filter = self.filter.clone();
         let mut clicked: Option<String> = None;
+        let mut heading: Option<&'static str> = None;
+        let mut shown = 0_usize;
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(space::MD);
                 for (label, tint, team) in board::teams(&self.board) {
-                    let players = self.board.team(&team);
+                    let mut players = self.board.team(&team);
                     if players.is_empty() {
                         continue;
                     }
-                    board::team_heading(ui, label, tint, &self.board, &team);
-                    board::headings(ui, ui.available_width(), &hidden);
-                    for player in players {
-                        let style = RowStyle {
-                            team: tint,
-                            selected: player.puuid.is_some() && player.puuid == selected,
-                            height,
-                            pace,
-                        };
-                        if board::row(ui, player, &style, &hidden).clicked() {
-                            clicked.clone_from(&player.puuid);
+                    sort::apply(&mut players, &sort);
+                    players.retain(|p| sort::matches(p, &filter));
+                    // Its own id scope: both blocks have a column called
+                    // K/D, and without this they ask egui for the same
+                    // widget id and it says so, loudly, across the board.
+                    ui.push_id(&team, |ui| {
+                        board::team_heading(ui, label, tint, &self.board, &team);
+                        if let Some(head) =
+                            board::headings(ui, ui.available_width(), &hidden, &sort)
+                        {
+                            heading = Some(head);
                         }
-                    }
+                        for player in players {
+                            shown += 1;
+                            let style = RowStyle {
+                                team: tint,
+                                selected: player.puuid.is_some() && player.puuid == selected,
+                                height,
+                                pace,
+                            };
+                            if board::row(ui, player, &style, &hidden).clicked() {
+                                clicked.clone_from(&player.puuid);
+                            }
+                        }
+                    });
                     ui.add_space(space::XL);
+                }
+                if shown == 0 {
+                    nobody(ui, &filter);
                 }
             });
         if clicked.is_some() {
             self.selected = clicked;
+        }
+        if let Some(head) = heading {
+            self.sort.clicked(head);
         }
     }
 }
@@ -462,6 +515,13 @@ impl App for Overseer {
             .exact_size(space::XL + space::SM)
             .frame(chrome)
             .show(ui, |ui| self.footer(ui));
+
+        if self.screen == Screen::Board {
+            Panel::top("search")
+                .exact_size(space::ROW + space::MD)
+                .frame(egui::Frame::NONE.fill(colour::BG))
+                .show(ui, |ui| self.search(ui));
+        }
 
         if self.screen == Screen::Settings {
             // Both read out before the screen borrows the settings, because
@@ -504,6 +564,56 @@ impl App for Overseer {
 }
 
 impl Overseer {
+    /// The search box, and what the board is currently ordered by.
+    ///
+    /// A real text field rather than something painted: selection, the
+    /// caret, backspace and every other keyboard convention are exactly what
+    /// hand painting gets wrong, and nobody thanks an app for reinventing
+    /// them badly.
+    fn search(&mut self, ui: &mut Ui) {
+        let full = ui.available_width();
+        ui.horizontal(|ui| {
+            ui.add_space(space::LG);
+            ui.label(
+                RichText::new(label_text("find"))
+                    .color(colour::TEXT_FAINT)
+                    .font(Face::Display.at(size::MICRO)),
+            );
+            let width = (full * 0.3).clamp(140.0, 320.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .desired_width(width)
+                    .font(Face::Body.at(size::BODY))
+                    .hint_text(
+                        RichText::new("a name or an agent")
+                            .color(colour::TEXT_FAINT)
+                            .font(Face::Body.at(size::BODY)),
+                    ),
+            );
+            if self.focus_search {
+                response.request_focus();
+                self.focus_search = false;
+            }
+            if !self.filter.is_empty() {
+                ui.label(
+                    RichText::new("escape clears it")
+                        .color(colour::TEXT_FAINT)
+                        .font(Face::Body.at(size::MICRO)),
+                );
+            }
+            if let Some(column) = self.sort.column.as_deref() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(space::LG);
+                    ui.label(
+                        RichText::new(format!("sorted by {column}"))
+                            .color(colour::TEXT_FAINT)
+                            .font(Face::Body.at(size::MICRO)),
+                    );
+                });
+            }
+        });
+    }
+
     /// The footer: what to press, and what the window is spending.
     fn footer(&self, ui: &mut Ui) {
         let (rect, _response) =
@@ -515,7 +625,7 @@ impl Overseer {
         painter.text(
             pos2(rect.left() + space::LG, rect.center().y),
             Align2::LEFT_CENTER,
-            "[,] settings    [up] [down] pick a player",
+            "[/] find   [,] settings   [up] [down] pick   click a heading to sort",
             Face::Body.at(size::MICRO),
             colour::TEXT_FAINT,
         );
@@ -528,6 +638,18 @@ impl Overseer {
             colour::TEXT_FAINT,
         );
     }
+}
+
+/// What to say when the filter has hidden everybody.
+fn nobody(ui: &mut Ui, filter: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(space::XXL);
+        ui.label(
+            RichText::new(format!("Nobody here matches \"{}\"", filter.trim()))
+                .color(colour::TEXT_DIM)
+                .font(Face::Body.at(size::BODY)),
+        );
+    });
 }
 
 /// What to say while there is no board. An empty screen is a place to say
@@ -589,6 +711,9 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         boards: 0,
         slow: 0,
         dropped: false,
+        sort: Sort::default(),
+        filter: String::new(),
+        focus_search: false,
     };
     Panel::top("header")
         .exact_size(space::XXL + space::MD)

@@ -15,6 +15,7 @@ mod perf;
 mod probe;
 mod settings;
 mod shot;
+mod sort;
 mod view;
 
 use std::path::PathBuf;

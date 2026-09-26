@@ -16,6 +16,7 @@ use egui::text::{LayoutJob, TextWrapping};
 use egui::{Align2, Color32, FontId, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 
+use crate::sort::{Direction, Sort};
 use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
 
 /// Which way a column's content sits against its own width.
@@ -254,14 +255,39 @@ fn cell_text(ui: &Ui, text: &str, font: FontId, tint: Color32, rect: Rect, align
 }
 
 /// The heading row, drawn from the same spec the data uses.
-pub(crate) fn headings(ui: &mut Ui, width: f32, hidden: &[String]) {
+///
+/// Returns the heading that was clicked, because a heading you can click is
+/// the shortest way there is to ask "who is the best player here".
+pub(crate) fn headings(
+    ui: &mut Ui,
+    width: f32,
+    hidden: &[String],
+    sort: &Sort,
+) -> Option<&'static str> {
     let (rect, _response) = ui.allocate_exact_size(vec2(width, space::XL), Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return;
+        return None;
     }
     let painter = ui.painter().clone();
+    let mut clicked = None;
     let mut x = rect.left() + space::LG;
     for column in columns_for(width, hidden) {
+        let hit = Rect::from_min_size(
+            pos2(x - space::SM, rect.top()),
+            vec2(column.width + space::MD, rect.height()),
+        );
+        let response = ui.interact(hit, ui.id().with(("head", column.head)), Sense::click());
+        if response.clicked() {
+            clicked = Some(column.head);
+        }
+        let sorted = sort.arrow(column.head);
+        let tint = if sorted.is_some() {
+            colour::TEXT
+        } else if response.hovered() {
+            colour::TEXT_DIM
+        } else {
+            colour::TEXT_FAINT
+        };
         let (pos, anchor) = match column.align {
             Align::Left => (pos2(x, rect.center().y), Align2::LEFT_CENTER),
             Align::Right => (
@@ -269,16 +295,41 @@ pub(crate) fn headings(ui: &mut Ui, width: f32, hidden: &[String]) {
                 Align2::RIGHT_CENTER,
             ),
         };
-        painter.text(
+        let drawn = painter.text(
             pos,
             anchor,
             label_text(column.head),
             Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT,
+            tint,
         );
+        if let Some(direction) = sorted {
+            arrow(&painter, drawn, column.align, direction);
+        }
         x += column.width + space::MD;
     }
     painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
+    clicked
+}
+
+/// The mark on the sorted heading: a triangle, painted rather than typed.
+///
+/// A glyph would be at the mercy of the face having it, and of how wide the
+/// world thinks that glyph is. Three points are three points.
+fn arrow(painter: &egui::Painter, label: Rect, align: Align, direction: Direction) {
+    let x = match align {
+        Align::Left => label.right() + space::SM + 3.0,
+        Align::Right => label.left() - space::SM - 3.0,
+    };
+    let y = label.center().y;
+    let (base, point) = match direction {
+        Direction::Down => (y - 2.0, y + 2.5),
+        Direction::Up => (y + 2.0, y - 2.5),
+    };
+    painter.add(egui::Shape::convex_polygon(
+        vec![pos2(x - 3.0, base), pos2(x + 3.0, base), pos2(x, point)],
+        colour::INFO,
+        egui::Stroke::NONE,
+    ));
 }
 
 /// One player. Painted rather than assembled out of widgets: a row is a

@@ -8,6 +8,8 @@ use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
 use crate::board::COLUMNS;
 use crate::settings::{Quality, Settings};
+#[cfg(test)]
+use crate::sort::Sort;
 use overseer_ui::{Face, colour, label_text, size, space};
 
 /// Draws the settings screen. True when something changed and wants saving.
@@ -200,7 +202,13 @@ use overseer_core::Board;
 use overseer_ui::motion;
 
 #[cfg(test)]
-pub(crate) fn snapshot(ui: &mut Ui, board: &Board, selected: Option<&str>, settings: &Settings) {
+pub(crate) fn snapshot(
+    ui: &mut Ui,
+    board: &Board,
+    selected: Option<&str>,
+    settings: &Settings,
+    sort: &Sort,
+) {
     let width = ui.available_width();
     app::snapshot_header(ui, board);
     if width >= app::COMPACT && settings.panel {
@@ -229,12 +237,16 @@ pub(crate) fn snapshot(ui: &mut Ui, board: &Board, selected: Option<&str>, setti
                 space::ROW
             };
             for (label, tint, team) in board::teams(board) {
-                let players = board.team(&team);
+                let mut players = board.team(&team);
+                crate::sort::apply(&mut players, sort);
                 if players.is_empty() {
                     continue;
                 }
                 board::team_heading(ui, label, tint, board, &team);
-                board::headings(ui, ui.available_width(), &settings.hidden_columns);
+                // Same id scope as the window uses, for the same reason.
+                ui.push_id(&team, |ui| {
+                    board::headings(ui, ui.available_width(), &settings.hidden_columns, sort);
+                });
                 for player in players {
                     let style = RowStyle {
                         team: tint,

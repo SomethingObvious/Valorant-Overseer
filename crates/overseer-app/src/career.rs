@@ -495,12 +495,29 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
     };
 
     let points: Vec<egui::Pos2> = values.iter().enumerate().map(|(i, &v)| at(i, v)).collect();
+    // The area under the line, fading to nothing at the floor. A bare
+    // polyline is a diagram; the same line with weight under it is a
+    // quantity, and which of the two this is happens to be the question.
+    let mut area = egui::Mesh::default();
+    for point in &points {
+        area.colored_vertex(*point, colour::INFO.gamma_multiply(0.22));
+        area.colored_vertex(pos2(point.x, inner.bottom()), egui::Color32::TRANSPARENT);
+    }
+    for i in 0..points.len().saturating_sub(1) {
+        let a = (i * 2) as u32;
+        area.add_triangle(a, a + 1, a + 2);
+        area.add_triangle(a + 1, a + 3, a + 2);
+    }
+    painter.add(egui::Shape::mesh(area));
     painter.add(egui::Shape::line(
         points.clone(),
-        egui::Stroke::new(1.5, colour::INFO),
+        egui::Stroke::new(2.0, colour::INFO),
     ));
-    for point in points {
-        painter.circle_filled(point, 2.0, colour::INFO);
+    // Only the ends get a dot. A dot on every point turns a shape into a
+    // row of beads, and the two that matter are where it started and where
+    // it got to.
+    for point in [points.first(), points.last()].into_iter().flatten() {
+        painter.circle_filled(*point, 2.5, colour::INFO);
     }
 }
 

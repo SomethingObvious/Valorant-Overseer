@@ -53,7 +53,11 @@ fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> Rect {
         pos2(at.x, at.y - 8.0),
         vec2((galley.size().x + space::MD).max(16.0), 16.0),
     );
-    painter.rect_filled(plate, 0, colour::BG_INSET);
+    painter.add(egui::Shape::gradient_rect(
+        plate,
+        egui::Direction::TopDown,
+        [colour::BG_HOVER, colour::BG_INSET],
+    ));
     painter.rect_stroke(
         plate,
         0,
@@ -543,6 +547,18 @@ impl Overseer {
         }
         let painter = ui.painter().clone();
         let middle = rect.center().y;
+        painter.add(egui::Shape::gradient_rect(
+            rect,
+            egui::Direction::TopDown,
+            [colour::BG_INSET, colour::BG_RAISED],
+        ));
+        painter.extend(overseer_ui::shape::drop_shadow(
+            Rect::from_min_max(
+                pos2(rect.left(), rect.bottom() - 2.0),
+                pos2(rect.right(), rect.bottom()),
+            ),
+            2.0,
+        ));
 
         // The accent, once, at the very edge. Riot spends red on punctuation
         // and nothing else, and a companion app that spends it on panels has
@@ -552,80 +568,94 @@ impl Overseer {
             0,
             colour::ENEMY,
         );
-        let left = self.header_match(&painter, middle, rect.left() + space::XL);
         let right = self.header_light(&painter, rect, middle);
+        let left = self.header_match(&painter, middle, rect.left() + space::XL, right - space::LG);
         self.header_progress(&painter, middle, left, right);
         painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
     }
 
     /// The app, then the match: wordmark, state, map, queue, side.
-    fn header_match(&self, painter: &egui::Painter, middle: f32, start: f32) -> f32 {
-        let after = caps_text(
-            painter,
-            pos2(start, middle),
-            Align2::LEFT_CENTER,
+    ///
+    /// Each piece is measured before it is drawn and dropped if it would
+    /// reach the connection light on the other side. A title bar that
+    /// overlaps itself on a narrow window is the one kind of layout fault
+    /// that cannot be explained away, and everything here is also on the
+    /// board underneath.
+    fn header_match(&self, painter: &egui::Painter, middle: f32, start: f32, limit: f32) -> f32 {
+        let mut x = start;
+        let valorant = painter.layout_job(overseer_ui::caps(
             "valorant",
             Face::Display.at(size::TITLE),
             colour::ENEMY,
+        ));
+        if x + valorant.size().x > limit {
+            return x;
+        }
+        painter.galley(
+            pos2(x, middle - valorant.size().y / 2.0),
+            valorant.clone(),
+            colour::ENEMY,
         );
+        x += valorant.size().x + space::SM;
         let after = caps_text(
             painter,
-            pos2(after.right() + space::SM, middle),
+            pos2(x, middle),
             Align2::LEFT_CENTER,
             "overseer",
             Face::Display.at(size::TITLE),
             colour::TEXT_STRONG,
         );
-        let mut x = after.right() + space::XXL;
+        x = after.right() + space::XXL;
 
-        // The state on a plate, because it is the one word here that is a
-        // state rather than a name, and a plate is how this app says so.
         let state = self
             .board
             .state_label
             .as_deref()
             .or(self.board.state.as_deref())
             .unwrap_or("waiting");
-        x = board::chip(painter, pos2(x, middle), state, colour::TEXT_DIM).right() + space::LG;
+        let plate = board::chip(painter, pos2(x, middle), state, colour::TEXT_DIM);
+        x = plate.right() + space::LG;
 
         if let Some(map) = self.board.map.as_deref() {
-            let after = painter.text(
-                pos2(x, middle),
-                Align2::LEFT_CENTER,
-                map,
+            let galley = painter.layout_no_wrap(
+                map.to_owned(),
                 Face::Body.at(size::TITLE),
                 colour::TEXT_STRONG,
             );
-            x = after.right() + space::MD;
+            let room = galley.size().x + space::MD;
+            if x + room <= limit {
+                painter.galley(
+                    pos2(x, middle - galley.size().y / 2.0),
+                    galley,
+                    colour::TEXT_STRONG,
+                );
+                x += room;
+            }
         }
-        if let Some(mode) = self.board.mode.as_deref() {
-            let after = caps_text(
-                painter,
-                pos2(x, middle + 1.0),
-                Align2::LEFT_CENTER,
-                mode,
-                Face::Display.at(size::MICRO),
-                colour::TEXT_FAINT,
-            );
-            x = after.right() + space::LG;
-        }
-        if let Some(side) = self.board.side.as_deref() {
-            let tint = if side.eq_ignore_ascii_case("attack") {
-                colour::ENEMY
-            } else {
-                colour::ALLY
-            };
-            let after = caps_text(
-                painter,
-                pos2(x, middle),
-                Align2::LEFT_CENTER,
-                side,
-                Face::Display.at(size::LABEL),
-                tint,
-            );
-            x = after.right() + space::LG;
+        for (text, tint, size_of) in [
+            (self.board.mode.clone(), colour::TEXT_FAINT, size::MICRO),
+            (self.board.side.clone(), self.side_tint(), size::LABEL),
+        ] {
+            let Some(text) = text else { continue };
+            let galley =
+                painter.layout_job(overseer_ui::caps(&text, Face::Display.at(size_of), tint));
+            let room = galley.size().x + space::LG;
+            if x + room > limit {
+                continue;
+            }
+            painter.galley(pos2(x, middle - galley.size().y / 2.0), galley, tint);
+            x += room;
         }
         x
+    }
+
+    /// Attack is the game's red and defence is its green, the same way round
+    /// as the game draws them.
+    fn side_tint(&self) -> egui::Color32 {
+        match self.board.side.as_deref() {
+            Some(side) if side.eq_ignore_ascii_case("attack") => colour::ENEMY,
+            _ => colour::ALLY,
+        }
     }
 
     /// The score, or how far through agent select the lobby is: whichever of
@@ -723,6 +753,37 @@ impl Overseer {
         }
     }
 
+    /// The detail panel down the right: one surface, lifted off the board.
+    fn detail(&mut self, ui: &mut Ui, width: f32) {
+        let panel_width = if width >= WIDE {
+            PANEL_WIDE
+        } else {
+            PANEL_NARROW
+        };
+        Panel::right("detail")
+            .exact_size(panel_width)
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let all = ui.max_rect();
+                ui.painter().add(egui::Shape::gradient_rect(
+                    all,
+                    egui::Direction::TopDown,
+                    [colour::BG_RAISED, colour::BG],
+                ));
+                ui.painter()
+                    .vline(all.left(), all.y_range(), (1.0, colour::LINE));
+                ui.add_space(space::MD);
+                // Lent to the panel rather than borrowed from self, because
+                // the panel edits the notes while reading the player, and
+                // both live on this struct.
+                let mut lent = std::mem::take(&mut self.notes);
+                if panel::show(ui, self.current(), &mut lent, &self.career) {
+                    notes::save(&self.root, &lent);
+                }
+                self.notes = lent;
+            });
+    }
+
     /// Every switch there is, and what could not be switched on.
     fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame) {
         // All of this is read out before the screen borrows the settings it
@@ -767,12 +828,14 @@ impl Overseer {
             }
             return;
         }
-        drop(self.rows(ui));
+        // No foot in the overlay: the session belongs in a window somebody
+        // is looking at, and the overlay is exactly as tall as its rows.
+        drop(self.rows(ui, false));
     }
 
     /// The board, both teams, with the headings each side needs.
     fn board_view(&mut self, ui: &mut Ui) {
-        let touched = self.rows(ui);
+        let touched = self.rows(ui, true);
         // Read a frame late, which nobody can see: the panel is drawn before
         // the board, so what the pointer was on last frame is what the panel
         // shows this one.
@@ -793,7 +856,7 @@ impl Overseer {
     /// Read only, so that the overlay can call it too: the overlay is its
     /// own window and takes no clicks, and nothing that only draws can be
     /// the reason two windows disagree about what is selected.
-    fn rows(&self, ui: &mut Ui) -> Touched {
+    fn rows(&self, ui: &mut Ui, foot: bool) -> Touched {
         if self.board.players.is_empty() {
             empty(ui, &self.status, self.reason());
             return Touched::default();
@@ -863,7 +926,7 @@ impl Overseer {
                     });
                     ui.add_space(space::XL);
                 }
-                if shown > 0 {
+                if foot && shown > 0 {
                     board::board_foot(ui, &self.board);
                 }
                 if shown == 0 {
@@ -967,33 +1030,23 @@ impl App for Overseer {
 
         let width = ui.available_width();
         if width >= COMPACT && self.settings.panel {
-            let panel_width = if width >= WIDE {
-                PANEL_WIDE
-            } else {
-                PANEL_NARROW
-            };
-            Panel::right("detail")
-                .exact_size(panel_width)
-                .frame(
-                    egui::Frame::NONE
-                        .fill(colour::BG_RAISED)
-                        .stroke(egui::Stroke::new(1.0, colour::LINE)),
-                )
-                .show(ui, |ui| {
-                    ui.add_space(space::MD);
-                    // Lent to the panel rather than borrowed from self, because
-                    // the panel edits the notes while reading the player, and
-                    // both live on this struct.
-                    let mut lent = std::mem::take(&mut self.notes);
-                    if panel::show(ui, self.current(), &mut lent, &self.career) {
-                        notes::save(&self.root, &lent);
-                    }
-                    self.notes = lent;
-                });
+            self.detail(ui, width);
         }
-        CentralPanel::default().frame(chrome).show(ui, |ui| {
-            self.board_view(ui);
-        });
+        CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                // The ground under the board falls off towards the bottom.
+                // Ten rows never reach the bottom of a window, and a flat
+                // rectangle under the empty half is the single largest area
+                // of undesigned colour in the app.
+                let all = ui.max_rect();
+                ui.painter().add(egui::Shape::gradient_rect(
+                    all,
+                    egui::Direction::TopDown,
+                    [colour::BG, colour::VOID],
+                ));
+                self.board_view(ui);
+            });
     }
 }
 

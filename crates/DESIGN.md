@@ -44,13 +44,25 @@ because it lives next to that.
 
 Do not write a literal into a widget. Everything comes from `design.rs`.
 
-**Type.** Three faces, by role:
+**Type.** Three faces, all shipped inside the binary, all variable, all
+pinned to one cut:
 
 | Role | Face | Why |
 | --- | --- | --- |
-| Display, labels | Bebas Neue, shipped in the binary | Tall, condensed, caps only. VALORANT's own display face is Tungsten Bold, always uppercase, and Windows has nothing like it: Bahnschrift is a variable font and this rasteriser can only take its default instance, which is the flattest, widest cut in the family. Sixty kilobytes buys a face that looks the same on every machine and looks like something. |
-| Body, names | Segoe UI | The system's reading face; it disappears, which is what a name wants. |
-| Numbers | Cascadia Mono, Consolas behind it | Tabular by construction, so a column of K/D cannot drift. Cascadia first because its figures are rounder and its zero is slashed. |
+| Display, labels | Oswald, weight 600 | Riot's display face is Tungsten Bold, always uppercase, and it is commercial. Oswald is the substitute Riot themselves use: their own site sets it wherever Tungsten cannot be. Tall, condensed, and legible at ten points, which a poster face is not. |
+| Body, names | Inter, weight 420, optical size 16 | Riot's interface face is DIN Next W1G, also commercial, and the fallback at the end of their own DIN stack is Inter. Drawn for interfaces at small sizes. |
+| Numbers | JetBrains Mono, weight 500 | Tabular by construction, so a column of K/D cannot drift. Consolas is a terminal font from 2004 and looked it. |
+
+Shipped rather than read from Windows, which is what this did at first and
+which was wrong twice over: Windows has no condensed display grotesque worth
+using, and a design system whose type depends on which machine it is running
+on is not a design system. About a megabyte and a quarter, and it buys the
+app a voice.
+
+All three files are variable and the rasteriser takes the default instance
+unless told otherwise, which for Oswald is Regular and far too light to be a
+heading. The weight axis is pinned per face in `Face::tweak`, along with the
+nudge that puts three faces of one point size onto one baseline.
 
 Sizes, in points, rounded to whole pixels because glyphs are rasterised:
 `HERO 30`, `DISPLAY 20`, `TITLE 15`, `BODY 13`, `LABEL 11`, `MICRO 10`.
@@ -88,6 +100,23 @@ is red, and an app beside the game that swaps those is actively misleading.
 Most numbers are `neutral`. Colour spent on an ordinary value is colour taken
 from the one that matters, so a win rate is only tinted past 57 or under 43,
 and a level only when it is low enough to be a tell.
+
+**Surfaces are lit, not filled.** Nothing large is one flat colour. The
+title bar runs from `bg_inset` at the top to `bg_raised` at the bottom and
+drops a soft edge onto the board; the board's ground falls from `bg` to
+`void`, which is what stops the half of the window the roster does not reach
+from being the largest area of undesigned colour in the app; the panel runs
+the other way. A team band is a wash of the team's colour that runs out
+before the averages, so the block has a direction. A row's hover and
+selection tints run left to right, away from the rail, so they look like
+they came from it.
+
+All of it costs the same triangles the flat version costs: the colour is per
+vertex and the tessellator interpolates it for nothing. `shape::cut_wash`
+does the chamfered ones, `Shape::gradient_rect` the square ones, and
+`shape::drop_shadow` is three stacked blurred rects because epaint's blur is
+an oversized feather with a linear falloff and one of them alone has a hard
+edge.
 
 **Shape.** One motif: a corner cut at forty five degrees, on two diagonally
 opposite corners, seven points deep. It is the game's own language, it costs

@@ -389,12 +389,16 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
         let panel_width = if width >= app::WIDE { 340.0 } else { 280.0 };
         Panel::right("detail")
             .exact_size(panel_width)
-            .frame(
-                egui::Frame::NONE
-                    .fill(colour::BG_RAISED)
-                    .stroke(egui::Stroke::new(1.0, colour::LINE)),
-            )
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                let all = ui.max_rect();
+                ui.painter().add(egui::Shape::gradient_rect(
+                    all,
+                    egui::Direction::TopDown,
+                    [colour::BG_RAISED, colour::BG],
+                ));
+                ui.painter()
+                    .vline(all.left(), all.y_range(), (1.0, colour::LINE));
                 ui.add_space(space::MD);
                 let player = selected
                     .and_then(|id| board.players.iter().find(|p| p.name.as_deref() == Some(id)));
@@ -402,8 +406,14 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
             });
     }
     CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(colour::BG))
+        .frame(egui::Frame::NONE)
         .show(ui, |ui| {
+            let all = ui.max_rect();
+            ui.painter().add(egui::Shape::gradient_rect(
+                all,
+                egui::Direction::TopDown,
+                [colour::BG, colour::VOID],
+            ));
             ui.add_space(space::MD);
             let height = if width < app::COMPACT {
                 space::ROW_TIGHT

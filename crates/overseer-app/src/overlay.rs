@@ -38,15 +38,25 @@ const MARGIN: f32 = 16.0;
 /// borderless there is no bar and the gap is a gap; on the desktop it is the
 /// difference between visible and not.
 const TASKBAR: f32 = 48.0;
-/// How wide the overlay is. Enough for the columns that matter at a glance
-/// and no more: an overlay as wide as the board is a board.
-pub(crate) const WIDTH: f32 = 460.0;
+/// How wide the overlay is.
+///
+/// Enough for the columns that matter at a glance and no more: an overlay
+/// as wide as the board is a board. At this width the priority list keeps
+/// the agent, the name, the rank, the K/D and the last five results, which
+/// is the whole of what can be read in the seconds this is looked at.
+pub(crate) const WIDTH: f32 = 540.0;
 /// What to assume the screen is, on the one frame of a window's life before
 /// anybody has said. Only ever wrong for a moment: the frame after it, the
 /// real size arrives and the overlay is placed again.
 const FALLBACK_SCREEN: Vec2 = vec2(1920.0, 1080.0);
-/// Room for the two team headings and the air between the blocks.
-const CHROME: f32 = space::ROW * 2.0 + space::XL * 2.0 + space::MD;
+/// Everything in the overlay that is not a player row: two team bands,
+/// two column heading rows, the air above the first and the gap between
+/// the blocks. Measured from the same tokens the board draws with, so a
+/// band that grows cannot leave the overlay clipping its own last row.
+const CHROME: f32 = space::MD                       // the air above the first band
+    + (space::ROW + space::MD) * 2.0                // two team bands
+    + space::XL * 2.0                               // two rows of column headings
+    + space::XL * 2.0; // the gap after each block
 
 /// Which corner of the screen the overlay lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

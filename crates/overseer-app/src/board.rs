@@ -13,7 +13,7 @@
 //! fewer can switch them off and have the choice remembered.
 
 use egui::text::{LayoutJob, TextWrapping};
-use egui::{Align2, Color32, FontId, Rect, Response, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 
 use crate::sort::{Direction, Sort};
@@ -74,7 +74,7 @@ pub(crate) struct Column {
 pub(crate) const COLUMNS: [Column; 12] = [
     Column {
         head: "agent",
-        width: 68.0,
+        width: 84.0,
         align: Align::Left,
         face: Face::Body,
         priority: Priority::High,
@@ -90,7 +90,7 @@ pub(crate) const COLUMNS: [Column; 12] = [
     },
     Column {
         head: "rank",
-        width: 92.0,
+        width: 104.0,
         align: Align::Left,
         face: Face::Body,
         priority: Priority::Core,
@@ -170,8 +170,10 @@ pub(crate) const COLUMNS: [Column; 12] = [
     },
 ];
 
-/// The room kept on the right for the flags: a smurf mark and a party mark.
-const FLAG_WIDTH: f32 = 34.0;
+/// The room kept on the right for the flags: a note mark, a smurf mark and
+/// a stack guess, with a gutter before the first of them so the rightmost
+/// column never runs into one.
+const FLAG_WIDTH: f32 = 52.0;
 /// One result pip in the form column.
 const PIP: f32 = 8.0;
 
@@ -230,42 +232,65 @@ pub(crate) struct Bracket {
 /// What a set of columns needs, gutters and margins included.
 fn width_of(keep: &[&Column]) -> f32 {
     let columns: f32 = keep.iter().map(|c| c.width + space::MD).sum();
-    space::LG.mul_add(2.0, columns + FLAG_WIDTH)
+    columns + FLAG_WIDTH + space::LG + GUTTER * 2.0
 }
 
 /// Which columns fit in the width available, after the ones switched off.
 ///
 /// Built by adding rather than by shedding. Shedding overshoots: dropping a
 /// 128 point column to save 40 leaves 88 points of room that nothing is ever
-/// offered, and the test that noticed said the board kept fewer columns after
-/// one was switched off, which is the opposite of what switching one off is
-/// for. Adding in priority order cannot overshoot, and it is twelve
-/// comparisons on a table of twelve.
+/// offered, and the test that noticed said the board kept fewer columns
+/// after one was switched off, which is the opposite of what switching one
+/// off is for.
+///
+/// The first pass ignores `hidden` entirely, and that is the part that
+/// matters. Whatever survives a fill of the whole table survives the fill
+/// below it, so hiding one column can never take a different one away with
+/// it. Without that step, hiding the agent column freed enough room for
+/// peak, which is wider, which pushed win off the end: you switch one thing
+/// off and a second thing you never touched disappears.
 pub(crate) fn columns_for(width: f32, hidden: &[String]) -> Vec<&'static Column> {
+    let shown = fill(width, &[], &[]);
+    let kept: Vec<&Column> = shown
+        .into_iter()
+        .filter(|c| !hidden.iter().any(|h| h == c.head))
+        .collect();
+    fill(width, &kept, hidden)
+}
+
+/// Adds columns in priority order, keeping any that still fit.
+///
+/// In priority order and then in table order, so a narrow window sheds from
+/// the bottom of the priority list rather than from the right of the table,
+/// and the board reads the same however many columns are on.
+fn fill(width: f32, start: &[&'static Column], hidden: &[String]) -> Vec<&'static Column> {
     let visible = |c: &&Column| !hidden.iter().any(|h| h == c.head);
+    let mut keep: Vec<&Column> = start.to_vec();
     // The core columns are not negotiable: without them there is no table,
     // and a window too narrow for them is a window that gets a wide row.
-    let mut keep: Vec<&Column> = COLUMNS
-        .iter()
-        .filter(|c| c.priority == Priority::Core)
-        .filter(visible)
-        .collect();
+    for column in COLUMNS.iter().filter(|c| c.priority == Priority::Core) {
+        if visible(&column) && !keep.iter().any(|c| c.head == column.head) {
+            keep.push(column);
+        }
+    }
     for priority in [Priority::High, Priority::Mid, Priority::Low] {
         for column in COLUMNS
             .iter()
             .filter(|c| c.priority == priority)
             .filter(visible)
         {
+            if keep.iter().any(|c| c.head == column.head) {
+                continue;
+            }
             let mut candidate = keep.clone();
             candidate.push(column);
-            // Kept in table order rather than in the order they were added,
-            // so the board reads the same however many columns are on.
             candidate.sort_by_key(|c| COLUMNS.iter().position(|o| o.head == c.head).unwrap_or(0));
             if width_of(&candidate) <= width {
                 keep = candidate;
             }
         }
     }
+    keep.sort_by_key(|c| COLUMNS.iter().position(|o| o.head == c.head).unwrap_or(0));
     keep
 }
 
@@ -273,7 +298,14 @@ pub(crate) fn columns_for(width: f32, hidden: &[String]) -> Vec<&'static Column>
 ///
 /// A severed letter reads as a bug; three dots read as "there is more". Both
 /// cost one layout, so there is no reason to take the one that looks broken.
-fn cell_text(ui: &Ui, text: &str, font: FontId, tint: Color32, rect: Rect, align: Align) {
+fn cell_text(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    tint: Color32,
+    rect: Rect,
+    align: Align,
+) {
     if text.is_empty() {
         return;
     }
@@ -284,13 +316,13 @@ fn cell_text(ui: &Ui, text: &str, font: FontId, tint: Color32, rect: Rect, align
         break_anywhere: true,
         overflow_character: Some('\u{2026}'),
     };
-    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let galley = painter.layout_job(job);
     let y = rect.center().y - galley.size().y / 2.0;
     let x = match align {
         Align::Left => rect.left(),
         Align::Right => rect.right() - galley.size().x,
     };
-    ui.painter().galley(pos2(x, y), galley, tint);
+    painter.galley(pos2(x, y), galley, tint);
 }
 
 /// The heading row, drawn from the same spec the data uses.
@@ -444,13 +476,14 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
     for column in columns_for(width, hidden) {
         let cell_rect = Rect::from_min_size(pos2(x, rect.top()), vec2(column.width, rect.height()));
         match column.head {
-            "rr" => rr_cell(ui, player, cell_rect),
-            "last 5" => form_cell(ui, player, cell_rect),
+            "rr" => rr_cell(&painter, player, cell_rect),
+            "last 5" => form_cell(&painter, player, cell_rect),
             "rank" => rank_cell(&painter, player, cell_rect),
+            "agent" => agent_cell(&painter, player, cell_rect),
             _ => {
                 let (text, tint) = cell(column.head, player, name_colour);
                 cell_text(
-                    ui,
+                    &painter,
                     &text,
                     column.face.at(size::BODY),
                     tint,
@@ -480,15 +513,28 @@ fn furniture(
     hover: f32,
     chosen: f32,
 ) {
+    // Left to right, because the rail is on the left and the tint should
+    // look like it came from it.
     if chosen > 0.0 {
-        painter.rect_filled(inner, 0, colour::BG_SELECTED.gamma_multiply(chosen));
+        painter.add(egui::Shape::gradient_rect(
+            inner,
+            egui::Direction::LeftToRight,
+            [
+                colour::BG_SELECTED.gamma_multiply(chosen),
+                colour::BG_SELECTED.gamma_multiply(chosen * 0.55),
+            ],
+        ));
     }
     if hover > 0.0 && chosen < 1.0 {
-        painter.rect_filled(
+        let fade = hover * (1.0 - chosen);
+        painter.add(egui::Shape::gradient_rect(
             inner,
-            0,
-            colour::BG_HOVER.gamma_multiply(hover * (1.0 - chosen)),
-        );
+            egui::Direction::LeftToRight,
+            [
+                colour::BG_HOVER.gamma_multiply(fade),
+                colour::BG_HOVER.gamma_multiply(fade * 0.4),
+            ],
+        ));
     }
     let lift = chosen.max(hover).max(f32::from(player.is_self));
     let rail_tint = if player.is_self {
@@ -512,6 +558,78 @@ fn furniture(
     }
 }
 
+/// The agent, as a tile with their initial on it.
+///
+/// A word in a column is a word to read; a coloured tile is a shape to
+/// recognise, and after two matches you know the composition of a lobby
+/// from the left edge of the board without reading anything. It is the
+/// closest this app can get to the portrait every other tracker shows
+/// without going to Riot's servers for a picture, which is a thing this app
+/// does not do.
+fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
+    let Some(agent) = player.agent.as_deref().filter(|a| !a.is_empty()) else {
+        painter.text(
+            pos2(rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            "-",
+            Face::Body.at(size::BODY),
+            colour::TEXT_FAINT,
+        );
+        return;
+    };
+    let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::TEXT_DIM);
+    let tile = Rect::from_min_size(pos2(rect.left(), rect.center().y - 9.0), vec2(18.0, 18.0));
+    painter.add(shape::cut_wash(
+        tile,
+        4.0,
+        tint.gamma_multiply(0.55),
+        tint.gamma_multiply(0.28),
+    ));
+    let initial: String = agent.chars().take(1).collect::<String>().to_uppercase();
+    painter.text(
+        tile.center(),
+        Align2::CENTER_CENTER,
+        initial,
+        Face::Display.at(size::LABEL),
+        colour::TEXT_STRONG,
+    );
+    cell_text(
+        painter,
+        agent,
+        Face::Body.at(size::BODY),
+        colour::TEXT,
+        Rect::from_min_max(pos2(tile.right() + space::MD, rect.top()), rect.max),
+        Align::Left,
+    );
+}
+
+/// The rank division, as the game draws it: a stack of chevrons.
+///
+/// One chevron for the first division of a tier, three for the third, in
+/// the tier's own colour. It is the mark a player reads before the word
+/// beside it, and the whole reason the colours are Riot's exact ones.
+fn chevrons(painter: &egui::Painter, tier: u32, at: Pos2, tint: Color32) {
+    // Tier 0 to 2 is unranked and has no divisions; Radiant is one tier of
+    // one and gets a single mark rather than a third of one.
+    if tier < 3 {
+        return;
+    }
+    let division = if tier >= 27 { 3 } else { tier % 3 + 1 };
+    for i in 0..division {
+        let y = at.y - 5.0 + i as f32 * 4.0;
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                pos2(at.x - 4.0, y + 2.5),
+                pos2(at.x, y - 0.5),
+                pos2(at.x + 4.0, y + 2.5),
+                pos2(at.x, y + 1.0),
+            ],
+            tint,
+            egui::Stroke::NONE,
+        ));
+    }
+}
+
 /// The rank, on a plate in its own colour.
 ///
 /// A plate rather than coloured text because rank is the one value on the
@@ -528,20 +646,36 @@ fn rank_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
         );
         return;
     };
+    let tier = player.rank_tier.unwrap_or(0);
     let tint = rank(player.rank_tier);
     let galley = painter.layout_no_wrap(name.to_owned(), Face::Body.at(size::BODY), tint);
+    let badge = if tier >= 3 { 14.0 } else { 0.0 };
     let plate = Rect::from_min_size(
         pos2(rect.left(), rect.center().y - 9.0),
-        vec2((galley.size().x + space::MD * 2.0).min(rect.width()), 18.0),
+        vec2(
+            (galley.size().x + space::MD * 2.0 + badge).min(rect.width()),
+            18.0,
+        ),
     );
     // Unranked is a state rather than a tier, so it gets no plate: a grey
     // plate next to nine coloured ones reads as a tenth rank.
-    if player.rank_tier.unwrap_or(0) > 0 {
-        painter.add(shape::cut_filled(plate, 4.0, tint.gamma_multiply(0.15)));
+    if tier > 0 {
+        painter.add(shape::cut_wash(
+            plate,
+            4.0,
+            tint.gamma_multiply(0.26),
+            tint.gamma_multiply(0.10),
+        ));
     }
+    chevrons(
+        painter,
+        tier,
+        pos2(plate.left() + space::MD + 4.0, plate.center().y),
+        tint,
+    );
     painter.galley(
         pos2(
-            plate.left() + space::MD,
+            plate.left() + space::MD + badge,
             plate.center().y - galley.size().y / 2.0,
         ),
         galley,
@@ -585,10 +719,10 @@ fn flags(painter: &egui::Painter, player: &Player, rect: Rect, noted: bool) {
 }
 
 /// Rating, and what the last match did to it, in one cell.
-fn rr_cell(ui: &Ui, player: &Player, rect: Rect) {
+fn rr_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     let Some(rr) = player.rr else {
         cell_text(
-            ui,
+            painter,
             "-",
             Face::Number.at(size::BODY),
             colour::TEXT_FAINT,
@@ -608,7 +742,7 @@ fn rr_cell(ui: &Ui, player: &Player, rect: Rect) {
         vec2(26.0, rect.height()),
     );
     cell_text(
-        ui,
+        painter,
         &text,
         Face::Number.at(size::MICRO),
         tint,
@@ -617,7 +751,7 @@ fn rr_cell(ui: &Ui, player: &Player, rect: Rect) {
     );
     let value_rect = Rect::from_min_size(rect.min, vec2(rect.width() - 28.0, rect.height()));
     cell_text(
-        ui,
+        painter,
         &rr.to_string(),
         Face::Number.at(size::BODY),
         colour::TEXT,
@@ -631,8 +765,7 @@ fn rr_cell(ui: &Ui, player: &Player, rect: Rect) {
 /// Pips rather than letters because the question is "how has it been going",
 /// which is a shape rather than a word. Five squares answer it without being
 /// read, and the streak count sits on the end when there is one worth saying.
-fn form_cell(ui: &Ui, player: &Player, rect: Rect) {
-    let painter = ui.painter();
+fn form_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     let mut x = rect.left();
     let pips = player.form.len().min(5) as f32 * (PIP + 2.0);
     for result in player.form.iter().take(5) {
@@ -999,16 +1132,20 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
         pos2(rect.left() + GUTTER, rect.top()),
         pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
     );
-    painter.add(shape::cut_filled(
+    painter.add(shape::cut_filled(band, shape::CHAMFER, colour::BG_RAISED));
+    painter.add(shape::cut_wash(
         band,
         shape::CHAMFER,
-        tint.gamma_multiply(0.10),
+        tint.gamma_multiply(0.34),
+        Color32::TRANSPARENT,
     ));
-    painter.rect_filled(
+    // The bar is a wash too, bright at the top. A three point rectangle in
+    // a flat colour is a rule; the same bar lit from above is an edge.
+    painter.add(egui::Shape::gradient_rect(
         Rect::from_min_size(band.min, vec2(3.0, band.height())),
-        0,
-        tint,
-    );
+        egui::Direction::TopDown,
+        [shape::blend(tint, colour::TEXT_STRONG, 0.35), tint],
+    ));
 
     let mut x = band.left() + space::MD + space::SM;
     let drawn = caps_text(
@@ -1031,8 +1168,12 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
         );
     }
 
-    // The averages, laid out right to left so they finish on the same edge
-    // the numbers in the rows below finish on.
+    averages(&painter, board, team, band);
+}
+
+/// A side's averages, laid out right to left so they finish on the same
+/// edge the numbers in the rows below finish on.
+fn averages(painter: &egui::Painter, board: &Board, team: &str, band: Rect) {
     let Some(stats) = board.stats(team) else {
         return;
     };
@@ -1063,7 +1204,7 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
             tint,
         );
         let drawn = caps_text(
-            &painter,
+            painter,
             pos2(drawn.left() - space::SM, band.center().y),
             Align2::RIGHT_CENTER,
             name,
@@ -1079,13 +1220,18 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
 /// For the handful of things that are claims rather than measurements: a
 /// count of accounts worth a look, a tag somebody wrote. A claim on a plate
 /// reads as a claim; the same words as plain text read as another column.
-pub(crate) fn chip(painter: &egui::Painter, at: egui::Pos2, text: &str, tint: Color32) -> Rect {
+pub(crate) fn chip(painter: &egui::Painter, at: Pos2, text: &str, tint: Color32) -> Rect {
     let galley = painter.layout_job(caps(text, Face::Display.at(size::MICRO), tint));
     let plate = Rect::from_min_size(
         pos2(at.x, at.y - 9.0),
         vec2(galley.size().x + space::MD * 2.0, 18.0),
     );
-    painter.add(shape::cut_filled(plate, 4.0, tint.gamma_multiply(0.16)));
+    painter.add(shape::cut_wash(
+        plate,
+        4.0,
+        tint.gamma_multiply(0.24),
+        tint.gamma_multiply(0.10),
+    ));
     painter.galley(
         pos2(
             plate.left() + space::MD,

@@ -255,6 +255,66 @@ pub mod shape {
         Shape::convex_polygon(cut_corners(rect, cut), fill, Stroke::NONE)
     }
 
+    /// A chamfered rectangle filled with a gradient across it.
+    ///
+    /// Flat fills are what make an interface look printed rather than lit.
+    /// A wash costs the same two triangles the flat version costs, because
+    /// the colour is per vertex and the tessellator interpolates it for
+    /// free, and it is the difference between a coloured rectangle and a
+    /// surface with a light source somewhere.
+    ///
+    /// Convex only, which the two-corner cut is, so a fan from the first
+    /// vertex covers it without a triangulator.
+    pub fn cut_wash(rect: Rect, cut: f32, from: Color32, to: Color32) -> Shape {
+        let points = cut_corners(rect, cut);
+        let mut mesh = egui::Mesh::default();
+        for point in &points {
+            let t = ((point.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+            mesh.colored_vertex(*point, blend(from, to, t));
+        }
+        for i in 1..points.len().saturating_sub(1) {
+            mesh.add_triangle(0, i as u32, i as u32 + 1);
+        }
+        Shape::mesh(mesh)
+    }
+
+    /// Two colours, mixed. Premultiplied, which is how epaint stores them,
+    /// so a fade to nothing has to go to [`Color32::TRANSPARENT`] rather
+    /// than to the same colour with the alpha taken off.
+    #[must_use]
+    pub fn blend(from: Color32, to: Color32, t: f32) -> Color32 {
+        let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t) as u8;
+        Color32::from_rgba_premultiplied(
+            mix(from.r(), to.r()),
+            mix(from.g(), to.g()),
+            mix(from.b(), to.b()),
+            mix(from.a(), to.a()),
+        )
+    }
+
+    /// A soft edge under or beside a surface, so it reads as being above
+    /// what it covers.
+    ///
+    /// Three stacked rects rather than one, because the only blur here is
+    /// an oversized anti-aliasing feather and it falls off linearly: one of
+    /// them alone has a hard edge, three of them look like light.
+    #[must_use]
+    pub fn drop_shadow(rect: Rect, down: f32) -> Vec<Shape> {
+        [(16.0_f32, 26_u8), (8.0, 34), (3.0, 40)]
+            .into_iter()
+            .map(|(blur, alpha)| {
+                Shape::from(
+                    egui::epaint::RectShape::filled(
+                        rect.translate(egui::vec2(0.0, down)),
+                        0,
+                        Color32::from_black_alpha(alpha),
+                    )
+                    .with_blur_width(blur),
+                )
+            })
+            .collect()
+    }
+
     /// The mark before a section heading: a short upright bar.
     ///
     /// Two points wide and the height of a cap. It is the only thing in the
@@ -284,16 +344,16 @@ pub fn hex(text: Option<&str>) -> Option<Color32> {
 /// The three faces, by the job each one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
-    /// A tall condensed display face, always in caps. Every heading, every
-    /// column label, the wordmark. This is the one that carries the
-    /// character: the game's own lockup is a condensed grotesque, and a
-    /// scoreboard set entirely in the system UI face reads as a settings
-    /// dialog no matter what colour it is.
+    /// Oswald at semibold: a tall condensed grotesque, always set in caps
+    /// here. Every heading, every column label, the wordmark. This is the
+    /// face that carries the character.
     Display,
-    /// The system's reading face. It disappears, which is what a name wants.
+    /// Inter at regular. Names, and anything read rather than scanned. It
+    /// was drawn for interfaces at small sizes and it disappears, which is
+    /// what a name wants.
     Body,
-    /// Tabular by construction, so a column of numbers cannot drift. This is
-    /// the whole reason a third face exists.
+    /// `JetBrains Mono` at medium. Tabular by construction, so a column of
+    /// K/D cannot drift, and drawn this decade, which Consolas was not.
     Number,
 }
 
@@ -313,84 +373,76 @@ impl Face {
         FontId::new(points, FontFamily::Name(self.key().into()))
     }
 
-    /// How to sit this face on the line.
+    /// How to sit this face on the line, and which cut of it to use.
     ///
-    /// A point is not a height, it is an em, and three faces at the same
-    /// point size are three different heights on screen. The display face is
-    /// caps only and its caps fill most of its em, so at a shared size it
-    /// towers over the other two and sits high; scaling it down and nudging
-    /// it puts all three on one baseline, which is the only way a label and
-    /// the value beside it can look like one line.
+    /// All three files are variable, and the rasteriser takes the default
+    /// instance unless it is told otherwise. Oswald's default is Regular,
+    /// which is far too light to be a heading, so the weight axis is
+    /// pinned; Inter has an optical size axis, which is what lets one file
+    /// hold together at ten points and at thirty.
+    ///
+    /// A point is not a height. Three faces at one point size are three
+    /// different heights on screen, and the display face is set in caps, so
+    /// it needs a nudge to share a baseline with the value beside it.
     fn tweak(self) -> egui::FontTweak {
+        let pinned = |axes: &[(&[u8; 4], f32)]| {
+            let mut coords = egui::epaint::text::VariationCoords::default();
+            for (tag, value) in axes {
+                coords.push(*tag, *value);
+            }
+            coords
+        };
         match self {
             Self::Display => egui::FontTweak {
-                scale: 1.12,
-                y_offset_factor: 0.06,
+                coords: pinned(&[(b"wght", 600.0)]),
+                y_offset_factor: 0.03,
                 ..egui::FontTweak::default()
             },
-            Self::Body | Self::Number => egui::FontTweak::default(),
+            Self::Body => egui::FontTweak {
+                coords: pinned(&[(b"wght", 420.0), (b"opsz", 16.0)]),
+                ..egui::FontTweak::default()
+            },
+            Self::Number => egui::FontTweak {
+                coords: pinned(&[(b"wght", 500.0)]),
+                scale: 0.94,
+                ..egui::FontTweak::default()
+            },
         }
     }
 }
 
-/// Where a face comes from.
-enum Source {
-    /// Shipped inside the binary.
-    ///
-    /// Only the display face, and only because it is the one doing the
-    /// design work. Windows has no condensed display grotesque worth using:
-    /// Bahnschrift is a variable font and the rasteriser here can only take
-    /// its default instance, which is the flattest, widest cut in the family.
-    /// Sixty kilobytes buys a face that looks the same on every machine and
-    /// looks like something.
-    Bundled(&'static [u8]),
-    /// One of the system's own, first one that is there.
-    ///
-    /// The reading face and the figures both ship with Windows, which is the
-    /// only platform this runs on, so vendoring them would add a megabyte to
-    /// deliver a file already on the disk.
-    System(&'static [&'static str]),
-}
-
-/// What each face is, and where it comes from.
+/// What each face is, shipped inside the binary.
 ///
-/// A load that fails falls through to egui's own font rather than taking the
-/// window down, which is why nothing here is allowed to be fatal.
-const FACES: [(Face, Source); 3] = [
-    (
-        Face::Display,
-        Source::Bundled(include_bytes!("../assets/BebasNeue-Regular.ttf")),
-    ),
-    (Face::Body, Source::System(&["segoeui.ttf"])),
-    // Cascadia first: it is the newer of the two, its figures are rounder
-    // and its zero is slashed, and a column of numbers is most of this app.
-    // Consolas behind it for a machine that predates Cascadia.
+/// Riot's own are Tungsten Bold for display and DIN Next W1G for the
+/// interface, and both are commercial. These are the substitutes Riot
+/// themselves fall back to: their site sets Oswald wherever Tungsten cannot
+/// be used, and its DIN stack ends in Inter. So this is not an
+/// approximation somebody picked off a list, it is the one the people who
+/// designed the thing picked.
+///
+/// Shipped rather than loaded from Windows, which is what this used to do
+/// and which was wrong twice over: Windows has no condensed display
+/// grotesque worth using, and a design system whose type depends on which
+/// machine it is running on is not a design system. About one and a
+/// quarter megabytes, and it buys the app a voice.
+const FACES: [(Face, &[u8]); 3] = [
+    (Face::Display, include_bytes!("../assets/Oswald[wght].ttf")),
+    (Face::Body, include_bytes!("../assets/Inter[opsz,wght].ttf")),
     (
         Face::Number,
-        Source::System(&["CascadiaMono.ttf", "consola.ttf"]),
+        include_bytes!("../assets/JetBrainsMono[wght].ttf"),
     ),
 ];
 
-/// Registers the faces, falling back quietly to what egui ships.
+/// Registers the three faces, each pinned to its own cut.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    let dir = std::env::var_os("SystemRoot").map_or_else(
-        || std::path::PathBuf::from("C:/Windows"),
-        std::path::PathBuf::from,
-    );
-    for (face, source) in FACES {
-        let data = match source {
-            Source::Bundled(bytes) => Some(egui::FontData::from_static(bytes)),
-            Source::System(files) => files
-                .iter()
-                .find_map(|file| std::fs::read(dir.join("Fonts").join(file)).ok())
-                .map(egui::FontData::from_owned),
-        };
-        let Some(data) = data else { continue };
+    for (face, bytes) in FACES {
         let key = face.key().to_owned();
-        fonts
-            .font_data
-            .insert(key.clone(), std::sync::Arc::new(data.tweak(face.tweak())));
+        fonts.font_data.insert(
+            key.clone(),
+            std::sync::Arc::new(egui::FontData::from_static(bytes).tweak(face.tweak())),
+        );
         // Behind the face itself: egui's bundled font, so a glyph the face
         // does not have still draws instead of becoming a box.
         let mut chain = vec![key.clone()];
@@ -402,20 +454,6 @@ pub fn install_fonts(ctx: &egui::Context) {
                 .unwrap_or_default(),
         );
         fonts.families.insert(FontFamily::Name(key.into()), chain);
-    }
-    // A face that failed to load still needs its family to exist, or every
-    // call to Face::at draws nothing at all. The fallback list is read out
-    // first because inserting into the map borrows it.
-    let fallback = fonts
-        .families
-        .get(&FontFamily::Proportional)
-        .cloned()
-        .unwrap_or_default();
-    for (face, _) in FACES {
-        fonts
-            .families
-            .entry(FontFamily::Name(face.key().into()))
-            .or_insert_with(|| fallback.clone());
     }
     ctx.set_fonts(fonts);
 }

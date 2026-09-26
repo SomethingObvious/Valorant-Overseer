@@ -6,7 +6,7 @@
 
 use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
-use crate::board::COLUMNS;
+use crate::board::{COLUMNS, Column};
 use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
@@ -125,9 +125,34 @@ fn keys(ui: &mut Ui) {
 
 /// Which columns the board shows. True when one was switched.
 fn columns(ui: &mut Ui, settings: &mut Settings) -> bool {
-    let mut changed = false;
     section(ui, "columns", "What the board shows about each player.");
-    for column in &COLUMNS {
+    // Twelve in one list is a thin ribbon down the middle of a wide window
+    // with nothing beside it, and twelve rows of scrolling to reach the next
+    // section. Two abreast wherever two fit, which halves both.
+    if ui.available_width() < TWO_ABREAST {
+        return switches(ui, &COLUMNS, settings);
+    }
+    let (first, second) = COLUMNS.split_at(COLUMNS.len().div_ceil(2));
+    let mut changed = false;
+    ui.columns(2, |side| {
+        if let [left, right] = side {
+            changed |= switches(left, first, settings);
+            changed |= switches(right, second, settings);
+        }
+    });
+    changed
+}
+
+/// The width at which the column list stops being one list.
+///
+/// Two of them need a name, an explanation and the air between, which is
+/// what the switch itself asks for twice over.
+const TWO_ABREAST: f32 = 760.0;
+
+/// One toggle per column, in the order the board draws them.
+fn switches(ui: &mut Ui, columns: &[Column], settings: &mut Settings) -> bool {
+    let mut changed = false;
+    for column in columns {
         let hidden = settings.hidden_columns.iter().any(|h| h == column.head);
         if switch(ui, column.head, column.about, !hidden, false) {
             changed = true;
@@ -351,14 +376,25 @@ fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool 
             colour::TEXT_DIM
         },
     );
-    painter.text(
-        pos2(
-            drawn.right().max(rect.left() + 190.0) + space::LG,
-            rect.center().y,
-        ),
-        Align2::LEFT_CENTER,
-        about,
+    // Cut to what is left of the row rather than run off the edge of it:
+    // two of these side by side leave half the width each, and the longest
+    // explanation here is wider than half.
+    let at = drawn.right().max(rect.left() + 190.0) + space::LG;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        about.to_owned(),
         Face::Body.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: rect.right() - space::XL - at,
+        max_rows: 1,
+        break_anywhere: false,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = painter.layout_job(job);
+    painter.galley(
+        pos2(at, rect.center().y - galley.size().y / 2.0),
+        galley,
         colour::TEXT_FAINT,
     );
     response.clicked()

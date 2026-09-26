@@ -126,7 +126,7 @@ pub(crate) const COLUMNS: [Column; 12] = [
         align: Align::Right,
         face: Face::Number,
         priority: Priority::Low,
-        about: "Headshot percentage over those same matches",
+        about: "Headshots, over those same matches",
     },
     Column {
         head: "win",

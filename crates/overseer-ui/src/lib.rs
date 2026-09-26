@@ -54,6 +54,14 @@ pub mod space {
     pub const ROW: f32 = 24.0;
     /// One player, on a window too narrow to spend the extra four points.
     pub const ROW_TIGHT: f32 = 20.0;
+    /// One result in a run of them: a win, a loss, a match in a session.
+    ///
+    /// Counted rather than read, so it has to be big enough to count at a
+    /// glance and small enough that five of them are one shape. Defined
+    /// here because the board and the panel both draw them, and two sizes
+    /// of the same mark is the sort of thing nobody sees and everybody
+    /// feels.
+    pub const PIP: f32 = 9.0;
 }
 
 /// How long things take. Four durations, because a fifth would be a fifth

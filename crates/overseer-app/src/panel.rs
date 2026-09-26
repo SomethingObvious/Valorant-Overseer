@@ -325,7 +325,12 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
         vec2(galley.size().x + space::MD * 2.0, 20.0),
     );
     if player.rank_tier.unwrap_or(0) > 0 {
-        painter.add(shape::cut_filled(plate, 5.0, tint.gamma_multiply(0.15)));
+        painter.add(shape::cut_wash(
+            plate,
+            5.0,
+            tint.gamma_multiply(0.26),
+            tint.gamma_multiply(0.10),
+        ));
     }
     painter.galley(
         pos2(
@@ -443,9 +448,12 @@ fn pips(ui: &Ui, player: &Player, rect: Rect) {
             Some('D' | 'd') => colour::WARN,
             _ => colour::ENEMY,
         };
-        let pip = Rect::from_min_size(pos2(x, rect.center().y - 4.0), vec2(6.0, 8.0));
+        let pip = Rect::from_min_size(
+            pos2(x, rect.center().y - space::PIP / 2.0),
+            vec2(space::PIP - 2.0, space::PIP),
+        );
         painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
-        x += 8.0;
+        x += space::PIP + 2.0;
     }
     let Some(streak) = player.streak.as_ref() else {
         return;

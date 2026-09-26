@@ -149,9 +149,45 @@ value that changes every second must never animate.
 - **Two tiers, one layout.** Efficient removes shaders, blur and shadows and
   shortens every duration to 150ms or less; it never removes information or
   moves anything. A person switching tiers should see the same app, calmer.
-- **Density by width, not by preference.** Under 520 points the board keeps
-  name, rank and K/D and drops the rest by column priority. The same priority
-  list the terminal front end uses.
+- **Density by width, not by preference.** A narrow board keeps name, rank
+  and K/D and drops the rest by column priority, the same priority list the
+  terminal front end uses. The fill is monotone: switching a column off can
+  only ever add columns, never swap one for another, which it used to do.
+- **A mark beats a word.** Four things on a row are shapes rather than text,
+  because four different channels can be read at once and four columns of
+  words cannot: the agent as a tile in the agent's own colour, the rank as
+  chevrons on a plate in the tier's colour, a party as a bracket down the
+  gutter, the last five results as pips. Everything else is tabular support.
+- **Nothing sizes itself by arithmetic.** The overlay asks for exactly the
+  height the board drew last frame. Adding the pieces up by hand means the
+  sum has to be revisited whenever a band grows a point, and nobody revisits
+  a sum: that is twice it clipped its own last player.
+- **A guess presented as a fact is a lie.** A party Riot confirmed gets a
+  bracket; a stack the app inferred gets a question mark and its evidence in
+  the panel. An account the backend cannot see says "not visible" rather than
+  drawing ten columns of dashes.
+
+## What it costs
+
+Measured on the release build against a live backend, on the integrated
+adapter the window deliberately asks for:
+
+| | |
+| --- | --- |
+| Idle | 0% of a core |
+| Pointer swept down the roster as fast as it moves | 0.8% of a core |
+| Memory | 77 MB |
+
+Idle is zero because the window is reactive: nothing asks for a frame unless
+something happened. The bridge thread wakes it when a board arrives, egui's
+own animator asks while a tint is in flight and stops when it settles, and
+the two things painted from a timestamp rather than from the animator — the
+roster landing and the hover dwell — ask for exactly as long as they run.
+
+The loudest complaint about the overlay this app is an alternative to is
+that it drops frames in game. That is the number that matters most, and it
+is the reason `perf.rs` holds a shape budget and an assertion that a still
+window asks for nothing.
 
 ## How to know it worked
 

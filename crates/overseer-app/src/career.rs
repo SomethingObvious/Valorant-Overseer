@@ -16,7 +16,7 @@ use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Bridge, CareerMatch, Profile};
 
 use crate::panel::{heading, line, stat};
-use overseer_ui::{Face, colour, kd, size, space};
+use overseer_ui::{Face, colour, kd, shape, size, space};
 
 /// How tall a chart is. Enough for a shape to be a shape, not so much that
 /// the numbers under it fall off the bottom of the panel.
@@ -298,7 +298,14 @@ fn guns(ui: &mut Ui, profile: &Profile) {
             pos2(rect.left() + space::LG, rect.center().y - 7.0),
             vec2(full * share / 100.0, 14.0),
         );
-        painter.rect_filled(bar, 0, colour::BG_HOVER);
+        // Tinted rather than grey, because the length of it is a number and
+        // a grey bar behind a word reads as a text field.
+        painter.add(shape::cut_wash(
+            bar,
+            3.0,
+            colour::INFO.gamma_multiply(0.30),
+            colour::INFO.gamma_multiply(0.12),
+        ));
         painter.text(
             pos2(rect.left() + space::LG + space::SM, rect.center().y),
             Align2::LEFT_CENTER,

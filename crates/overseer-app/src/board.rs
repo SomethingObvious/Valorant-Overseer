@@ -174,8 +174,6 @@ pub(crate) const COLUMNS: [Column; 12] = [
 /// a stack guess, with a gutter before the first of them so the rightmost
 /// column never runs into one.
 const FLAG_WIDTH: f32 = 52.0;
-/// One result pip in the form column.
-const PIP: f32 = 9.0;
 
 /// How long the two things a row animates are allowed to take.
 #[derive(Debug, Clone, Copy)]
@@ -780,16 +778,19 @@ fn rr_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
 /// read, and the streak count sits on the end when there is one worth saying.
 fn form_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     let mut x = rect.left();
-    let pips = player.form.len().min(5) as f32 * (PIP + 2.0);
+    let pips = player.form.len().min(5) as f32 * (space::PIP + 2.0);
     for result in player.form.iter().take(5) {
         let tint = match result.chars().next() {
             Some('W' | 'w') => colour::ALLY,
             Some('D' | 'd') => colour::WARN,
             _ => colour::ENEMY,
         };
-        let pip = Rect::from_min_size(pos2(x, rect.center().y - PIP / 2.0), vec2(PIP - 2.0, PIP));
+        let pip = Rect::from_min_size(
+            pos2(x, rect.center().y - space::PIP / 2.0),
+            vec2(space::PIP - 2.0, space::PIP),
+        );
         painter.rect_filled(pip, 0, tint.gamma_multiply(0.85));
-        x += PIP + 2.0;
+        x += space::PIP + 2.0;
     }
     // Only if the pips left room for it. On a narrow window this column is
     // the one that gets squeezed, and a streak count printed over the flag

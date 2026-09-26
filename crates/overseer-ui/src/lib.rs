@@ -117,66 +117,92 @@ pub mod motion {
 pub mod colour {
     use egui::Color32;
 
-    /// Behind everything, and darker than anything drawn on it.
+    /// Below the ground: the shadow under a slab and the clear colour behind
+    /// the overlay. Nothing is drawn in it.
+    pub const VOID: Color32 = Color32::from_rgb(0x05, 0x06, 0x08);
+    /// The ground everything stands on.
     ///
-    /// Four surfaces rather than two. A flat interface is not calm, it is
-    /// undesigned: without a tone difference nothing can sit on anything,
-    /// every edge has to be a line, and a screen of lines reads as a
-    /// spreadsheet. These are the four steps, and nothing is allowed a fifth.
-    pub const VOID: Color32 = Color32::from_rgb(0x08, 0x0C, 0x12);
-    /// The board's own surface, and the game's own menu tone.
-    pub const BG: Color32 = Color32::from_rgb(0x0F, 0x19, 0x23);
-    /// The window's background in overlay mode.
-    ///
-    /// The same colour as [`BG`], letting enough of the game through that you
-    /// can tell it is an overlay and little enough that the text still reads
-    /// at a glance. Only ever used as a clear colour, where the window itself
-    /// is transparent. Premultiplied, because that is the only constructor
-    /// that is const: each channel scaled by the 0xD8 alpha beside it.
-    pub const BG_OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x09, 0x0E, 0x15, 0xD8);
-    /// A surface that sits above the board: a header, the detail panel.
-    pub const BG_RAISED: Color32 = Color32::from_rgb(0x1A, 0x24, 0x2E);
-    /// A surface above that: a chip, an input, a card inside the panel.
-    pub const BG_INSET: Color32 = Color32::from_rgb(0x1C, 0x29, 0x37);
-    /// The tint under the cursor.
-    pub const BG_HOVER: Color32 = Color32::from_rgb(0x1B, 0x28, 0x36);
-    /// The tint on the row you have chosen.
-    pub const BG_SELECTED: Color32 = Color32::from_rgb(0x23, 0x35, 0x47);
-    /// A rule that separates two things.
-    pub const LINE: Color32 = Color32::from_rgb(0x2B, 0x3A, 0x47);
-    /// A rule between rows, which should be felt rather than seen.
-    pub const LINE_SOFT: Color32 = Color32::from_rgb(0x19, 0x24, 0x30);
+    /// Neutral near black with the blue taken out. The old ground was the
+    /// game's menu slate, and slate under a neon accent is the look every
+    /// generated dark interface lands on; a broadcast is printed on black.
+    pub const BG: Color32 = Color32::from_rgb(0x0A, 0x0B, 0x0E);
+    /// The overlay's clear colour: the ground at 85%, premultiplied, which is
+    /// the only constructor that is const.
+    pub const BG_OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x08, 0x09, 0x0C, 0xD8);
+    /// A slab: one row, one card, one plate. The thing the eye reads as an
+    /// object sitting on the ground.
+    pub const BG_RAISED: Color32 = Color32::from_rgb(0x15, 0x17, 0x1C);
+    /// A slab on a slab: a chip, an input, the panel's inner cards.
+    pub const BG_INSET: Color32 = Color32::from_rgb(0x1D, 0x20, 0x27);
+    /// A slab under the pointer.
+    pub const BG_HOVER: Color32 = Color32::from_rgb(0x1C, 0x1F, 0x26);
+    /// The slab you chose.
+    pub const BG_SELECTED: Color32 = Color32::from_rgb(0x25, 0x29, 0x33);
+    /// A rule, where a rule is really needed.
+    pub const LINE: Color32 = Color32::from_rgb(0x2A, 0x2E, 0x36);
+    /// A seam between slabs that touch.
+    pub const LINE_SOFT: Color32 = Color32::from_rgb(0x1A, 0x1C, 0x22);
 
-    /// A name, a heading: the brightest text there is.
-    pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xEC, 0xE8, 0xE1);
-    /// Ordinary text.
-    pub const TEXT: Color32 = Color32::from_rgb(0xCE, 0xD8, 0xE0);
-    /// A label beside a value.
-    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x8A, 0x99, 0xA5);
-    /// Present, but not the point. Bright enough to read on [`BG`], which
-    /// the old value was not: a column heading nobody can read is a column
-    /// heading that is not there.
-    pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x64, 0x74, 0x82);
+    /// Names and numerals: the broadcast's cream. 15.6:1 on a slab.
+    pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xF2, 0xEF, 0xE8);
+    /// A value. 11.3:1 on a slab.
+    pub const TEXT: Color32 = Color32::from_rgb(0xC9, 0xCE, 0xD6);
+    /// Secondary text. 6.9:1 on a slab.
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x9A, 0xA1, 0xAB);
+    /// A label. 5.7:1 on a slab, which the old faint grey at 3.3:1 was not:
+    /// a label nobody can read is a label that is not there.
+    pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x8B, 0x92, 0x9C);
     /// Your team.
     pub const ALLY: Color32 = Color32::from_rgb(0x18, 0xE5, 0xA7);
-    /// The other team, and anything dangerous.
+    /// The other team. The one colour that owns a whole slab.
     pub const ENEMY: Color32 = Color32::from_rgb(0xFF, 0x46, 0x55);
     /// You.
     pub const YOU: Color32 = TEXT_STRONG;
-    /// A good number.
+    /// Good for you: your own rating going up, a match you won.
     pub const GOOD: Color32 = ALLY;
     /// A measurement rather than an outcome.
     pub const INFO: Color32 = Color32::from_rgb(0x9A, 0xDE, 0xFF);
-    /// Something worth a second look.
-    pub const WARN: Color32 = Color32::from_rgb(0xFF, 0xB4, 0x54);
+    /// Worth a look. Amber, and on a board where red is taken by the enemy
+    /// it is the only colour that means "this one".
+    pub const WARN: Color32 = Color32::from_rgb(0xFF, 0xC8, 0x45);
     /// A number that is neither good nor bad.
-    ///
-    /// Most of them. Colour spent on an ordinary value is colour taken from
-    /// the one that matters, and a board where every figure is tinted is a
-    /// board with no figure on it.
-    pub const NEUTRAL: Color32 = Color32::from_rgb(0xCE, 0xD8, 0xE0);
-    /// A bad number.
+    pub const NEUTRAL: Color32 = TEXT;
+    /// Bad for you.
     pub const BAD: Color32 = Color32::from_rgb(0xFF, 0x80, 0x88);
+
+    /// One colour per party, never red or green.
+    ///
+    /// A party bracket in the enemy's red on your own side says the wrong
+    /// thing about who is in it, and the old code did exactly that.
+    pub const PARTY: [Color32; 4] = [
+        Color32::from_rgb(0x7A, 0xA2, 0xFF),
+        Color32::from_rgb(0xC5, 0x8B, 0xFF),
+        Color32::from_rgb(0xFF, 0xD1, 0x66),
+        Color32::from_rgb(0x5C, 0xE1, 0xE6),
+    ];
+
+    /// How much of a threat an enemy's number is, as a colour: neutral, then
+    /// amber, then the enemy's own red.
+    ///
+    /// The old board painted an enemy's 1.92 K/D in ally green, because a
+    /// good number was green whoever it belonged to. On the other side of
+    /// the lobby a good number is bad news, and bad news is hot. `t` runs
+    /// from nothing to worry about at 0 to the worst in the lobby at 1.
+    #[must_use]
+    pub fn threat(t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        if t < 0.5 {
+            super::shape::blend(TEXT, WARN, t * 2.0)
+        } else {
+            super::shape::blend(WARN, ENEMY, (t - 0.5) * 2.0)
+        }
+    }
+
+    /// The same idea for your own side: neutral up to your team's green.
+    #[must_use]
+    pub fn strength(t: f32) -> Color32 {
+        super::shape::blend(TEXT, ALLY, t.clamp(0.0, 1.0))
+    }
 }
 
 /// One colour per rank group, in tier order.
@@ -725,17 +751,18 @@ pub fn hex(text: Option<&str>) -> Option<Color32> {
 /// The three faces, by the job each one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
-    /// Oswald at semibold: a tall condensed grotesque, always set in caps
-    /// here. Every heading, every column label, the wordmark. This is the
-    /// face that carries the character.
+    /// Barlow Condensed Bold. Names, labels, headings, chips: everything that
+    /// is set in caps and scanned rather than read.
     Display,
-    /// Inter at regular. Names, and anything read rather than scanned. It
-    /// was drawn for interfaces at small sizes and it disappears, which is
-    /// what a name wants.
-    Body,
-    /// `JetBrains Mono` at medium. Tabular by construction, so a column of
-    /// K/D cannot drift, and drawn this decade, which Consolas was not.
+    /// Barlow Condensed at its extra bold italic. The numerals, the team titles, the
+    /// score and the map: the broadcast's voice, and the one face in the app
+    /// allowed to shout.
+    Heavy,
+    /// Barlow Condensed at semibold. Secondary numbers and the quieter labels.
     Number,
+    /// Inter. Sentences: reasons, notes, explanations. The only face here
+    /// that is read word by word, so the only one drawn for reading.
+    Body,
 }
 
 impl Face {
@@ -743,8 +770,9 @@ impl Face {
     const fn key(self) -> &'static str {
         match self {
             Self::Display => "overseer-display",
-            Self::Body => "overseer-body",
+            Self::Heavy => "overseer-heavy",
             Self::Number => "overseer-number",
+            Self::Body => "overseer-body",
         }
     }
 
@@ -754,68 +782,54 @@ impl Face {
         FontId::new(points, FontFamily::Name(self.key().into()))
     }
 
-    /// How to sit this face on the line, and which cut of it to use.
+    /// How to sit this face on the line.
     ///
-    /// All three files are variable, and the rasteriser takes the default
-    /// instance unless it is told otherwise. Oswald's default is Regular,
-    /// which is far too light to be a heading, so the weight axis is
-    /// pinned; Inter has an optical size axis, which is what lets one file
-    /// hold together at ten points and at thirty.
-    ///
-    /// A point is not a height. Three faces at one point size are three
-    /// different heights on screen, and the display face is set in caps, so
-    /// it needs a nudge to share a baseline with the value beside it.
+    /// Barlow ships as static cuts, so nothing is pinned; the only job left
+    /// is the baseline. Condensed caps sit high on their em, so they come
+    /// down a touch to share a centre line with Inter beside them.
     fn tweak(self) -> egui::FontTweak {
-        let pinned = |axes: &[(&[u8; 4], f32)]| {
-            let mut coords = egui::epaint::text::VariationCoords::default();
-            for (tag, value) in axes {
-                coords.push(*tag, *value);
-            }
-            coords
-        };
         match self {
-            Self::Display => egui::FontTweak {
-                coords: pinned(&[(b"wght", 600.0)]),
-                y_offset_factor: 0.03,
+            Self::Display | Self::Heavy | Self::Number => egui::FontTweak {
+                y_offset_factor: 0.02,
                 ..egui::FontTweak::default()
             },
-            Self::Body => egui::FontTweak {
-                coords: pinned(&[(b"wght", 420.0), (b"opsz", 16.0)]),
-                ..egui::FontTweak::default()
-            },
-            Self::Number => egui::FontTweak {
-                coords: pinned(&[(b"wght", 500.0)]),
-                scale: 0.94,
-                ..egui::FontTweak::default()
-            },
+            Self::Body => {
+                let mut coords = egui::epaint::text::VariationCoords::default();
+                coords.push(*b"wght", 440.0);
+                coords.push(*b"opsz", 16.0);
+                egui::FontTweak {
+                    coords,
+                    ..egui::FontTweak::default()
+                }
+            }
         }
     }
 }
 
 /// What each face is, shipped inside the binary.
 ///
-/// Riot's own are Tungsten Bold for display and DIN Next W1G for the
-/// interface, and both are commercial. These are the substitutes Riot
-/// themselves fall back to: their site sets Oswald wherever Tungsten cannot
-/// be used, and its DIN stack ends in Inter. So this is not an
-/// approximation somebody picked off a list, it is the one the people who
-/// designed the thing picked.
-///
-/// Shipped rather than loaded from Windows, which is what this used to do
-/// and which was wrong twice over: Windows has no condensed display
-/// grotesque worth using, and a design system whose type depends on which
-/// machine it is running on is not a design system. About one and a
-/// quarter megabytes, and it buys the app a voice.
-const FACES: [(Face, &[u8]); 3] = [
-    (Face::Display, include_bytes!("../assets/Oswald[wght].ttf")),
-    (Face::Body, include_bytes!("../assets/Inter[opsz,wght].ttf")),
+/// Barlow Condensed is the broadcast face: a condensed grotesque cut from
+/// the lettering on highway signs and number plates, with an italic heavy
+/// enough to carry a numeral across a room. It replaced Oswald, which is a
+/// fine face for a heading and a poor one for a number, and a monospace that
+/// made every figure on the board look like it belonged in a terminal.
+const FACES: [(Face, &[u8]); 4] = [
+    (
+        Face::Display,
+        include_bytes!("../assets/BarlowCondensed-Bold.ttf"),
+    ),
+    (
+        Face::Heavy,
+        include_bytes!("../assets/BarlowCondensed-ExtraBoldItalic.ttf"),
+    ),
     (
         Face::Number,
-        include_bytes!("../assets/JetBrainsMono[wght].ttf"),
+        include_bytes!("../assets/BarlowCondensed-SemiBold.ttf"),
     ),
+    (Face::Body, include_bytes!("../assets/Inter[opsz,wght].ttf")),
 ];
 
-/// Registers the three faces, each pinned to its own cut.
+/// Registers the four faces.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     for (face, bytes) in FACES {
@@ -1007,7 +1021,7 @@ mod tests {
         // is laid out, and that glyph is the whole interface.
         let output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let ctx = ui.ctx();
-            for face in [Face::Display, Face::Body, Face::Number] {
+            for face in [Face::Display, Face::Heavy, Face::Number, Face::Body] {
                 let galley = ctx.fonts_mut(|fonts| {
                     fonts.layout_no_wrap("W".to_owned(), face.at(size::BODY), colour::TEXT)
                 });

@@ -111,8 +111,14 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes) -> bool {
         ui.add_space(space::LG);
         let width = (ui.available_width() - space::LG).max(120.0);
         ui.vertical(|ui| {
+            // Ids from the account, not from where the box sits. Two
+            // players' boxes are at the same place in the panel, and with
+            // positional ids the focused box quietly became the next
+            // player's box when the pointer moved, and the rest of the
+            // sentence was saved under their name.
             let prose = ui.add(
                 egui::TextEdit::multiline(&mut text)
+                    .id(egui::Id::new(("note-text", id)))
                     .desired_width(width)
                     .desired_rows(2)
                     .font(Face::Body.at(size::BODY))
@@ -121,6 +127,7 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes) -> bool {
             ui.add_space(space::SM);
             let labels = ui.add(
                 egui::TextEdit::singleline(&mut tags)
+                    .id(egui::Id::new(("note-tags", id)))
                     .desired_width(width)
                     .font(Face::Body.at(size::MICRO))
                     .hint_text(hint("tags, separated by commas")),

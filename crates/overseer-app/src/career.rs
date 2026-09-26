@@ -12,6 +12,8 @@
 //! problem. Everything else is a number, and a number that would be a chart
 //! of three points is a number.
 
+use std::collections::HashMap;
+
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Bridge, CareerMatch, Profile};
 
@@ -75,12 +77,30 @@ impl Career {
     ///
     /// Only while the socket is up. A question asked into a dead socket is
     /// queued and sent on reconnect, by which time nobody wants the answer.
-    pub(crate) fn follow(&mut self, bridge: &Bridge, selected: Option<&str>, live: bool) {
+    pub(crate) fn follow(
+        &mut self,
+        bridge: &Bridge,
+        selected: Option<&str>,
+        live: bool,
+        seen: &HashMap<String, Box<Profile>>,
+    ) {
         let Some(puuid) = selected else {
             *self = Self::Nothing;
             return;
         };
-        if !live || self.about() == Some(puuid) {
+        if self.about() == Some(puuid) {
+            return;
+        }
+        // Already fetched in this lobby: shown straight away, no question
+        // asked. Moving off a row and back is not new information.
+        if let Some(profile) = seen.get(puuid) {
+            *self = Self::Have {
+                puuid: puuid.to_owned(),
+                profile: profile.clone(),
+            };
+            return;
+        }
+        if !live {
             return;
         }
         let id = bridge.ask("profile", serde_json::json!({ "puuid": puuid }));
@@ -105,7 +125,12 @@ impl Career {
     /// Anything else is an answer to a question abandoned when the selection
     /// moved on, and acting on it would put one player's history under
     /// another player's name.
-    pub(crate) fn answered(&mut self, id: u64, result: Result<serde_json::Value, String>) {
+    pub(crate) fn answered(
+        &mut self,
+        id: u64,
+        result: Result<serde_json::Value, String>,
+        seen: &mut HashMap<String, Box<Profile>>,
+    ) {
         let Self::Asking { id: waiting, puuid } = self else {
             return;
         };
@@ -116,10 +141,11 @@ impl Career {
         *self = match result {
             Err(why) => Self::Refused { puuid, why },
             Ok(value) => match serde_json::from_value::<Profile>(value) {
-                Ok(profile) => Self::Have {
-                    puuid,
-                    profile: Box::new(profile),
-                },
+                Ok(profile) => {
+                    let profile = Box::new(profile);
+                    seen.insert(puuid.clone(), profile.clone());
+                    Self::Have { puuid, profile }
+                }
                 Err(e) => Self::Refused {
                     puuid,
                     why: format!("the history did not read: {e}"),
@@ -554,6 +580,8 @@ fn dash() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::{Career, bounds, ladder};
     use overseer_core::CareerMatch;
 
@@ -601,16 +629,22 @@ mod tests {
             id: 4,
             puuid: "b".to_owned(),
         };
-        career.answered(3, Ok(serde_json::json!({ "puuid": "a" })));
+        let mut seen = HashMap::new();
+        career.answered(3, Ok(serde_json::json!({ "puuid": "a" })), &mut seen);
         assert!(
             matches!(career, Career::Asking { id: 4, .. }),
             "an old answer landed on the current question"
         );
-        career.answered(4, Ok(serde_json::json!({ "puuid": "b" })));
+        career.answered(4, Ok(serde_json::json!({ "puuid": "b" })), &mut seen);
         assert!(matches!(career, Career::Have { .. }));
+        assert!(seen.contains_key("b"), "an answer was not remembered");
+        assert!(
+            !seen.contains_key("a"),
+            "an abandoned answer was remembered"
+        );
 
         // And nothing lands at all once there is an answer.
-        career.answered(4, Err("no".to_owned()));
+        career.answered(4, Err("no".to_owned()), &mut seen);
         assert!(matches!(career, Career::Have { .. }));
     }
 

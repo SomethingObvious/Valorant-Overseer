@@ -1,36 +1,42 @@
-//! The pictures: Riot's agent portraits and rank emblems, decoded once and
-//! kept as textures for as long as the window is open.
+//! The pictures: Riot's agent portraits, killfeed crops, map strips and rank
+//! emblems, decoded once and kept as textures for as long as the window is
+//! open.
 //!
 //! Every scoreboard anybody actually uses shows the agent's face and the
-//! rank's emblem, and this one drew a letter in a box and three chevrons. A
-//! letter is a thing to read; a face is a thing you already know, and after
-//! two matches you read a lobby's composition off the left edge of the board
-//! without reading a word of it. That is the whole reason to spend three
-//! hundred kilobytes on it.
+//! rank's emblem, and a broadcast shows them large. A letter is a thing to
+//! read; a face is a thing you already know, and after two matches you read a
+//! lobby's composition off the left edge of the board without reading a word.
 //!
 //! Bound into the binary rather than fetched, because this app does not go
 //! online and is not going to start. Decoded on first use rather than at
-//! startup, because a lobby is ten agents out of twenty nine and the other
-//! nineteen are work nobody asked for.
+//! startup, because a lobby is ten agents out of twenty nine and one map out
+//! of twenty six, and the rest are work nobody asked for.
 
 use egui::{Context, TextureHandle, TextureOptions};
 
-use crate::art_assets::{AGENTS, RANKS};
+use crate::art_assets::{KILLFEED, MAPS, PORTRAITS, RANKS};
 
-/// The portrait for an agent the backend named, if it is one this build
-/// knows.
+/// The square portrait for an agent, for the panel and the ladder.
 ///
 /// Returns nothing for an agent added to the game after this build shipped,
-/// and every call site falls back to the coloured tile it used to draw. A
-/// missing picture is a plate with a letter on it, not a hole.
+/// and every call site falls back to a coloured plate with the initial on
+/// it. A missing picture is a plate with a letter on it, not a hole.
 #[must_use]
 pub fn agent(ctx: &Context, name: &str) -> Option<TextureHandle> {
-    let key = slug(name);
-    let bytes = AGENTS
-        .iter()
-        .find(|(known, _)| *known == key)
-        .map(|(_, bytes)| *bytes)?;
-    texture(ctx, &format!("agent:{key}"), bytes)
+    named(ctx, "agent", &PORTRAITS, name)
+}
+
+/// The killfeed crop for an agent: two wide by one tall, cut tight on the
+/// face, which is what a broadcast puts at the head of each player's row.
+#[must_use]
+pub fn killfeed(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    named(ctx, "killfeed", &KILLFEED, name)
+}
+
+/// A map's list strip, for behind the header.
+#[must_use]
+pub fn map(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    named(ctx, "map", &MAPS, name)
 }
 
 /// The emblem for a tier, if it is one Riot has an emblem for.
@@ -41,6 +47,16 @@ pub fn rank(ctx: &Context, tier: u32) -> Option<TextureHandle> {
         .find(|(known, _)| *known == tier)
         .map(|(_, bytes)| *bytes)?;
     texture(ctx, &format!("rank:{tier}"), bytes)
+}
+
+/// One of the tables keyed by name, looked up by what the backend sent.
+fn named(ctx: &Context, kind: &str, table: &[(&str, &[u8])], name: &str) -> Option<TextureHandle> {
+    let key = slug(name);
+    let bytes = table
+        .iter()
+        .find(|(known, _)| *known == key)
+        .map(|(_, bytes)| *bytes)?;
+    texture(ctx, &format!("{kind}:{key}"), bytes)
 }
 
 /// The name the backend sent, reduced to what can be looked up.
@@ -75,57 +91,80 @@ fn texture(ctx: &Context, key: &str, bytes: &[u8]) -> Option<TextureHandle> {
     Some(handle)
 }
 
-/// One RGBA8 PNG, which is what every file in `assets` is.
+/// One PNG, as RGBA.
+///
+/// The portraits and emblems are straight RGBA; the map strips are palette
+/// images, because a photograph behind the header costs three hundred
+/// kilobytes as RGBA and nine as sixty four colours, and nobody can see the
+/// difference through the dimming. Expansion turns either into eight bit
+/// channels, and three channels get an opaque alpha.
 ///
 /// Anything else returns nothing rather than panicking. These are files this
 /// repository wrote and checked, so a failure here means somebody replaced
-/// one by hand, and the right answer to that is the coloured tile rather
+/// one by hand, and the right answer to that is the fallback plate rather
 /// than a window that will not open.
 fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
-    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
-        .read_info()
-        .ok()?;
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().ok()?;
     let mut buffer = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buffer).ok()?;
-    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+    if info.bit_depth != png::BitDepth::Eight {
         return None;
     }
-    let size = [info.width as usize, info.height as usize];
     buffer.truncate(info.buffer_size());
-    Some(egui::ColorImage::from_rgba_unmultiplied(size, &buffer))
+    let size = [info.width as usize, info.height as usize];
+    match info.color_type {
+        png::ColorType::Rgba => Some(egui::ColorImage::from_rgba_unmultiplied(size, &buffer)),
+        png::ColorType::Rgb => Some(egui::ColorImage::from_rgb(size, &buffer)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AGENTS, RANKS, decode, slug};
+    use super::{KILLFEED, MAPS, PORTRAITS, RANKS, decode, slug};
 
     /// The slug has to survive the one agent with punctuation in its name.
     #[test]
     fn a_name_becomes_the_key_it_is_filed_under() {
         assert_eq!(slug("KAY/O"), "kayo");
         assert_eq!(slug("Clove"), "clove");
-        assert_eq!(slug("Omen"), "omen");
+        assert_eq!(slug("The Range"), "therange");
     }
 
-    /// Every file bound into the binary has to be the shape the decoder
-    /// expects, because the decoder refuses anything else and the failure
-    /// would be a silently missing picture.
+    /// Every file bound into the binary has to decode, because the decoder
+    /// refuses anything it does not recognise and the failure would be a
+    /// silently missing picture.
     #[test]
     fn every_bound_picture_decodes() {
-        for (name, bytes) in AGENTS {
-            assert!(decode(bytes).is_some(), "{name} did not decode");
+        for table in [&PORTRAITS[..], &KILLFEED[..], &MAPS[..]] {
+            for (name, bytes) in table {
+                assert!(decode(bytes).is_some(), "{name} did not decode");
+            }
         }
         for (tier, bytes) in RANKS {
             assert!(decode(bytes).is_some(), "tier {tier} did not decode");
         }
     }
 
-    /// The table is keyed by the slug, so a key that is not already one
+    /// Every agent with a portrait has a killfeed crop and the other way
+    /// round, or the board and the panel would disagree about who has a face.
+    #[test]
+    fn every_agent_has_both_pictures() {
+        let portraits: Vec<&str> = PORTRAITS.iter().map(|(name, _)| *name).collect();
+        let crops: Vec<&str> = KILLFEED.iter().map(|(name, _)| *name).collect();
+        assert_eq!(portraits, crops);
+    }
+
+    /// The tables are keyed by the slug, so a key that is not already one
     /// could never be found.
     #[test]
     fn every_key_is_already_a_slug() {
-        for (name, _) in AGENTS {
-            assert_eq!(slug(name), name);
+        for table in [&PORTRAITS[..], &KILLFEED[..], &MAPS[..]] {
+            for (name, _) in table {
+                assert_eq!(slug(name), *name);
+            }
         }
     }
 }

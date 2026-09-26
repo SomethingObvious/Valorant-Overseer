@@ -12,11 +12,12 @@
 //! There is no timer and no polling, so a window nobody is touching settles
 //! to no frames at all.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
-use overseer_core::{Board, Bridge, Event, Player, Status};
+use overseer_core::{Board, Bridge, Event, Player, Profile, Status};
 
 use crate::board::{self, GUTTER, Pace, RowStyle};
 use crate::career::Career;
@@ -126,6 +127,25 @@ pub(crate) struct Overseer {
     /// looks exactly like no match in progress, and that cost an evening
     /// once already.
     unreadable: (u64, Option<String>),
+    /// Set by the tray's Quit, so the close it sends is not mistaken for the
+    /// window's own close button and put back in the tray.
+    quitting: bool,
+    /// Set when the last move through the board came from the keyboard.
+    ///
+    /// The pointer wins over the selection everywhere else, and without this
+    /// a key press with the pointer resting on a row did nothing visible: the
+    /// selection moved and the panel stayed on the row under the pointer.
+    /// Cleared the moment the pointer moves again.
+    keyboard_owns: bool,
+    /// Whether the detail panel was on screen last frame, which decides
+    /// whether a history is worth asking for at all.
+    panel_visible: bool,
+    /// Every history already fetched for somebody in this lobby.
+    ///
+    /// Moving the pointer off a row and back is not a reason to ask the
+    /// backend again, and each ask is a match history call to Riot. Cleared
+    /// when the lobby changes, so it never holds more than ten.
+    histories: HashMap<String, Box<Profile>>,
 }
 
 /// What the middle of the window is showing.
@@ -201,17 +221,25 @@ impl Overseer {
             overlay_drew: None,
             panel_showing: None,
             unreadable: (0, None),
+            quitting: false,
+            keyboard_owns: false,
+            panel_visible: false,
+            histories: HashMap::new(),
         }
     }
 
     /// Takes everything queued since the last frame, from all three of the
     /// things that can wake this window up.
     fn pump(&mut self, ctx: &egui::Context) {
+        // The hotkey is pressed in the middle of a round. It switches the
+        // overlay and does nothing else: it used to show the board window as
+        // well, and give it the keyboard when the overlay went off, which is
+        // this app taking the focus away from the game mid-fight. Getting the
+        // window back is the tray's job.
         let pressed = self.hotkey.as_ref().map_or(0, |k| k.presses().count());
         if pressed % 2 == 1 {
             let on = !self.settings.overlay;
             self.set_overlay(on);
-            self.reveal(ctx, !on);
         }
         let actions: Vec<Action> = self
             .tray
@@ -231,6 +259,7 @@ impl Overseer {
                 Action::Quit => {
                     settings::save(&self.root, &self.settings);
                     notes::save(&self.root, &self.notes);
+                    self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
@@ -245,7 +274,9 @@ impl Overseer {
                     }
                     self.status = status;
                 }
-                Event::Answer { id, result } => self.career.answered(id, result),
+                Event::Answer { id, result } => {
+                    self.career.answered(id, result, &mut self.histories);
+                }
                 Event::Unreadable(why) => {
                     self.unreadable.0 = self.unreadable.0.saturating_add(1);
                     self.unreadable.1 = Some(why);
@@ -263,6 +294,12 @@ impl Overseer {
                     if roster != self.roster {
                         self.roster = roster;
                         self.roster_at = ctx.input(|i| i.time);
+                        self.histories.clear();
+                        // A new lobby opens on the account most worth
+                        // reading, so the common case costs no input at all.
+                        if let Some(first) = self.first_flagged_enemy() {
+                            self.selected = Some(first);
+                        }
                     }
                 }
                 Event::Stopped(why) => {
@@ -320,25 +357,29 @@ impl Overseer {
     /// side it stays on that side, which is what the chip in the team band
     /// does when it is clicked.
     fn next_flagged(&mut self, team: Option<&str>) {
-        let flagged: Vec<&str> = self
-            .board
-            .players
-            .iter()
-            .filter(|p| p.smurf)
-            .filter(|p| team.is_none_or(|t| p.team.as_deref() == Some(t)))
-            .filter_map(|p| p.puuid.as_deref())
+        let flagged: Vec<String> = self
+            .visible_order()
+            .into_iter()
+            .filter(|id| {
+                self.board.players.iter().any(|p| {
+                    p.puuid.as_deref() == Some(id.as_str())
+                        && p.smurf
+                        && team.is_none_or(|t| p.team.as_deref() == Some(t))
+                })
+            })
             .collect();
         let Some(first) = flagged.first() else { return };
         let at = self
             .selected
             .as_deref()
-            .and_then(|id| flagged.iter().position(|f| *f == id));
+            .and_then(|id| flagged.iter().position(|f| f == id));
         let next = at.map_or(first, |i| flagged.get(i + 1).unwrap_or(first));
-        self.selected = Some((*next).to_owned());
+        self.selected = Some(next.clone());
         // The pointer wins over the selection everywhere else in this app,
         // so a jump has to take the pointer's job away or nothing appears
-        // to happen.
+        // to happen, and keep it away until the pointer moves.
         self.hovered = None;
+        self.keyboard_owns = true;
     }
 
     /// How far the row at a given place has landed.
@@ -449,12 +490,12 @@ impl Overseer {
             ui.memory_mut(egui::Memory::stop_text_input);
             return;
         }
+        if typing {
+            return;
+        }
         if find {
             self.focus_search = true;
             self.screen = Screen::Board;
-            return;
-        }
-        if typing {
             return;
         }
         if overlay {
@@ -462,6 +503,7 @@ impl Overseer {
         }
         if worth {
             self.next_flagged(None);
+            self.keyboard_owns = true;
         }
         // The one thing anybody wants to do with a name in this window that
         // this window cannot do: look it up somewhere else.
@@ -476,23 +518,54 @@ impl Overseer {
                 Screen::Settings
             };
         }
-        if !(up || down) || self.board.players.is_empty() {
+        if !(up || down) {
             return;
         }
-        let order: Vec<Option<String>> =
-            self.board.players.iter().map(|p| p.puuid.clone()).collect();
-        let at = order
-            .iter()
-            .position(|id| id == &self.selected)
-            .unwrap_or(0);
-        let next = if down {
-            at.saturating_add(1)
-        } else {
-            at.saturating_sub(1)
-        };
-        if let Some(id) = order.get(next.min(order.len().saturating_sub(1))) {
-            self.selected.clone_from(id);
+        // The order on screen, not the order the backend sent: enemies
+        // first, sorted by whatever heading was clicked, and without anybody
+        // the search has hidden. Walking the backend's order stepped through
+        // people who were not visible and could not get from one block to
+        // the other.
+        let order = self.visible_order();
+        if order.is_empty() {
+            return;
         }
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|id| order.iter().position(|o| o == id));
+        let next = match (at, down) {
+            (None, _) => 0,
+            (Some(i), true) => (i + 1).min(order.len() - 1),
+            (Some(i), false) => i.saturating_sub(1),
+        };
+        self.selected = order.get(next).cloned();
+        self.keyboard_owns = true;
+    }
+
+    /// Every account on screen, in the order they are drawn.
+    ///
+    /// One definition, so the keys and the board cannot disagree about what
+    /// comes after what.
+    fn visible_order(&self) -> Vec<String> {
+        let mut order = Vec::with_capacity(self.board.players.len());
+        for (_label, _tint, team) in board::teams(&self.board, self.settings.enemies_first) {
+            let mut players = self.board.team(&team);
+            sort::apply(&mut players, &self.sort);
+            players.retain(|p| sort::matches(p, &self.filter));
+            order.extend(players.iter().filter_map(|p| p.puuid.clone()));
+        }
+        order
+    }
+
+    /// The first enemy worth a look, in screen order.
+    fn first_flagged_enemy(&self) -> Option<String> {
+        let ours = self.board.self_team.as_deref();
+        self.visible_order().into_iter().find(|id| {
+            self.board.players.iter().any(|p| {
+                p.puuid.as_deref() == Some(id.as_str()) && p.smurf && p.team.as_deref() != ours
+            })
+        })
     }
 
     /// Why there is no board, when the plain answer would be misleading.
@@ -527,7 +600,7 @@ impl Overseer {
     /// Only while there is a tray to put it in. Without one this would be a
     /// window that cannot be closed and has nowhere to be reopened from.
     fn closing(&mut self, ctx: &egui::Context) {
-        if self.tray.is_err() || !ctx.input(|i| i.viewport().close_requested()) {
+        if self.quitting || self.tray.is_err() || !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -577,16 +650,22 @@ impl Overseer {
     /// Three consecutive frames over budget rather than one, because one slow
     /// frame is a window being dragged onto another monitor. The drop is said
     /// out loud in the settings screen, and choosing a tier by hand ends it.
-    fn watch_frames(&mut self, ui: &Ui) {
+    fn watch_frames(&mut self, ctx: &egui::Context, frame: &Frame) {
         if self.settings.quality != Quality::Auto {
             return;
         }
         // The first second is not evidence. Starting up means building a
         // font atlas, compiling a shader and creating a swapchain, and the
-        // frames that do all that miss every budget there is. Judging on
-        // them dropped the window to the careful tier on every launch and
-        // it never came back, which is exactly the fault this is for.
-        let (dt, since) = ui.input(|i| (i.unstable_dt, i.time));
+        // frames that do all that miss every budget there is.
+        //
+        // And the measure is how long the last frame took to build, not the
+        // time since the one before it. This window sleeps between boards,
+        // so the gap between two frames is usually a second of nothing, and
+        // judging on that called every idle second a slow frame.
+        let since = ctx.input(|i| i.time);
+        let Some(dt) = frame.info().cpu_usage else {
+            return;
+        };
         if since < WARMUP {
             return;
         }
@@ -999,10 +1078,11 @@ impl Overseer {
     /// The board, both teams, with the headings each side needs.
     fn board_view(&mut self, ui: &mut Ui) {
         let touched = self.rows(ui, true);
+        let typing = ui.memory(egui::Memory::focused).is_some();
         // Read a frame late, which nobody can see: the panel is drawn before
         // the board, so what the pointer was on last frame is what the panel
         // shows this one.
-        if touched.hovered != self.hovered {
+        if !self.keyboard_owns && !typing && touched.hovered != self.hovered {
             self.hovered = touched.hovered;
             self.hovered_at = ui.input(|i| i.time);
         }
@@ -1014,6 +1094,19 @@ impl Overseer {
         }
         if let Some(team) = touched.worth {
             self.next_flagged(Some(&team));
+        }
+    }
+
+    /// The search as a board in this window applies it.
+    ///
+    /// The overlay has no search box, so it never inherits the window's: a
+    /// board over a game that says nobody matches is a board that has
+    /// quietly stopped working.
+    fn filter_for(&self, windowed: bool) -> String {
+        if windowed {
+            self.filter.clone()
+        } else {
+            String::new()
         }
     }
 
@@ -1046,7 +1139,7 @@ impl Overseer {
             select: self.pace(motion::QUICK),
         };
         let sort = self.sort.clone();
-        let filter = self.filter.clone();
+        let filter = self.filter_for(windowed);
         let now = ui.input(|i| i.time);
         let landing = self.landing(now);
         let mut at = 0_usize;
@@ -1158,21 +1251,42 @@ impl App for Overseer {
         notes::save(&self.root, &self.notes);
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
-        self.pump(ui.ctx());
-        self.closing(ui.ctx());
-        self.keys(ui);
-        self.watch_frames(ui);
-        // After the keys, because an arrow key moves the selection and the
-        // history for the new one may as well be on its way this frame.
-        let now = ui.input(|i| i.time);
+    /// Everything that has to happen whether or not the window is on
+    /// screen: the bridge, the hotkey, the tray and the close button.
+    ///
+    /// eframe skips `ui` entirely while the window is minimised, and this
+    /// all used to live there. So a minimised window stopped hearing the
+    /// hotkey and the tray, and a board a second queued up behind it until
+    /// somebody restored it.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+        self.pump(ctx);
+        self.closing(ctx);
+        self.watch_frames(ctx, frame);
+        let now = ctx.input(|i| i.time);
+        // Only for a panel somebody can see. Every account the pointer
+        // rested on used to fetch a history, panel or no panel.
+        if !self.panel_visible {
+            return;
+        }
         // Copied out because the follow needs the bridge and the career at
         // once, and the subject is borrowed from the same struct as both.
         let subject = self.career_subject(now).map(ToOwned::to_owned);
         if let Some(subject) = subject {
-            self.career
-                .follow(&self.bridge, Some(&subject), self.status == Status::Live);
+            self.career.follow(
+                &self.bridge,
+                Some(&subject),
+                self.status == Status::Live,
+                &self.histories,
+            );
         }
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+        self.keys(ui);
+        if ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+            self.keyboard_owns = false;
+        }
+        let now = ui.input(|i| i.time);
         // While the pointer is settling, ask for a frame at the moment it
         // will have settled. Without this the history waits for the next
         // thing to happen, which on a still board is nothing.
@@ -1203,8 +1317,9 @@ impl App for Overseer {
             // What it asked for against what the board needed. The window
             // follows the board rather than a sum kept by hand, which is the
             // only arrangement that cannot go stale.
+            let drew = drew.min(overlay::CEILING);
             if (drew - asked).abs() > 0.5 {
-                self.overlay_drew = Some(drew.min(overlay::CEILING));
+                self.overlay_drew = Some(drew);
                 ui.ctx().request_repaint();
             }
         }
@@ -1235,12 +1350,14 @@ impl App for Overseer {
             self.screen_showing = self.screen;
         }
         if self.screen_showing == Screen::Settings {
+            self.panel_visible = false;
             self.settings_screen(ui, chrome, turning);
             return;
         }
 
         let width = ui.available_width();
-        if width >= COMPACT && self.settings.panel {
+        self.panel_visible = width >= COMPACT && self.settings.panel;
+        if self.panel_visible {
             self.detail(ui, width);
         }
         CentralPanel::default()
@@ -1690,6 +1807,10 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         overlay_drew: None,
         panel_showing: None,
         unreadable: (0, None),
+        quitting: false,
+        keyboard_owns: false,
+        panel_visible: false,
+        histories: HashMap::new(),
     };
     Panel::top("header")
         .exact_size(HEADER)

@@ -54,6 +54,8 @@ pub(crate) struct Settings {
     pub(crate) overlay: bool,
     /// Which corner the overlay parks in.
     pub(crate) corner: Corner,
+    /// Whether the other side is drawn above your own.
+    pub(crate) enemies_first: bool,
 }
 
 impl Default for Settings {
@@ -69,6 +71,9 @@ impl Default for Settings {
             // time it ran would be an app somebody uninstalled.
             overlay: false,
             corner: Corner::default(),
+            // The five you cannot see in game are the five worth the top of
+            // the window.
+            enemies_first: true,
         }
     }
 }

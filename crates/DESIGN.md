@@ -44,36 +44,68 @@ because it lives next to that.
 
 Do not write a literal into a widget. Everything comes from `design.rs`.
 
-**Type.** Three faces, by role, all present on Windows 11, with egui's bundled
-font as the fallback:
+**Type.** Three faces, by role:
 
 | Role | Face | Why |
 | --- | --- | --- |
-| Display, labels | Bahnschrift | A DIN, which is the family VALORANT's own interface uses. Caps and letterspaced for labels. |
+| Display, labels | Bebas Neue, shipped in the binary | Tall, condensed, caps only. VALORANT's own display face is Tungsten Bold, always uppercase, and Windows has nothing like it: Bahnschrift is a variable font and this rasteriser can only take its default instance, which is the flattest, widest cut in the family. Sixty kilobytes buys a face that looks the same on every machine and looks like something. |
 | Body, names | Segoe UI | The system's reading face; it disappears, which is what a name wants. |
-| Numbers | Consolas | Tabular by construction, so a column of K/D cannot drift. |
+| Numbers | Cascadia Mono, Consolas behind it | Tabular by construction, so a column of K/D cannot drift. Cascadia first because its figures are rounder and its zero is slashed. |
 
 Sizes, in points, rounded to whole pixels because glyphs are rasterised:
-`DISPLAY 20`, `TITLE 15`, `BODY 13`, `LABEL 11`, `MICRO 10`.
+`HERO 30`, `DISPLAY 20`, `TITLE 15`, `BODY 13`, `LABEL 11`, `MICRO 10`.
+`HERO` is the score and nothing else.
 
-**Space.** A four point grid: `XS 2`, `SM 4`, `MD 8`, `LG 12`, `XL 16`,
-`XXL 24`. A row is `ROW 24`, body type doubled and rounded onto the grid, so
-rows stack on the same rhythm as everything else. It was 26 for an afternoon,
-which is body doubled exactly, and the grid test caught it: a rule with an
-exception in its first week is not a rule.
+**Tracking is laid out, not typed.** Caps get `extra_letter_spacing`, scaled
+by size: about a sixteenth of an em at ten points down to a fiftieth at
+thirty. It used to be thin spaces pushed between the letters, which measures
+as text, so it broke kerning, broke truncation, and threw every centred label
+off by half a space. Riot's own display type is tracked by about a hundredth
+of an em; small caps need much more, large caps need almost none, and one
+constant cannot be both.
 
-**Colour by role, never by name.** `bg`, `bg_raised`, `line`, `line_soft`,
-`text`, `text_strong`, `text_dim`, `text_faint`, `ally`, `enemy`, `you`,
-`good`, `info`, `warn`, `bad`. Rank colours come from the tier, one per group,
-the same values the terminal app uses.
+**Space.** A four point grid: `SM 4`, `MD 8`, `LG 12`, `XL 16`, `XXL 24`. A
+row is `ROW 24`, body type doubled and rounded onto the grid. It was 26 for
+an afternoon, which is body doubled exactly, and the grid test caught it: a
+rule with an exception in its first week is not a rule. The board keeps an
+18 point gutter down both sides, which is wider than the grid on purpose:
+the party bracket lives in it.
 
-`you` is bone, not red: in game your own row is the light one and the enemy is
-red, and an app beside the game that swaps those is actively misleading.
+**Colour by role, never by name.** Four surfaces rather than two: `void`,
+`bg`, `bg_raised`, `bg_inset`. A flat interface is not calm, it is
+undesigned; without a tone difference nothing can sit on anything and every
+edge has to be a line.
 
-**Motion.** `INSTANT 60ms` for a hover tint, `QUICK 120ms` for a selection,
-`MOVE 180ms` for something travelling across the screen, `STAGGER 40ms`
-between siblings, capped at ten. Ease out for arrivals, linear for progress.
-Nothing else gets a duration.
+The three that matter come from Riot's own shipped CSS, where they appear in
+the ratio 73 : 41 : 41 — one dark ground `#0F1923`, cream type `#ECE8E1`,
+and red `#FF4655` as punctuation and nothing else. Rank colours are the
+`color` field of every tier in `valorant-api.com/v1/competitivetiers`, byte
+for byte, because that encoding is the one a player already knows by heart.
+
+`you` is bone, not red: in game your own row is the light one and the enemy
+is red, and an app beside the game that swaps those is actively misleading.
+
+Most numbers are `neutral`. Colour spent on an ordinary value is colour taken
+from the one that matters, so a win rate is only tinted past 57 or under 43,
+and a level only when it is low enough to be a tell.
+
+**Shape.** One motif: a corner cut at forty five degrees, on two diagonally
+opposite corners, seven points deep. It is the game's own language, it costs
+four points of a rectangle, and only things that can be acted on or that
+group other things get one. Plus the tick: two points wide and a cap tall,
+before a section heading, so the eye has somewhere to start.
+
+**Motion.** `INSTANT 150ms` for a hover tint, `QUICK 200ms` for a selection
+or a colour, `ARRIVE 300ms` with `STAGGER 28ms` for a roster landing, and
+`MEASURE 700ms` for a bar whose length is a number. These are the durations
+Riot's own interfaces ship: their working range is 150 to 250 milliseconds,
+two hundred decelerating is the default, and nothing in their bundles
+bounces, overshoots or springs. Everything here decelerates; nothing else
+gets a duration.
+
+What moves: opacity, position, a bar's length, a tint. What does not: type
+size, tracking, corner geometry, or any number that updates on its own. A
+value that changes every second must never animate.
 
 ## Rules that keep it coherent
 

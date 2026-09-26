@@ -38625,36 +38625,37 @@ var C = {
   ice: "#9ADEFF",
   bone: "#ECE8E1",
   gold: "#FFB454",
-  text: "#D6DDE3",
-  dim: "#7E8C92",
-  faint: "#55636D",
-  line: "#2A3947",
+  text: "#CED8E0",
+  dim: "#8A99A5",
+  faint: "#647482",
+  line: "#2B3A47",
   // The plate a shut section button sits on. Light enough to read as a button
   // on a dark terminal, dark enough not to compete with the open one.
-  slate: "#1B2733",
+  slate: "#1A242E",
   loss: "#FF8088",
-  ink: "#0B1119"
+  // Riot's own ground colour, the most common hex in their shipped CSS.
+  ink: "#0F1923"
 };
 var RANK_COLORS = [
   "#4A4A4A",
   // Unranked
-  "#5A5751",
+  "#868986",
   // Iron
-  "#BB8F5A",
+  "#A5855D",
   // Bronze
-  "#AEB2B2",
+  "#BBC2C2",
   // Silver
-  "#C5BA3F",
+  "#ECCF56",
   // Gold
-  "#18A7B9",
+  "#59A9B6",
   // Platinum
-  "#D864C7",
+  "#B489C4",
   // Diamond
-  "#189452",
+  "#6AE2AF",
   // Ascendant
-  "#DD4444",
+  "#BB3D65",
   // Immortal
-  "#FFFDCD"
+  "#FFFFAA"
   // Radiant
 ];
 var RANK_GROUPS = [

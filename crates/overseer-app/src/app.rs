@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use eframe::{App, CreationContext, Frame};
-use egui::{Align2, CentralPanel, Key, Panel, RichText, ScrollArea, Sense, Ui, pos2, vec2};
+use egui::{Align2, CentralPanel, Key, Panel, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Bridge, Event, Player, Status};
 
 use crate::board::{self, Pace, RowStyle};
@@ -27,7 +27,7 @@ use crate::settings::{self, Quality, Settings};
 use crate::sort::{self, Sort};
 use crate::tray::{self, Action, Tray};
 use crate::{panel, view};
-use overseer_ui::{self, Face, colour, label_text, motion, size, space};
+use overseer_ui::{self, Face, caps_at, caps_text, colour, motion, size, space};
 
 /// Under this width there is no room for the panel beside the board.
 pub(crate) const COMPACT: f32 = 720.0;
@@ -37,6 +37,13 @@ pub(crate) const WIDE: f32 = 1100.0;
 const PANEL_NARROW: f32 = 280.0;
 /// The panel's width above [`WIDE`].
 const PANEL_WIDE: f32 = 340.0;
+/// How long the pointer has to rest on a row before its history is asked
+/// for. Short enough to feel immediate, long enough that crossing the board
+/// asks nothing.
+const DWELL: f64 = 0.25;
+/// How tall the title bar is. Room for a thirty point score without the bar
+/// becoming a second thing to look at.
+const HEADER: f32 = 44.0;
 /// A frame over this many seconds is a frame that missed, at 60Hz with room
 /// to spare for the compositor.
 const SLOW_FRAME: f32 = 1.0 / 45.0;
@@ -83,6 +90,21 @@ pub(crate) struct Overseer {
     hidden: bool,
     /// The selected player's history, or where the request for it has got to.
     career: Career,
+    /// The account the pointer is over, which the panel follows without a
+    /// click. Scanning five enemies should cost five glances, not five
+    /// clicks and five ways back.
+    hovered: Option<String>,
+    /// When the pointer arrived on it, so a history is only fetched for an
+    /// account somebody actually stopped on.
+    hovered_at: f64,
+    /// Who was on the last board, and when that last changed.
+    ///
+    /// The roster rather than the board: a board arrives every second and
+    /// the people on it change once a match. Animating the second would
+    /// make every number on screen twitch for ever.
+    roster: Vec<String>,
+    /// When the roster last changed, which is when the rows start landing.
+    roster_at: f64,
     /// Frames the bridge sent that this build could not read, and the last
     /// reason. Counted rather than ignored: a board that will not parse
     /// looks exactly like no match in progress, and that cost an evening
@@ -154,6 +176,10 @@ impl Overseer {
             tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
             hidden: false,
             career: Career::default(),
+            hovered: None,
+            hovered_at: 0.0,
+            roster: Vec::new(),
+            roster_at: 0.0,
             unreadable: (0, None),
         }
     }
@@ -208,6 +234,16 @@ impl Overseer {
                     self.board = *board;
                     self.boards = self.boards.saturating_add(1);
                     self.keep_selection();
+                    let roster: Vec<String> = self
+                        .board
+                        .players
+                        .iter()
+                        .filter_map(|p| p.puuid.clone())
+                        .collect();
+                    if roster != self.roster {
+                        self.roster = roster;
+                        self.roster_at = ctx.input(|i| i.time);
+                    }
                 }
                 Event::Stopped(why) => {
                     self.stopped = Some(why.clone());
@@ -242,13 +278,60 @@ impl Overseer {
             .and_then(|p| p.puuid.clone());
     }
 
-    /// The selected player, if they are still on the board.
+    /// Who the panel is about: whoever the pointer is over, or failing that
+    /// whoever was last clicked.
+    ///
+    /// Hover wins, and that is the whole point. The board answers "who is
+    /// here" and the panel answers "what about them", and needing a click
+    /// between the two questions is what makes reading five enemies in
+    /// agent select take longer than agent select lasts.
     fn current(&self) -> Option<&Player> {
-        let id = self.selected.as_ref()?;
+        let id = self.hovered.as_ref().or(self.selected.as_ref())?;
         self.board
             .players
             .iter()
             .find(|p| p.puuid.as_ref() == Some(id))
+    }
+
+    /// How far the row at a given place has landed.
+    ///
+    /// Staggered, so ten rows read as a roster arriving rather than a block
+    /// appearing. The window asks for frames while any of them is still on
+    /// its way and stops the moment the last one is home.
+    fn landing(&self, now: f64) -> impl Fn(usize) -> f32 + use<> {
+        let since = (now - self.roster_at) as f32;
+        let still = self.quality() == Quality::Efficient;
+        move |at| {
+            if still {
+                return 1.0;
+            }
+            let start = at as f32 * motion::STAGGER;
+            motion::eased(((since - start) / motion::ARRIVE).clamp(0.0, 1.0))
+        }
+    }
+
+    /// Whether any row is still on its way in.
+    fn landing_now(&self, now: f64) -> bool {
+        if self.quality() == Quality::Efficient {
+            return false;
+        }
+        let last = self.board.players.len() as f32 * motion::STAGGER + motion::ARRIVE;
+        (now - self.roster_at) < f64::from(last)
+    }
+
+    /// Whose history to ask for.
+    ///
+    /// The panel follows the pointer instantly because everything on it came
+    /// with the board and costs nothing. A history is a request, so it
+    /// follows only once the pointer has settled: dragging across ten rows
+    /// on the way to the eleventh should not ask the backend eleven
+    /// questions.
+    fn career_subject(&self, now: f64) -> Option<&str> {
+        match self.hovered.as_deref() {
+            Some(id) if now - self.hovered_at >= DWELL => Some(id),
+            Some(_) => None,
+            None => self.selected.as_deref(),
+        }
     }
 
     /// Keys, which are the fastest way through a board and cost nothing.
@@ -412,71 +495,85 @@ impl Overseer {
     }
 
     /// The title bar: who is playing what, and whether we can see it.
+    ///
+    /// Three zones, laid out from both ends towards the middle: the app on
+    /// the left, the connection on the right, and the state of the match in
+    /// between. The score is the only thing here allowed to be large,
+    /// because it is the only thing here that changes while you are looking
+    /// at it.
     fn header(&self, ui: &mut Ui) {
-        let height = space::XXL + space::MD;
         let (rect, _response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+            ui.allocate_exact_size(vec2(ui.available_width(), HEADER), Sense::hover());
         if !ui.is_rect_visible(rect) {
             return;
         }
         let painter = ui.painter().clone();
         let middle = rect.center().y;
 
-        let x = self.header_match(&painter, middle, rect.left() + space::LG);
-        self.header_progress(&painter, middle, x);
-        self.header_light(&painter, rect, middle);
+        // The accent, once, at the very edge. Riot spends red on punctuation
+        // and nothing else, and a companion app that spends it on panels has
+        // spent the one colour that was supposed to mean something.
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
+            0,
+            colour::ENEMY,
+        );
+        let left = self.header_match(&painter, middle, rect.left() + space::XL);
+        let right = self.header_light(&painter, rect, middle);
+        self.header_progress(&painter, middle, left, right);
         painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
     }
 
-    /// The wordmark, the state, the map, the queue and the side, left to
-    /// right in the order somebody reads them.
+    /// The app, then the match: wordmark, state, map, queue, side.
     fn header_match(&self, painter: &egui::Painter, middle: f32, start: f32) -> f32 {
-        let mut x = start;
-        // The wordmark, in the one place the accent is allowed to be loud.
-        let after = painter.text(
-            pos2(x, middle),
+        let after = caps_text(
+            painter,
+            pos2(start, middle),
             Align2::LEFT_CENTER,
-            label_text("valorant"),
+            "valorant",
             Face::Display.at(size::TITLE),
             colour::ENEMY,
         );
-        let after = painter.text(
-            pos2(after.right() + space::MD, middle),
+        let after = caps_text(
+            painter,
+            pos2(after.right() + space::SM, middle),
             Align2::LEFT_CENTER,
-            label_text("overseer"),
+            "overseer",
             Face::Display.at(size::TITLE),
             colour::TEXT_STRONG,
         );
-        x = after.right() + space::XL;
+        let mut x = after.right() + space::XXL;
 
+        // The state on a plate, because it is the one word here that is a
+        // state rather than a name, and a plate is how this app says so.
         let state = self
             .board
             .state_label
             .as_deref()
             .or(self.board.state.as_deref())
             .unwrap_or("waiting");
-        let after = painter.text(
-            pos2(x, middle),
-            Align2::LEFT_CENTER,
-            label_text(state),
-            Face::Display.at(size::LABEL),
-            colour::TEXT_DIM,
-        );
-        x = after.right() + space::LG;
+        x = board::chip(painter, pos2(x, middle), state, colour::TEXT_DIM).right() + space::LG;
 
-        for (text, tint) in [
-            (self.board.map.clone(), colour::TEXT_STRONG),
-            (self.board.mode.clone(), colour::TEXT_DIM),
-        ] {
-            let Some(text) = text else { continue };
+        if let Some(map) = self.board.map.as_deref() {
             let after = painter.text(
                 pos2(x, middle),
                 Align2::LEFT_CENTER,
-                text,
-                Face::Body.at(size::BODY),
-                tint,
+                map,
+                Face::Body.at(size::TITLE),
+                colour::TEXT_STRONG,
             );
             x = after.right() + space::MD;
+        }
+        if let Some(mode) = self.board.mode.as_deref() {
+            let after = caps_text(
+                painter,
+                pos2(x, middle + 1.0),
+                Align2::LEFT_CENTER,
+                mode,
+                Face::Display.at(size::MICRO),
+                colour::TEXT_FAINT,
+            );
+            x = after.right() + space::LG;
         }
         if let Some(side) = self.board.side.as_deref() {
             let tint = if side.eq_ignore_ascii_case("attack") {
@@ -484,10 +581,11 @@ impl Overseer {
             } else {
                 colour::ALLY
             };
-            let after = painter.text(
+            let after = caps_text(
+                painter,
                 pos2(x, middle),
                 Align2::LEFT_CENTER,
-                label_text(side),
+                side,
                 Face::Display.at(size::LABEL),
                 tint,
             );
@@ -498,42 +596,54 @@ impl Overseer {
 
     /// The score, or how far through agent select the lobby is: whichever of
     /// the two is the number that changes while you are watching.
-    fn header_progress(&self, painter: &egui::Painter, middle: f32, x: f32) {
+    ///
+    /// Dropped entirely rather than overlapped when the window is too narrow
+    /// to hold it between the two ends. A score printed over the word next
+    /// to it is worse than no score, and the board underneath carries the
+    /// same match anyway.
+    fn header_progress(&self, painter: &egui::Painter, middle: f32, left: f32, right: f32) {
         if let Some(score) = self.board.score.as_ref() {
             let (ally, enemy) = (score.ally.unwrap_or(0), score.enemy.unwrap_or(0));
+            let text = format!("{ally}");
+            let font = Face::Display.at(size::HERO);
+            let width = 96.0;
+            if right - left < width {
+                return;
+            }
+            let at = left + space::LG;
             let after = painter.text(
-                pos2(x, middle),
+                pos2(at, middle - 1.0),
                 Align2::LEFT_CENTER,
-                format!("{ally}"),
-                Face::Number.at(size::TITLE),
+                text,
+                font.clone(),
                 colour::ALLY,
             );
             let after = painter.text(
-                pos2(after.right() + space::SM, middle),
+                pos2(after.right() + space::MD, middle - 1.0),
                 Align2::LEFT_CENTER,
                 format!("{enemy}"),
-                Face::Number.at(size::TITLE),
+                font,
                 colour::ENEMY,
             );
             if let Some(round) = score.round {
-                painter.text(
-                    pos2(after.right() + space::MD, middle),
+                caps_at(
+                    painter,
+                    pos2(after.right() + space::LG, middle + 1.0),
                     Align2::LEFT_CENTER,
-                    format!("round {round}"),
-                    Face::Body.at(size::MICRO),
+                    &format!("round {round}"),
+                    Face::Display.at(size::MICRO),
                     colour::TEXT_FAINT,
                 );
             }
         } else if let Some(lock) = self.board.lock_progress.as_ref() {
-            painter.text(
-                pos2(x, middle),
-                Align2::LEFT_CENTER,
-                format!(
-                    "{}/{} locked",
-                    lock.locked.unwrap_or(0),
-                    lock.total.unwrap_or(0)
-                ),
-                Face::Body.at(size::MICRO),
+            let (locked, total) = (lock.locked.unwrap_or(0), lock.total.unwrap_or(0));
+            if right - left < 120.0 {
+                return;
+            }
+            board::chip(
+                painter,
+                pos2(left + space::LG, middle),
+                &format!("{locked} of {total} locked"),
                 colour::WARN,
             );
         }
@@ -541,16 +651,33 @@ impl Overseer {
 
     /// Whether the bridge is answering: on the right, where a status light
     /// belongs, and quiet enough to ignore while it is green.
-    fn header_light(&self, painter: &egui::Painter, rect: egui::Rect, middle: f32) {
+    fn header_light(&self, painter: &egui::Painter, rect: Rect, middle: f32) -> f32 {
         let (radius, tint, text) = self.connection();
-        let drawn = painter.text(
-            pos2(rect.right() - space::LG, middle),
+        let drawn = caps_text(
+            painter,
+            pos2(rect.right() - space::XL, middle),
             Align2::RIGHT_CENTER,
-            text,
-            Face::Body.at(size::MICRO),
+            &text,
+            Face::Display.at(size::MICRO),
             colour::TEXT_FAINT,
         );
-        painter.circle_filled(pos2(drawn.left() - space::MD, middle), radius, tint);
+        let dot = pos2(drawn.left() - space::MD, middle);
+        // A halo behind it, so a green light reads as lit rather than as a
+        // full stop. Three shapes, because the only blur here is an
+        // oversized feather and one of them alone has a hard edge.
+        for (blur, alpha) in [(9.0_f32, 0.30_f32), (4.0, 0.45)] {
+            painter.add(
+                egui::epaint::RectShape::filled(
+                    Rect::from_center_size(dot, vec2(radius * 2.0, radius * 2.0))
+                        .expand(blur * 0.5),
+                    egui::CornerRadius::same(255),
+                    tint.gamma_multiply(alpha),
+                )
+                .with_blur_width(blur),
+            );
+        }
+        painter.circle_filled(dot, radius, tint);
+        dot.x - radius - space::MD
     }
 
     /// The connection light: a radius, a colour, and the reason behind it.
@@ -559,6 +686,28 @@ impl Overseer {
             (Some(why), _) | (None, Status::Lost(why)) => (3.0, colour::ENEMY, why.clone()),
             (None, Status::Live) => (3.0, colour::ALLY, "live".to_owned()),
             (None, Status::Connecting(detail)) => (2.0, colour::WARN, connecting_text(detail)),
+        }
+    }
+
+    /// Every switch there is, and what could not be switched on.
+    fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame) {
+        // All of this is read out before the screen borrows the settings it
+        // sits beside. Failing quietly would leave somebody pressing a key
+        // that does nothing with no way to find out why.
+        let quality = self.quality();
+        let dropped = self.dropped;
+        let no_hotkey = self.hotkey.as_ref().err().cloned();
+        let no_tray = self.tray.as_ref().err().cloned();
+        let trouble = view::Trouble {
+            hotkey: no_hotkey.as_deref(),
+            tray: no_tray.as_deref(),
+        };
+        let mut changed = false;
+        CentralPanel::default().frame(chrome).show(ui, |ui| {
+            changed = view::settings(ui, &mut self.settings, quality, dropped, trouble);
+        });
+        if changed {
+            settings::save(&self.root, &self.settings);
         }
     }
 
@@ -589,11 +738,18 @@ impl Overseer {
 
     /// The board, both teams, with the headings each side needs.
     fn board_view(&mut self, ui: &mut Ui) {
-        let (clicked, heading) = self.rows(ui);
-        if clicked.is_some() {
-            self.selected = clicked;
+        let touched = self.rows(ui);
+        // Read a frame late, which nobody can see: the panel is drawn before
+        // the board, so what the pointer was on last frame is what the panel
+        // shows this one.
+        if touched.hovered != self.hovered {
+            self.hovered = touched.hovered;
+            self.hovered_at = ui.input(|i| i.time);
         }
-        if let Some(head) = heading {
+        if touched.clicked.is_some() {
+            self.selected = touched.clicked;
+        }
+        if let Some(head) = touched.heading {
             self.sort.clicked(head);
         }
     }
@@ -603,10 +759,10 @@ impl Overseer {
     /// Read only, so that the overlay can call it too: the overlay is its
     /// own window and takes no clicks, and nothing that only draws can be
     /// the reason two windows disagree about what is selected.
-    fn rows(&self, ui: &mut Ui) -> (Option<String>, Option<&'static str>) {
+    fn rows(&self, ui: &mut Ui) -> Touched {
         if self.board.players.is_empty() {
             empty(ui, &self.status, self.reason());
-            return (None, None);
+            return Touched::default();
         }
         let height = if ui.available_width() < COMPACT {
             space::ROW_TIGHT
@@ -621,14 +777,18 @@ impl Overseer {
         };
         let sort = self.sort.clone();
         let filter = self.filter.clone();
+        let now = ui.input(|i| i.time);
+        let landing = self.landing(now);
+        let mut at = 0_usize;
         let mut clicked: Option<String> = None;
+        let mut hovered: Option<String> = None;
         let mut heading: Option<&'static str> = None;
         let mut shown = 0_usize;
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(space::MD);
-                for (label, tint, team) in board::teams(&self.board) {
+                for (label, tint, team) in board::teams(&self.board, self.settings.enemies_first) {
                     let mut players = self.board.team(&team);
                     if players.is_empty() {
                         continue;
@@ -645,7 +805,8 @@ impl Overseer {
                         {
                             heading = Some(head);
                         }
-                        for player in players {
+                        let brackets = board::brackets(&players);
+                        for (where_in_team, player) in players.iter().enumerate() {
                             shown += 1;
                             let style = RowStyle {
                                 team: tint,
@@ -653,9 +814,16 @@ impl Overseer {
                                 height,
                                 pace,
                                 noted: player.puuid.as_deref().is_some_and(|id| self.notes.has(id)),
+                                bracket: brackets.get(where_in_team).copied().flatten(),
+                                arrive: landing(at),
                             };
-                            if board::row(ui, player, &style, &hidden).clicked() {
+                            at += 1;
+                            let touch = board::row(ui, player, &style, &hidden);
+                            if touch.clicked() {
                                 clicked.clone_from(&player.puuid);
+                            }
+                            if touch.hovered() {
+                                hovered.clone_from(&player.puuid);
                             }
                         }
                     });
@@ -665,8 +833,23 @@ impl Overseer {
                     nobody(ui, &filter);
                 }
             });
-        (clicked, heading)
+        Touched {
+            clicked,
+            hovered,
+            heading,
+        }
     }
+}
+
+/// What the pointer did to the board this frame.
+#[derive(Debug, Default)]
+struct Touched {
+    /// The account whose row was clicked.
+    clicked: Option<String>,
+    /// The account whose row the pointer is over.
+    hovered: Option<String>,
+    /// The column heading that was clicked.
+    heading: Option<&'static str>,
 }
 
 impl App for Overseer {
@@ -687,11 +870,28 @@ impl App for Overseer {
         self.watch_frames(ui);
         // After the keys, because an arrow key moves the selection and the
         // history for the new one may as well be on its way this frame.
-        self.career.follow(
-            &self.bridge,
-            self.selected.as_deref(),
-            self.status == Status::Live,
-        );
+        let now = ui.input(|i| i.time);
+        // Copied out because the follow needs the bridge and the career at
+        // once, and the subject is borrowed from the same struct as both.
+        let subject = self.career_subject(now).map(ToOwned::to_owned);
+        if let Some(subject) = subject {
+            self.career
+                .follow(&self.bridge, Some(&subject), self.status == Status::Live);
+        }
+        // While the pointer is settling, ask for a frame at the moment it
+        // will have settled. Without this the history waits for the next
+        // thing to happen, which on a still board is nothing.
+        if self.hovered.is_some() && now - self.hovered_at < DWELL {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(DWELL));
+        }
+        // A roster landing is the one animation nothing else asks frames
+        // for: the rows are painted from a timestamp rather than from
+        // egui's own animator, so the window has to keep itself awake until
+        // the last of them is home.
+        if self.landing_now(now) {
+            ui.ctx().request_repaint();
+        }
 
         if self.settings.overlay {
             // Its own window, drawn before this one so that a frame where
@@ -708,7 +908,7 @@ impl App for Overseer {
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
         Panel::top("header")
-            .exact_size(space::XXL + space::MD)
+            .exact_size(HEADER)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.header(ui));
         Panel::bottom("footer")
@@ -724,26 +924,7 @@ impl App for Overseer {
         }
 
         if self.screen == Screen::Settings {
-            // Both read out before the screen borrows the settings, because
-            // the tier is worked out from the settings it is about to edit.
-            let quality = self.quality();
-            let dropped = self.dropped;
-            let mut changed = false;
-            // Copied out before the screen borrows the settings it sits
-            // beside. Failing quietly would leave somebody pressing a key
-            // that does nothing with no way to find out why.
-            let no_hotkey = self.hotkey.as_ref().err().cloned();
-            let no_tray = self.tray.as_ref().err().cloned();
-            let trouble = view::Trouble {
-                hotkey: no_hotkey.as_deref(),
-                tray: no_tray.as_deref(),
-            };
-            CentralPanel::default().frame(chrome).show(ui, |ui| {
-                changed = view::settings(ui, &mut self.settings, quality, dropped, trouble);
-            });
-            if changed {
-                settings::save(&self.root, &self.settings);
-            }
+            self.settings_screen(ui, chrome);
             return;
         }
 
@@ -791,7 +972,7 @@ impl Overseer {
         ui.horizontal(|ui| {
             ui.add_space(space::LG);
             ui.label(
-                RichText::new(label_text("find"))
+                RichText::new("FIND")
                     .color(colour::TEXT_FAINT)
                     .font(Face::Display.at(size::MICRO)),
             );
@@ -972,10 +1153,14 @@ pub(crate) fn snapshot_header(ui: &mut Ui, board: &Board) {
         tray: Err(String::new()),
         hidden: false,
         career: Career::default(),
+        hovered: None,
+        hovered_at: 0.0,
+        roster: Vec::new(),
+        roster_at: 0.0,
         unreadable: (0, None),
     };
     Panel::top("header")
-        .exact_size(space::XXL + space::MD)
+        .exact_size(HEADER)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.header(ui));
 }

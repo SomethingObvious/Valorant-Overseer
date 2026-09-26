@@ -11,7 +11,7 @@ use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
-use overseer_ui::{Face, colour, label_text, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
 
 /// What did not start, and why, for the screen to say out loud.
 ///
@@ -52,10 +52,19 @@ pub(crate) fn settings(
             if switch(
                 ui,
                 "detail panel",
-                "The selected player, in full, on the right",
+                "Whoever the pointer is over, in full, on the right",
                 settings.panel,
             ) {
                 settings.panel = !settings.panel;
+                changed = true;
+            }
+            if switch(
+                ui,
+                "enemies first",
+                "The other five above your own, because the game already shows you yours",
+                settings.enemies_first,
+            ) {
+                settings.enemies_first = !settings.enemies_first;
                 changed = true;
             }
 
@@ -177,10 +186,11 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());
     if ui.is_rect_visible(rect) {
-        ui.painter().text(
+        caps_at(
+            ui.painter(),
             pos2(rect.left() + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
-            label_text(text),
+            text,
             Face::Display.at(size::DISPLAY),
             colour::TEXT_STRONG,
         );
@@ -208,10 +218,11 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
     }
     let painter = ui.painter().clone();
     painter.hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
-    let drawn = painter.text(
+    let drawn = caps_text(
+        &painter,
         pos2(rect.left() + space::XL, rect.center().y + space::SM),
         Align2::LEFT_CENTER,
-        label_text(text),
+        text,
         Face::Display.at(size::LABEL),
         colour::TEXT_DIM,
     );
@@ -363,7 +374,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
             } else {
                 space::ROW
             };
-            for (label, tint, team) in board::teams(board) {
+            for (label, tint, team) in board::teams(board, settings.enemies_first) {
                 let mut players = board.team(&team);
                 crate::sort::apply(&mut players, sort);
                 if players.is_empty() {
@@ -374,12 +385,15 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 ui.push_id(&team, |ui| {
                     board::headings(ui, ui.available_width(), &settings.hidden_columns, sort);
                 });
-                for player in players {
+                let brackets = board::brackets(&players);
+                for (at, player) in players.iter().enumerate() {
                     let style = RowStyle {
                         team: tint,
                         selected: player.name.as_deref() == selected,
                         height,
                         noted: player.puuid.as_deref().is_some_and(|id| notes.has(id)),
+                        bracket: brackets.get(at).copied().flatten(),
+                        arrive: 1.0,
                         pace: Pace {
                             hover: motion::EFFICIENT,
                             select: motion::EFFICIENT,

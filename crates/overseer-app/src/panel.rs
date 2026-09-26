@@ -15,7 +15,7 @@ use overseer_core::Player;
 
 use crate::career::{self, Career};
 use crate::notes::{self, Notes};
-use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, hex, kd, motion, rank, shape, size, space};
 
 /// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;
@@ -168,10 +168,24 @@ fn hint(text: &str) -> RichText {
 
 /// The player's name, at the top, in the brightest thing there is.
 fn name(ui: &mut Ui, player: &Player) {
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::XXL + space::MD),
+        Sense::hover(),
+    );
     if !ui.is_rect_visible(rect) {
         return;
+    }
+    // The agent's colour, down the side of their name, tying the panel to
+    // the row it came from without repeating a word of it.
+    if let Some(tint) = hex(player.agent_color.as_deref()) {
+        ui.painter().rect_filled(
+            Rect::from_min_size(
+                pos2(rect.left(), rect.top() + space::SM),
+                vec2(3.0, rect.height() - space::MD),
+            ),
+            0,
+            tint,
+        );
     }
     // The tag is part of the name and not part of the point, so it is drawn
     // quieter rather than dropped: two people with the same name is exactly
@@ -185,7 +199,7 @@ fn name(ui: &mut Ui, player: &Player) {
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         stem,
-        Face::Body.at(size::TITLE),
+        Face::Body.at(size::DISPLAY),
         colour::TEXT_STRONG,
     );
     if !tag.is_empty() {
@@ -198,10 +212,11 @@ fn name(ui: &mut Ui, player: &Player) {
         );
     }
     if player.name_hidden {
-        painter.text(
+        caps_at(
+            &painter,
             pos2(rect.right() - space::LG, rect.center().y),
             Align2::RIGHT_CENTER,
-            label_text("hidden"),
+            "hidden",
             Face::Display.at(size::MICRO),
             colour::TEXT_FAINT,
         );
@@ -269,6 +284,7 @@ fn ranks(ui: &mut Ui, player: &Player) {
     if ui.is_rect_visible(rect) {
         rank_line(ui, player, rect);
     }
+    rank_bar(ui, player);
     if let Some(place) = player.leaderboard {
         line(
             ui,
@@ -299,28 +315,38 @@ fn ranks(ui: &mut Ui, player: &Player) {
 /// Rank, rating, what the last match did to it, and how far through they are.
 fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
     let painter = ui.painter().clone();
-    let mut x = rect.left() + space::LG;
-    let after = painter.text(
-        pos2(x, rect.center().y),
-        Align2::LEFT_CENTER,
-        player.rank.clone().unwrap_or_else(|| "Unranked".to_owned()),
-        Face::Body.at(size::BODY),
-        rank(player.rank_tier),
+    let tint = rank(player.rank_tier);
+    let name = player.rank.clone().unwrap_or_else(|| "Unranked".to_owned());
+    let galley = painter.layout_no_wrap(name, Face::Body.at(size::BODY), tint);
+    let plate = Rect::from_min_size(
+        pos2(rect.left() + space::LG, rect.center().y - 10.0),
+        vec2(galley.size().x + space::MD * 2.0, 20.0),
     );
-    x = after.right() + space::MD;
+    if player.rank_tier.unwrap_or(0) > 0 {
+        painter.add(shape::cut_filled(plate, 5.0, tint.gamma_multiply(0.15)));
+    }
+    painter.galley(
+        pos2(
+            plate.left() + space::MD,
+            plate.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        tint,
+    );
 
     let Some(rr) = player.rr else { return };
     let after = painter.text(
-        pos2(x, rect.center().y),
+        pos2(plate.right() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         rr.to_string(),
-        Face::Number.at(size::BODY),
-        colour::TEXT,
+        Face::Number.at(size::TITLE),
+        colour::TEXT_STRONG,
     );
-    let mut after = painter.text(
-        pos2(after.right() + space::SM, rect.center().y),
+    let after = caps_text(
+        &painter,
+        pos2(after.right() + space::SM, rect.center().y + 1.0),
         Align2::LEFT_CENTER,
-        "RR",
+        "rr",
         Face::Display.at(size::MICRO),
         colour::TEXT_FAINT,
     );
@@ -331,26 +357,47 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect) {
         } else {
             delta.to_string()
         };
-        after = painter.text(
-            pos2(after.right() + space::MD, rect.center().y),
+        painter.text(
+            pos2(after.right() + space::LG, rect.center().y),
             Align2::LEFT_CENTER,
             text,
-            Face::Number.at(size::MICRO),
+            Face::Number.at(size::BODY),
             tint,
         );
     }
-    // How far through the rank they are, as a bar rather than a second
-    // number: the number is already there, and the bar is the thing that is
-    // read without being read.
-    let x = after.right() + space::MD;
-    let track = Rect::from_min_size(
-        pos2(x, rect.center().y - 2.0),
-        vec2((rect.right() - space::LG - x).clamp(0.0, 72.0), 4.0),
+}
+
+/// How far through the rank they are, across the whole panel.
+///
+/// A bar rather than a second number, because the number is already on the
+/// line above and the bar is the thing that is read without being read. It
+/// slides to its new length over the better part of a second: long, and
+/// decelerating, so the length reads as a measurement being taken rather
+/// than a value being set.
+fn rank_bar(ui: &mut Ui, player: &Player) {
+    let Some(rr) = player.rr else { return };
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::MD), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    // One id for every player rather than one each: switching subject should
+    // slide the bar from where it was, which is the comparison you wanted
+    // when you clicked the second name.
+    let share = ui.ctx().animate_value_with_time(
+        egui::Id::new("panel-rr"),
+        (rr as f32 / 100.0).clamp(0.0, 1.0),
+        motion::MEASURE,
     );
-    painter.rect_filled(track, 0, colour::LINE);
+    let track = Rect::from_min_max(
+        pos2(rect.left() + space::LG, rect.center().y - 2.0),
+        pos2(rect.right() - space::LG, rect.center().y + 2.0),
+    );
+    let painter = ui.painter();
+    painter.rect_filled(track, 0, colour::BG_INSET);
     let mut filled = track;
-    filled.set_width(track.width() * (rr as f32 / 100.0).clamp(0.0, 1.0));
-    painter.rect_filled(filled, 0, colour::INFO);
+    filled.set_width(track.width() * share);
+    painter.rect_filled(filled, 0, rank(player.rank_tier));
 }
 
 /// Recent results, the run they are on, and what they play.
@@ -593,19 +640,40 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
 }
 
 /// A section heading in a colour, for the sections that are claims.
+///
+/// A tick, the word, and a hairline running to the edge. The tick is what
+/// makes a heading a heading: caps alone at this size disappear into the
+/// values under them, and the eye needs somewhere to start each time it
+/// comes back to the panel.
 fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
+    ui.add_space(space::MD);
     let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    ui.painter().text(
-        pos2(rect.left() + space::LG, rect.center().y),
+    let painter = ui.painter();
+    painter.add(shape::tick(
+        pos2(rect.left() + space::LG, rect.center().y - 5.0),
+        10.0,
+        tint,
+    ));
+    let drawn = caps_text(
+        painter,
+        pos2(rect.left() + space::LG + space::MD, rect.center().y),
         Align2::LEFT_CENTER,
-        label_text(text),
+        text,
         Face::Display.at(size::LABEL),
         tint,
     );
+    let from = drawn.right() + space::MD;
+    if from < rect.right() - space::LG {
+        painter.hline(
+            from..=rect.right() - space::LG,
+            rect.center().y,
+            (1.0, colour::LINE_SOFT),
+        );
+    }
 }
 
 /// One line of prose, at the panel's left margin.
@@ -632,10 +700,11 @@ pub(crate) fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &
         return;
     }
     let painter = ui.painter().clone();
-    painter.text(
+    caps_at(
+        &painter,
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
-        label_text(label),
+        label,
         Face::Display.at(size::MICRO),
         colour::TEXT_FAINT,
     );

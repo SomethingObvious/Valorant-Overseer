@@ -163,3 +163,13 @@ struct_excessive_bools = "allow"
 cast_precision_loss = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
+
+# `a + b * c` in layout code becomes `b.mul_add(c, a)`, which is a fused
+# multiply-add: one rounding instead of two, and on a good day one
+# instruction instead of two. Both of those matter in a numerical kernel and
+# neither matters here, where the operands are a margin and a fraction of a
+# row and the result is rounded to a pixel before anything sees it. What it
+# costs is real: every rectangle in this app is written as arithmetic, and
+# `space::MD.mul_add(2.0, galley.size().x)` says nothing about a plate being
+# a galley wide with a gutter each side. Legible geometry wins.
+suboptimal_flops = "allow"

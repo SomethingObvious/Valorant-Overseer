@@ -293,7 +293,7 @@ fn guns(ui: &mut Ui, profile: &Profile) {
         let share = f32::from(u16::try_from(gun.share.unwrap_or(0).min(100)).unwrap_or(0));
         // The bar sits behind the name rather than beside it, so five guns
         // read as one shape rather than as five rows of furniture.
-        let full = space::LG.mul_add(-2.0, rect.width());
+        let full = rect.width() - space::LG * 2.0;
         let bar = Rect::from_min_size(
             pos2(rect.left() + space::LG, rect.center().y - 7.0),
             vec2(full * share / 100.0, 14.0),
@@ -475,7 +475,7 @@ fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>) {
         let y = height_of(rule);
         painter.hline(inner.x_range(), y, (1.0, colour::LINE));
         for (i, &v) in values.iter().enumerate() {
-            let middle = slot.mul_add(i as f32 + 0.5, inner.left());
+            let middle = inner.left() + slot * (i as f32 + 0.5);
             let top = height_of(v);
             let half = slot * 0.275;
             let bar = Rect::from_min_max(

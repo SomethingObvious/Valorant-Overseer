@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
-use overseer_ui::{Face, colour, label_text, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
 
 use crate::plan::{self, Finding, Profile, REGIONS, Survey};
 use crate::run::{self, Line, Running};
@@ -156,24 +156,27 @@ fn header(ui: &mut Ui, step: Step) {
     }
     let painter = ui.painter().clone();
     let middle = rect.center().y - space::SM;
-    let after = painter.text(
+    let after = caps_text(
+        &painter,
         pos2(rect.left() + space::XL, middle),
         Align2::LEFT_CENTER,
-        label_text("valorant"),
+        "valorant",
         Face::Display.at(size::TITLE),
         colour::ENEMY,
     );
-    let after = painter.text(
+    let after = caps_text(
+        &painter,
         pos2(after.right() + space::MD, middle),
         Align2::LEFT_CENTER,
-        label_text("overseer"),
+        "overseer",
         Face::Display.at(size::TITLE),
         colour::TEXT_STRONG,
     );
-    painter.text(
+    caps_at(
+        &painter,
         pos2(after.right() + space::LG, middle + 1.0),
         Align2::LEFT_CENTER,
-        label_text("setup"),
+        "setup",
         Face::Display.at(size::LABEL),
         colour::TEXT_DIM,
     );
@@ -358,10 +361,11 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());
     if ui.is_rect_visible(rect) {
-        ui.painter().text(
+        caps_at(
+            ui.painter(),
             pos2(rect.left() + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
-            label_text(text),
+            text,
             Face::Display.at(size::DISPLAY),
             colour::TEXT_STRONG,
         );
@@ -377,10 +381,11 @@ fn heading(ui: &mut Ui, text: &str) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    ui.painter().text(
+    caps_at(
+        ui.painter(),
         pos2(rect.left() + space::XL, rect.center().y),
         Align2::LEFT_CENTER,
-        label_text(text),
+        text,
         Face::Display.at(size::LABEL),
         colour::TEXT_DIM,
     );
@@ -523,10 +528,11 @@ fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) 
             egui::StrokeKind::Inside,
         );
     }
-    painter.text(
+    caps_at(
+        painter,
         rect.center(),
         Align2::CENTER_CENTER,
-        label_text(label),
+        label,
         Face::Display.at(size::LABEL),
         text,
     );

@@ -20,9 +20,13 @@ use egui::{Color32, FontFamily, FontId, Stroke, Style, TextStyle, Visuals};
 /// a user live here, because a constant nothing calls is a decision nobody
 /// needed, and the lint that says so is right.
 pub mod size {
-    /// The wordmark and the state of the game.
+    /// The one number on screen that changes while you watch: the score.
+    /// Nothing else is allowed to be this big, which is the whole point of
+    /// having a step nothing else uses.
+    pub const HERO: f32 = 30.0;
+    /// A screen's own title, and the subject of the panel.
     pub const DISPLAY: f32 = 20.0;
-    /// A panel's subject: a player's name, a team.
+    /// A section's subject: a team, a heading with weight behind it.
     pub const TITLE: f32 = 15.0;
     /// Everything that is read rather than scanned.
     pub const BODY: f32 = 13.0;
@@ -56,15 +60,41 @@ pub mod space {
 /// opinion about the same question, and the whole point of a system is that
 /// the same question has one answer.
 pub mod motion {
-    /// A hover tint. Fast enough to feel like the cursor rather than an
-    /// animation somebody wrote.
-    pub const INSTANT: f32 = 0.06;
-    /// A selection moving, a value changing.
-    pub const QUICK: f32 = 0.12;
+    /// A hover tint.
+    ///
+    /// The four durations below are the ones Riot's own interfaces ship:
+    /// their working range is 150 to 250 milliseconds, two hundred
+    /// decelerating is the default, and a bar that represents a measurement
+    /// takes seven hundred so that it reads as being measured rather than
+    /// set. Nothing in their bundles bounces, overshoots or springs, and
+    /// nothing here does either.
+    pub const INSTANT: f32 = 0.15;
+    /// A selection moving, a value changing, a colour swapping.
+    pub const QUICK: f32 = 0.20;
+    /// Something arriving that was not there: a roster landing, a panel
+    /// changing subject.
+    pub const ARRIVE: f32 = 0.30;
+    /// A bar filling. Long and decelerating, because the length of it is a
+    /// number and the eye should have time to read it as one.
+    pub const MEASURE: f32 = 0.70;
+    /// How long after a row before the one under it moves, when ten of them
+    /// arrive together.
+    pub const STAGGER: f32 = 0.028;
 
     /// The same durations when the window is being careful: fast enough to
     /// still say what changed, short enough to cost nothing.
     pub const EFFICIENT: f32 = 0.0;
+
+    /// How movement is shaped.
+    ///
+    /// Everything decelerates. A thing that starts fast and settles reads as
+    /// physical; a thing that eases in at both ends reads as a slideshow.
+    /// One curve everywhere, because two would be two opinions about the
+    /// same question.
+    #[must_use]
+    pub fn eased(t: f32) -> f32 {
+        egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
+    }
 }
 
 /// Colour by the job it does, never by what it looks like.
@@ -76,8 +106,15 @@ pub mod motion {
 pub mod colour {
     use egui::Color32;
 
-    /// The window's background.
-    pub const BG: Color32 = Color32::from_rgb(0x0B, 0x11, 0x19);
+    /// Behind everything, and darker than anything drawn on it.
+    ///
+    /// Four surfaces rather than two. A flat interface is not calm, it is
+    /// undesigned: without a tone difference nothing can sit on anything,
+    /// every edge has to be a line, and a screen of lines reads as a
+    /// spreadsheet. These are the four steps, and nothing is allowed a fifth.
+    pub const VOID: Color32 = Color32::from_rgb(0x08, 0x0C, 0x12);
+    /// The board's own surface, and the game's own menu tone.
+    pub const BG: Color32 = Color32::from_rgb(0x0F, 0x19, 0x23);
     /// The window's background in overlay mode.
     ///
     /// The same colour as [`BG`], letting enough of the game through that you
@@ -86,25 +123,29 @@ pub mod colour {
     /// is transparent. Premultiplied, because that is the only constructor
     /// that is const: each channel scaled by the 0xD8 alpha beside it.
     pub const BG_OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x09, 0x0E, 0x15, 0xD8);
-    /// A surface that sits above the background: a header, a panel.
-    pub const BG_RAISED: Color32 = Color32::from_rgb(0x11, 0x1A, 0x24);
+    /// A surface that sits above the board: a header, the detail panel.
+    pub const BG_RAISED: Color32 = Color32::from_rgb(0x1A, 0x24, 0x2E);
+    /// A surface above that: a chip, an input, a card inside the panel.
+    pub const BG_INSET: Color32 = Color32::from_rgb(0x1C, 0x29, 0x37);
     /// The tint under the cursor.
-    pub const BG_HOVER: Color32 = Color32::from_rgb(0x18, 0x24, 0x31);
+    pub const BG_HOVER: Color32 = Color32::from_rgb(0x1B, 0x28, 0x36);
     /// The tint on the row you have chosen.
-    pub const BG_SELECTED: Color32 = Color32::from_rgb(0x1E, 0x2C, 0x3A);
+    pub const BG_SELECTED: Color32 = Color32::from_rgb(0x23, 0x35, 0x47);
     /// A rule that separates two things.
-    pub const LINE: Color32 = Color32::from_rgb(0x2A, 0x39, 0x47);
+    pub const LINE: Color32 = Color32::from_rgb(0x2B, 0x3A, 0x47);
     /// A rule between rows, which should be felt rather than seen.
-    pub const LINE_SOFT: Color32 = Color32::from_rgb(0x18, 0x21, 0x2B);
+    pub const LINE_SOFT: Color32 = Color32::from_rgb(0x19, 0x24, 0x30);
 
     /// A name, a heading: the brightest text there is.
     pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xEC, 0xE8, 0xE1);
     /// Ordinary text.
-    pub const TEXT: Color32 = Color32::from_rgb(0xD6, 0xDD, 0xE3);
+    pub const TEXT: Color32 = Color32::from_rgb(0xCE, 0xD8, 0xE0);
     /// A label beside a value.
-    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x7E, 0x8C, 0x92);
-    /// Present, but not the point.
-    pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x55, 0x63, 0x6D);
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x8A, 0x99, 0xA5);
+    /// Present, but not the point. Bright enough to read on [`BG`], which
+    /// the old value was not: a column heading nobody can read is a column
+    /// heading that is not there.
+    pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x64, 0x74, 0x82);
     /// Your team.
     pub const ALLY: Color32 = Color32::from_rgb(0x18, 0xE5, 0xA7);
     /// The other team, and anything dangerous.
@@ -117,22 +158,39 @@ pub mod colour {
     pub const INFO: Color32 = Color32::from_rgb(0x9A, 0xDE, 0xFF);
     /// Something worth a second look.
     pub const WARN: Color32 = Color32::from_rgb(0xFF, 0xB4, 0x54);
+    /// A number that is neither good nor bad.
+    ///
+    /// Most of them. Colour spent on an ordinary value is colour taken from
+    /// the one that matters, and a board where every figure is tinted is a
+    /// board with no figure on it.
+    pub const NEUTRAL: Color32 = Color32::from_rgb(0xCE, 0xD8, 0xE0);
     /// A bad number.
     pub const BAD: Color32 = Color32::from_rgb(0xFF, 0x80, 0x88);
 }
 
-/// One colour per rank group, in tier order, as the game shows them.
+/// One colour per rank group, in tier order.
+///
+/// Riot's own, byte for byte: the `color` field of every tier in
+/// `valorant-api.com/v1/competitivetiers`, which is the file the game reads.
+/// These were guessed from screenshots before, and the guesses were close
+/// enough to look right and wrong enough that a Platinum badge in the app and
+/// a Platinum badge in the game were not the same colour. The one encoding a
+/// player already knows by heart is the one worth getting exactly right.
+///
+/// All three divisions of a tier share a colour, which is why there are ten
+/// entries and not thirty: colour says the tier, the numeral says the
+/// division.
 const RANKS: [Color32; 10] = [
     Color32::from_rgb(0x4A, 0x4A, 0x4A),
-    Color32::from_rgb(0x5A, 0x57, 0x51),
-    Color32::from_rgb(0xBB, 0x8F, 0x5A),
-    Color32::from_rgb(0xAE, 0xB2, 0xB2),
-    Color32::from_rgb(0xC5, 0xBA, 0x3F),
-    Color32::from_rgb(0x18, 0xA7, 0xB9),
-    Color32::from_rgb(0xD8, 0x64, 0xC7),
-    Color32::from_rgb(0x18, 0x94, 0x52),
-    Color32::from_rgb(0xDD, 0x44, 0x44),
-    Color32::from_rgb(0xFF, 0xFD, 0xCD),
+    Color32::from_rgb(0x86, 0x89, 0x86),
+    Color32::from_rgb(0xA5, 0x85, 0x5D),
+    Color32::from_rgb(0xBB, 0xC2, 0xC2),
+    Color32::from_rgb(0xEC, 0xCF, 0x56),
+    Color32::from_rgb(0x59, 0xA9, 0xB6),
+    Color32::from_rgb(0xB4, 0x89, 0xC4),
+    Color32::from_rgb(0x6A, 0xE2, 0xAF),
+    Color32::from_rgb(0xBB, 0x3D, 0x65),
+    Color32::from_rgb(0xFF, 0xFF, 0xAA),
 ];
 
 /// The colour for a rank tier. Tier 0 to 2 is unranked, then three per group.
@@ -162,11 +220,75 @@ pub fn kd(value: Option<f64>) -> Color32 {
     }
 }
 
+/// The shapes the interface is allowed to make.
+///
+/// Three, and all three are the same idea: a corner cut off at forty five
+/// degrees. It is the game's own motif, it costs four points of a rectangle,
+/// and it is the difference between a card and a div. A fourth ornament
+/// would be decoration; these carry meaning, because only things that can be
+/// acted on or that group other things get one.
+pub mod shape {
+    use egui::{Color32, Pos2, Rect, Shape, Stroke, pos2};
+
+    /// How far the cut comes in from the corner.
+    pub const CHAMFER: f32 = 7.0;
+
+    /// A rectangle with its top left and bottom right corners cut away.
+    ///
+    /// Diagonally opposite rather than all four: two cuts read as a
+    /// direction, four read as an octagon.
+    #[must_use]
+    pub fn cut_corners(rect: Rect, cut: f32) -> Vec<Pos2> {
+        let cut = cut.min(rect.width() * 0.5).min(rect.height() * 0.5);
+        vec![
+            pos2(rect.left() + cut, rect.top()),
+            pos2(rect.right(), rect.top()),
+            pos2(rect.right(), rect.bottom() - cut),
+            pos2(rect.right() - cut, rect.bottom()),
+            pos2(rect.left(), rect.bottom()),
+            pos2(rect.left(), rect.top() + cut),
+        ]
+    }
+
+    /// Fills a chamfered rectangle.
+    pub fn cut_filled(rect: Rect, cut: f32, fill: Color32) -> Shape {
+        Shape::convex_polygon(cut_corners(rect, cut), fill, Stroke::NONE)
+    }
+
+    /// The mark before a section heading: a short upright bar.
+    ///
+    /// Two points wide and the height of a cap. It is the only thing in the
+    /// interface allowed to use the accent colour without meaning danger,
+    /// because it means "a section starts here" and nothing else does.
+    pub fn tick(at: Pos2, height: f32, tint: Color32) -> Shape {
+        Shape::rect_filled(Rect::from_min_size(at, egui::vec2(2.0, height)), 0, tint)
+    }
+}
+
+/// A colour the backend sent as a hex string, if it sent one that parses.
+///
+/// Agent colours arrive from Riot as `#RRGGBB`. A row tinted with the agent's
+/// own colour is the cheapest texture this board can have, and it is real
+/// information rather than decoration: you learn the lobby's composition
+/// before you have read a word of it.
+#[must_use]
+pub fn hex(text: Option<&str>) -> Option<Color32> {
+    let raw = text?.trim().trim_start_matches('#');
+    if raw.len() < 6 {
+        return None;
+    }
+    let byte = |at: usize| u8::from_str_radix(raw.get(at..at + 2)?, 16).ok();
+    Some(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
+}
+
 /// The three faces, by the job each one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
-    /// A DIN, which is the family the game's own interface uses. Headings and
-    /// labels, in caps.
+    /// A tall condensed display face, always in caps. Every heading, every
+    /// column label, the wordmark. This is the one that carries the
+    /// character: the game's own lockup is a condensed grotesque, and a
+    /// scoreboard set entirely in the system UI face reads as a settings
+    /// dialog no matter what colour it is.
     Display,
     /// The system's reading face. It disappears, which is what a name wants.
     Body,
@@ -190,19 +312,63 @@ impl Face {
     pub fn at(self, points: f32) -> FontId {
         FontId::new(points, FontFamily::Name(self.key().into()))
     }
+
+    /// How to sit this face on the line.
+    ///
+    /// A point is not a height, it is an em, and three faces at the same
+    /// point size are three different heights on screen. The display face is
+    /// caps only and its caps fill most of its em, so at a shared size it
+    /// towers over the other two and sits high; scaling it down and nudging
+    /// it puts all three on one baseline, which is the only way a label and
+    /// the value beside it can look like one line.
+    fn tweak(self) -> egui::FontTweak {
+        match self {
+            Self::Display => egui::FontTweak {
+                scale: 1.12,
+                y_offset_factor: 0.06,
+                ..egui::FontTweak::default()
+            },
+            Self::Body | Self::Number => egui::FontTweak::default(),
+        }
+    }
 }
 
-/// Where Windows keeps the faces above, and what to fall back to.
+/// Where a face comes from.
+enum Source {
+    /// Shipped inside the binary.
+    ///
+    /// Only the display face, and only because it is the one doing the
+    /// design work. Windows has no condensed display grotesque worth using:
+    /// Bahnschrift is a variable font and the rasteriser here can only take
+    /// its default instance, which is the flattest, widest cut in the family.
+    /// Sixty kilobytes buys a face that looks the same on every machine and
+    /// looks like something.
+    Bundled(&'static [u8]),
+    /// One of the system's own, first one that is there.
+    ///
+    /// The reading face and the figures both ship with Windows, which is the
+    /// only platform this runs on, so vendoring them would add a megabyte to
+    /// deliver a file already on the disk.
+    System(&'static [&'static str]),
+}
+
+/// What each face is, and where it comes from.
 ///
-/// Loaded from the system rather than vendored: all three ship with Windows 11,
-/// which is the only platform this app runs on, so vendoring them would add a
-/// megabyte to the repository and a licence file to maintain in order to
-/// deliver a file that is already on the disk. A machine missing one falls back
-/// to egui's bundled font, which is why every load is allowed to fail.
-const FACES: [(Face, &str); 3] = [
-    (Face::Display, "bahnschrift.ttf"),
-    (Face::Body, "segoeui.ttf"),
-    (Face::Number, "consola.ttf"),
+/// A load that fails falls through to egui's own font rather than taking the
+/// window down, which is why nothing here is allowed to be fatal.
+const FACES: [(Face, Source); 3] = [
+    (
+        Face::Display,
+        Source::Bundled(include_bytes!("../assets/BebasNeue-Regular.ttf")),
+    ),
+    (Face::Body, Source::System(&["segoeui.ttf"])),
+    // Cascadia first: it is the newer of the two, its figures are rounder
+    // and its zero is slashed, and a column of numbers is most of this app.
+    // Consolas behind it for a machine that predates Cascadia.
+    (
+        Face::Number,
+        Source::System(&["CascadiaMono.ttf", "consola.ttf"]),
+    ),
 ];
 
 /// Registers the faces, falling back quietly to what egui ships.
@@ -212,16 +378,19 @@ pub fn install_fonts(ctx: &egui::Context) {
         || std::path::PathBuf::from("C:/Windows"),
         std::path::PathBuf::from,
     );
-    for (face, file) in FACES {
-        let path = dir.join("Fonts").join(file);
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
+    for (face, source) in FACES {
+        let data = match source {
+            Source::Bundled(bytes) => Some(egui::FontData::from_static(bytes)),
+            Source::System(files) => files
+                .iter()
+                .find_map(|file| std::fs::read(dir.join("Fonts").join(file)).ok())
+                .map(egui::FontData::from_owned),
         };
+        let Some(data) = data else { continue };
         let key = face.key().to_owned();
-        fonts.font_data.insert(
-            key.clone(),
-            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-        );
+        fonts
+            .font_data
+            .insert(key.clone(), std::sync::Arc::new(data.tweak(face.tweak())));
         // Behind the face itself: egui's bundled font, so a glyph the face
         // does not have still draws instead of becoming a box.
         let mut chain = vec![key.clone()];
@@ -303,27 +472,89 @@ pub fn style() -> Style {
     style
 }
 
-/// A label, in the app's voice: caps, letterspaced, dim.
+/// A label, in the app's voice: caps, properly tracked.
 ///
-/// egui has no letterspacing, so the spaces are put in by hand. That is a
-/// small ugliness in one function rather than at every call site, and caps
-/// without tracking is the thing that reads as unfinished.
+/// Caps without tracking is the single thing that reads as unfinished, and
+/// tracking done by pushing thin spaces between letters — which is what this
+/// used to do — is worse than none: it is measured as text, so it breaks
+/// kerning, it breaks truncation, and the trailing gap throws every centred
+/// label off by half a space. `extra_letter_spacing` is laid out properly,
+/// so widths, wrapping and hit testing all agree with what is on screen.
+///
+/// The amount is a fraction of the size rather than a fixed number of
+/// points, because tracking is an optical correction and a ten point label
+/// needs less of it than a twenty point one.
 #[must_use]
-pub fn label_text(text: &str) -> String {
-    let upper = text.to_uppercase();
-    let mut out = String::with_capacity(upper.len() * 2);
-    for (index, ch) in upper.chars().enumerate() {
-        if index > 0 {
-            out.push('\u{2009}');
-        }
-        out.push(ch);
-    }
-    out
+pub fn caps(text: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
+    let tracking = tracking_for(font.size);
+    egui::text::LayoutJob::single_section(
+        text.to_uppercase(),
+        egui::TextFormat {
+            font_id: font,
+            extra_letter_spacing: tracking,
+            color: tint,
+            ..egui::TextFormat::default()
+        },
+    )
+}
+
+/// How much air to put between capitals, at a given size.
+///
+/// Not a flat fraction. Small caps need the help and large ones do not:
+/// Riot's own display type is tracked by about a hundredth of an em at
+/// ninety six points, which at ten points would be invisible, while ten
+/// points of caps set solid is a word nobody can read. So it runs from a
+/// sixteenth of an em at the bottom of the scale to a fiftieth at the top.
+#[must_use]
+pub fn tracking_for(points: f32) -> f32 {
+    let t = ((points - size::MICRO) / (size::HERO - size::MICRO)).clamp(0.0, 1.0);
+    points * (0.065 - 0.045 * t)
+}
+
+/// Paints a caps label where most call sites want one: and that is all.
+///
+/// The twin of [`caps_text`], which also hands back the rectangle it drew
+/// into. Two entry points rather than one, because a painting call whose
+/// result is usually irrelevant should not have to be ignored at every site,
+/// and a rectangle that is sometimes load bearing should not be droppable by
+/// accident.
+pub fn caps_at(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    anchor: egui::Align2,
+    text: &str,
+    font: FontId,
+    tint: Color32,
+) {
+    let _drawn = caps_text(painter, pos, anchor, text, font, tint);
+}
+
+/// Paints a caps label and says where it landed.
+///
+/// The same shape as [`egui::Painter::text`] so a call site reads the same
+/// either way. The trailing tracking after the last letter is taken back off
+/// the width, so a label right against an edge sits against the edge and a
+/// centred one is actually centred.
+#[must_use]
+pub fn caps_text(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    anchor: egui::Align2,
+    text: &str,
+    font: FontId,
+    tint: Color32,
+) -> egui::Rect {
+    let trailing = tracking_for(font.size);
+    let galley = painter.layout_job(caps(text, font, tint));
+    let size = egui::vec2((galley.size().x - trailing).max(0.0), galley.size().y);
+    let rect = anchor.anchor_size(pos, size);
+    painter.galley(rect.min, galley, tint);
+    rect
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Face, colour, install_fonts, kd, label_text, rank, size, space};
+    use super::{Face, caps, colour, install_fonts, kd, rank, size, space, tracking_for};
 
     /// The three faces have to be bound to something, loaded or not: a family
     /// that is registered nowhere panics inside epaint the moment a glyph in
@@ -415,7 +646,24 @@ mod tests {
 
     #[test]
     fn a_label_is_caps_and_tracked() {
-        assert_eq!(label_text("rank"), "R\u{2009}A\u{2009}N\u{2009}K");
-        assert_eq!(label_text(""), "");
+        let job = caps("rank", Face::Display.at(size::MICRO), colour::TEXT);
+        assert_eq!(job.text, "RANK", "a label has to be in caps");
+        let tracking = job
+            .sections
+            .first()
+            .map_or(0.0, |s| s.format.extra_letter_spacing);
+        assert!(tracking > 0.0, "a label has to be tracked");
+        // Small caps need the help and large caps do not, so one constant
+        // cannot be both.
+        assert!(
+            tracking_for(size::MICRO) / size::MICRO > tracking_for(size::HERO) / size::HERO,
+            "tracking has to loosen as the type gets smaller"
+        );
+        assert!(
+            caps("", Face::Display.at(size::BODY), colour::TEXT)
+                .text
+                .is_empty(),
+            "nothing should lay out as nothing"
+        );
     }
 }

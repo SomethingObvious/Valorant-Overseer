@@ -7,15 +7,16 @@ export const C = {
   ice: "#9ADEFF",
   bone: "#ECE8E1",
   gold: "#FFB454",
-  text: "#D6DDE3",
-  dim: "#7E8C92",
-  faint: "#55636D",
-  line: "#2A3947",
+  text: "#CED8E0",
+  dim: "#8A99A5",
+  faint: "#647482",
+  line: "#2B3A47",
   // The plate a shut section button sits on. Light enough to read as a button
   // on a dark terminal, dark enough not to compete with the open one.
-  slate: "#1B2733",
+  slate: "#1A242E",
   loss: "#FF8088",
-  ink: "#0B1119",
+  // Riot's own ground colour, the most common hex in their shipped CSS.
+  ink: "#0F1923",
 } as const;
 
 // One colour per rank group, in tier order, matching what the game shows.
@@ -27,17 +28,22 @@ export const C = {
 // filled them in, which is the sort of thing you cannot unsee once noticed.
 // The tier is always there, so the colour comes off the tier and the field the
 // backend sends is ignored.
+// Riot's own, byte for byte: the `color` field of every tier in
+// valorant-api.com/v1/competitivetiers, which is the file the game reads.
+// These were guessed from screenshots before, and the guesses were close
+// enough to look right and wrong enough that a Platinum badge here and a
+// Platinum badge in the game were different colours.
 const RANK_COLORS = [
   "#4A4A4A", // Unranked
-  "#5A5751", // Iron
-  "#BB8F5A", // Bronze
-  "#AEB2B2", // Silver
-  "#C5BA3F", // Gold
-  "#18A7B9", // Platinum
-  "#D864C7", // Diamond
-  "#189452", // Ascendant
-  "#DD4444", // Immortal
-  "#FFFDCD", // Radiant
+  "#868986", // Iron
+  "#A5855D", // Bronze
+  "#BBC2C2", // Silver
+  "#ECCF56", // Gold
+  "#59A9B6", // Platinum
+  "#B489C4", // Diamond
+  "#6AE2AF", // Ascendant
+  "#BB3D65", // Immortal
+  "#FFFFAA", // Radiant
 ] as const;
 
 const RANK_GROUPS = [

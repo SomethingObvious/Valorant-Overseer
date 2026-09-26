@@ -17,7 +17,15 @@ use egui::{Align2, Color32, FontId, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 
 use crate::sort::{Direction, Sort};
-use overseer_ui::{Face, colour, kd, label_text, rank, size, space};
+use overseer_ui::{Face, caps, caps_text, colour, hex, kd, motion, rank, shape, size, space};
+
+/// The margin down both sides of the board.
+///
+/// Wide enough on the left for a party bracket to sit in it without
+/// touching a row, which is the whole reason it is not the default gap: a
+/// bracket drawn inside the rows would be a twelfth column, and drawn
+/// against the window edge it would look like a rendering fault.
+const GUTTER: f32 = 18.0;
 
 /// Which way a column's content sits against its own width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +196,33 @@ pub(crate) struct RowStyle {
     pub(crate) pace: Pace,
     /// Whether you have written something about this account.
     pub(crate) noted: bool,
+    /// The party bracket in the gutter, if this row is in one: the colour,
+    /// and whether it is the top or the bottom of the group.
+    pub(crate) bracket: Option<Bracket>,
+    /// How far this row has arrived, from nothing to all the way.
+    ///
+    /// A roster does not appear, it lands: each row fades up and slides the
+    /// last few points into place, a little after the one above it. It runs
+    /// when the lobby changes and never when the numbers in it do, because
+    /// animating a value that updates every second is the one motion
+    /// mistake that makes an app unusable.
+    pub(crate) arrive: f32,
+}
+
+/// One row's share of a party bracket.
+///
+/// The single most information-dense mark on the board. A three stack plays
+/// nothing like three strangers, and a bracket down the gutter says so
+/// without a column, a word or a number: you see the shape before you read
+/// anything.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bracket {
+    /// The party's own colour, as the backend assigned it.
+    pub(crate) tint: Color32,
+    /// Whether the bracket turns in at the top of this row.
+    pub(crate) top: bool,
+    /// Whether it turns in at the bottom.
+    pub(crate) bottom: bool,
 }
 
 /// What a set of columns needs, gutters and margins included.
@@ -271,12 +306,16 @@ pub(crate) fn headings(
         return None;
     }
     let painter = ui.painter().clone();
+    let inner = Rect::from_min_max(
+        pos2(rect.left() + GUTTER, rect.top()),
+        pos2(rect.right() - GUTTER, rect.bottom()),
+    );
     let mut clicked = None;
-    let mut x = rect.left() + space::LG;
+    let mut x = inner.left() + space::LG;
     for column in columns_for(width, hidden) {
         let hit = Rect::from_min_size(
-            pos2(x - space::SM, rect.top()),
-            vec2(column.width + space::MD, rect.height()),
+            pos2(x - space::SM, inner.top()),
+            vec2(column.width + space::MD, inner.height()),
         );
         let response = ui.interact(hit, ui.id().with(("head", column.head)), Sense::click());
         if response.clicked() {
@@ -291,16 +330,17 @@ pub(crate) fn headings(
             colour::TEXT_FAINT
         };
         let (pos, anchor) = match column.align {
-            Align::Left => (pos2(x, rect.center().y), Align2::LEFT_CENTER),
+            Align::Left => (pos2(x, inner.center().y), Align2::LEFT_CENTER),
             Align::Right => (
-                pos2(x + column.width, rect.center().y),
+                pos2(x + column.width, inner.center().y),
                 Align2::RIGHT_CENTER,
             ),
         };
-        let drawn = painter.text(
+        let drawn = caps_text(
+            &painter,
             pos,
             anchor,
-            label_text(column.head),
+            column.head,
             Face::Display.at(size::MICRO),
             tint,
         );
@@ -309,7 +349,11 @@ pub(crate) fn headings(
         }
         x += column.width + space::MD;
     }
-    painter.hline(rect.x_range(), rect.bottom() - 1.0, (1.0, colour::LINE));
+    painter.hline(
+        inner.left() + space::LG..=inner.right(),
+        inner.bottom() - 1.0,
+        (1.0, colour::LINE),
+    );
     clicked
 }
 
@@ -343,61 +387,64 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let painter = ui.painter().clone();
+    let mut painter = ui.painter().clone();
+    if style.arrive < 1.0 {
+        painter.multiply_opacity(style.arrive);
+    }
 
     // Both tints arrive over time rather than at once, which is the
     // difference between a cursor that feels attached to the app and one
     // that snaps. Selection is the slower of the two because it is a
     // decision rather than a movement.
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(response.id, response.hovered(), style.pace.hover);
-    let chosen = ui.ctx().animate_bool_with_time(
+    let hover = motion::eased(ui.ctx().animate_bool_with_time(
+        response.id,
+        response.hovered(),
+        style.pace.hover,
+    ));
+    let chosen = motion::eased(ui.ctx().animate_bool_with_time(
         response.id.with("selected"),
         style.selected,
         style.pace.select,
+    ));
+    let slide = (1.0 - style.arrive) * 12.0;
+    let inner = Rect::from_min_max(
+        pos2(rect.left() + GUTTER + slide, rect.top()),
+        pos2(rect.right() - GUTTER + slide, rect.bottom()),
     );
-    if chosen > 0.0 {
-        painter.rect_filled(rect, 0, colour::BG_SELECTED.gamma_multiply(chosen));
-    }
-    if hover > 0.0 && chosen < 1.0 {
-        painter.rect_filled(
-            rect,
-            0,
-            colour::BG_HOVER.gamma_multiply(hover * (1.0 - chosen)),
+    furniture(&painter, player, style, inner, hover, chosen);
+    flags(&painter, player, inner, style.noted);
+    painter.hline(
+        inner.left() + space::LG..=inner.right(),
+        inner.bottom(),
+        (1.0, colour::LINE_SOFT),
+    );
+
+    // An account the backend could not see at all. A row of dashes across
+    // ten columns reads as the app being broken; one quiet word reads as the
+    // truth, which is that Riot did not say.
+    if player.name.is_none() && player.agent.is_none() && player.rank.is_none() {
+        painter.text(
+            pos2(inner.left() + space::LG, inner.center().y),
+            Align2::LEFT_CENTER,
+            "not visible",
+            Face::Body.at(size::MICRO),
+            colour::TEXT_FAINT,
         );
+        return response;
     }
-
-    // The state bar: you are light, an enemy is red, an ally is green. That
-    // is the game's own convention, and a companion app that inverts it is
-    // worse than one with no colour at all.
-    let mut bar = rect;
-    bar.set_width(2.0);
-    let tint = if player.is_self {
-        colour::YOU
-    } else {
-        style.team
-    };
-    painter.rect_filled(
-        bar,
-        0,
-        tint.gamma_multiply(if player.is_self { 1.0 } else { 0.5 }),
-    );
-
-    flags(&painter, player, rect, style.noted);
-    painter.hline(rect.x_range(), rect.bottom(), (1.0, colour::LINE_SOFT));
 
     let name_colour = if player.is_self {
         colour::YOU
     } else {
-        style.team
+        colour::TEXT_STRONG
     };
-    let mut x = rect.left() + space::LG;
+    let mut x = inner.left() + space::LG;
     for column in columns_for(width, hidden) {
         let cell_rect = Rect::from_min_size(pos2(x, rect.top()), vec2(column.width, rect.height()));
         match column.head {
             "rr" => rr_cell(ui, player, cell_rect),
             "last 5" => form_cell(ui, player, cell_rect),
+            "rank" => rank_cell(&painter, player, cell_rect),
             _ => {
                 let (text, tint) = cell(column.head, player, name_colour);
                 cell_text(
@@ -413,6 +460,91 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, style: &RowStyle, hidden: &[Stri
         x += column.width + space::MD;
     }
     response
+}
+
+/// Everything on a row that is not a value: the tints, the rail and the
+/// party bracket.
+///
+/// The rail is the agent's own colour, which is the cheapest texture this
+/// board can have and is real information: ten rails tell you the lobby's
+/// composition before you have read a word. Your own row overrides it with
+/// bone, because in game your row is the light one and a companion app that
+/// moves that is worse than one with no colour at all.
+fn furniture(
+    painter: &egui::Painter,
+    player: &Player,
+    style: &RowStyle,
+    inner: Rect,
+    hover: f32,
+    chosen: f32,
+) {
+    if chosen > 0.0 {
+        painter.rect_filled(inner, 0, colour::BG_SELECTED.gamma_multiply(chosen));
+    }
+    if hover > 0.0 && chosen < 1.0 {
+        painter.rect_filled(
+            inner,
+            0,
+            colour::BG_HOVER.gamma_multiply(hover * (1.0 - chosen)),
+        );
+    }
+    let lift = chosen.max(hover).max(f32::from(player.is_self));
+    let rail_tint = if player.is_self {
+        colour::YOU
+    } else {
+        hex(player.agent_color.as_deref()).unwrap_or(style.team)
+    };
+    painter.rect_filled(
+        Rect::from_min_size(inner.min, vec2(3.0 + 2.0 * lift, inner.height())),
+        0,
+        rail_tint.gamma_multiply(0.45 + 0.55 * lift),
+    );
+    let Some(bracket) = style.bracket else { return };
+    let x = inner.left() - 10.0;
+    let (top, bottom) = (inner.top(), inner.bottom());
+    painter.vline(x, top..=bottom, (2.0, bracket.tint));
+    for (on, y) in [(bracket.top, top + 1.0), (bracket.bottom, bottom - 1.0)] {
+        if on {
+            painter.hline(x..=x + 6.0, y, (2.0, bracket.tint));
+        }
+    }
+}
+
+/// The rank, on a plate in its own colour.
+///
+/// A plate rather than coloured text because rank is the one value on the
+/// row that is a category rather than a measurement, and because eight tiers
+/// of coloured text at the same weight is eight colours that cancel out.
+fn rank_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
+    let Some(name) = player.rank.as_deref().filter(|n| !n.is_empty()) else {
+        painter.text(
+            pos2(rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            "-",
+            Face::Body.at(size::BODY),
+            colour::TEXT_FAINT,
+        );
+        return;
+    };
+    let tint = rank(player.rank_tier);
+    let galley = painter.layout_no_wrap(name.to_owned(), Face::Body.at(size::BODY), tint);
+    let plate = Rect::from_min_size(
+        pos2(rect.left(), rect.center().y - 9.0),
+        vec2((galley.size().x + space::MD * 2.0).min(rect.width()), 18.0),
+    );
+    // Unranked is a state rather than a tier, so it gets no plate: a grey
+    // plate next to nine coloured ones reads as a tenth rank.
+    if player.rank_tier.unwrap_or(0) > 0 {
+        painter.add(shape::cut_filled(plate, 4.0, tint.gamma_multiply(0.15)));
+    }
+    painter.galley(
+        pos2(
+            plate.left() + space::MD,
+            plate.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        tint,
+    );
 }
 
 /// The marks on the right: a note you left, a flag, and a group.
@@ -435,17 +567,11 @@ fn flags(painter: &egui::Painter, player: &Player, rect: Rect, noted: bool) {
         );
         x = drawn.left() - space::MD;
     }
-    // A party Riot told us about is a fact and gets its number; a stack the
-    // app inferred is a guess and gets a question mark.
-    if let Some(party) = player.party.as_ref().and_then(|p| p.number) {
-        painter.text(
-            pos2(x, rect.center().y),
-            Align2::RIGHT_CENTER,
-            format!("{party}"),
-            Face::Number.at(size::MICRO),
-            colour::INFO,
-        );
-    } else if player.stack_guess.is_some() {
+    // A party Riot told us about is drawn as a bracket down the gutter, so
+    // there is nothing to say here. A stack the app only inferred cannot be
+    // bracketed, because inference does not say who with, and it gets a
+    // question mark instead.
+    if player.party.is_none() && player.stack_guess.is_some() {
         painter.text(
             pos2(x, rect.center().y),
             Align2::RIGHT_CENTER,
@@ -536,12 +662,14 @@ fn form_cell(ui: &Ui, player: &Player, rect: Rect) {
 /// What one column says about one player, and in what colour.
 fn cell(head: &str, player: &Player, name_colour: Color32) -> (String, Color32) {
     match head {
+        // The agent's own colour is already on the rail at the left of the
+        // row, so the word itself is just a word.
         "agent" => (
             player.agent.clone().unwrap_or_else(dash),
             player
                 .agent
                 .as_ref()
-                .map_or(colour::TEXT_FAINT, |_| colour::INFO),
+                .map_or(colour::TEXT_FAINT, |_| colour::TEXT),
         ),
         "player" => (player.display_name().to_owned(), name_colour),
         "rank" => (
@@ -551,8 +679,14 @@ fn cell(head: &str, player: &Player, name_colour: Color32) -> (String, Color32) 
         "peak" => (peak_text(player), peak_colour(player)),
         "k/d" => (number(player.kd), kd(player.kd)),
         "hs" => (
-            player.hs_pct.map_or_else(dash, |v| format!("{v:.1}")),
-            colour::TEXT_DIM,
+            player.hs_pct.map_or_else(dash, |v| format!("{v:.0}%")),
+            player.hs_pct.map_or(colour::TEXT_FAINT, |v| {
+                if v >= 30.0 {
+                    colour::GOOD
+                } else {
+                    colour::NEUTRAL
+                }
+            }),
         ),
         "win" => (
             player
@@ -643,9 +777,12 @@ fn map_cell(player: &Player) -> (String, Color32) {
 fn win_colour(rate: Option<f64>) -> Color32 {
     match rate {
         None => colour::TEXT_FAINT,
-        Some(v) if v >= 55.0 => colour::GOOD,
-        Some(v) if v >= 45.0 => colour::TEXT,
-        Some(_) => colour::BAD,
+        // Only the ends. Half of every lobby is within a few points of even,
+        // and tinting all of them spends the two colours that were supposed
+        // to mean something on the players they mean nothing about.
+        Some(v) if v >= 57.0 => colour::GOOD,
+        Some(v) if v <= 43.0 => colour::BAD,
+        Some(_) => colour::NEUTRAL,
     }
 }
 
@@ -658,78 +795,120 @@ const fn level_colour(player: &Player) -> Color32 {
     }
 }
 
-/// A team's heading: who they are, and how they compare.
+/// A team's heading: a band in their colour, what to worry about, and how
+/// they compare.
+///
+/// The only block of colour on the board, and the thing the eye lands on
+/// first. It answers the question asked before any other: which half of this
+/// lobby am I looking at, and is anybody on it a problem.
 pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Board, team: &str) {
     let width = ui.available_width();
-    let (rect, _response) = ui.allocate_exact_size(vec2(width, space::ROW), Sense::hover());
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(width, space::ROW + space::MD), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
     let painter = ui.painter().clone();
-    let mut x = rect.left() + space::LG;
-
-    // A three point bar in the team's colour, then the name. It is the only
-    // ornament on the screen and it carries information.
-    let bar = Rect::from_min_size(
-        pos2(x, rect.top() + space::MD),
-        vec2(3.0, rect.height() - space::XL),
+    let band = Rect::from_min_max(
+        pos2(rect.left() + GUTTER, rect.top()),
+        pos2(rect.right() - GUTTER, rect.bottom() - space::SM),
     );
-    painter.rect_filled(bar, 0, tint);
-    x += space::MD;
+    painter.add(shape::cut_filled(
+        band,
+        shape::CHAMFER,
+        tint.gamma_multiply(0.10),
+    ));
+    painter.rect_filled(
+        Rect::from_min_size(band.min, vec2(3.0, band.height())),
+        0,
+        tint,
+    );
 
-    let drawn = painter.text(
-        pos2(x, rect.center().y),
+    let mut x = band.left() + space::MD + space::SM;
+    let drawn = caps_text(
+        &painter,
+        pos2(x, band.center().y),
         Align2::LEFT_CENTER,
-        label_text(label),
-        Face::Display.at(size::LABEL),
+        label,
+        Face::Display.at(size::TITLE),
         tint,
     );
     x = drawn.right() + space::LG;
 
-    // The side's averages. Before a match the useful comparison is not how
-    // good somebody is, it is how good they are next to the other five.
-    if let Some(stats) = board.stats(team) {
-        for (text, tint) in [
-            (
-                stats.avg_rank.clone(),
-                rank(stats.avg_rank_tier.map(|t| t.round() as u32)),
-            ),
-            (
-                stats.avg_kd.map(|v| format!("{v:.2} K/D")),
-                kd(stats.avg_kd),
-            ),
-            (
-                stats.avg_win_rate.map(|v| format!("{}% win", v.round())),
-                win_colour(stats.avg_win_rate),
-            ),
-        ] {
-            let Some(text) = text else { continue };
-            let drawn = painter.text(
-                pos2(x, rect.center().y),
-                Align2::LEFT_CENTER,
-                text,
-                Face::Body.at(size::MICRO),
-                tint,
-            );
-            x = drawn.right() + space::LG;
-        }
-    }
-
     let flagged = board.team(team).iter().filter(|p| p.smurf).count();
     if flagged > 0 {
-        let text = if flagged == 1 {
-            "1 worth a look".to_owned()
-        } else {
-            format!("{flagged} worth a look")
-        };
-        painter.text(
-            pos2(x, rect.center().y),
-            Align2::LEFT_CENTER,
-            text,
-            Face::Body.at(size::MICRO),
+        chip(
+            &painter,
+            pos2(x, band.center().y),
+            &format!("{flagged} worth a look"),
             colour::WARN,
         );
     }
+
+    // The averages, laid out right to left so they finish on the same edge
+    // the numbers in the rows below finish on.
+    let Some(stats) = board.stats(team) else {
+        return;
+    };
+    let mut right = band.right() - space::LG;
+    for (name, value, tint) in [
+        (
+            "win",
+            stats.avg_win_rate.map(|v| format!("{}%", v.round())),
+            colour::NEUTRAL,
+        ),
+        (
+            "k/d",
+            stats.avg_kd.map(|v| format!("{v:.2}")),
+            kd(stats.avg_kd),
+        ),
+        (
+            "rank",
+            stats.avg_rank.clone(),
+            rank(stats.avg_rank_tier.map(|t| t.round() as u32)),
+        ),
+    ] {
+        let Some(value) = value else { continue };
+        let drawn = painter.text(
+            pos2(right, band.center().y),
+            Align2::RIGHT_CENTER,
+            value,
+            Face::Body.at(size::BODY),
+            tint,
+        );
+        let drawn = caps_text(
+            &painter,
+            pos2(drawn.left() - space::SM, band.center().y),
+            Align2::RIGHT_CENTER,
+            name,
+            Face::Display.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+        right = drawn.left() - space::XL;
+    }
+}
+
+/// A word on a tinted plate, cut at the corners. Returns where it ended.
+///
+/// For the handful of things that are claims rather than measurements: a
+/// count of accounts worth a look, a tag somebody wrote. A claim on a plate
+/// reads as a claim; the same words as plain text read as another column.
+pub(crate) fn chip(painter: &egui::Painter, at: egui::Pos2, text: &str, tint: Color32) -> Rect {
+    let galley = painter.layout_job(caps(text, Face::Display.at(size::MICRO), tint));
+    let plate = Rect::from_min_size(
+        pos2(at.x, at.y - 9.0),
+        vec2(galley.size().x + space::MD * 2.0, 18.0),
+    );
+    painter.add(shape::cut_filled(plate, 4.0, tint.gamma_multiply(0.16)));
+    painter.galley(
+        pos2(
+            plate.left() + space::MD,
+            plate.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        tint,
+    );
+    plate
 }
 
 /// What a missing value looks like, in one place.
@@ -742,14 +921,52 @@ fn number(value: Option<f64>) -> String {
     value.map_or_else(dash, |v| format!("{v:.2}"))
 }
 
-/// The teams, in reading order: ours, then theirs.
-pub(crate) fn teams(board: &Board) -> [(&'static str, Color32, String); 2] {
+/// Which rows share a party, and where each group starts and ends.
+///
+/// Worked out over the team as it will be drawn, not as it arrived, because
+/// a sorted board moves the rows and a bracket that spans two rows with a
+/// stranger between them is a lie.
+pub(crate) fn brackets(players: &[&Player]) -> Vec<Option<Bracket>> {
+    let key = |p: &Player| p.party.as_ref().and_then(|party| party.number);
+    players
+        .iter()
+        .enumerate()
+        .map(|(i, player)| {
+            let number = key(player)?;
+            let tint =
+                hex(player.party.as_ref().and_then(|p| p.color.as_deref())).unwrap_or(colour::INFO);
+            let same = |at: usize| players.get(at).is_some_and(|p| key(p) == Some(number));
+            // A party of one is not a party. Riot reports a number for a
+            // solo queue player too, and a bracket around one row is an
+            // ornament rather than a fact.
+            let above = i > 0 && same(i - 1);
+            let below = same(i + 1);
+            (above || below).then_some(Bracket {
+                tint,
+                top: !above,
+                bottom: !below,
+            })
+        })
+        .collect()
+}
+
+/// The teams, in reading order.
+///
+/// Enemies first by default, which is a deliberate break from the game's own
+/// Tab screen. The game already shows you your side at the top; the reason
+/// to open this app at all is the other five, and putting them second means
+/// the answer you came for is below the answer you already had. Anybody who
+/// disagrees has a switch.
+pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(&'static str, Color32, String); 2] {
     let ours = board.self_team.as_deref().unwrap_or("Blue").to_owned();
     let theirs = if ours == "Blue" { "Red" } else { "Blue" }.to_owned();
-    [
-        ("allies", colour::ALLY, ours),
-        ("enemies", colour::ENEMY, theirs),
-    ]
+    let allies = ("allies", colour::ALLY, ours);
+    let enemies = ("enemies", colour::ENEMY, theirs);
+    if enemies_first {
+        [enemies, allies]
+    } else {
+        [allies, enemies]
+    }
 }
 
 #[cfg(test)]

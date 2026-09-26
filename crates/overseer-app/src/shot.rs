@@ -91,6 +91,8 @@ impl Scene {
 pub(crate) fn sample() -> Board {
     let mut players = flagged();
     players.extend(plain());
+    players.extend(more_allies());
+    players.extend(more_enemies());
     players.sort_by_key(|p| p.team.clone());
     let mut stats = std::collections::HashMap::new();
     stats.insert(
@@ -100,6 +102,16 @@ pub(crate) fn sample() -> Board {
             avg_rank_tier: Some(12.6),
             avg_kd: Some(1.27),
             avg_win_rate: Some(56.0),
+            smurf_count: Some(1),
+        },
+    );
+    stats.insert(
+        "Red".to_owned(),
+        overseer_core::TeamStats {
+            avg_rank: Some("Gold 3".to_owned()),
+            avg_rank_tier: Some(14.2),
+            avg_kd: Some(1.11),
+            avg_win_rate: Some(49.0),
             smurf_count: Some(1),
         },
     );
@@ -121,6 +133,127 @@ pub(crate) fn sample() -> Board {
     }
 }
 
+/// The other five, so the board under test is a real lobby.
+///
+/// Five and five, because every question about this layout — does a column
+/// shed at the right width, does a party bracket read, does the eye find the
+/// one dangerous account — is a question about ten rows, and four rows
+/// answer none of them. Two of these are a duo on the enemy side, which is
+/// the grouping the gutter has to draw.
+/// The three on our side who are simply playing the game.
+fn more_allies() -> Vec<Player> {
+    vec![
+        Player {
+            puuid: Some("h".to_owned()),
+            name: Some("DriftFrag#RR".to_owned()),
+            team: Some("Blue".to_owned()),
+            agent: Some("Reyna".to_owned()),
+            agent_color: Some("#D1548C".to_owned()),
+            rank: Some("Gold 2".to_owned()),
+            rank_tier: Some(13),
+            rr: Some(66),
+            kd: Some(1.44),
+            win_rate: Some(41.0),
+            games: Some(103),
+            level: Some(212),
+            hs_pct: Some(29.5),
+            form: form("WLWLW"),
+            ..Player::default()
+        },
+        Player {
+            puuid: Some("i".to_owned()),
+            name: Some("SageDiff#EUW".to_owned()),
+            team: Some("Blue".to_owned()),
+            agent: Some("Viper".to_owned()),
+            agent_color: Some("#27AF75".to_owned()),
+            rank: Some("Bronze 3".to_owned()),
+            rank_tier: Some(8),
+            rr: Some(56),
+            kd: Some(0.72),
+            win_rate: Some(59.0),
+            games: Some(98),
+            level: Some(77),
+            hs_pct: Some(23.8),
+            form: form("WLWLW"),
+            ..Player::default()
+        },
+    ]
+}
+
+/// The other side, including the duo the gutter has to bracket.
+fn more_enemies() -> Vec<Player> {
+    vec![
+        Player {
+            puuid: Some("f".to_owned()),
+            name: Some("GhostDash#OCE".to_owned()),
+            team: Some("Red".to_owned()),
+            agent: Some("Phoenix".to_owned()),
+            agent_color: Some("#F5955B".to_owned()),
+            rank: Some("Gold 3".to_owned()),
+            rank_tier: Some(14),
+            rr: Some(68),
+            kd: Some(1.71),
+            win_rate: Some(49.0),
+            games: Some(104),
+            level: Some(406),
+            hs_pct: Some(31.7),
+            form: form("WLWLW"),
+            party: Some(duo()),
+            ..Player::default()
+        },
+        Player {
+            puuid: Some("g".to_owned()),
+            name: Some("FrostSpike#VAL".to_owned()),
+            team: Some("Red".to_owned()),
+            agent: Some("Yoru".to_owned()),
+            agent_color: Some("#5A9FE1".to_owned()),
+            rank: Some("Platinum 1".to_owned()),
+            rank_tier: Some(15),
+            rr: Some(70),
+            kd: Some(1.54),
+            win_rate: Some(45.0),
+            games: Some(105),
+            level: Some(134),
+            hs_pct: Some(30.3),
+            form: form("WLWLW"),
+            party: Some(duo()),
+            ..Player::default()
+        },
+        Player {
+            puuid: Some("j".to_owned()),
+            name: Some("DriftAim#GG".to_owned()),
+            team: Some("Red".to_owned()),
+            agent: Some("Skye".to_owned()),
+            agent_color: Some("#6AE2AF".to_owned()),
+            rank: Some("Gold 1".to_owned()),
+            rank_tier: Some(12),
+            rr: Some(64),
+            kd: Some(0.93),
+            win_rate: Some(52.0),
+            games: Some(102),
+            level: Some(181),
+            hs_pct: Some(25.4),
+            form: form("WLWLW"),
+            ..Player::default()
+        },
+    ]
+}
+
+/// Two accounts Riot says are queued together.
+fn duo() -> overseer_core::Party {
+    overseer_core::Party {
+        id: Some("p1".to_owned()),
+        color: Some("#5A9FE1".to_owned()),
+        number: Some(1),
+        size: Some(2),
+    }
+}
+
+/// A run of results, newest first, written the way a person would say it.
+fn form(results: &str) -> Vec<String> {
+    results.chars().map(|c| c.to_string()).collect()
+}
+
 /// The two accounts the app is for: one on each side, both flagged.
 fn flagged() -> Vec<Player> {
     vec![smurf_ally(), smurf_enemy()]
@@ -134,6 +267,7 @@ fn smurf_ally() -> Player {
         name: Some("SilentEnt#GG".to_owned()),
         team: Some("Blue".to_owned()),
         agent: Some("KAY/O".to_owned()),
+        agent_color: Some("#4A6B8A".to_owned()),
         role: Some("Initiator".to_owned()),
         rank: Some("Diamond 3".to_owned()),
         rank_tier: Some(20),
@@ -195,6 +329,7 @@ fn smurf_enemy() -> Player {
         name: Some("NeonLock#VAL".to_owned()),
         team: Some("Red".to_owned()),
         agent: Some("Clove".to_owned()),
+        agent_color: Some("#D1548C".to_owned()),
         rank: Some("Immortal 1".to_owned()),
         rank_tier: Some(24),
         rr: Some(97),
@@ -243,6 +378,7 @@ fn plain() -> Vec<Player> {
             name: Some("Day#9932".to_owned()),
             team: Some("Blue".to_owned()),
             agent: Some("Chamber".to_owned()),
+            agent_color: Some("#C9A227".to_owned()),
             role: Some("Sentinel".to_owned()),
             rank: Some("Gold 2".to_owned()),
             rank_tier: Some(13),
@@ -277,6 +413,7 @@ fn plain() -> Vec<Player> {
             name: Some("AVeryLongNameIndeed#0000".to_owned()),
             team: Some("Blue".to_owned()),
             agent: Some("Astra".to_owned()),
+            agent_color: Some("#6F4ACC".to_owned()),
             rank: Some("Unranked".to_owned()),
             rank_tier: Some(0),
             level: Some(12),
@@ -391,13 +528,13 @@ fn remembered() -> Notes {
 /// is adding a line here.
 fn scenes() -> [(&'static str, egui::Vec2, Scene); 7] {
     [
-        ("wide", vec2(1200.0, 340.0), Scene::of(Some("SilentEnt#GG"))),
+        ("wide", vec2(1200.0, 480.0), Scene::of(Some("SilentEnt#GG"))),
         // Sorted by K/D, best first, which is the question a heading gets
         // clicked to answer. The arrow belongs in a picture somebody looks
         // at rather than only in a unit test.
         (
             "sorted",
-            vec2(1200.0, 300.0),
+            vec2(1200.0, 480.0),
             Scene::of(Some("NeonLock#VAL")).sorted(Sort {
                 column: Some("k/d".to_owned()),
                 direction: Some(Direction::Down),
@@ -407,11 +544,11 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 7] {
         // boxes in the panel with something in them.
         (
             "noted",
-            vec2(1200.0, 300.0),
+            vec2(1200.0, 480.0),
             Scene::of(Some("Day#9932")).noted(remembered()),
         ),
-        ("normal", vec2(860.0, 340.0), Scene::of(Some("Day#9932"))),
-        ("compact", vec2(460.0, 320.0), Scene::of(Some("Day#9932"))),
+        ("normal", vec2(860.0, 480.0), Scene::of(Some("Day#9932"))),
+        ("compact", vec2(460.0, 460.0), Scene::of(Some("Day#9932"))),
         // A full history, which is the only thing in the app with a chart in
         // it and therefore the only thing a number alone cannot check.
         (

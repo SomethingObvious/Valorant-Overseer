@@ -673,7 +673,7 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
         painter.hline(
             from..=rect.right() - space::LG,
             rect.center().y,
-            (1.0, colour::LINE_SOFT),
+            (1.0, colour::LINE),
         );
     }
 }

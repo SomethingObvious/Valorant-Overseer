@@ -106,7 +106,7 @@ pub(crate) const COLUMNS: [Column; 12] = [
     },
     Column {
         head: "peak",
-        width: 120.0,
+        width: 140.0,
         align: Align::Left,
         face: Face::Body,
         priority: Priority::Mid,
@@ -175,7 +175,7 @@ pub(crate) const COLUMNS: [Column; 12] = [
 /// column never runs into one.
 const FLAG_WIDTH: f32 = 52.0;
 /// One result pip in the form column.
-const PIP: f32 = 8.0;
+const PIP: f32 = 9.0;
 
 /// How long the two things a row animates are allowed to take.
 #[derive(Debug, Clone, Copy)]
@@ -582,8 +582,8 @@ fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
     painter.add(shape::cut_wash(
         tile,
         4.0,
-        tint.gamma_multiply(0.55),
-        tint.gamma_multiply(0.28),
+        shape::blend(tint, colour::TEXT_STRONG, 0.18),
+        tint,
     ));
     let initial: String = agent.chars().take(1).collect::<String>().to_uppercase();
     painter.text(
@@ -591,7 +591,7 @@ fn agent_cell(painter: &egui::Painter, player: &Player, rect: Rect) {
         Align2::CENTER_CENTER,
         initial,
         Face::Display.at(size::LABEL),
-        colour::TEXT_STRONG,
+        shape::ink_on(tint),
     );
     cell_text(
         painter,
@@ -907,7 +907,10 @@ fn peak_colour(player: &Player) -> Color32 {
         .peak_rank_tier
         .unwrap_or(0)
         .saturating_sub(player.rank_tier.unwrap_or(0));
-    if gap >= 3 {
+    // Two whole ranks, not one. Three tiers is a single rank and half a
+    // lobby is a rank off its peak at any time, so colouring that made the
+    // peak column a wall of orange and the colour meant nothing.
+    if gap >= 6 {
         colour::WARN
     } else {
         rank(player.peak_rank_tier)

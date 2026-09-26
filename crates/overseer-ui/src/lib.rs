@@ -292,6 +292,26 @@ pub mod shape {
         )
     }
 
+    /// Which of the two text colours reads on a given fill.
+    ///
+    /// Agent colours run from near black to pale yellow, so a tile drawn in
+    /// one of them cannot have its letter in a fixed colour: half the roster
+    /// would be unreadable. Rec. 601 luma, because it is the one a person
+    /// would recognise and the difference from a perceptual model at this
+    /// size is nothing.
+    #[must_use]
+    pub fn ink_on(fill: Color32) -> Color32 {
+        let luma = 0.299f32.mul_add(
+            f32::from(fill.r()),
+            0.587f32.mul_add(f32::from(fill.g()), 0.114 * f32::from(fill.b())),
+        );
+        if luma > 140.0 {
+            super::colour::VOID
+        } else {
+            super::colour::TEXT_STRONG
+        }
+    }
+
     /// A soft edge under or beside a surface, so it reads as being above
     /// what it covers.
     ///

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
-use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, motion, shape, size, space};
 
 use crate::plan::{self, Finding, Profile, REGIONS, Survey};
 use crate::run::{self, Line, Running};
@@ -376,19 +376,34 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
 
 /// A heading inside a step.
 fn heading(ui: &mut Ui, text: &str) {
+    ui.add_space(space::XL);
     let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    caps_at(
-        ui.painter(),
-        pos2(rect.left() + space::XL, rect.center().y),
+    let painter = ui.painter();
+    painter.add(shape::tick(
+        pos2(rect.left() + space::XL, rect.center().y - 5.0),
+        10.0,
+        colour::ENEMY,
+    ));
+    let drawn = caps_text(
+        painter,
+        pos2(rect.left() + space::XL + space::MD, rect.center().y),
         Align2::LEFT_CENTER,
         text,
         Face::Display.at(size::LABEL),
         colour::TEXT_DIM,
     );
+    let from = drawn.right() + space::MD;
+    if from < rect.right() - space::XL {
+        painter.hline(
+            from..=rect.right() - space::XL,
+            rect.center().y,
+            (1.0, colour::LINE_SOFT),
+        );
+    }
 }
 
 /// A line of explanation.
@@ -417,25 +432,37 @@ fn option_row(ui: &mut Ui, name: &str, about: &str, chosen: bool) -> bool {
         return response.clicked();
     }
     let painter = ui.painter().clone();
-    if chosen {
-        painter.rect_filled(rect, 0, colour::BG_SELECTED);
-    } else if response.hovered() {
-        painter.rect_filled(rect, 0, colour::BG_HOVER);
-    }
-    let dot = Rect::from_min_size(
-        pos2(rect.left() + space::XL, rect.center().y - 5.0),
-        vec2(10.0, 10.0),
+    let lift = ui.ctx().animate_bool_with_time_and_easing(
+        response.id,
+        response.hovered(),
+        motion::INSTANT,
+        egui::emath::easing::cubic_out,
     );
     if chosen {
-        painter.rect_filled(dot, 0, colour::INFO);
-    } else {
-        painter.rect_stroke(
-            dot,
+        painter.add(egui::Shape::gradient_rect(
+            rect,
+            egui::Direction::LeftToRight,
+            [colour::BG_SELECTED, colour::BG_RAISED],
+        ));
+    } else if lift > 0.0 {
+        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
+    }
+    if chosen || lift > 0.0 {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, vec2(2.0, rect.height())),
             0,
-            egui::Stroke::new(1.0, colour::LINE),
-            egui::StrokeKind::Inside,
+            colour::ENEMY.gamma_multiply(if chosen { 1.0 } else { lift }),
         );
     }
+    // A disc, because these are choices among siblings rather than switches.
+    // Drawing them as squares is how somebody ends up trying to pick two
+    // regions.
+    let centre = pos2(rect.left() + space::XL + 5.0, rect.center().y);
+    painter.circle_stroke(centre, 5.0, egui::Stroke::new(1.0, colour::LINE));
+    if chosen {
+        painter.circle_filled(centre, 3.0, colour::TEXT_STRONG);
+    }
+    let dot = Rect::from_center_size(centre, vec2(10.0, 10.0));
     painter.text(
         pos2(dot.right() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
@@ -507,19 +534,31 @@ fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) 
         (colour::LINE, colour::TEXT_FAINT)
     } else if from_right == 0 {
         // The one that moves you forward is the bright one, and there is
-        // only ever one bright thing on the screen.
+        // only ever one bright thing on the screen. Under the pointer it
+        // inverts outright rather than tinting, which is what Riot's own
+        // buttons do and is the cheapest thing in this file to copy.
         (
             if response.hovered() {
                 colour::TEXT_STRONG
             } else {
-                colour::INFO
+                colour::ENEMY
             },
-            colour::BG,
+            if response.hovered() {
+                colour::VOID
+            } else {
+                colour::TEXT_STRONG
+            },
         )
+    } else if response.hovered() {
+        (colour::TEXT_STRONG, colour::VOID)
     } else {
-        (colour::BG_RAISED, colour::TEXT)
+        (colour::BG_INSET, colour::TEXT)
     };
-    painter.rect_filled(rect, 0, fill);
+    painter.add(egui::Shape::gradient_rect(
+        rect,
+        egui::Direction::TopDown,
+        [shape::blend(fill, colour::TEXT_STRONG, 0.10), fill],
+    ));
     if from_right > 0 {
         painter.rect_stroke(
             rect,

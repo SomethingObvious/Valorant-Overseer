@@ -37,44 +37,6 @@ pub(crate) const WIDE: f32 = 1100.0;
 const PANEL_NARROW: f32 = 280.0;
 /// The panel's width above [`WIDE`].
 const PANEL_WIDE: f32 = 340.0;
-/// One key, drawn as a key: a plate with a letter on it.
-///
-/// The display face is caps only and has no arrows, so anything that is not
-/// a letter is set in the reading face. A keycap with a box on it is worse
-/// than no keycap.
-fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> Rect {
-    let face = if key.is_ascii() {
-        Face::Display.at(size::MICRO)
-    } else {
-        Face::Body.at(size::MICRO)
-    };
-    let galley = painter.layout_no_wrap(key.to_uppercase(), face, colour::TEXT_DIM);
-    let plate = Rect::from_min_size(
-        pos2(at.x, at.y - 8.0),
-        vec2((galley.size().x + space::MD).max(16.0), 16.0),
-    );
-    painter.add(egui::Shape::gradient_rect(
-        plate,
-        egui::Direction::TopDown,
-        [colour::BG_HOVER, colour::BG_INSET],
-    ));
-    painter.rect_stroke(
-        plate,
-        0,
-        egui::Stroke::new(1.0, colour::LINE),
-        egui::StrokeKind::Inside,
-    );
-    painter.galley(
-        pos2(
-            plate.center().x - galley.size().x / 2.0,
-            plate.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        colour::TEXT_DIM,
-    );
-    plate
-}
-
 /// How long the pointer has to rest on a row before its history is asked
 /// for. Short enough to feel immediate, long enough that crossing the board
 /// asks nothing.
@@ -110,6 +72,8 @@ pub(crate) struct Overseer {
     selected: Option<String>,
     /// Which screen is showing.
     screen: Screen,
+    /// Which screen is drawn, which lags the one above by half a fade.
+    screen_showing: Screen,
     /// How many boards have arrived, which is the cheapest proof that the
     /// socket is alive and the frame on screen is not stale.
     boards: u64,
@@ -213,6 +177,7 @@ impl Overseer {
             stopped: None,
             selected: None,
             screen: Screen::Board,
+            screen_showing: Screen::Board,
             boards: 0,
             slow: 0,
             dropped: false,
@@ -461,7 +426,7 @@ impl Overseer {
         // Nothing here fires while the search box has the keyboard: a
         // person typing a name is not asking to change screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
-        let (up, down, settings, escape, find, overlay, worth) = ui.input(|i| {
+        let (up, down, settings, escape, find, overlay, worth, copy) = ui.input(|i| {
             (
                 i.key_pressed(Key::ArrowUp),
                 i.key_pressed(Key::ArrowDown),
@@ -470,6 +435,7 @@ impl Overseer {
                 i.key_pressed(Key::Slash) || (i.modifiers.command && i.key_pressed(Key::F)),
                 i.key_pressed(Key::O),
                 i.key_pressed(Key::W),
+                i.modifiers.command && i.key_pressed(Key::C),
             )
         });
         if escape {
@@ -496,6 +462,12 @@ impl Overseer {
         }
         if worth {
             self.next_flagged(None);
+        }
+        // The one thing anybody wants to do with a name in this window that
+        // this window cannot do: look it up somewhere else.
+        if copy && let Some(player) = self.current() {
+            let name = player.display_name().to_owned();
+            ui.ctx().copy_text(name);
         }
         if settings {
             self.screen = if self.screen == Screen::Settings {
@@ -911,7 +883,7 @@ impl Overseer {
     }
 
     /// Every switch there is, and what could not be switched on.
-    fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame) {
+    fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
         // All of this is read out before the screen borrows the settings it
         // sits beside. Failing quietly would leave somebody pressing a key
         // that does nothing with no way to find out why.
@@ -925,6 +897,7 @@ impl Overseer {
         };
         let mut changed = false;
         CentralPanel::default().frame(chrome).show(ui, |ui| {
+            ui.multiply_opacity(0.10 + 0.90 * turning);
             changed = view::settings(ui, &mut self.settings, quality, dropped, trouble);
         });
         if changed {
@@ -1187,8 +1160,16 @@ impl App for Overseer {
                 .show(ui, |ui| self.search(ui));
         }
 
-        if self.screen == Screen::Settings {
-            self.settings_screen(ui, chrome);
+        let turning = ui.ctx().animate_value_with_time(
+            egui::Id::new("screen"),
+            f32::from(self.screen == self.screen_showing),
+            motion::QUICK / 2.0,
+        );
+        if turning <= 0.02 && self.screen != self.screen_showing {
+            self.screen_showing = self.screen;
+        }
+        if self.screen_showing == Screen::Settings {
+            self.settings_screen(ui, chrome, turning);
             return;
         }
 
@@ -1209,6 +1190,7 @@ impl App for Overseer {
                     egui::Direction::TopDown,
                     [colour::BG, colour::VOID],
                 ));
+                ui.multiply_opacity(0.10 + 0.90 * turning);
                 self.board_view(ui);
             });
     }
@@ -1288,7 +1270,7 @@ impl Overseer {
             ("o", "overlay"),
             ("\u{2191}\u{2193}", "pick"),
         ] {
-            x = keycap(&painter, pos2(x, rect.center().y), key).right() + space::SM;
+            x = overseer_ui::keycap(&painter, pos2(x, rect.center().y), key).right() + space::SM;
             let after = caps_text(
                 &painter,
                 pos2(x, rect.center().y),
@@ -1430,6 +1412,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         stopped: None,
         selected: None,
         screen: Screen::Board,
+        screen_showing: Screen::Board,
         boards,
         slow: 0,
         dropped: false,

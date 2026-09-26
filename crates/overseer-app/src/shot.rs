@@ -624,7 +624,7 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
     // Same first frame rule as the board: fonts land on the frame after they
     // are installed, so the first one draws nothing.
     let mut shot = Harness::builder()
-        .with_size(vec2(880.0, 1020.0))
+        .with_size(vec2(880.0, 1300.0))
         .build_ui_state(
             |ui, state: &mut (bool, Settings)| {
                 if state.0 {

@@ -74,9 +74,53 @@ pub(crate) fn settings(
             changed |= overlay(ui, settings, trouble);
 
             changed |= effort(ui, settings, quality, dropped);
+            keys(ui);
             ui.add_space(space::XXL);
         });
     changed
+}
+
+/// Every key this window listens for.
+///
+/// The footer carries the four worth a keycap; this carries all of them,
+/// because a key nobody can find is a key nobody presses, and the settings
+/// screen is where a person goes to find out what an app can do.
+fn keys(ui: &mut Ui) {
+    section(ui, "keys", "Everything the window listens for.");
+    for (key, what) in [
+        ("/", "Find a name or an agent. Escape clears it."),
+        (",", "This screen, and back again."),
+        (
+            "w",
+            "The next account worth a look, wrapping round the lobby.",
+        ),
+        (
+            "o",
+            "The overlay, on and off. Ctrl+Alt+O does it from in game.",
+        ),
+        ("up, down", "Move the panel through the roster."),
+        ("ctrl+c", "Copy the name of whoever the panel is about."),
+        ("escape", "Clear the search, then leave the screen."),
+    ] {
+        let (rect, _response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+        if !ui.is_rect_visible(rect) {
+            continue;
+        }
+        let painter = ui.painter();
+        let plate =
+            overseer_ui::keycap(painter, pos2(rect.left() + space::XL, rect.center().y), key);
+        painter.text(
+            pos2(
+                plate.right().max(rect.left() + 190.0) + space::LG,
+                rect.center().y,
+            ),
+            Align2::LEFT_CENTER,
+            what,
+            Face::Body.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+    }
 }
 
 /// Which columns the board shows. True when one was switched.

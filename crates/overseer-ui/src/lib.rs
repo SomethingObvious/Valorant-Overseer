@@ -353,6 +353,48 @@ pub mod shape {
     }
 }
 
+/// One key, drawn as a key: a plate with a letter on it.
+///
+/// The display face is caps only and has no arrows, so anything that is not
+/// a letter is set in the reading face. A keycap with a box on it is worse
+/// than no keycap.
+///
+/// Shared, because the footer and the settings screen both list keys and
+/// two drawings of the same keyboard is two drawings to keep in step.
+#[must_use]
+pub fn keycap(painter: &egui::Painter, at: egui::Pos2, key: &str) -> egui::Rect {
+    let face = if key.is_ascii() {
+        Face::Display.at(size::MICRO)
+    } else {
+        Face::Body.at(size::MICRO)
+    };
+    let galley = painter.layout_no_wrap(key.to_uppercase(), face, colour::TEXT_DIM);
+    let plate = egui::Rect::from_min_size(
+        egui::pos2(at.x, at.y - 8.0),
+        egui::vec2((galley.size().x + space::MD).max(16.0), 16.0),
+    );
+    painter.add(egui::Shape::gradient_rect(
+        plate,
+        egui::Direction::TopDown,
+        [colour::BG_HOVER, colour::BG_INSET],
+    ));
+    painter.rect_stroke(
+        plate,
+        0,
+        Stroke::new(1.0, colour::LINE),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        egui::pos2(
+            plate.center().x - galley.size().x / 2.0,
+            plate.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        colour::TEXT_DIM,
+    );
+    plate
+}
+
 /// A colour the backend sent as a hex string, if it sent one that parses.
 ///
 /// Agent colours arrive from Riot as `#RRGGBB`. A row tinted with the agent's

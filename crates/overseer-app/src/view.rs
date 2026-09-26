@@ -11,8 +11,7 @@ use crate::overlay::Corner;
 use crate::settings::{Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
-use egui::Rect;
-use overseer_ui::{Face, caps_at, caps_text, colour, motion, shape, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, shape, size, space};
 
 /// What did not start, and why, for the screen to say out loud.
 ///
@@ -322,87 +321,7 @@ fn section(ui: &mut Ui, text: &str, about: &str) {
 /// for a switch. Drawing both the same way is how a settings screen ends up
 /// with somebody trying to turn two corners on at once.
 fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::click());
-    if !ui.is_rect_visible(rect) {
-        return response.clicked();
-    }
-    let painter = ui.painter().clone();
-    let lift = ui.ctx().animate_bool_with_time_and_easing(
-        response.id,
-        response.hovered(),
-        motion::INSTANT,
-        ease,
-    );
-    if lift > 0.0 {
-        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
-        // The accent, only under the pointer, only on the thing that can be
-        // acted on. It is the one mark in this window that says "this is a
-        // control" rather than "this is a value".
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(2.0, rect.height())),
-            0,
-            colour::ENEMY.gamma_multiply(lift),
-        );
-    }
-    let centre = pos2(rect.left() + space::XL + 5.0, rect.center().y);
-    let mark = colour::TEXT_STRONG;
-    if one_of {
-        painter.circle_stroke(centre, 5.0, egui::Stroke::new(1.0, colour::LINE));
-        if on {
-            painter.circle_filled(centre, 3.0, mark);
-        }
-    } else {
-        let box_rect = Rect::from_center_size(centre, vec2(10.0, 10.0));
-        if on {
-            painter.rect_filled(box_rect, 0, mark);
-        } else {
-            painter.rect_stroke(
-                box_rect,
-                0,
-                egui::Stroke::new(1.0, colour::LINE),
-                egui::StrokeKind::Inside,
-            );
-        }
-    }
-    let drawn = painter.text(
-        pos2(centre.x + 5.0 + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        Face::Body.at(size::BODY),
-        if on || lift > 0.0 {
-            colour::TEXT_STRONG
-        } else {
-            colour::TEXT_DIM
-        },
-    );
-    // Cut to what is left of the row rather than run off the edge of it:
-    // two of these side by side leave half the width each, and the longest
-    // explanation here is wider than half.
-    let at = drawn.right().max(rect.left() + 190.0) + space::LG;
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        about.to_owned(),
-        Face::Body.at(size::MICRO),
-        colour::TEXT_FAINT,
-    );
-    job.wrap = egui::text::TextWrapping {
-        max_width: rect.right() - space::XL - at,
-        max_rows: 1,
-        break_anywhere: false,
-        overflow_character: Some('\u{2026}'),
-    };
-    let galley = painter.layout_job(job);
-    painter.galley(
-        pos2(at, rect.center().y - galley.size().y / 2.0),
-        galley,
-        colour::TEXT_FAINT,
-    );
-    response.clicked()
-}
-
-/// The one curve this app eases with.
-fn ease(t: f32) -> f32 {
-    egui::emath::easing::cubic_out(t)
+    overseer_ui::choice(ui, name, about, on, one_of)
 }
 
 /// A line of explanation under a group.
@@ -525,8 +444,8 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                         bracket: brackets.get(at).copied().flatten(),
                         arrive: 1.0,
                         pace: Pace {
-                            hover: motion::EFFICIENT,
-                            select: motion::EFFICIENT,
+                            hover: overseer_ui::motion::EFFICIENT,
+                            select: overseer_ui::motion::EFFICIENT,
                         },
                     };
                     board::row(ui, player, &style, &settings.hidden_columns);

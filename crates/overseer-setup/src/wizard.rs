@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use eframe::{App, CreationContext, Frame};
 use egui::{Align2, CentralPanel, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
-use overseer_ui::{Face, caps_at, caps_text, colour, motion, shape, size, space};
+use overseer_ui::{Face, caps_at, caps_text, colour, shape, size, space};
 
 use crate::plan::{self, Finding, Profile, REGIONS, Survey};
 use crate::run::{self, Line, Running};
@@ -424,64 +424,7 @@ fn note(ui: &mut Ui, text: &str, tint: egui::Color32) {
 
 /// One choice. True when it was clicked.
 fn option_row(ui: &mut Ui, name: &str, about: &str, chosen: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), space::ROW + space::SM),
-        Sense::click(),
-    );
-    if !ui.is_rect_visible(rect) {
-        return response.clicked();
-    }
-    let painter = ui.painter().clone();
-    let lift = ui.ctx().animate_bool_with_time_and_easing(
-        response.id,
-        response.hovered(),
-        motion::INSTANT,
-        egui::emath::easing::cubic_out,
-    );
-    if chosen {
-        painter.add(egui::Shape::gradient_rect(
-            rect,
-            egui::Direction::LeftToRight,
-            [colour::BG_SELECTED, colour::BG_RAISED],
-        ));
-    } else if lift > 0.0 {
-        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
-    }
-    if chosen || lift > 0.0 {
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(2.0, rect.height())),
-            0,
-            colour::ENEMY.gamma_multiply(if chosen { 1.0 } else { lift }),
-        );
-    }
-    // A disc, because these are choices among siblings rather than switches.
-    // Drawing them as squares is how somebody ends up trying to pick two
-    // regions.
-    let centre = pos2(rect.left() + space::XL + 5.0, rect.center().y);
-    painter.circle_stroke(centre, 5.0, egui::Stroke::new(1.0, colour::LINE));
-    if chosen {
-        painter.circle_filled(centre, 3.0, colour::TEXT_STRONG);
-    }
-    let dot = Rect::from_center_size(centre, vec2(10.0, 10.0));
-    painter.text(
-        pos2(dot.right() + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        Face::Body.at(size::BODY),
-        if chosen {
-            colour::TEXT_STRONG
-        } else {
-            colour::TEXT
-        },
-    );
-    painter.text(
-        pos2(rect.left() + 190.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        about,
-        Face::Body.at(size::MICRO),
-        colour::TEXT_FAINT,
-    );
-    response.clicked()
+    overseer_ui::choice(ui, name, about, chosen, true)
 }
 
 /// The footer: what happens next, and the button that does it.

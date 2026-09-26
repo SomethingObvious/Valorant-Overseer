@@ -378,6 +378,108 @@ pub mod shape {
     }
 }
 
+/// One row that can be switched on, drawn the one way this product draws
+/// them.
+///
+/// The window and the installer both ask the same question in the same
+/// shape: a mark, a name, and a few words saying what it means. They had a
+/// copy each, and the copies had already drifted: the installer lit the
+/// chosen row and the settings screen did not, so the same control looked
+/// like two controls in one product. This is the only one now.
+///
+/// `one_of` picks the mark. A disc for a choice among siblings, a square for
+/// a switch that stands alone: drawing a region as a square is how somebody
+/// ends up trying to pick two of them. A chosen disc also lights its row,
+/// because one row in a group being the answer is worth saying twice, while
+/// twelve lit rows of switches would say nothing at all.
+pub fn choice(ui: &mut egui::Ui, name: &str, about: &str, on: bool, one_of: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), space::ROW + space::SM),
+        egui::Sense::click(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return response.clicked();
+    }
+    let painter = ui.painter().clone();
+    let lift = motion::eased(ui.ctx().animate_bool_with_time(
+        response.id,
+        response.hovered(),
+        motion::INSTANT,
+    ));
+    let answer = on && one_of;
+    if answer {
+        painter.add(egui::Shape::gradient_rect(
+            rect,
+            egui::Direction::LeftToRight,
+            [colour::BG_SELECTED, colour::BG_RAISED],
+        ));
+    } else if lift > 0.0 {
+        painter.rect_filled(rect, 0, colour::BG_HOVER.gamma_multiply(lift));
+    }
+    // The accent, only on the row that is the answer or the row under the
+    // pointer. It is the one mark in these screens that says "this is a
+    // control" rather than "this is a value".
+    if answer || lift > 0.0 {
+        painter.rect_filled(
+            egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
+            0,
+            colour::ENEMY.gamma_multiply(if answer { 1.0 } else { lift }),
+        );
+    }
+    let centre = egui::pos2(rect.left() + space::XL + 5.0, rect.center().y);
+    if one_of {
+        painter.circle_stroke(centre, 5.0, Stroke::new(1.0, colour::LINE));
+        if on {
+            painter.circle_filled(centre, 3.0, colour::TEXT_STRONG);
+        }
+    } else {
+        let box_rect = egui::Rect::from_center_size(centre, egui::vec2(10.0, 10.0));
+        if on {
+            painter.rect_filled(box_rect, 0, colour::TEXT_STRONG);
+        } else {
+            painter.rect_stroke(
+                box_rect,
+                0,
+                Stroke::new(1.0, colour::LINE),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    let drawn = painter.text(
+        egui::pos2(centre.x + 5.0 + space::LG, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        Face::Body.at(size::BODY),
+        if on || lift > 0.0 {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT_DIM
+        },
+    );
+    // Cut to what is left of the row rather than run off the end of it: two
+    // of these side by side leave half the width each, and the longest
+    // explanation is wider than half.
+    let at = drawn.right().max(rect.left() + 190.0) + space::LG;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        about.to_owned(),
+        Face::Body.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: rect.right() - space::XL - at,
+        max_rows: 1,
+        break_anywhere: false,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = painter.layout_job(job);
+    painter.galley(
+        egui::pos2(at, rect.center().y - galley.size().y / 2.0),
+        galley,
+        colour::TEXT_FAINT,
+    );
+    response.clicked()
+}
+
 /// One key, drawn as a key: a plate with a letter on it.
 ///
 /// The display face is caps only and has no arrows, so anything that is not

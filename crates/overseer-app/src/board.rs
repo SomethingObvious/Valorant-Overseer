@@ -694,14 +694,27 @@ fn flags(painter: &egui::Painter, player: &Player, rect: Rect, noted: bool) {
         x = mark.left() - space::MD;
     }
     if player.smurf {
-        let drawn = painter.text(
-            pos2(x, rect.center().y),
-            Align2::RIGHT_CENTER,
-            "!",
-            Face::Display.at(size::BODY),
+        // A filled triangle rather than an exclamation mark. The mark that
+        // answers "which of these five" has to be found without reading,
+        // and a glyph in a column of glyphs is not.
+        let (cx, cy) = (x - 6.0, rect.center().y);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                pos2(cx, cy - 6.0),
+                pos2(cx + 6.0, cy + 5.0),
+                pos2(cx - 6.0, cy + 5.0),
+            ],
             colour::WARN,
+            egui::Stroke::NONE,
+        ));
+        painter.text(
+            pos2(cx, cy + 1.0),
+            Align2::CENTER_CENTER,
+            "!",
+            Face::Display.at(size::MICRO),
+            colour::VOID,
         );
-        x = drawn.left() - space::MD;
+        x = cx - 6.0 - space::MD;
     }
     // A party Riot told us about is drawn as a bracket down the gutter, so
     // there is nothing to say here. A stack the app only inferred cannot be
@@ -1120,12 +1133,18 @@ fn notice(ui: &mut Ui, board: &Board) {
 /// The only block of colour on the board, and the thing the eye lands on
 /// first. It answers the question asked before any other: which half of this
 /// lobby am I looking at, and is anybody on it a problem.
-pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Board, team: &str) {
+pub(crate) fn team_heading(
+    ui: &mut Ui,
+    label: &str,
+    tint: Color32,
+    board: &Board,
+    team: &str,
+) -> bool {
     let width = ui.available_width();
     let (rect, _response) =
         ui.allocate_exact_size(vec2(width, space::ROW + space::MD), Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return;
+        return false;
     }
     let painter = ui.painter().clone();
     let band = Rect::from_min_max(
@@ -1158,17 +1177,38 @@ pub(crate) fn team_heading(ui: &mut Ui, label: &str, tint: Color32, board: &Boar
     );
     x = drawn.right() + space::LG;
 
-    let flagged = board.team(team).iter().filter(|p| p.smurf).count();
-    if flagged > 0 {
-        chip(
-            &painter,
-            pos2(x, band.center().y),
-            &format!("{flagged} worth a look"),
-            colour::WARN,
-        );
-    }
-
+    let jump = worth_chip(ui, &painter, board, team, pos2(x, band.center().y));
     averages(&painter, board, team, band);
+    jump
+}
+
+/// The count of accounts worth a look, as a chip that takes you to one.
+///
+/// The chip says there is somebody worth looking at, so it may as well be
+/// the way to look at them: one click from the question to the answer, in
+/// an app whose whole job is that question.
+fn worth_chip(ui: &Ui, painter: &egui::Painter, board: &Board, team: &str, at: Pos2) -> bool {
+    let flagged = board.team(team).iter().filter(|p| p.smurf).count();
+    if flagged == 0 {
+        return false;
+    }
+    let plate = chip(
+        painter,
+        at,
+        &format!("{flagged} worth a look"),
+        colour::WARN,
+    );
+    let hit = ui.interact(plate, ui.id().with(("worth", team)), Sense::click());
+    if hit.hovered() {
+        painter.add(shape::cut_wash(
+            plate,
+            4.0,
+            colour::WARN.gamma_multiply(0.22),
+            colour::WARN.gamma_multiply(0.10),
+        ));
+        drop(hit.clone().on_hover_cursor(egui::CursorIcon::PointingHand));
+    }
+    hit.clicked()
 }
 
 /// A side's averages, laid out right to left so they finish on the same

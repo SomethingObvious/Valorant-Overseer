@@ -143,6 +143,9 @@ pub(crate) struct Overseer {
     roster: Vec<String>,
     /// When the roster last changed, which is when the rows start landing.
     roster_at: f64,
+    /// How tall the overlay's contents actually came out last time they
+    /// were drawn, so the window can be exactly that tall.
+    overlay_drew: Option<f32>,
     /// Frames the bridge sent that this build could not read, and the last
     /// reason. Counted rather than ignored: a board that will not parse
     /// looks exactly like no match in progress, and that cost an evening
@@ -218,6 +221,7 @@ impl Overseer {
             hovered_at: 0.0,
             roster: Vec::new(),
             roster_at: 0.0,
+            overlay_drew: None,
             unreadable: (0, None),
         }
     }
@@ -331,11 +335,78 @@ impl Overseer {
             .find(|p| p.puuid.as_ref() == Some(id))
     }
 
+    /// Moves to the next account worth a look, wrapping round.
+    ///
+    /// The whole app exists to answer "which of these five should I worry
+    /// about", and this is that question as a single keystroke. Given a
+    /// side it stays on that side, which is what the chip in the team band
+    /// does when it is clicked.
+    fn next_flagged(&mut self, team: Option<&str>) {
+        let flagged: Vec<&str> = self
+            .board
+            .players
+            .iter()
+            .filter(|p| p.smurf)
+            .filter(|p| team.is_none_or(|t| p.team.as_deref() == Some(t)))
+            .filter_map(|p| p.puuid.as_deref())
+            .collect();
+        let Some(first) = flagged.first() else { return };
+        let at = self
+            .selected
+            .as_deref()
+            .and_then(|id| flagged.iter().position(|f| *f == id));
+        let next = at.map_or(first, |i| flagged.get(i + 1).unwrap_or(first));
+        self.selected = Some((*next).to_owned());
+        // The pointer wins over the selection everywhere else in this app,
+        // so a jump has to take the pointer's job away or nothing appears
+        // to happen.
+        self.hovered = None;
+    }
+
     /// How far the row at a given place has landed.
     ///
     /// Staggered, so ten rows read as a roster arriving rather than a block
     /// appearing. The window asks for frames while any of them is still on
     /// its way and stops the moment the last one is home.
+    /// One side's rows, and what the pointer did to them.
+    ///
+    /// Its own function because the loop and the frame around it are two
+    /// different jobs: this one is a row at a time, the caller is a side at
+    /// a time, and reading either while the other is in the way is how a
+    /// board ends up with a bug nobody can see.
+    fn team_rows(
+        &self,
+        ui: &mut Ui,
+        players: &[&Player],
+        look: &Look<'_>,
+        landing: &impl Fn(usize) -> f32,
+        at: &mut usize,
+    ) -> (Option<String>, Option<String>) {
+        let brackets = board::brackets(players);
+        let (mut clicked, mut hovered) = (None, None);
+        for (where_in_team, player) in players.iter().enumerate() {
+            let style = RowStyle {
+                team: look.tint,
+                selected: player.puuid.is_some() && player.puuid.as_deref() == look.selected,
+                height: look.height,
+                pace: look.pace,
+                noted: player.puuid.as_deref().is_some_and(|id| self.notes.has(id)),
+                bracket: brackets.get(where_in_team).copied().flatten(),
+                arrive: landing(*at),
+            };
+            *at += 1;
+            let touch = board::row(ui, player, &style, look.hidden);
+            if touch.clicked() {
+                clicked.clone_from(&player.puuid);
+            }
+            if touch.hovered() {
+                hovered.clone_from(&player.puuid);
+            }
+        }
+        (clicked, hovered)
+    }
+
+    /// The parts of a row's look that every row on a side shares.
     fn landing(&self, now: f64) -> impl Fn(usize) -> f32 + use<> {
         let since = (now - self.roster_at) as f32;
         let still = self.quality() == Quality::Efficient;
@@ -377,7 +448,7 @@ impl Overseer {
         // Nothing here fires while the search box has the keyboard: a
         // person typing a name is not asking to change screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
-        let (up, down, settings, escape, find, overlay) = ui.input(|i| {
+        let (up, down, settings, escape, find, overlay, worth) = ui.input(|i| {
             (
                 i.key_pressed(Key::ArrowUp),
                 i.key_pressed(Key::ArrowDown),
@@ -385,6 +456,7 @@ impl Overseer {
                 i.key_pressed(Key::Escape),
                 i.key_pressed(Key::Slash) || (i.modifiers.command && i.key_pressed(Key::F)),
                 i.key_pressed(Key::O),
+                i.key_pressed(Key::W),
             )
         });
         if escape {
@@ -408,6 +480,9 @@ impl Overseer {
         }
         if overlay {
             self.set_overlay(!self.settings.overlay);
+        }
+        if worth {
+            self.next_flagged(None);
         }
         if settings {
             self.screen = if self.screen == Screen::Settings {
@@ -812,7 +887,15 @@ impl Overseer {
     /// The windowed empty state is three lines of reassurance in the middle
     /// of a large rectangle, which is right for a window somebody opened on
     /// purpose and wrong for something sitting over a game.
-    fn overlay_view(&self, ui: &mut Ui) {
+    /// How tall the overlay should be: what it measured, or a guess until
+    /// it has measured anything.
+    fn overlay_height(&self) -> f32 {
+        self.overlay_drew
+            .unwrap_or_else(|| overlay::size_for(self.board.players.len()).y)
+    }
+
+    /// The overlay's whole contents, and how tall they came out.
+    fn overlay_view(&self, ui: &mut Ui) -> f32 {
         if self.board.players.is_empty() {
             let (rect, _response) =
                 ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
@@ -826,11 +909,11 @@ impl Overseer {
                     tint,
                 );
             }
-            return;
+            return space::ROW + space::MD;
         }
         // No foot in the overlay: the session belongs in a window somebody
         // is looking at, and the overlay is exactly as tall as its rows.
-        drop(self.rows(ui, false));
+        self.rows(ui, false).drew
     }
 
     /// The board, both teams, with the headings each side needs.
@@ -848,6 +931,9 @@ impl Overseer {
         }
         if let Some(head) = touched.heading {
             self.sort.clicked(head);
+        }
+        if let Some(team) = touched.worth {
+            self.next_flagged(Some(&team));
         }
     }
 
@@ -880,8 +966,9 @@ impl Overseer {
         let mut clicked: Option<String> = None;
         let mut hovered: Option<String> = None;
         let mut heading: Option<&'static str> = None;
+        let mut worth: Option<String> = None;
         let mut shown = 0_usize;
-        ScrollArea::vertical()
+        let scrolled = ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(space::MD);
@@ -896,32 +983,28 @@ impl Overseer {
                     // K/D, and without this they ask egui for the same
                     // widget id and it says so, loudly, across the board.
                     ui.push_id(&team, |ui| {
-                        board::team_heading(ui, label, tint, &self.board, &team);
+                        if board::team_heading(ui, label, tint, &self.board, &team) {
+                            worth = Some(team.clone());
+                        }
                         if let Some(head) =
                             board::headings(ui, ui.available_width(), &hidden, &sort)
                         {
                             heading = Some(head);
                         }
-                        let brackets = board::brackets(&players);
-                        for (where_in_team, player) in players.iter().enumerate() {
-                            shown += 1;
-                            let style = RowStyle {
-                                team: tint,
-                                selected: player.puuid.is_some() && player.puuid == selected,
-                                height,
-                                pace,
-                                noted: player.puuid.as_deref().is_some_and(|id| self.notes.has(id)),
-                                bracket: brackets.get(where_in_team).copied().flatten(),
-                                arrive: landing(at),
-                            };
-                            at += 1;
-                            let touch = board::row(ui, player, &style, &hidden);
-                            if touch.clicked() {
-                                clicked.clone_from(&player.puuid);
-                            }
-                            if touch.hovered() {
-                                hovered.clone_from(&player.puuid);
-                            }
+                        let look = Look {
+                            tint,
+                            height,
+                            pace,
+                            selected: selected.as_deref(),
+                            hidden: &hidden,
+                        };
+                        let (hit, over) = self.team_rows(ui, &players, &look, &landing, &mut at);
+                        shown += players.len();
+                        if hit.is_some() {
+                            clicked = hit;
+                        }
+                        if over.is_some() {
+                            hovered = over;
                         }
                     });
                     ui.add_space(space::XL);
@@ -934,22 +1017,44 @@ impl Overseer {
                 }
             });
         Touched {
+            drew: scrolled.content_size.y,
             clicked,
             hovered,
             heading,
+            worth,
         }
     }
 }
 
-/// What the pointer did to the board this frame.
+/// What every row on one side has in common.
+#[derive(Debug, Clone, Copy)]
+struct Look<'a> {
+    /// The side's colour, behind the agent's own.
+    tint: egui::Color32,
+    /// How tall a row is at this width.
+    height: f32,
+    /// How long the hover and selection tints take.
+    pace: Pace,
+    /// Who is selected, if anybody.
+    selected: Option<&'a str>,
+    /// Which columns are switched off.
+    hidden: &'a [String],
+}
+
+/// What the pointer did to the board this frame, and how tall it came out.
 #[derive(Debug, Default)]
 struct Touched {
+    /// The height the rows actually took, which is what the overlay sizes
+    /// itself from.
+    drew: f32,
     /// The account whose row was clicked.
     clicked: Option<String>,
     /// The account whose row the pointer is over.
     hovered: Option<String>,
     /// The column heading that was clicked.
     heading: Option<&'static str>,
+    /// The side whose "worth a look" chip was clicked.
+    worth: Option<String>,
 }
 
 impl App for Overseer {
@@ -997,13 +1102,21 @@ impl App for Overseer {
             // Its own window, drawn before this one so that a frame where
             // the board changed reaches both. Read only: nothing in it takes
             // a click, so nothing in it can change anything.
-            let this = &*self;
-            overlay::show(
-                ui.ctx(),
-                this.settings.corner,
-                this.board.players.len(),
-                |ui| this.overlay_view(ui),
-            );
+            let asked = self.overlay_height();
+            let mut drew = asked;
+            {
+                let this = &*self;
+                overlay::show(ui.ctx(), this.settings.corner, asked, |ui| {
+                    drew = this.overlay_view(ui);
+                });
+            }
+            // What it asked for against what the board needed. The window
+            // follows the board rather than a sum kept by hand, which is the
+            // only arrangement that cannot go stale.
+            if (drew - asked).abs() > 0.5 {
+                self.overlay_drew = Some(drew.min(overlay::CEILING));
+                ui.ctx().request_repaint();
+            }
         }
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
@@ -1120,6 +1233,7 @@ impl Overseer {
         for (key, what) in [
             ("/", "find"),
             (",", "settings"),
+            ("w", "worth a look"),
             ("o", "overlay"),
             ("\u{2191}\u{2193}", "pick"),
         ] {
@@ -1282,6 +1396,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         hovered_at: 0.0,
         roster: Vec::new(),
         roster_at: 0.0,
+        overlay_drew: None,
         unreadable: (0, None),
     };
     Panel::top("header")

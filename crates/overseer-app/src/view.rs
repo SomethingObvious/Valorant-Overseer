@@ -430,7 +430,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 if players.is_empty() {
                     continue;
                 }
-                board::team_heading(ui, label, tint, board, &team);
+                let _jumped = board::team_heading(ui, label, tint, board, &team);
                 // Same id scope as the window uses, for the same reason.
                 ui.push_id(&team, |ui| {
                     board::headings(ui, ui.available_width(), &settings.hidden_columns, sort);

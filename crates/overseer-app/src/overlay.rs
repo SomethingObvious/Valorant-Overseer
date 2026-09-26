@@ -118,11 +118,12 @@ pub(crate) fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
     }
 }
 
-/// How tall the overlay has to be to hold this many rows.
+/// How tall to make the overlay before anything has been drawn in it.
 ///
-/// Measured from the rows rather than fixed, because a five stack in agent
-/// select and a ten player lobby are different heights and an overlay with a
-/// band of empty space under it looks broken.
+/// A guess, and only a guess: the window is resized to whatever the board
+/// actually drew as soon as it has drawn once. Adding the pieces up by hand
+/// is how this clipped its own last player twice, because the sum has to be
+/// revisited every time a band grows a point, and nobody revisits a sum.
 ///
 /// No rows at all is a single line saying so. The full sized empty state
 /// belongs in a window somebody is looking at; over a game it would be a
@@ -134,6 +135,13 @@ pub(crate) fn size_for(rows: usize) -> Vec2 {
     let body = space::ROW_TIGHT * rows as f32;
     vec2(WIDTH, body + CHROME)
 }
+
+/// The tallest the overlay is allowed to get, whatever it measures.
+///
+/// A lobby is ten rows and this is far more than ten rows need. It exists
+/// so that a board that somehow grows without bound cannot turn the overlay
+/// into a full screen window over somebody's game.
+pub(crate) const CEILING: f32 = 620.0;
 
 /// Draws the overlay, as a window of its own.
 ///
@@ -148,8 +156,8 @@ pub(crate) fn size_for(rows: usize) -> Vec2 {
 ///
 /// The main window is left alone, which also means the board is still there
 /// on a second monitor while the overlay runs on the first.
-pub(crate) fn show(ctx: &egui::Context, corner: Corner, rows: usize, draw: impl FnMut(&mut Ui)) {
-    let size = size_for(rows);
+pub(crate) fn show(ctx: &egui::Context, corner: Corner, height: f32, draw: impl FnMut(&mut Ui)) {
+    let size = vec2(WIDTH, height.clamp(space::ROW, CEILING));
     let monitor = ctx
         .input(|i| i.viewport().monitor_size)
         .unwrap_or(FALLBACK_SCREEN);

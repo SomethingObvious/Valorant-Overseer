@@ -1076,10 +1076,10 @@ const APART: f32 = 4.0;
 
 /// `plate` kept inside `bounds`, the screen it is drawn on, and moved to the
 /// nearest place clear of everything in `taken` by `APART`: names placed
-/// before it, and the faces and rings it mustn't cover. Names stack
-/// upwards first, so lineups on one spot list their names above it, and then
-/// try below and to either side. When nothing near is clear it takes the
-/// spot covering the least.
+/// before it, and the faces and rings it mustn't cover. That can be above,
+/// below or out to either side, whichever is nearest, so lineups on one spot
+/// stack their names. When nothing near is clear it takes the spot covering
+/// the least.
 fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
     let inside = |r: Rect| {
         let dx = (bounds.left() - r.left()).max(0.0) + (bounds.right() - r.right()).min(0.0);
@@ -1094,24 +1094,26 @@ fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
             .map(|i| i.area())
             .sum()
     };
-    let (up, across) = (plate.height() + APART, plate.width().mul_add(0.5, APART));
+    // Rows of the name's height, and steps of a quarter of its width out to a
+    // width and a half either side, tried nearest first. Below costs a little
+    // more than above, so a stack still grows upwards.
+    let (up, across) = (plate.height() + APART, (plate.width() + APART) / 4.0);
+    let mut shifts: Vec<Vec2> = (-5_i8..=5)
+        .flat_map(|row| {
+            (-6_i8..=6).map(move |step| vec2(f32::from(step) * across, f32::from(row) * up))
+        })
+        .collect();
+    let cost = |v: &Vec2| v.x.hypot(if v.y > 0.0 { v.y * 1.15 } else { v.y });
+    shifts.sort_by(|a, b| cost(a).total_cmp(&cost(b)));
     let mut best = (f32::INFINITY, inside(plate));
-    for step in 0..6_u8 {
-        let rows = f32::from(step);
-        for shift in [
-            vec2(0.0, -rows * up),
-            vec2(0.0, rows * up),
-            vec2(-across, -rows * up),
-            vec2(across, -rows * up),
-        ] {
-            let moved = inside(plate.translate(shift));
-            let covered = overlap(moved);
-            if covered <= 0.0 {
-                return moved;
-            }
-            if covered < best.0 {
-                best = (covered, moved);
-            }
+    for shift in shifts {
+        let moved = inside(plate.translate(shift));
+        let covered = overlap(moved);
+        if covered <= 0.0 {
+            return moved;
+        }
+        if covered < best.0 {
+            best = (covered, moved);
         }
     }
     best.1
@@ -1675,5 +1677,13 @@ mod tests {
         let face = Rect::from_center_size(pos2(200.0, 200.0), vec2(26.0, 26.0));
         let moved = clear_of(&[face], name, map);
         assert!(!moved.intersects(face), "{moved:?} still covers the face");
+        // Boxed in above and below, it goes beside rather than far up.
+        let column = Rect::from_min_max(pos2(150.0, 60.0), pos2(250.0, 340.0));
+        let beside = clear_of(&[column], name, map);
+        assert!(!beside.intersects(column), "{beside:?}");
+        assert!(
+            (beside.center().y - 200.0).abs() < 1.0,
+            "{beside:?} left its row"
+        );
     }
 }

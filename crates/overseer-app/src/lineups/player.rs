@@ -563,7 +563,7 @@ impl Player {
     /// over the bottom of it. `span` is the part it plays and `gain` the
     /// clip's own volume. Full screen, the panel keeps the frame and the
     /// controls go to the big one.
-    pub(super) fn show(&mut self, ui: &mut Ui, span: (f64, f64), gain: f32) {
+    pub(super) fn show(&mut self, ui: &mut Ui, span: (f64, f64), gain: f32, room: f32) {
         self.advance(ui.ctx());
         self.shown_in = ui.ctx().cumulative_pass_nr();
         (self.span, self.gain) = (span, gain);
@@ -581,9 +581,10 @@ impl Player {
         self.keys(ui);
         let aspect = self.aspect();
         let wide = ui.available_width();
-        // Never taller than what is left on screen under it, so the whole
-        // clip and its bar are always in view without scrolling.
-        let left = ui.clip_rect().bottom() - ui.cursor().top() - space::SM;
+        // Never taller than what is left on screen under it, less `room`
+        // for what comes after it, so the clip, its bar and that are all in
+        // view without scrolling.
+        let left = ui.clip_rect().bottom() - ui.cursor().top() - space::SM - room;
         let high = (wide / aspect)
             .min(ui.ctx().content_rect().height() * self.prefs.size)
             .min(left.max(SHORTEST));
@@ -1370,7 +1371,7 @@ mod tests {
             .build_ui_state(
                 move |ui, slot: &mut Option<Player>| {
                     ui.set_max_width(380.0);
-                    of(slot, &shown, 1.0, still).show(ui, (0.0, 4.0), 0.0);
+                    of(slot, &shown, 1.0, still).show(ui, (0.0, 4.0), 0.0, 0.0);
                 },
                 None,
             );

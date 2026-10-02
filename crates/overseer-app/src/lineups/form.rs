@@ -270,6 +270,9 @@ fn whereabouts(ui: &mut Ui, plan: Option<&Plan>, draft: &mut Draft) {
 const GRIP: f32 = 8.0;
 /// The shortest clip the trim bar keeps, in seconds.
 const SHORTEST: f64 = 0.5;
+/// How tall the trim bar, the From and To boxes and the volume under the
+/// video are, together, in points.
+const CUTTING_ROOM: f32 = 150.0;
 /// The longest clip the backend cuts, in seconds.
 pub(super) const LONGEST: f64 = 90.0;
 /// How long the trim bar takes to zoom to a new span, in seconds.
@@ -427,15 +430,18 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
         return;
     };
     let span = kept(draft).unwrap_or((0.0, LONGEST));
-    // Nothing starts on its own while it is being cut.
+    // Nothing starts on its own while it is being cut, and it is smaller than
+    // a saved lineup's, so the trim bar, the times and the volume under it
+    // fit on screen with it.
     let prefs = Prefs {
         autoplay: false,
+        size: prefs.size * 0.6,
         ..prefs
     };
     let player = player::of(slot, file, span.0, prefs);
     // The bar carries the clip's volume, so the clip itself plays as it is.
     player.follow(draft.volume, ui.input(|i| i.time));
-    player.show(ui, span, 100.0);
+    player.show(ui, span, 100.0, CUTTING_ROOM);
 }
 
 /// The trim bar, and the video following a handle while it is dragged: a

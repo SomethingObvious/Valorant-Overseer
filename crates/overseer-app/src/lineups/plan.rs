@@ -840,7 +840,7 @@ fn pins(painter: &egui::Painter, square: Square, atlas: &Atlas, view: &View, sca
         );
         label(painter, square, lineup, (&mut taken, colour::TEXT_STRONG));
     }
-    if view.naming() && writing.is_none() {
+    if view.naming() {
         for lineup in &rest {
             label(painter, square, lineup, (&mut taken, colour::TEXT_DIM));
         }

@@ -848,11 +848,11 @@ fn pins(
     for lineup in &rest {
         pin(painter, square, atlas, lineup, (faint(lineup), main));
     }
-    // Names keep off every face, ring and molly, and may run off the map as
+    // Names keep off every face and ring, and may run off the map as
     // far as the screen goes. The picked one's name goes first, so the rest
     // move out of its way.
     let shown: Vec<&Lineup> = rest.iter().chain(&picked).copied().chain(writing).collect();
-    let mut taken = covered(square, &shown, scale);
+    let mut taken = covered(square, &shown);
     let painter = &painter.with_clip_rect(room);
     for lineup in &picked {
         pin(
@@ -1017,17 +1017,28 @@ fn label(
         return;
     };
     let font = Face::Display.at(size::LABEL);
-    let wide = space::MD.mul_add(2.0, caps_width(painter, &lineup.title, font.clone()));
+    let wide = space::MD.mul_add(2.0, caps_width(painter, &lineup.title, font.clone())) + BAR;
     let plate = clear_of(
         taken,
-        Rect::from_center_size(at - vec2(0.0, RING + 14.0), vec2(wide, 18.0)),
+        Rect::from_center_size(at - vec2(0.0, RING + 14.0), vec2(wide, 20.0)),
         room,
     );
     taken.push(plate);
-    painter.rect_filled(plate, 0, colour::VOID.gamma_multiply(0.9));
+    // Outlined and barred in its side's colour, so a lineup's name reads
+    // apart from the map's own place names on their plain dark plates.
+    let side = tint(lineup.side.as_deref());
+    painter.rect(
+        plate,
+        0,
+        colour::VOID.gamma_multiply(0.95),
+        Stroke::new(1.0, side.gamma_multiply(0.8)),
+        egui::StrokeKind::Inside,
+    );
+    let bar = Rect::from_min_size(plate.min, vec2(BAR, plate.height()));
+    painter.rect_filled(bar, 0, side);
     let _title = caps_text(
         painter,
-        plate.center(),
+        pos2(plate.center().x + BAR / 2.0, plate.center().y),
         Align2::CENTER_CENTER,
         &lineup.title,
         font,
@@ -1035,9 +1046,9 @@ fn label(
     );
 }
 
-/// What a name must keep off: every lineup's face where it is thrown from,
-/// its ring where it lands, and the ground its molly covers.
-fn covered(square: Square, lineups: &[&Lineup], scale: Option<f32>) -> Vec<Rect> {
+/// What a name must keep off: every lineup's face where it is thrown from
+/// and its ring where it lands. The ground a molly covers is fine to sit on.
+fn covered(square: Square, lineups: &[&Lineup]) -> Vec<Rect> {
     let mut out = Vec::new();
     for lineup in lineups {
         if let Some(stand) = lineup.stand {
@@ -1049,23 +1060,23 @@ fn covered(square: Square, lineups: &[&Lineup], scale: Option<f32>) -> Vec<Rect>
         let Some(land) = lineup.land else {
             continue;
         };
-        let at = point(square, land);
-        out.push(Rect::from_center_size(at, Vec2::splat(RING * 2.0)));
-        let reach = lineup.ability.as_deref().and_then(reach).zip(scale);
-        if let Some(((edge, _), scale)) = reach {
-            let radius = edge * scale * square.width();
-            out.push(Rect::from_center_size(at, Vec2::splat(radius * 2.0)));
-        }
+        out.push(Rect::from_center_size(
+            point(square, land),
+            Vec2::splat(RING * 2.0),
+        ));
     }
     out
 }
+
+/// How wide the bar in its side's colour is down a lineup name's left edge.
+const BAR: f32 = 3.0;
 
 /// The space kept between two names on the map, in points.
 const APART: f32 = 4.0;
 
 /// `plate` kept inside `bounds`, the screen it is drawn on, and moved to the
 /// nearest place clear of everything in `taken` by `APART`: names placed
-/// before it, and the faces, rings and mollies it mustn't cover. Names stack
+/// before it, and the faces and rings it mustn't cover. Names stack
 /// upwards first, so lineups on one spot list their names above it, and then
 /// try below and to either side. When nothing near is clear it takes the
 /// spot covering the least.

@@ -165,16 +165,21 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
         }
         return None;
     }
-    // Always one picked while there are any to show: the one picked, or else
-    // the first in the list's order.
+    // Nothing picked lights every lineup on the map. One the filter has
+    // hidden isn't picked any more.
     let shown = view.shown(atlas);
     if !shown
         .iter()
         .any(|l| l.id.is_some() && l.id == view.selected)
     {
-        view.selected = shown.first().and_then(|l| l.id.clone());
+        view.selected = None;
     }
-    picker(ui, atlas, &here, view);
+    let hint = if shown.is_empty() {
+        "No lineup matches the filter"
+    } else {
+        "Pick a lineup, here or on the map"
+    };
+    picker(ui, atlas, (&here, hint), view);
     let picked = atlas
         .lineups
         .iter()
@@ -229,7 +234,7 @@ fn ordering(ui: &mut Ui, view: &mut View) {
 /// The picked lineup as a row with an arrow, which drops the whole list
 /// down under it to pick another from, with the filter, the order and the
 /// agent chips at the top of it.
-fn picker(ui: &mut Ui, atlas: &Atlas, here: &[&Lineup], view: &mut View) {
+fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &mut View) {
     ui.add_space(space::SM);
     let main = view.main.clone();
     let id = ui.id().with("lineup-picker");
@@ -247,7 +252,7 @@ fn picker(ui: &mut Ui, atlas: &Atlas, here: &[&Lineup], view: &mut View) {
         ui.painter().text(
             rect.left_center() + vec2(space::LG, 0.0),
             Align2::LEFT_CENTER,
-            "No lineup matches the filter",
+            hint,
             Face::Body.at(size::BODY),
             colour::TEXT_DIM,
         );

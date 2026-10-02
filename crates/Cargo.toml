@@ -1,0 +1,175 @@
+# The Rust half of Valorant Overseer: the window, its data layer, and the
+# installer. The Python backend and the terminal front end are unaffected by
+# everything here; see crates/README.md for the plan and the reasoning.
+#
+# The workspace root is crates/, so clippy.toml, rustfmt.toml and deny.toml
+# sit here beside it and cargo runs from here. lint.ps1 rejects any of them
+# anywhere else, since one in a crate would quietly loosen that crate.
+
+[workspace]
+resolver = "3"
+members = [
+  "overseer-core",
+  "overseer-ui",
+  "overseer-app",
+  "overseer-setup",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+egui = "0.36.2"
+# One PNG decoder for the agent portraits and rank emblems bound into the
+# design crate. The `image` crate would do the same job and bring a dozen
+# formats this app will never see; this is the one that `image` itself uses
+# for PNG.
+png = "0.18.0"
+# Default features on, deliberately. They are the wgpu renderer, the bundled
+# fonts, accesskit for screen readers, and winit's own defaults, which is where
+# raw-window-handle lives: turning them off to "keep it lean" removes the
+# renderer and the surface it draws on. `persistence` is the addition, so the
+# window remembers its size and which monitor it was on.
+eframe = { version = "0.36.2", features = ["persistence"] }
+# One key combination the whole machine listens for, so the overlay can be
+# switched off without clicking a window that takes no clicks.
+global-hotkey = "0.8.0"
+# The icon beside the clock: somewhere to put the window, and proof the app
+# is running while the overlay is the only thing on screen. Default features
+# are Linux's tray implementations, and this only ever builds for Windows.
+tray-icon = { version = "0.25.1", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.145"
+# Blocking, and deliberately so. This is one socket carrying about one message
+# a second; an async runtime would be the largest dependency in the tree and
+# would buy nothing. No TLS features: the bridge is plain ws on 127.0.0.1, and
+# ws_server.py rejects anything arriving with an Origin header, which is why
+# the connection lives here and not in a web view.
+tungstenite = { version = "0.30.0", default-features = false, features = [
+  "handshake",
+] }
+
+[workspace.lints.rust]
+# `forbid` rather than `deny`: nothing in this workspace may re-enable it,
+# including a future contributor with an #[allow].
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+single_use_lifetimes = "deny"
+elided_lifetimes_in_paths = "deny"
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+non_ascii_idents = "deny"
+noop_method_call = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+let_underscore = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+# missing_docs forces docs to exist; these check they are correct. They only
+# fire under rustdoc, so the gate runs `cargo doc` to reach them.
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+unescaped_backticks = "deny"
+missing_crate_level_docs = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# clippy::restriction is explicitly not meant to be enabled wholesale: many of
+# its lints contradict each other. These are the individually chosen ones, and
+# they are the ones that stop a scoreboard from taking the app down while
+# somebody is in a match.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+float_cmp_const = "deny"
+lossy_float_literal = "deny"
+string_slice = "deny"
+integer_division = "deny"
+modulo_arithmetic = "deny"
+as_underscore = "deny"
+verbose_file_reads = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+same_name_method = "deny"
+suspicious_xor_used_as_pow = "deny"
+try_err = "deny"
+empty_drop = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+partial_pub_fields = "deny"
+str_to_string = "deny"
+unnecessary_self_imports = "deny"
+# A semantic backstop for this repository's ban on inline suppressions, which
+# is otherwise a regular expression over file text. These reject #[allow] at
+# the syntax tree, where text cannot hide it.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# --- The only relaxations, each with its reason. There are no #[allow]
+# --- attributes anywhere in crates/; a lint that is wrong here is argued for
+# --- in the open, in this file.
+
+# The one lint pair that contradicts itself. `unreachable_pub` says a `pub` item
+# in a binary crate, which nothing can import, must be `pub(crate)`.
+# `clippy::redundant_pub_crate` says a `pub(crate)` item inside a private module
+# should be `pub`. Every module of a binary is a private module, so the two
+# cannot both be satisfied. `unreachable_pub` is the one that catches a real
+# mistake in a library, so it wins, and this is switched off rather than
+# sprinkling the crate with the attributes this repository forbids.
+redundant_pub_crate = "allow"
+
+# Duplicate versions in other crates' dependencies: `windows-sys` four times
+# over, `windows-targets`, `hashbrown`, `miniz_oxide`, `rustc-hash`,
+# `keyboard-types` and `syn` twice. Each comes from a dependency of egui,
+# winit or the tray crate pinning its own major version, and this workspace
+# depends on none of those versions directly, so nothing here can unify them
+# short of forking those crates. `cargo deny` still refuses an unexpected
+# licence or a known advisory in every one of them, which is the part that
+# matters.
+multiple_crate_versions = "allow"
+
+# The three cast lints, which no code in this workspace can satisfy, because
+# the standard library has no other way to do these conversions.
+#
+# A float to an integer: `as` is the only way. `f32::to_int_unchecked` is the
+# other, and it is `unsafe` and undefined for NaN and out of range values,
+# which a layout can produce. Every pixel turned into a row, a column, a byte
+# or a frame index goes through one, so `cast_possible_truncation` and
+# `cast_sign_loss` fire on each with nothing to replace it.
+#
+# An integer to a float: `From` only exists from the 8 and 16 bit integers,
+# and from `u32` and `i32` to `f64`. Every cast this lint flags here is one of
+# the others, `usize`, `u32`, `i32` or `i64` to `f32`, or `usize` or `i64` to
+# `f64`, so `cast_precision_loss` has no lossless conversion to suggest
+# either. The values are counts, sizes and milliseconds, far below the 2^24
+# where an `f32` stops being exact.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+

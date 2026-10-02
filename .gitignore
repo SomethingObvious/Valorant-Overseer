@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+backend/.env
+.env
+.env.local
+
+# Everybody's own data: match history, lineups and their clips, and settings.
+backend/data/
+/lineups/*
+!/lineups/README.md
+.overseer/
+
+# Release build output.
+/dist/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local config, and the design notes kept beside it
+.claude/
+/crates/DESIGN.md
+
+# The Rust build tree.
+target/
+# The window and the wizard, placed beside the launcher from target/release
+# by install.ps1 on a source tree.
+/overseer.exe
+/overseer-setup.exe

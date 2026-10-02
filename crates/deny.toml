@@ -1,0 +1,63 @@
+# cargo-deny. Advisories and dependency hygiene are hard failures.
+#
+# `lint.ps1` runs this on every push, so a dependency arriving with a security
+# advisory, an unexpected licence or a git source is a rejected push rather than
+# something noticed later.
+
+[graph]
+# Windows is the only target this app is built for, and that is not a detail
+# here: without this line cargo-deny walks the Linux and macOS graphs too, and
+# the first thing it finds is an unmaintained advisory for `ttf-parser`, pulled
+# in by `sctk-adwaita`, which is Wayland's client side window decorations.
+# Nothing in that chain is compiled on Windows. Scoping the graph is the honest
+# fix; writing an exception for an advisory would have hidden a real one later.
+targets = [{ triple = "x86_64-pc-windows-msvc" }]
+all-features = false
+no-default-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+# Empty, and it should stay that way. An entry here is a known vulnerability
+# somebody decided to live with, and it needs the reason written beside it.
+ignore = []
+
+[licenses]
+version = 2
+# The two crates in this repository are not published and have no licence of
+# their own; this is one person's private application.
+private = { ignore = true }
+# Exactly what the Windows graph resolves to today, and nothing more. A missing
+# entry is a hard stop, which makes adding a dependency a decision rather than a
+# formality; an unused one is an allowance for a dependency that never arrived.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "ISC",
+  "MIT",
+  "OFL-1.1",
+  "Ubuntu-font-1.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[bans]
+# Several versions of one crate is the normal state of a graph this size: wgpu,
+# winit and windows-sys each bring their own, and none of it is ours to fix.
+# Allowed rather than warned: the warning prints the entire dependency tree,
+# every run, which buried the rest of the gate's output in several hundred
+# lines nobody was going to act on.
+multiple-versions = "allow"
+# A version requirement of "*" is a dependency that can change under us without
+# a lock file change. That one is ours to fix.
+wildcards = "deny"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

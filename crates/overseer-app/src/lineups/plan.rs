@@ -1019,7 +1019,7 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
     if response.drag_started_by(egui::PointerButton::Primary)
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
     {
-        grab(view, square, origin);
+        grab(atlas, view, square, origin);
     }
     if let Some(now) = ui.input(|i| i.pointer.latest_pos()) {
         follow(atlas, view, square, now, response.drag_stopped());
@@ -1033,7 +1033,7 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
 /// Starts a drag at `origin` on the lineup being written. On one of its pins
 /// it picks that pin up. Anywhere else it throws from there, with where it
 /// lands following the pointer. Browsing, a drag does nothing.
-fn grab(view: &mut View, square: Square, origin: Pos2) {
+fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
     let Mode::Edit(draft) = &mut view.mode else {
         return;
     };
@@ -1043,7 +1043,8 @@ fn grab(view: &mut View, square: Square, origin: Pos2) {
     } else if on(draft.lineup.stand) {
         Place::Stand
     } else {
-        draft.lineup.stand = Some(shapes::spot(square, origin));
+        let spot = shapes::spot(square, origin);
+        draft.lineup.stand = Some(snapped(atlas, &draft.lineup, spot, Place::Stand));
         Place::Land
     });
 }
@@ -1060,8 +1061,12 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
     };
     let spot = Some(shapes::spot(square, now));
     match place {
-        Place::Stand => draft.lineup.stand = spot,
-        Place::Land => draft.lineup.land = spot.map(|s| snapped(atlas, &draft.lineup, s)),
+        Place::Stand => {
+            draft.lineup.stand = spot.map(|s| snapped(atlas, &draft.lineup, s, Place::Stand));
+        }
+        Place::Land => {
+            draft.lineup.land = spot.map(|s| snapped(atlas, &draft.lineup, s, Place::Land));
+        }
     }
     if done {
         draft.grab = None;
@@ -1074,9 +1079,11 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
     }
 }
 
-/// `spot` moved onto the nearest landing spot of another lineup on the same
-/// map within `SAME_SPOT`, so two lineups for one spot share one ring.
-fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2]) -> [f32; 2] {
+/// `spot` moved onto the nearest pin of the same kind on another lineup on
+/// the same map within `SAME_SPOT`: any lineup's landing spot, so two lineups
+/// for one spot share one ring, or where a lineup for the same agent is
+/// thrown from, so one corner is one agent pin.
+fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32; 2] {
     let Some(scale) = atlas
         .maps
         .iter()
@@ -1089,7 +1096,12 @@ fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2]) -> [f32; 2] {
         .lineups
         .iter()
         .filter(|l| l.map == lineup.map && (lineup.id.is_none() || l.id != lineup.id))
-        .filter_map(|l| l.land)
+        .filter_map(|l| match place {
+            Place::Land => l.land,
+            Place::Stand => l
+                .stand
+                .filter(|_| l.agent.eq_ignore_ascii_case(&lineup.agent)),
+        })
         .map(|p| ((p[0] - spot[0]).hypot(p[1] - spot[1]), p))
         .filter(|(far, _)| *far <= SAME_SPOT * scale)
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -1147,12 +1159,14 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
     if let Mode::Edit(draft) = &mut view.mode {
         match draft.placing {
             Place::Stand => {
-                draft.lineup.stand = Some(spot);
+                draft.lineup.stand = Some(snapped(atlas, &draft.lineup, spot, Place::Stand));
                 if draft.lineup.land.is_none() {
                     draft.placing = Place::Land;
                 }
             }
-            Place::Land => draft.lineup.land = Some(snapped(atlas, &draft.lineup, spot)),
+            Place::Land => {
+                draft.lineup.land = Some(snapped(atlas, &draft.lineup, spot, Place::Land));
+            }
         }
         return;
     }
@@ -1239,11 +1253,11 @@ mod tests {
             map: Some("Ascent".to_owned()),
             ..View::default()
         };
-        grab(&mut view, square, pos2(20.0, 30.0));
+        grab(&Atlas::default(), &mut view, square, pos2(20.0, 30.0));
         assert!(matches!(view.mode, Mode::Browse), "browsing only views");
 
         view.mode = Mode::Edit(Box::new(view.draft()));
-        grab(&mut view, square, pos2(20.0, 30.0));
+        grab(&Atlas::default(), &mut view, square, pos2(20.0, 30.0));
         follow(
             &Atlas::default(),
             &mut view,
@@ -1259,7 +1273,7 @@ mod tests {
         assert_eq!(draft.lineup.land, Some([0.6, 0.1]));
         assert_eq!((draft.grab, draft.placing), (None, Place::Land));
 
-        grab(&mut view, square, pos2(22.0, 31.0));
+        grab(&Atlas::default(), &mut view, square, pos2(22.0, 31.0));
         follow(&Atlas::default(), &mut view, square, pos2(25.0, 50.0), true);
         let Mode::Edit(draft) = &view.mode else {
             panic!("the lineup should still be open");
@@ -1267,7 +1281,7 @@ mod tests {
         assert_eq!(draft.lineup.stand, Some([0.25, 0.5]), "the stand pin moved");
         assert_eq!(draft.lineup.land, Some([0.6, 0.1]), "and only that pin");
 
-        grab(&mut view, square, pos2(70.0, 70.0));
+        grab(&Atlas::default(), &mut view, square, pos2(70.0, 70.0));
         follow(&Atlas::default(), &mut view, square, pos2(71.0, 70.0), true);
         let Mode::Edit(draft) = &view.mode else {
             panic!("the lineup should still be open");
@@ -1308,6 +1322,53 @@ mod tests {
         assert_eq!(reach("Sky Smoke"), None);
     }
 
+    /// Where you stand snaps onto where another lineup for the same agent is
+    /// thrown from, by a click or by the drag that starts a lineup, and a
+    /// different agent's spot stays apart.
+    #[test]
+    fn a_standing_spot_snaps_only_onto_the_same_agent() {
+        let square = Square::from(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0)));
+        let atlas = Atlas {
+            maps: vec![Plan {
+                name: "Ascent".to_owned(),
+                scale: Some(0.0001),
+                ..Plan::default()
+            }],
+            lineups: vec![Lineup {
+                id: Some("b-1".to_owned()),
+                map: "Ascent".to_owned(),
+                agent: "Brimstone".to_owned(),
+                stand: Some([0.2, 0.2]),
+                ..Lineup::default()
+            }],
+            ..Atlas::default()
+        };
+        let stand = |agent: &str, how: &str| {
+            let mut view = View {
+                map: Some("Ascent".to_owned()),
+                you: Some(agent.to_owned()),
+                ..View::default()
+            };
+            view.mode = Mode::Edit(Box::new(view.draft()));
+            if how == "click" {
+                click(&atlas, &mut view, square, pos2(204.0, 197.0));
+            } else {
+                grab(&atlas, &mut view, square, pos2(204.0, 197.0));
+            }
+            match &view.mode {
+                Mode::Edit(draft) => draft.lineup.stand,
+                Mode::Browse | Mode::Draw(_) => None,
+            }
+        };
+        assert_eq!(stand("Brimstone", "click"), Some([0.2, 0.2]));
+        assert_eq!(stand("Brimstone", "drag"), Some([0.2, 0.2]));
+        assert_eq!(
+            stand("Viper", "click"),
+            Some([0.204, 0.197]),
+            "another agent's"
+        );
+    }
+
     /// A landing spot a few centimetres from another lineup's lands on
     /// exactly that spot, and one a couple of metres away stays where it was
     /// put. A lineup being edited doesn't snap onto where it already lands.
@@ -1345,7 +1406,7 @@ mod tests {
         click(&atlas, &mut view, square, pos2(520.0, 500.0));
         assert_eq!(land(&view), Some([0.52, 0.5]), "two metres off stays put");
 
-        grab(&mut view, square, pos2(520.0, 500.0));
+        grab(&Atlas::default(), &mut view, square, pos2(520.0, 500.0));
         follow(&atlas, &mut view, square, pos2(503.0, 500.0), true);
         assert_eq!(land(&view), Some([0.5, 0.5]), "a drag snaps as well");
 

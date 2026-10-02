@@ -1,0 +1,37 @@
+# gitleaks, on its default rule set. This file only narrows *where* it
+# looks. The history is scanned as well as the working tree, because a key that
+# was committed and then deleted is still in the pack file.
+[extend]
+useDefault = true
+
+[allowlist]
+# overseerlog.py's self-check has to contain things shaped like secrets, or it is
+# not testing the redactor. This is the one fake credential in it, named
+# exactly rather than allowlisting the file, so a real secret landing in that
+# file would still be caught.
+regexes = ['''aBcD1234EfGh5678''']
+
+description = "Build output, installed dependencies and the localhost chat certificate"
+paths = [
+  # The Rust build tree: 750 MB of compiled dependencies, none of it ours, and
+  # scanning it took the secret check from under a second to eleven. The
+  # pattern has to match a path separator rather than anchor at the start,
+  # because the gate scans an absolute path and gitleaks reports what it was
+  # given: anchoring at ^ matched nothing and the exclusion did nothing.
+  '''(^|[\/])target[\/]''',
+  # Installed packages are not this repository's source, and a Python tree
+  # contains every byte pattern there is: cryptography's own .pyi files trip
+  # the generic-api-key rule.
+  '''\.venv/''',
+  '''node_modules/''',
+  '''(^|/)dist/''',
+  # .overseer/ is runtime state. bridge.json really does hold a live session
+  # token, that is what it is for, and it is gitignored, so flagging it would
+  # only teach people to ignore the scanner.
+  '''(^|/)\.overseer/''',
+  # The localhost TLS certificate the offline-mode chat proxy presents to the
+  # Riot client. Its key has to be on disk to terminate TLS at all, it is the
+  # same well-known certificate Deceive publishes, and it guards nothing but a
+  # loopback socket. See AGENTS.md.
+  '''backend/offline_chat\.pem''',
+]

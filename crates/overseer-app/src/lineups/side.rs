@@ -321,7 +321,7 @@ fn filter(ui: &mut Ui, here: &[&Lineup], view: &mut View) {
 }
 
 /// One lineup in the list: the agent, the title, and what it is for.
-fn row(
+pub(super) fn row(
     ui: &mut Ui,
     atlas: &Atlas,
     lineup: &Lineup,

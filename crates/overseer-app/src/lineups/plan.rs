@@ -95,13 +95,27 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         {
             click(atlas, view, square, at);
         }
+        if matches!(view.mode, Mode::Browse) {
+            choose(ui, atlas, view);
+        }
+        // Every lineup under the pointer, one under another, when several
+        // share a spot.
+        let under_pointer = response
+            .hover_pos()
+            .map(|at| under(atlas, view, square, at));
         if matches!(view.mode, Mode::Browse)
-            && let Some(at) = response.hover_pos()
-            && let Some(lineup) = nearest(atlas, view, square, at)
+            && view.choosing.is_none()
+            && let Some(found) = under_pointer.filter(|f| !f.is_empty())
         {
-            let _shown = response
-                .clone()
-                .on_hover_ui_at_pointer(|ui| note(ui, atlas, lineup));
+            let _shown = response.clone().on_hover_ui_at_pointer(|ui| {
+                for (index, lineup) in found.iter().enumerate() {
+                    if index > 0 {
+                        ui.add_space(space::SM);
+                        ui.separator();
+                    }
+                    note(ui, atlas, lineup);
+                }
+            });
         }
     }
 }
@@ -987,6 +1001,7 @@ fn label(
     let plate = clear_of(
         taken,
         Rect::from_center_size(at - vec2(0.0, RING + 14.0), vec2(wide, 18.0)),
+        square.rect,
     );
     taken.push(plate);
     painter.rect_filled(plate, 0, colour::VOID.gamma_multiply(0.9));
@@ -1000,17 +1015,49 @@ fn label(
     );
 }
 
-/// `plate` moved just above or below any title it would cover, trying the
-/// nearer side first, so lineups landing on one spot keep their titles apart.
-fn clear_of(taken: &[Rect], plate: Rect) -> Rect {
-    let step = plate.height() + 2.0;
-    for shift in [0.0, -step, step, -2.0 * step, 2.0 * step] {
-        let moved = plate.translate(vec2(0.0, shift));
-        if !taken.iter().any(|t| t.intersects(moved)) {
-            return moved;
+/// The space kept between two names on the map, in points.
+const APART: f32 = 4.0;
+
+/// `plate` kept inside `bounds`, so the map's edge never cuts a name off, and
+/// moved to the nearest place clear of every name in `taken` by `APART`.
+/// Names stack upwards first, so lineups on one spot list their names above
+/// it, and then try below and to either side. When nothing near is clear it
+/// takes the spot covering the least of the others.
+fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
+    let inside = |r: Rect| {
+        let dx = (bounds.left() - r.left()).max(0.0) + (bounds.right() - r.right()).min(0.0);
+        let dy = (bounds.top() - r.top()).max(0.0) + (bounds.bottom() - r.bottom()).min(0.0);
+        r.translate(vec2(dx, dy))
+    };
+    let overlap = |r: Rect| -> f32 {
+        taken
+            .iter()
+            .map(|t| t.expand(APART).intersect(r))
+            .filter(Rect::is_positive)
+            .map(|i| i.area())
+            .sum()
+    };
+    let (up, across) = (plate.height() + APART, plate.width().mul_add(0.5, APART));
+    let mut best = (f32::INFINITY, inside(plate));
+    for step in 0..6_u8 {
+        let rows = f32::from(step);
+        for shift in [
+            vec2(0.0, -rows * up),
+            vec2(0.0, rows * up),
+            vec2(-across, -rows * up),
+            vec2(across, -rows * up),
+        ] {
+            let moved = inside(plate.translate(shift));
+            let covered = overlap(moved);
+            if covered <= 0.0 {
+                return moved;
+            }
+            if covered < best.0 {
+                best = (covered, moved);
+            }
         }
     }
-    plate
+    best.1
 }
 
 /// A drag on the map while a lineup is being written: from where you stand
@@ -1108,9 +1155,11 @@ fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32
         .map_or(spot, |(_, p)| p)
 }
 
-/// The saved lineup with a pin nearest `at`, when one is in reach.
-fn nearest<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Option<&'a Lineup> {
-    view.shown(atlas)
+/// Every lineup on the map with a pin in reach of `at`, nearest first. More
+/// than one when lineups are stacked on one spot.
+fn under<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Vec<&'a Lineup> {
+    let mut found: Vec<(f32, &Lineup)> = view
+        .shown(atlas)
         .into_iter()
         .filter_map(|l| {
             let reach = [l.stand, l.land]
@@ -1120,8 +1169,60 @@ fn nearest<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Optio
                 .fold(f32::INFINITY, f32::min);
             (reach <= REACH).then_some((reach, l))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, l)| l)
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    found.into_iter().map(|(_, l)| l).collect()
+}
+
+/// The list a click on stacked lineups opens, beside the click: one row
+/// each, and picking one shows it. A click anywhere else or Escape closes it.
+fn choose(ui: &Ui, atlas: &Atlas, view: &mut View) {
+    let Some((at, ids, opened)) = view.choosing.clone() else {
+        return;
+    };
+    let pass = ui.ctx().cumulative_pass_nr();
+    if opened == 0
+        && let Some(choice) = &mut view.choosing
+    {
+        choice.2 = pass;
+    }
+    let main = view.main.clone();
+    let mut picked = None;
+    let shown = egui::Area::new(egui::Id::new("lineup-stack"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at + vec2(12.0, 12.0))
+        .constrain(true)
+        .show(ui.ctx(), |ui| {
+            controls::menu_card().show(ui, |ui| {
+                ui.set_width(300.0);
+                let _heading = caps_text(
+                    ui.painter(),
+                    ui.cursor().min + vec2(space::SM, space::SM),
+                    Align2::LEFT_TOP,
+                    "Lineups on this spot",
+                    Face::Display.at(size::MICRO),
+                    colour::TEXT_DIM,
+                );
+                ui.add_space(space::XL);
+                for id in &ids {
+                    let Some(lineup) = atlas.lineups.iter().find(|l| l.id.as_ref() == Some(id))
+                    else {
+                        continue;
+                    };
+                    let on = view.selected.as_ref() == Some(id);
+                    if super::side::row(ui, atlas, lineup, (on, main.as_deref())).clicked() {
+                        picked = Some(id.clone());
+                    }
+                }
+            });
+        });
+    let away = opened != 0 && opened != pass && shown.response.clicked_elsewhere();
+    if let Some(id) = picked {
+        view.selected = Some(id);
+        view.choosing = None;
+    } else if away || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        view.choosing = None;
+    }
 }
 
 /// What shows beside the pointer resting on a lineup's pin: its name, what
@@ -1171,13 +1272,25 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         return;
     }
     view.confirm = false;
-    view.selected = nearest(atlas, view, square, at).and_then(|l| l.id.clone());
+    // One lineup there is picked straight away. Several stacked on one spot
+    // open a list to pick from.
+    let ids: Vec<String> = under(atlas, view, square, at)
+        .iter()
+        .filter_map(|l| l.id.clone())
+        .collect();
+    view.choosing = None;
+    match ids.as_slice() {
+        [] => view.selected = None,
+        [one] => view.selected = Some(one.clone()),
+        _ => view.choosing = Some((at, ids, 0)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Floor, Label, Mode, Place, Square, View, click, follow, grab, plantable, reach, turn_for,
+        APART, Floor, Label, Mode, Place, Square, View, clear_of, click, follow, grab, plantable,
+        reach, turn_for,
     };
     use crate::settings::MapTurn;
     use egui::{Color32, Rect, pos2, vec2};
@@ -1450,5 +1563,55 @@ mod tests {
         };
         let apart = (one[0] - two[0]).abs() >= 30.0 || (one[1] - two[1]).abs() >= 6.0;
         assert!(apart, "{placed:?}");
+    }
+
+    /// A click on two lineups stacked on one spot opens a list of both and
+    /// picks neither, and a click on a lone pin still picks it.
+    #[test]
+    fn a_click_on_stacked_lineups_asks_which() {
+        let square = Square::from(Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)));
+        let lineup = |id: &str, land: [f32; 2]| Lineup {
+            id: Some(id.to_owned()),
+            map: "Ascent".to_owned(),
+            land: Some(land),
+            ..Lineup::default()
+        };
+        let atlas = Atlas {
+            lineups: vec![
+                lineup("a", [0.5, 0.5]),
+                lineup("b", [0.5, 0.5]),
+                lineup("c", [0.9, 0.9]),
+            ],
+            ..Atlas::default()
+        };
+        let mut view = View {
+            map: Some("Ascent".to_owned()),
+            ..View::default()
+        };
+        click(&atlas, &mut view, square, pos2(50.0, 50.0));
+        let asked = view.choosing.as_ref().map(|c| c.1.clone());
+        assert_eq!(asked, Some(vec!["a".to_owned(), "b".to_owned()]));
+        assert_eq!(view.selected, None);
+        click(&atlas, &mut view, square, pos2(90.0, 90.0));
+        assert_eq!(view.selected.as_deref(), Some("c"));
+        assert!(view.choosing.is_none());
+    }
+
+    /// Names on one spot stack upwards with a gap between them, and one that
+    /// would run off the map is pulled back onto it.
+    #[test]
+    fn names_keep_apart_and_stay_on_the_map() {
+        let map = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0));
+        let name = Rect::from_center_size(pos2(200.0, 200.0), vec2(80.0, 18.0));
+        let first = clear_of(&[], name, map);
+        let second = clear_of(&[first], name, map);
+        assert_eq!(first, name);
+        assert!(
+            second.bottom() <= first.top() - APART + 0.01,
+            "{second:?} over {first:?}"
+        );
+        let off = Rect::from_center_size(pos2(395.0, 5.0), vec2(80.0, 18.0));
+        let kept = clear_of(&[], off, map);
+        assert!(map.contains_rect(kept), "{kept:?}");
     }
 }

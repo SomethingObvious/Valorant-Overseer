@@ -471,6 +471,10 @@ struct View {
     order: Order,
     /// The lineup picked, by id.
     selected: Option<String>,
+    /// Lineups stacked on one spot that a click landed on, by id, for the
+    /// player to pick one of: where the click was, the ids, and the frame the
+    /// list opened on, which a click that opened it can't also close it on.
+    choosing: Option<(egui::Pos2, Vec<String>, u64)>,
     /// What the side panel is doing.
     mode: Mode,
     /// A request in flight, and what it was.

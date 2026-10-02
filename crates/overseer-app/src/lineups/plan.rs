@@ -6,7 +6,7 @@
 //! drawing, a drag draws a shape or moves one by its dot, and a click places
 //! a label. An export asks the window for a picture of it.
 
-use egui::{Align2, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
 use overseer_core::{Atlas, Lineup, Plan};
 use overseer_ui::{Face, art, caps_text, caps_width, colour, motion, size, space};
 
@@ -72,7 +72,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     for drawing in view.shapes(atlas) {
         shapes::paint(&painter, square, drawing);
     }
-    pins(&painter, square, atlas, view, plan.scale);
+    pins(&painter, (square, ui.clip_rect()), atlas, view, plan.scale);
     if view.export.is_some() {
         // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
@@ -811,7 +811,13 @@ fn tint(side: Option<&str>) -> Color32 {
 
 /// Every lineup on the map, the picked one last so it is on top, and the one
 /// being written in cream.
-fn pins(painter: &egui::Painter, square: Square, atlas: &Atlas, view: &View, scale: Option<f32>) {
+fn pins(
+    painter: &egui::Painter,
+    (square, room): (Square, Rect),
+    atlas: &Atlas,
+    view: &View,
+    scale: Option<f32>,
+) {
     let main = view.main.as_deref();
     let writing = match &view.mode {
         Mode::Edit(draft) => Some(&draft.lineup),
@@ -842,8 +848,12 @@ fn pins(painter: &egui::Painter, square: Square, atlas: &Atlas, view: &View, sca
     for lineup in &rest {
         pin(painter, square, atlas, lineup, (faint(lineup), main));
     }
-    // The picked one's name first, so the rest move out of its way.
-    let mut taken = Vec::new();
+    // Names keep off every face, ring and molly, and may run off the map as
+    // far as the screen goes. The picked one's name goes first, so the rest
+    // move out of its way.
+    let shown: Vec<&Lineup> = rest.iter().chain(&picked).copied().chain(writing).collect();
+    let mut taken = covered(square, &shown, scale);
+    let painter = &painter.with_clip_rect(room);
     for lineup in &picked {
         pin(
             painter,
@@ -852,11 +862,21 @@ fn pins(painter: &egui::Painter, square: Square, atlas: &Atlas, view: &View, sca
             lineup,
             (tint(lineup.side.as_deref()), main),
         );
-        label(painter, square, lineup, (&mut taken, colour::TEXT_STRONG));
+        label(
+            painter,
+            (square, room),
+            lineup,
+            (&mut taken, colour::TEXT_STRONG),
+        );
     }
     if view.naming() {
         for lineup in &rest {
-            label(painter, square, lineup, (&mut taken, colour::TEXT_DIM));
+            label(
+                painter,
+                (square, room),
+                lineup,
+                (&mut taken, colour::TEXT_DIM),
+            );
         }
     }
     if let Some(lineup) = writing {
@@ -989,7 +1009,7 @@ pub(super) fn stand_mark(
 /// The picked lineup's title above where it lands.
 fn label(
     painter: &egui::Painter,
-    square: Square,
+    (square, room): (Square, Rect),
     lineup: &Lineup,
     (taken, ink): (&mut Vec<Rect>, Color32),
 ) {
@@ -1001,7 +1021,7 @@ fn label(
     let plate = clear_of(
         taken,
         Rect::from_center_size(at - vec2(0.0, RING + 14.0), vec2(wide, 18.0)),
-        square.rect,
+        room,
     );
     taken.push(plate);
     painter.rect_filled(plate, 0, colour::VOID.gamma_multiply(0.9));
@@ -1015,14 +1035,40 @@ fn label(
     );
 }
 
+/// What a name must keep off: every lineup's face where it is thrown from,
+/// its ring where it lands, and the ground its molly covers.
+fn covered(square: Square, lineups: &[&Lineup], scale: Option<f32>) -> Vec<Rect> {
+    let mut out = Vec::new();
+    for lineup in lineups {
+        if let Some(stand) = lineup.stand {
+            out.push(Rect::from_center_size(
+                point(square, stand),
+                Vec2::splat(FACE * 2.0),
+            ));
+        }
+        let Some(land) = lineup.land else {
+            continue;
+        };
+        let at = point(square, land);
+        out.push(Rect::from_center_size(at, Vec2::splat(RING * 2.0)));
+        let reach = lineup.ability.as_deref().and_then(reach).zip(scale);
+        if let Some(((edge, _), scale)) = reach {
+            let radius = edge * scale * square.width();
+            out.push(Rect::from_center_size(at, Vec2::splat(radius * 2.0)));
+        }
+    }
+    out
+}
+
 /// The space kept between two names on the map, in points.
 const APART: f32 = 4.0;
 
-/// `plate` kept inside `bounds`, so the map's edge never cuts a name off, and
-/// moved to the nearest place clear of every name in `taken` by `APART`.
-/// Names stack upwards first, so lineups on one spot list their names above
-/// it, and then try below and to either side. When nothing near is clear it
-/// takes the spot covering the least of the others.
+/// `plate` kept inside `bounds`, the screen it is drawn on, and moved to the
+/// nearest place clear of everything in `taken` by `APART`: names placed
+/// before it, and the faces, rings and mollies it mustn't cover. Names stack
+/// upwards first, so lineups on one spot list their names above it, and then
+/// try below and to either side. When nothing near is clear it takes the
+/// spot covering the least.
 fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
     let inside = |r: Rect| {
         let dx = (bounds.left() - r.left()).max(0.0) + (bounds.right() - r.right()).min(0.0);
@@ -1597,8 +1643,9 @@ mod tests {
         assert!(view.choosing.is_none());
     }
 
-    /// Names on one spot stack upwards with a gap between them, and one that
-    /// would run off the map is pulled back onto it.
+    /// Names on one spot stack upwards with a gap between them, one that
+    /// would run off the screen is pulled back onto it, and one over a face
+    /// moves off it.
     #[test]
     fn names_keep_apart_and_stay_on_the_map() {
         let map = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0));
@@ -1613,5 +1660,9 @@ mod tests {
         let off = Rect::from_center_size(pos2(395.0, 5.0), vec2(80.0, 18.0));
         let kept = clear_of(&[], off, map);
         assert!(map.contains_rect(kept), "{kept:?}");
+        // A name over an agent's face moves off it.
+        let face = Rect::from_center_size(pos2(200.0, 200.0), vec2(26.0, 26.0));
+        let moved = clear_of(&[face], name, map);
+        assert!(!moved.intersects(face), "{moved:?} still covers the face");
     }
 }

@@ -20,11 +20,14 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
         mode: Mode::Edit(draft),
         player,
         prefs,
+        default_agent,
+        new_default,
         ..
     } = view
     else {
         return None;
     };
+    let default = &mut (default_agent.as_str(), new_default);
     let heading = if draft.lineup.id.is_some() {
         "Edit Lineup"
     } else {
@@ -35,7 +38,7 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     section(ui, "On the Map", placed, false);
     placing(ui, atlas, draft, main.as_deref());
     section(ui, "Agent", !draft.lineup.agent.is_empty(), false);
-    pick::agent(ui, atlas, draft, main.as_deref());
+    pick::agent(ui, atlas, draft, (main.as_deref(), default));
     section(ui, "Utility", draft.lineup.ability.is_some(), true);
     if draft.lineup.agent.is_empty() {
         words(ui, "Pick the agent first.", colour::TEXT_FAINT);

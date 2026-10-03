@@ -5,6 +5,7 @@
 //! Lineups stay in this window and never reach the overlay, since Riot's
 //! rules rule out telling somebody where to go in the middle of a round.
 
+mod areas;
 mod form;
 mod pick;
 mod pictures;
@@ -512,8 +513,10 @@ struct View {
     said: Option<(String, bool)>,
     /// Set by the first press of Delete, which the second one confirms.
     confirm: bool,
-    /// The agent you play, who a new lineup starts with.
-    you: Option<String>,
+    /// The agent a new lineup starts with, from the settings.
+    default_agent: String,
+    /// An agent Make Default was pressed on, for the settings to keep.
+    new_default: Option<String>,
     /// The agent you play most, whose outline the blacked-out figure is.
     main: Option<String>,
     /// Shapes changed on a map and not yet sent to be kept.
@@ -535,6 +538,8 @@ pub(crate) struct Look<'a> {
     pub(crate) names: bool,
     /// The colour of an ability's area, or by side when there is none.
     pub(crate) area: Option<&'a str>,
+    /// The agent a new lineup starts with.
+    pub(crate) agent: &'a str,
 }
 
 /// The Lineups screen.
@@ -547,17 +552,20 @@ pub(crate) struct Lineups {
 }
 
 impl Lineups {
+    /// The agent Make Default was last pressed on, once, for the settings.
+    pub(crate) const fn new_default(&mut self) -> Option<String> {
+        self.view.new_default.take()
+    }
+
     /// Asks for everything the screen draws from, on the current match's map
-    /// when there is one and nothing is being written. `you` is the agent a
-    /// new lineup starts with.
+    /// when there is one and nothing is being written.
     pub(crate) fn open(
         &mut self,
         bridge: &Bridge,
         live: bool,
         map: Option<&str>,
-        (you, main): (Option<&str>, Option<&str>),
+        main: Option<&str>,
     ) {
-        self.view.you = you.map(ToOwned::to_owned);
         // Only a board that knows replaces it. Out of a lobby the lineups'
         // own answer says, from your recorded matches.
         if let Some(main) = main {
@@ -870,6 +878,7 @@ impl Lineups {
         (self.view.prefs, self.view.turn_to) = (prefs, look.turn);
         self.view.names_by_default = look.names;
         self.view.area = look.area.map(shapes::ink);
+        look.agent.clone_into(&mut self.view.default_agent);
         if let Some((shown, at)) = &self.view.viewing {
             self.view.viewing =
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
@@ -1086,12 +1095,12 @@ impl View {
         }
     }
 
-    /// A new lineup on the map on screen, for the agent picked or else the
-    /// one you play. The map and the panel both start one here.
+    /// A new lineup on the map on screen, for the agent the list is cut to or
+    /// else the default one. The map and the panel both start one here.
     fn draft(&self) -> Draft {
         Draft::new(
             self.map.as_deref().unwrap_or_default(),
-            self.agent.as_deref().or(self.you.as_deref()),
+            self.agent.as_deref().or(Some(&self.default_agent)),
         )
     }
 

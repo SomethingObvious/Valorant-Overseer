@@ -124,9 +124,14 @@ impl Overseer {
                             turn: self.settings.lineups.map_turn,
                             names: self.settings.lineups.lineup_names,
                             area: self.settings.lineups.area_colour.as_deref(),
+                            agent: &self.settings.lineups.default_agent,
                         },
                     ),
                 );
+                if let Some(agent) = self.lineups.new_default() {
+                    self.settings.lineups.default_agent = agent;
+                    settings::save(&self.root, &self.settings);
+                }
             }
         }
         self.panel_visible = false;

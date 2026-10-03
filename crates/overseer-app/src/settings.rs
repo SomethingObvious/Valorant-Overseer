@@ -135,6 +135,8 @@ pub(crate) struct LineupSettings {
     /// The colour an ability's area is drawn in, from the drawing colours,
     /// or by the lineup's side when there is none.
     pub(crate) area_colour: Option<String>,
+    /// The agent a new lineup starts with.
+    pub(crate) default_agent: String,
 }
 
 impl Default for LineupSettings {
@@ -150,6 +152,7 @@ impl Default for LineupSettings {
             map_turn: MapTurn::Attack,
             lineup_names: false,
             area_colour: None,
+            default_agent: "Brimstone".to_owned(),
         }
     }
 }

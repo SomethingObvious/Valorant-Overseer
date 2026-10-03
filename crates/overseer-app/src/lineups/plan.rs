@@ -11,7 +11,7 @@ use overseer_core::{Atlas, Lineup, Plan};
 use overseer_ui::{Face, art, caps_text, caps_width, colour, motion, size, space};
 
 use super::shapes::{self, KINDS, Square};
-use super::{Mode, Place, View, ability, face};
+use super::{Mode, Place, View, ability, areas, face};
 use crate::controls;
 use crate::settings::MapTurn;
 
@@ -884,22 +884,8 @@ fn pins(
     }
 }
 
-/// How far an ability hurts from where it lands, in game units, a hundredth
-/// of a metre: its edge, and the inner circle where it does full damage when
-/// it has one. From Riot's wiki, Hot Hands' being an estimate there. Only the
-/// ones that leave an area on the ground.
-fn reach(ability: &str) -> Option<(f32, Option<f32>)> {
-    match ability {
-        "Incendiary" | "Snake Bite" | "Nanoswarm" | "Hot Hands" => Some((450.0, None)),
-        "FRAG/ment" => Some((400.0, Some(100.0))),
-        "Mosh Pit" => Some((620.0, Some(550.0))),
-        _ => None,
-    }
-}
-
-/// The ground a lineup's ability covers where it lands, to the map's scale:
-/// faint inside, its edge solid, and the full damage circle inside it when
-/// there is one. It moves with the pin, since it is drawn from it.
+/// The ground a lineup's ability covers, to the map's scale. It moves with
+/// the pins, since it is drawn from them.
 fn area(
     painter: &egui::Painter,
     square: Square,
@@ -907,24 +893,20 @@ fn area(
     scale: Option<f32>,
     ink: Color32,
 ) {
-    let (Some(land), Some((edge, inner)), Some(scale)) = (
+    let (Some(land), Some(reach), Some(scale)) = (
         lineup.land,
-        lineup.ability.as_deref().and_then(reach),
+        lineup.ability.as_deref().and_then(areas::reach),
         scale,
     ) else {
         return;
     };
-    let at = point(square, land);
-    let size = |units: f32| units * scale * square.width();
-    painter.circle(
-        at,
-        size(edge),
-        ink.gamma_multiply(0.14),
-        Stroke::new(1.5, ink.gamma_multiply(0.7)),
+    let stand = lineup.stand.map(|s| point(square, s));
+    areas::draw(
+        painter,
+        (stand, point(square, land)),
+        (reach, scale * square.width()),
+        ink,
     );
-    if let Some(inner) = inner {
-        painter.circle_stroke(at, size(inner), Stroke::new(1.0, ink.gamma_multiply(0.5)));
-    }
 }
 
 /// Where a lineup is thrown from and where it lands, joined by a dashed line.
@@ -1349,7 +1331,7 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
 mod tests {
     use super::{
         APART, Floor, Label, Mode, Place, Square, View, clear_of, click, follow, grab, plantable,
-        reach, turn_for,
+        turn_for,
     };
     use crate::settings::MapTurn;
     use egui::{Color32, Rect, pos2, vec2};
@@ -1388,7 +1370,7 @@ mod tests {
         };
         let mut view = View {
             map: Some("Ascent".to_owned()),
-            you: Some("Brimstone".to_owned()),
+            default_agent: "Brimstone".to_owned(),
             ..View::default()
         };
         click(&atlas, &mut view, square, pos2(90.0, 91.0));
@@ -1485,15 +1467,6 @@ mod tests {
         );
     }
 
-    /// The mollies reach 4.5 metres, KAY/O's and Gekko's have their full
-    /// damage circle inside, and a smoke has no area here.
-    #[test]
-    fn a_molly_reaches_as_far_as_the_game_says() {
-        assert_eq!(reach("Incendiary"), Some((450.0, None)));
-        assert_eq!(reach("FRAG/ment"), Some((400.0, Some(100.0))));
-        assert_eq!(reach("Sky Smoke"), None);
-    }
-
     /// Where you stand snaps onto where another lineup for the same agent is
     /// thrown from, by a click or by the drag that starts a lineup, and a
     /// different agent's spot stays apart.
@@ -1518,7 +1491,7 @@ mod tests {
         let stand = |agent: &str, how: &str| {
             let mut view = View {
                 map: Some("Ascent".to_owned()),
-                you: Some(agent.to_owned()),
+                default_agent: agent.to_owned(),
                 ..View::default()
             };
             view.mode = Mode::Edit(Box::new(view.draft()));

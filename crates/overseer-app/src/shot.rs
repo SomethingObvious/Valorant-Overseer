@@ -823,6 +823,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
                                     turn: crate::settings::MapTurn::Drawn,
                                     names: false,
                                     area: None,
+                                    agent: "Brimstone",
                                 },
                             ),
                         );
@@ -892,6 +893,7 @@ fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
                                 turn: crate::settings::MapTurn::Drawn,
                                 names: false,
                                 area: None,
+                                agent: "Brimstone",
                             },
                         ),
                     );
@@ -1081,6 +1083,7 @@ fn lineups_live() {
                                     turn: crate::settings::MapTurn::Attack,
                                     names: false,
                                     area: None,
+                                    agent: "Brimstone",
                                 },
                             ),
                         );

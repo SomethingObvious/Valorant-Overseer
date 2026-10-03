@@ -20,7 +20,14 @@ const FOUND: usize = 12;
 
 /// The agent as one line with a Change button, or the search and the grid
 /// while choosing. `main` is the agent the blacked-out figure is cut from.
-pub(super) fn agent(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
+/// Make Default shows on any agent but the default one, and pressing it puts
+/// the agent in `default` for the settings to keep.
+pub(super) fn agent(
+    ui: &mut Ui,
+    atlas: &Atlas,
+    draft: &mut Draft,
+    (main, default): (Option<&str>, &mut DefaultAgent<'_>),
+) {
     if draft.choosing || draft.lineup.agent.is_empty() {
         choose(ui, atlas, draft, main);
         return;
@@ -50,7 +57,21 @@ pub(super) fn agent(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<
         draft.choosing = true;
         draft.find.clear();
     }
+    if draft.lineup.agent != default.0 {
+        let make = egui::Rect::from_min_size(button.min - vec2(126.0, 0.0), vec2(118.0, 24.0));
+        if ui
+            .put(make, |ui: &mut Ui| {
+                controls::button(ui, "Make Default", Tone::Plain, true)
+            })
+            .clicked()
+        {
+            *default.1 = Some(draft.lineup.agent.clone());
+        }
+    }
 }
+
+/// The default agent, and where a new one goes when Make Default is pressed.
+pub(super) type DefaultAgent<'a> = (&'a str, &'a mut Option<String>);
 
 /// The search and every agent that matches it, Any Agent first. Picking one
 /// closes the grid again.

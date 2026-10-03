@@ -743,18 +743,20 @@ impl Overseer {
                 } else {
                     // Opens on the map being played, when there is one.
                     self.screen = Screen::Lineups;
-                    // A new lineup starts with the agent you're on, or
-                    // in the lobby the one you've played most lately.
-                    let me = self.board.players.iter().find(|p| p.is_self);
-                    let main = me
+                    // The blacked-out figure is cut from the agent you've
+                    // played most lately.
+                    let main = self
+                        .board
+                        .players
+                        .iter()
+                        .find(|p| p.is_self)
                         .and_then(|p| p.top_agents.first())
                         .and_then(|t| t.agent.as_deref());
-                    let you = me.and_then(|p| p.agent.as_deref()).or(main);
                     self.lineups.open(
                         &self.bridge,
                         self.status == Status::Live,
                         self.board.map.as_deref(),
-                        (you, main),
+                        main,
                     );
                 }
             }

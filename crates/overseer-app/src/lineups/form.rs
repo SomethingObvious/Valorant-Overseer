@@ -9,7 +9,7 @@ use overseer_ui::{Face, caps_text, colour, size, space};
 
 use super::player::{self, Player, Prefs};
 use super::side::{notice, title, words};
-use super::{Draft, Job, Measure, Mode, Place, Request, View, areas, pick, pictures, plan};
+use super::{Draft, Job, Measure, Mode, Place, Request, SPIKE, View, areas, pick, pictures, plan};
 use crate::controls::{self, Tone};
 
 /// The page above the footer. Returns a request when the clip's source
@@ -34,15 +34,19 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
         "Add a Lineup"
     };
     title(ui, heading, &draft.lineup.map.clone());
-    let placed = draft.lineup.stand.is_some() && draft.lineup.land.is_some();
+    let planted = draft.lineup.agent == SPIKE;
+    let placed = (planted || draft.lineup.stand.is_some()) && draft.lineup.land.is_some();
     section(ui, "On the Map", placed, false);
     placing(ui, atlas, draft, main.as_deref());
     section(ui, "Agent", !draft.lineup.agent.is_empty(), false);
     pick::agent(ui, atlas, draft, (main.as_deref(), default));
-    section(ui, "Utility", draft.lineup.ability.is_some(), true);
-    if draft.lineup.agent.is_empty() {
+    if planted {
+        // The Spike has no utility to pick.
+    } else if draft.lineup.agent.is_empty() {
+        section(ui, "Utility", false, true);
         words(ui, "Pick the agent first.", colour::TEXT_FAINT);
     } else {
+        section(ui, "Utility", draft.lineup.ability.is_some(), true);
         pick::utility(ui, atlas, draft);
     }
     section(ui, "Side and Site", draft.lineup.site.is_some(), true);
@@ -176,24 +180,8 @@ const PLACE_ROW: f32 = 44.0;
 /// the map draws it. The one the next click on the map sets is lit like a
 /// picked lineup, and a placed one has a tick.
 fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
-    let mut rows = vec![
-        (
-            Place::Stand,
-            "Where You Stand",
-            draft.lineup.stand.is_some(),
-        ),
-        (Place::Land, "Where It Lands", draft.lineup.land.is_some()),
-    ];
-    // Put down from afar, it can land in more places than one.
     let most = areas::spots(draft.lineup.ability.as_deref()).map_or(1, |s| s.0);
-    if most > 1 {
-        rows.push((
-            Place::More,
-            "More Places It Lands",
-            !draft.lineup.points.is_empty(),
-        ));
-    }
-    for (place, name, set) in rows {
+    for (place, name, set) in rows(draft, most) {
         let next = draft.placing == place;
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), PLACE_ROW), Sense::click());
@@ -257,6 +245,33 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
             draft.placing = place;
         }
     }
+}
+
+/// The rows under On the Map: where you stand and where it lands, or for
+/// the Spike only where it's planted, and a row for more places it lands
+/// when it can be put down in `most` of them.
+fn rows(draft: &Draft, most: usize) -> Vec<(Place, &'static str, bool)> {
+    let land = draft.lineup.land.is_some();
+    let mut rows = if draft.lineup.agent == SPIKE {
+        vec![(Place::Land, "Where It's Planted", land)]
+    } else {
+        vec![
+            (
+                Place::Stand,
+                "Where You Stand",
+                draft.lineup.stand.is_some(),
+            ),
+            (Place::Land, "Where It Lands", land),
+        ]
+    };
+    if most > 1 {
+        rows.push((
+            Place::More,
+            "More Places It Lands",
+            !draft.lineup.points.is_empty(),
+        ));
+    }
+    rows
 }
 
 /// What a row under On the Map says, and in what colour: whether it is

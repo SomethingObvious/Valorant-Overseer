@@ -45,6 +45,10 @@ pub(super) enum Reach {
     Bounce(f32),
 }
 
+/// How close you have to be to the Spike to defuse it. Riot publishes no
+/// number for it, so this is a metre and a half for now.
+pub(super) const DEFUSE: Reach = Reach::Round(150.0, None);
+
 /// Circles where they land: the edge, and the inner circle, 0 for none.
 const ROUND: &[(&str, f32, f32)] = &[
     ("Incendiary", 450.0, 0.0),

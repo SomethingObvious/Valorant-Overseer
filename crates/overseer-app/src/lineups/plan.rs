@@ -12,7 +12,7 @@ use overseer_ui::{Face, art, caps_text, caps_width, colour, motion, size, space}
 
 use super::areas::Reach;
 use super::shapes::{self, KINDS, Square};
-use super::{Mode, Place, View, ability, areas, face};
+use super::{Mode, Place, SPIKE, View, ability, areas, face, spike};
 use crate::controls;
 use crate::settings::MapTurn;
 
@@ -585,6 +585,7 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
         Mode::Edit(draft) => {
             let reach = draft.lineup.ability.as_deref().and_then(areas::reach);
             match (draft.placing, draft.lineup.land.is_some(), reach) {
+                _ if draft.lineup.agent == SPIKE => "Click where the Spike is planted",
                 (Place::Stand, ..) => "Click or drag from where you stand",
                 (Place::Land, false, _) => "Now click where it lands",
                 (Place::More, ..) => "Click to put down another, or click one to take it off",
@@ -1055,11 +1056,12 @@ fn area(
     scale: Option<f32>,
     (ink, run, see): (Color32, areas::Run<'_>, areas::Run<'_>),
 ) {
-    let (Some(land), Some(reach), Some(scale)) = (
-        lineup.land,
-        lineup.ability.as_deref().and_then(areas::reach),
-        scale,
-    ) else {
+    let reach = if lineup.agent == SPIKE {
+        Some(areas::DEFUSE)
+    } else {
+        lineup.ability.as_deref().and_then(areas::reach)
+    };
+    let (Some(land), Some(reach), Some(scale)) = (lineup.land, reach, scale) else {
         return;
     };
     let stand = lineup.stand.map(|s| point(square, s));
@@ -1145,6 +1147,11 @@ pub(super) fn land_mark(
     lineup: &Lineup,
     ink: Color32,
 ) {
+    // The Spike has no ring, as its defuse range is barely wider than one.
+    if lineup.agent == SPIKE {
+        spike(painter, at, radius * 0.6, f32::from(ink.a()) / 255.0);
+        return;
+    }
     painter.circle_filled(at, radius, colour::VOID.gamma_multiply(0.85));
     painter.circle_stroke(at, radius, Stroke::new(2.0, ink));
     let icon = lineup
@@ -1308,6 +1315,15 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
         };
         let scale = scale_of(atlas, &draft.lineup.map);
         settle(&mut draft.lineup, scale, held);
+        // The Spike is only where it's planted, so a click always plants it.
+        if draft.lineup.agent == SPIKE {
+            draft.lineup.stand = None;
+            draft.lineup.ability = None;
+            draft.lineup.points.clear();
+            if draft.placing == Place::Stand {
+                draft.placing = Place::Land;
+            }
+        }
         // Another ability can't put down more, so a click places it again.
         if draft.placing == Place::More && areas::spots(draft.lineup.ability.as_deref()).is_none() {
             draft.placing = Place::Land;
@@ -1348,6 +1364,9 @@ fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
         Place::Land
     } else if on(draft.lineup.stand) {
         Place::Stand
+    } else if draft.lineup.agent == SPIKE {
+        draft.lineup.land = Some(shapes::spot(square, origin));
+        Place::Land
     } else if on_wall(&draft.lineup, square, scale, origin) {
         draft.lineup.points = vec![shapes::spot(square, origin)];
         Place::Point(0)

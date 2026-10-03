@@ -25,7 +25,7 @@ use overseer_ui::{art, colour};
 use crate::settings::MapTurn;
 use crate::view;
 
-use pick::ANY;
+use pick::{ANY, SPIKE};
 pub(crate) use player::{Prefs, SIZES, SPEEDS, speed_name};
 pub(crate) use shapes::COLOURS;
 pub(crate) use sketch::swatch;
@@ -304,11 +304,14 @@ impl Draft {
 
     /// The name it gets when it isn't given one, like A Site Incendiary.
     fn named(&self) -> String {
-        let what = self
-            .lineup
-            .ability
-            .clone()
-            .unwrap_or_else(|| format!("{} Lineup", self.lineup.agent));
+        let what = if self.lineup.agent == SPIKE {
+            "Spike Plant".to_owned()
+        } else {
+            self.lineup
+                .ability
+                .clone()
+                .unwrap_or_else(|| format!("{} Lineup", self.lineup.agent))
+        };
         match self.lineup.site.as_deref() {
             Some(site) => format!("{site} Site {what}"),
             None => what,
@@ -316,7 +319,15 @@ impl Draft {
     }
 
     /// What still stops it being saved, in words, or nothing once it can be.
-    const fn missing(&self) -> Option<&'static str> {
+    /// The Spike is only where it's planted.
+    fn missing(&self) -> Option<&'static str> {
+        if self.lineup.agent == SPIKE {
+            return self
+                .lineup
+                .land
+                .is_none()
+                .then_some("Click the map where the Spike is planted.");
+        }
         match (
             self.lineup.agent.is_empty(),
             self.lineup.stand.is_some(),
@@ -1204,7 +1215,10 @@ impl View {
 /// shows through.
 fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option<&str>) {
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    if agent == ANY {
+    if agent == SPIKE {
+        painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
+        spike(painter, rect.center(), rect.height() * 0.38, lit);
+    } else if agent == ANY {
         painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
         let figure = main
             .and_then(|m| art::agent(painter.ctx(), m))
@@ -1228,6 +1242,22 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
             Color32::WHITE.gamma_multiply(lit),
         );
     }
+}
+
+/// The Spike as a red diamond `half` either way of `at`, since it has no
+/// picture of its own.
+fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, lit: f32) {
+    let points = vec![
+        at + egui::vec2(0.0, -half),
+        at + egui::vec2(half * 0.7, 0.0),
+        at + egui::vec2(0.0, half),
+        at + egui::vec2(-half * 0.7, 0.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        colour::ENEMY.gamma_multiply(lit),
+        egui::Stroke::new(1.0, colour::VOID),
+    ));
 }
 
 /// An ability by name, from the agent's own kit first and then anyone's,
@@ -1314,7 +1344,9 @@ fn length(clip: &Clip) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ANY, Draft, Lineups, Load, Mode, Order, View, ability, clock, matches, seconds};
+    use super::{
+        ANY, Draft, Lineups, Load, Mode, Order, SPIKE, View, ability, clock, matches, seconds,
+    };
     use overseer_core::{Ability, Atlas, Clip, Kit, Lineup};
 
     /// Out of a lobby the figure is cut from the agent your recorded matches
@@ -1416,6 +1448,12 @@ mod tests {
         assert_eq!(draft.sent().title, "Default Molly");
         draft.lineup.agent.clear();
         assert!(draft.missing().is_some());
+        let mut planted = Draft::new("Ascent", Some(SPIKE));
+        assert!(planted.missing().is_some());
+        planted.lineup.land = Some([0.5, 0.1]);
+        planted.lineup.site = Some("B".to_owned());
+        assert_eq!(planted.missing(), None, "the Spike has nowhere to stand");
+        assert_eq!(planted.sent().title, "B Site Spike Plant");
     }
 
     /// An ability is found in its own agent's kit, and for any agent in

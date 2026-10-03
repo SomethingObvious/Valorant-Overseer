@@ -12,6 +12,8 @@ use crate::controls::{self, Tone};
 
 /// The agent a lineup has when any agent can throw it.
 pub(super) const ANY: &str = "Any Agent";
+/// The agent a lineup has when it is only the Spike, planted.
+pub(super) const SPIKE: &str = "Spike";
 
 /// How big an agent's tile is in the grid.
 const TILE: f32 = 38.0;
@@ -82,7 +84,9 @@ fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
     let mut picked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
-        let names = std::iter::once(ANY).chain(atlas.agents.iter().map(|k| k.name.as_str()));
+        let names = [ANY, SPIKE]
+            .into_iter()
+            .chain(atlas.agents.iter().map(|k| k.name.as_str()));
         for name in names.filter(|n| find.is_empty() || n.to_lowercase().contains(&find)) {
             if tile(ui, name, draft.lineup.agent == name, main) {
                 picked = Some(name.to_owned());

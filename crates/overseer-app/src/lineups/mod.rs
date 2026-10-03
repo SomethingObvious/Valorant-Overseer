@@ -151,6 +151,11 @@ enum Place {
     Stand,
     /// Where it lands.
     Land,
+    /// Another place a smoke put down from afar lands. A click adds one, or
+    /// takes off the one it is on.
+    More,
+    /// One of the lineup's own points, held by a drag.
+    Point(usize),
 }
 
 /// A lineup being written, with its clip's fields as they were typed.

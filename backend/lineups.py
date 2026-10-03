@@ -664,6 +664,8 @@ def save(raw: Any, clip: Any = None) -> dict[str, Any]:
         "description": str(raw.get("description") or "").strip()[:_LONGEST_DESCRIPTION] or None,
         "stand": _point(raw.get("stand"), "you stand"),
         "land": _point(raw.get("land"), "it lands"),
+        # Astra's five stars are the most any ability puts down.
+        "points": _points(raw.get("points"))[:5],
     }
     path = folder / f"{lineup_id}.json"
     kept = read_json(str(path), None) if path.exists() else None

@@ -1216,7 +1216,6 @@ impl View {
 fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option<&str>) {
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     if agent == SPIKE {
-        painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
         spike(
             painter,
             rect.center(),
@@ -1249,12 +1248,15 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
     }
 }
 
-/// The Spike's icon `half` either way of `at`, in `ink`.
+/// The Spike's icon `half` either way of `at`, in `ink`, with the middle of
+/// its core on `at` rather than the middle of the picture.
 fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, ink: Color32) {
     if let Some(icon) = art::spike(painter.ctx()) {
+        let [x, y] = art::SPIKE_CORE;
+        let shift = egui::vec2(0.5 - x, 0.5 - y) * (half * 2.0);
         painter.image(
             icon.id(),
-            Rect::from_center_size(at, egui::vec2(half, half) * 2.0),
+            Rect::from_center_size(at + shift, egui::vec2(half, half) * 2.0),
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             ink,
         );

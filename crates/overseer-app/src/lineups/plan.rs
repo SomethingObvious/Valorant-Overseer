@@ -244,6 +244,43 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) {
     }
 }
 
+/// How near plantable ground the Spike has to be put to move onto it, in game
+/// units. Further off it stays where it is put.
+const STICKY: f32 = 200.0;
+
+/// `at`, on the minimap `image`, moved onto the nearest plantable pixel
+/// within `reach` map widths when it is just off the plantable ground, or
+/// left where it is.
+fn stick(image: &egui::ColorImage, at: [f32; 2], reach: f32) -> [f32; 2] {
+    let [w, h] = image.size;
+    let on = |x: i64, y: i64| {
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return false;
+        };
+        x < w && y < h && image.pixels.get(y * w + x).is_some_and(|p| plantable(*p))
+    };
+    let (x, y) = ((at[0] * w as f32) as i64, (at[1] * h as f32) as i64);
+    if on(x, y) {
+        return at;
+    }
+    let far = (reach * w as f32).ceil() as i64;
+    let mut best: Option<(i64, i64, i64)> = None;
+    for dy in -far..=far {
+        for dx in -far..=far {
+            let gap = dx * dx + dy * dy;
+            if gap <= far * far && best.is_none_or(|b| gap < b.0) && on(x + dx, y + dy) {
+                best = Some((gap, dx, dy));
+            }
+        }
+    }
+    best.map_or(at, |(_, dx, dy)| {
+        [
+            ((x + dx) as f32 + 0.5) / w as f32,
+            ((y + dy) as f32 + 0.5) / h as f32,
+        ]
+    })
+}
+
 /// Whether a minimap pixel is the olive the game tints plantable ground in.
 fn plantable(pixel: Color32) -> bool {
     let [r, g, b, a] = pixel.to_srgba_unmultiplied();
@@ -1323,6 +1360,15 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
             if draft.placing == Place::Stand {
                 draft.placing = Place::Land;
             }
+            let image = atlas
+                .maps
+                .iter()
+                .find(|p| p.name == draft.lineup.map)
+                .and_then(|p| p.minimap.as_deref())
+                .and_then(|path| art::file_pixels(ui.ctx(), path));
+            if let (Some(image), Some(land), Some(scale)) = (image, draft.lineup.land, scale) {
+                draft.lineup.land = Some(stick(&image, land, STICKY * scale));
+            }
         }
         // Another ability can't put down more, so a click places it again.
         if draft.placing == Place::More && areas::spots(draft.lineup.ability.as_deref()).is_none() {
@@ -1710,7 +1756,7 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
 mod tests {
     use super::{
         APART, Floor, Label, Mode, Place, Square, View, clear_of, click, follow, grab, plantable,
-        settle, turn_for,
+        settle, stick, turn_for,
     };
     use crate::settings::MapTurn;
     use egui::{Color32, Rect, pos2, vec2};
@@ -2120,5 +2166,30 @@ mod tests {
         lineup.ability = Some("Incendiary".to_owned());
         settle(&mut lineup, Some(0.0001), None);
         assert!(lineup.points.is_empty(), "a molly has no points of its own");
+    }
+
+    /// The Spike put down just off plantable ground moves onto it, and one
+    /// put down further off or already on it stays where it is.
+    #[test]
+    fn the_spike_sticks_to_plantable_ground_nearby() {
+        let olive = Color32::from_rgb(152, 152, 118);
+        let mut image = egui::ColorImage::new([10, 10], vec![Color32::TRANSPARENT; 100]);
+        for y in 0..10 {
+            for x in 5..10 {
+                if let Some(p) = image.pixels.get_mut(y * 10 + x) {
+                    *p = olive;
+                }
+            }
+        }
+        let lands = |at: [f32; 2], want: [f32; 2]| {
+            let got = stick(&image, at, 0.2);
+            assert!(
+                (got[0] - want[0]).abs() < 1e-6 && (got[1] - want[1]).abs() < 1e-6,
+                "{at:?} went to {got:?}"
+            );
+        };
+        lands([0.45, 0.55], [0.55, 0.55]);
+        lands([0.15, 0.55], [0.15, 0.55]);
+        lands([0.72, 0.31], [0.72, 0.31]);
     }
 }

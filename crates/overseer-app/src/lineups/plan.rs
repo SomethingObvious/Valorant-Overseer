@@ -1149,7 +1149,7 @@ pub(super) fn land_mark(
 ) {
     // The Spike has no ring, as its defuse range is barely wider than one.
     if lineup.agent == SPIKE {
-        spike(painter, at, radius * 0.6, f32::from(ink.a()) / 255.0);
+        spike(painter, at, radius * 0.75, ink);
         return;
     }
     painter.circle_filled(at, radius, colour::VOID.gamma_multiply(0.85));

@@ -1217,7 +1217,12 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     if agent == SPIKE {
         painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
-        spike(painter, rect.center(), rect.height() * 0.38, lit);
+        spike(
+            painter,
+            rect.center(),
+            rect.height() * 0.4,
+            Color32::WHITE.gamma_multiply(lit),
+        );
     } else if agent == ANY {
         painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
         let figure = main
@@ -1244,20 +1249,16 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
     }
 }
 
-/// The Spike as a red diamond `half` either way of `at`, since it has no
-/// picture of its own.
-fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, lit: f32) {
-    let points = vec![
-        at + egui::vec2(0.0, -half),
-        at + egui::vec2(half * 0.7, 0.0),
-        at + egui::vec2(0.0, half),
-        at + egui::vec2(-half * 0.7, 0.0),
-    ];
-    painter.add(egui::Shape::convex_polygon(
-        points,
-        colour::ENEMY.gamma_multiply(lit),
-        egui::Stroke::new(1.0, colour::VOID),
-    ));
+/// The Spike's icon `half` either way of `at`, in `ink`.
+fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, ink: Color32) {
+    if let Some(icon) = art::spike(painter.ctx()) {
+        painter.image(
+            icon.id(),
+            Rect::from_center_size(at, egui::vec2(half, half) * 2.0),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            ink,
+        );
+    }
 }
 
 /// An ability by name, from the agent's own kit first and then anyone's,

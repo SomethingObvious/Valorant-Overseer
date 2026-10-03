@@ -159,6 +159,16 @@ pub fn mark(ctx: &Context) -> Option<TextureHandle> {
     texture(ctx, "mark", include_bytes!("../assets/mark.png"))
 }
 
+/// The Spike as Riot draws it on the Standard mode's icon, for a lineup that
+/// is only the Spike, planted.
+const SPIKE: &[u8] = include_bytes!("../assets/spike.png");
+
+/// The Spike's icon, white on clear, for the caller to tint.
+#[must_use]
+pub fn spike(ctx: &Context) -> Option<TextureHandle> {
+    texture(ctx, "spike", SPIKE)
+}
+
 /// One of the tables keyed by name, looked up by what the backend sent.
 fn named(ctx: &Context, kind: &str, table: &[(&str, &[u8])], name: &str) -> Option<TextureHandle> {
     let key = slug(name);
@@ -348,7 +358,9 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CARDS, GLOW_PAD, KILLFEED, MAPS, PORTRAITS, RANKS, bloom, decode, emblem, slug};
+    use super::{
+        CARDS, GLOW_PAD, KILLFEED, MAPS, PORTRAITS, RANKS, SPIKE, bloom, decode, emblem, slug,
+    };
 
     /// The slug has to survive the one agent with punctuation in its name.
     #[test]
@@ -378,6 +390,7 @@ mod tests {
         for (tier, bytes) in RANKS {
             assert!(decode(bytes).is_some(), "tier {tier} did not decode");
         }
+        assert!(decode(SPIKE).is_some(), "the Spike did not decode");
     }
 
     /// Brightest on the emblem and gone by the edge of its own picture, where

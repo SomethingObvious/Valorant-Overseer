@@ -17,11 +17,19 @@ pub(super) enum Reach {
     /// A fan out from where it's thrown toward where it lands: how far it
     /// reaches and how wide it opens, in degrees.
     Fan(f32, f32),
+    /// A strip from where it lands on in the way it was thrown: how long it
+    /// runs and how wide it is.
+    Sweep(f32, f32),
     /// A wall this long standing across the throw where it lands.
     Across(f32),
-    /// A trip wire from where it's stuck back toward where it was placed
-    /// from, at most this long, since that is the way the wall it's on faces.
+    /// Four walls out from where it lands in an X across the throw, each
+    /// running until it meets a wall or reaches this far.
+    Cross(f32),
+    /// A trip wire across the narrowest gap through where it's put, from wall
+    /// to wall, when that gap is no longer than this.
     Wire(f32),
+    /// A wall through both pins from one side of the map to the other.
+    Divide,
 }
 
 /// Circles where they land: the edge, and the inner circle, 0 for none.
@@ -78,7 +86,8 @@ const ROUND: &[(&str, f32, f32)] = &[
 ];
 
 /// Strips out from where they're thrown: where they start, how long they
-/// run and how wide they are. A wall is a metre wide.
+/// run and how wide they are. A wall the wiki gives no thickness for is 0,
+/// and drawn as a line.
 const STRIP: &[(&str, f32, f32, f32)] = &[
     ("Fault Line", 800.0, 5600.0, 800.0),
     ("Rolling Thunder", 800.0, 3200.0, 1800.0),
@@ -91,9 +100,9 @@ const STRIP: &[(&str, f32, f32, f32)] = &[
     ("Kill Contract", 0.0, 3600.0, 1500.0),
     ("Hunter's Fury", 0.0, 6600.0, 352.0),
     ("Fast Lane", 0.0, 4500.0, 350.0),
-    ("Toxic Screen", 0.0, 6000.0, 100.0),
-    ("High Tide", 0.0, 6000.0, 100.0),
-    ("Blaze", 0.0, 2100.0, 100.0),
+    ("Toxic Screen", 0.0, 6000.0, 0.0),
+    ("High Tide", 0.0, 6000.0, 0.0),
+    ("Blaze", 0.0, 2100.0, 0.0),
 ];
 
 /// The ground `ability` covers, matched by name however it is spaced or
@@ -116,8 +125,10 @@ pub(super) fn reach(ability: &str) -> Option<Reach> {
     [
         ("Bassquake", Reach::Fan(4000.0, 60.0)),
         ("Barrier Orb", Reach::Across(1040.0)),
-        ("Barrier Mesh", Reach::Across(2000.0)),
+        ("Barrier Mesh", Reach::Cross(1000.0)),
         ("Trapwire", Reach::Wire(1500.0)),
+        ("Armageddon", Reach::Sweep(3200.0, 1200.0)),
+        ("Astral Form / Cosmic Divide", Reach::Divide),
     ]
     .into_iter()
     .find(|r| same(r.0))
@@ -128,37 +139,41 @@ pub(super) fn reach(ability: &str) -> Option<Reach> {
 /// still shows on a small map.
 const THINNEST: f32 = 3.0;
 
+/// How far the floor runs from a point along a way before it meets a wall,
+/// in points, when it does within the most given.
+pub(super) type Run<'a> = &'a dyn Fn(Pos2, Vec2, f32) -> Option<f32>;
+
+/// How far each way Cosmic Divide is drawn, in game units. It has no end, and
+/// this is past the edge of every map.
+const ENDLESS: f32 = 50_000.0;
+
 /// Draws `reach` for a lineup thrown from `stand` that comes down at `land`,
-/// at `units` points to a game unit. Anything with a direction needs both
-/// pins apart, and isn't drawn until it has them.
+/// at `units` points to a game unit, finding walls with `run`. Anything
+/// that goes the way it was thrown needs both pins apart, and isn't drawn
+/// until it has them.
 pub(super) fn draw(
     painter: &egui::Painter,
     at: (Option<Pos2>, Pos2),
     reach: (Reach, f32),
-    ink: Color32,
+    (ink, run): (Color32, Run<'_>),
 ) {
-    painter.extend(outline(at, reach, ink));
+    painter.extend(outline(at, reach, (ink, run)));
 }
 
 /// The shapes `draw` paints.
 fn outline(
     (stand, land): (Option<Pos2>, Pos2),
     (reach, units): (Reach, f32),
-    ink: Color32,
+    (ink, run): (Color32, Run<'_>),
 ) -> Vec<Shape> {
     let (fill, edge) = (
         ink.gamma_multiply(0.14),
         Stroke::new(1.5, ink.gamma_multiply(0.7)),
     );
-    let Some(ahead) = stand.map(|s| land - s).filter(|d| d.length() > 1.0) else {
-        return match reach {
-            Reach::Round(..) => outline((Some(land - Vec2::X * 2.0), land), (reach, units), ink),
-            _ => Vec::new(),
-        };
-    };
-    let from = land - ahead;
-    match reach {
-        Reach::Round(outer, inner) => {
+    let line = (edge.color, edge);
+    let ahead = stand.map(|s| land - s).filter(|d| d.length() > 1.0);
+    match (reach, ahead) {
+        (Reach::Round(outer, inner), _) => {
             let mut out = vec![
                 Shape::circle_filled(land, outer * units, fill),
                 Shape::circle_stroke(land, outer * units, edge),
@@ -172,16 +187,38 @@ fn outline(
             }
             out
         }
-        Reach::Strip(start, length, wide) => {
-            vec![band(
-                from,
-                ahead.normalized(),
-                (start * units, (start + length) * units, wide * units),
-                (fill, edge),
-            )]
+        (Reach::Wire(length), _) => wire(land, length * units, run, line),
+        (Reach::Cross(arm), _) => {
+            let towards = ahead.map_or(0.0, Vec2::angle);
+            let most = arm * units;
+            (0..4_u8)
+                .map(|i| {
+                    let turn = f32::from(i).mul_add(90.0, 45.0).to_radians();
+                    let way = Vec2::angled(towards + turn);
+                    band(
+                        land,
+                        way,
+                        (0.0, run(land, way, most).unwrap_or(most), 0.0),
+                        line,
+                    )
+                })
+                .collect()
         }
-        Reach::Fan(far, degrees) => {
-            let (towards, half) = (ahead.y.atan2(ahead.x), degrees.to_radians() / 2.0);
+        (Reach::Strip(start, length, wide), Some(ahead)) => vec![band(
+            land - ahead,
+            ahead.normalized(),
+            (start * units, (start + length) * units, wide * units),
+            (fill, edge),
+        )],
+        (Reach::Sweep(length, wide), Some(ahead)) => vec![band(
+            land,
+            ahead.normalized(),
+            (0.0, length * units, wide * units),
+            (fill, edge),
+        )],
+        (Reach::Fan(far, degrees), Some(ahead)) => {
+            let from = land - ahead;
+            let (towards, half) = (ahead.angle(), degrees.to_radians() / 2.0);
             let mut points = vec![from];
             points.extend((0..=16_u8).map(|i| {
                 let turn = (f32::from(i) / 16.0).mul_add(2.0 * half, towards - half);
@@ -189,7 +226,7 @@ fn outline(
             }));
             vec![Shape::convex_polygon(points, fill, edge)]
         }
-        Reach::Across(length) => {
+        (Reach::Across(length), Some(ahead)) => {
             let half = length * units / 2.0;
             vec![band(
                 land,
@@ -198,16 +235,28 @@ fn outline(
                 (fill, edge),
             )]
         }
-        Reach::Wire(length) => {
-            let reaches = (length * units).min(ahead.length());
-            vec![band(
-                land,
-                -ahead.normalized(),
-                (0.0, reaches, 0.0),
-                (edge.color, edge),
-            )]
+        (Reach::Divide, Some(ahead)) => {
+            let far = ENDLESS * units;
+            vec![band(land, ahead.normalized(), (-far, far, 0.0), line)]
         }
+        _ => Vec::new(),
     }
+}
+
+/// A trip wire through `at` across the narrowest gap between two walls no
+/// wider than `most` points, tried every 5 degrees. Nothing when no gap that
+/// narrow goes through it.
+fn wire(at: Pos2, most: f32, run: Run<'_>, line: (Color32, Stroke)) -> Vec<Shape> {
+    (0..36_u8)
+        .filter_map(|i| {
+            let way = Vec2::angled((f32::from(i) * 5.0).to_radians());
+            let (on, back) = (run(at, way, most)?, run(at, -way, most)?);
+            let span = on + back;
+            (span > 1.0 && span <= most).then_some((span, way, on, back))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, way, on, back)| vec![band(at, way, (-back, on, 0.0), line)])
+        .unwrap_or_default()
 }
 
 /// A rectangle out from `origin` along `way`, from `near` to `far` points
@@ -243,11 +292,13 @@ mod tests {
         );
         assert_eq!(reach("Trapwire"), Some(Reach::Wire(1500.0)));
         assert_eq!(reach("Bassquake"), Some(Reach::Fan(4000.0, 60.0)));
+        assert_eq!(reach("Astral Form / Cosmic Divide"), Some(Reach::Divide));
+        assert_eq!(reach("Barrier Mesh"), Some(Reach::Cross(1000.0)));
         assert_eq!(reach("Updraft"), None);
     }
 
-    /// The corners of every polygon drawn, rounded to a point.
-    fn corners(shapes: &[Shape]) -> Vec<(i32, i32)> {
+    /// The corners of every polygon drawn.
+    fn corners(shapes: &[Shape]) -> Vec<Pos2> {
         shapes
             .iter()
             .filter_map(|s| match s {
@@ -255,24 +306,115 @@ mod tests {
                 _ => None,
             })
             .flatten()
-            .map(|p| (p.x.round() as i32, p.y.round() as i32))
             .collect()
     }
 
-    /// A strip runs out from where it's thrown, a wire back from where it
-    /// sticks, and a wall stands across, each the size the game says, here
-    /// at a point to a metre.
+    /// Whether two lists of corners are the same, past float noise.
+    fn same(found: &[Pos2], wanted: &[[f32; 2]]) -> bool {
+        found.len() == wanted.len()
+            && found
+                .iter()
+                .zip(wanted)
+                .all(|(f, w)| (f.x - w[0]).abs() < 1e-3 && (f.y - w[1]).abs() < 1e-3)
+    }
+
+    /// Open floor everywhere.
+    fn open(_: Pos2, _: Vec2, _: f32) -> Option<f32> {
+        None
+    }
+
+    /// A corridor 10 points wide, between walls along y = -5 and y = 5.
+    fn corridor(from: Pos2, way: Vec2, most: f32) -> Option<f32> {
+        if way.y.abs() < 1e-6 {
+            return None;
+        }
+        let wall = if way.y > 0.0 { 5.0 } else { -5.0 };
+        Some((wall - from.y) / way.y).filter(|t| *t <= most)
+    }
+
+    /// A strip runs out from where it's thrown, Armageddon on from where it
+    /// lands, and a wall stands across, each the size the game says, here at
+    /// a point to a metre.
     #[test]
     fn each_shape_points_the_way_it_is_thrown() {
         let at = (Some(pos2(0.0, 0.0)), pos2(100.0, 0.0));
-        let units = 0.01;
-        let ink = Color32::WHITE;
-        let strip = outline(at, (Reach::Strip(800.0, 5600.0, 800.0), units), ink);
-        assert_eq!(corners(&strip), [(8, -4), (64, -4), (64, 4), (8, 4)]);
-        let wire = outline(at, (Reach::Wire(1500.0), units), ink);
-        assert_eq!(corners(&wire), [(100, 2), (85, 2), (85, -2), (100, -2)]);
-        let wall = outline(at, (Reach::Across(1040.0), units), ink);
-        assert_eq!(corners(&wall), [(99, 5), (99, -5), (102, -5), (102, 5)]);
-        assert!(outline((None, pos2(0.0, 0.0)), (Reach::Wire(1500.0), units), ink).is_empty());
+        let ink: (Color32, Run<'_>) = (Color32::WHITE, &open);
+        let strip = corners(&outline(
+            at,
+            (Reach::Strip(800.0, 5600.0, 800.0), 0.01),
+            ink,
+        ));
+        assert!(
+            same(
+                &strip,
+                &[[8.0, -4.0], [64.0, -4.0], [64.0, 4.0], [8.0, 4.0]]
+            ),
+            "{strip:?}"
+        );
+        let sweep = corners(&outline(at, (Reach::Sweep(3200.0, 1200.0), 0.01), ink));
+        assert!(
+            same(
+                &sweep,
+                &[[100.0, -6.0], [132.0, -6.0], [132.0, 6.0], [100.0, 6.0]]
+            ),
+            "{sweep:?}"
+        );
+        let wall = corners(&outline(at, (Reach::Across(1040.0), 0.01), ink));
+        assert!(
+            same(
+                &wall,
+                &[[98.5, 5.2], [98.5, -5.2], [101.5, -5.2], [101.5, 5.2]]
+            ),
+            "{wall:?}"
+        );
+    }
+
+    /// A trip goes straight across the corridor it's put in, wall to wall,
+    /// whichever way it was placed from, and isn't drawn in open floor.
+    #[test]
+    fn a_trip_spans_the_gap_it_is_put_in() {
+        let walled: (Color32, Run<'_>) = (Color32::WHITE, &corridor);
+        let trip = corners(&outline(
+            (Some(pos2(0.0, 0.0)), pos2(100.0, 0.0)),
+            (Reach::Wire(1500.0), 0.01),
+            walled,
+        ));
+        assert_eq!(trip.len(), 4, "{trip:?}");
+        assert!(
+            trip.iter()
+                .all(|p| (p.x - 100.0).abs() <= THINNEST / 2.0 + 1e-3),
+            "{trip:?}"
+        );
+        assert!(
+            trip.iter().all(|p| (p.y.abs() - 5.0).abs() < 1e-3),
+            "{trip:?}"
+        );
+        let floor: (Color32, Run<'_>) = (Color32::WHITE, &open);
+        assert!(outline((None, pos2(0.0, 0.0)), (Reach::Wire(1500.0), 0.01), floor).is_empty());
+    }
+
+    /// Barrier Mesh is an X of four walls at 45 degrees to the throw, each
+    /// cut short by a wall or else 10 metres long.
+    #[test]
+    fn a_mesh_is_an_x_cut_short_by_walls() {
+        let at = (Some(pos2(0.0, 0.0)), pos2(100.0, 0.0));
+        let floor: (Color32, Run<'_>) = (Color32::WHITE, &open);
+        let mesh = outline(at, (Reach::Cross(1000.0), 0.01), floor);
+        assert_eq!(mesh.len(), 4);
+        let reach: Vec<f32> = corners(&mesh)
+            .iter()
+            .map(|p| p.distance(pos2(100.0, 0.0)))
+            .collect();
+        let longest = reach.iter().copied().fold(0.0, f32::max);
+        assert!(
+            (longest - 10.0_f32.hypot(THINNEST / 2.0)).abs() < 1e-3,
+            "{reach:?}"
+        );
+        let walled: (Color32, Run<'_>) = (Color32::WHITE, &corridor);
+        let short = corners(&outline(at, (Reach::Cross(1000.0), 0.01), walled));
+        assert!(
+            short.iter().all(|p| p.y.abs() <= 5.0 + THINNEST),
+            "{short:?}"
+        );
     }
 }

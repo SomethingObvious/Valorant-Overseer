@@ -72,7 +72,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     for drawing in view.shapes(atlas) {
         shapes::paint(&painter, square, drawing);
     }
-    pins(&painter, (square, ui.clip_rect()), atlas, view, plan.scale);
+    pins(&painter, (square, ui.clip_rect()), atlas, view, plan);
     if view.export.is_some() {
         // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
@@ -327,7 +327,7 @@ fn spots(
         .minimap
         .as_deref()
         .and_then(|path| art::file_pixels(ctx, path));
-    let floor = Floor::new(image.as_deref(), square.turn);
+    let floor = Floor::new(image.as_deref(), square.turn, false);
     let cells = f32::from(CELLS);
     let cell = side / cells;
     let labels: Vec<Label> = plan
@@ -367,6 +367,24 @@ struct Label {
     letter: bool,
 }
 
+/// The floor of the map on screen, worked out once for each map and turn
+/// once its minimap is on disk. All floor until then.
+fn floor_of(ctx: &egui::Context, square: Square, plan: &Plan) -> std::sync::Arc<Floor> {
+    let id = egui::Id::new(("walled-floor", &plan.name, square.turn));
+    if let Some(kept) = ctx.data(|store| store.get_temp::<std::sync::Arc<Floor>>(id)) {
+        return kept;
+    }
+    let image = plan
+        .minimap
+        .as_deref()
+        .and_then(|path| art::file_pixels(ctx, path));
+    let floor = std::sync::Arc::new(Floor::new(image.as_deref(), square.turn, true));
+    if image.is_some() {
+        ctx.data_mut(|store| store.insert_temp(id, std::sync::Arc::clone(&floor)));
+    }
+    floor
+}
+
 /// A box of cells, from its top left corner to just past its bottom right.
 type Cells = [i32; 4];
 
@@ -378,18 +396,39 @@ struct Floor {
 
 impl Floor {
     /// The floor of `image` turned `turn` quarter turns, or all floor when
-    /// the minimap isn't on disk.
-    fn new(image: Option<&egui::ColorImage>, turn: u8) -> Self {
+    /// the minimap isn't on disk. With `lines`, the white lines Riot draws
+    /// for walls inside the floor are wall too. They are a pixel or two wide,
+    /// so then a cell is only floor when every pixel across it is.
+    fn new(image: Option<&egui::ColorImage>, turn: u8, lines: bool) -> Self {
         let row = usize::from(CELLS) + 1;
         let cells = f32::from(CELLS);
+        let across: &[f32] = if lines {
+            &[0.125, 0.375, 0.625, 0.875]
+        } else {
+            &[0.5]
+        };
+        let floor = |image: &egui::ColorImage, shown: [f32; 2]| {
+            let [w, h] = image.size;
+            let [x, y] = shapes::turned(shown, 4 - turn % 4);
+            let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
+            let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
+            // The floor is mid grey, the sites yellow and the wall lines
+            // white, so only the lines are this bright in red and green.
+            image
+                .pixels
+                .get(py * w + px)
+                .is_some_and(|p| p.a() > 128 && !(lines && p.r() > 190 && p.g() > 190))
+        };
         let on = |gx: u16, gy: u16| {
             image.is_none_or(|image| {
-                let [w, h] = image.size;
-                let shown = [(f32::from(gx) + 0.5) / cells, (f32::from(gy) + 0.5) / cells];
-                let [x, y] = shapes::turned(shown, 4 - turn % 4);
-                let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
-                let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
-                image.pixels.get(py * w + px).is_some_and(|p| p.a() > 128)
+                across.iter().all(|dy| {
+                    across.iter().all(|dx| {
+                        floor(
+                            image,
+                            [(f32::from(gx) + dx) / cells, (f32::from(gy) + dy) / cells],
+                        )
+                    })
+                })
             })
         };
         let mut sums = vec![0_u32; row];
@@ -414,6 +453,30 @@ impl Floor {
             .and_then(|at| self.sums.get(at))
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Whether the cell at `x`, `y` is wall, or off the map.
+    fn wall(&self, x: i32, y: i32) -> bool {
+        self.count([x, y, x + 1, y + 1]) == 0
+    }
+
+    /// How many points the floor runs from `from` along `way` on `square`
+    /// before a wall, when one comes within `most`. A point on a wall's edge
+    /// starts from the floor beside it, up to three cells out, since a trip
+    /// or a mesh is put against a wall. One deeper in the wall is at it.
+    fn run(&self, square: Square, (from, way): (Pos2, Vec2), most: f32) -> Option<f32> {
+        let cell = square.width() / f32::from(CELLS);
+        let wall = |t: f32| {
+            let at = (from + way * t - square.min) / cell;
+            self.wall(at.x.floor() as i32, at.y.floor() as i32)
+        };
+        let step = cell / 2.0;
+        let Some(start) = (0..=6_u8).map(|i| f32::from(i) * step).find(|&t| !wall(t)) else {
+            return Some(0.0);
+        };
+        std::iter::successors(Some(start), |t| Some(t + step))
+            .take_while(|&t| t <= most)
+            .find(|&t| wall(t))
     }
 
     /// How many cells of a box are floor.
@@ -816,8 +879,9 @@ fn pins(
     (square, room): (Square, Rect),
     atlas: &Atlas,
     view: &View,
-    scale: Option<f32>,
+    plan: &Plan,
 ) {
+    let (scale, floor) = (plan.scale, floor_of(painter.ctx(), square, plan));
     let main = view.main.as_deref();
     let writing = match &view.mode {
         Mode::Edit(draft) => Some(&draft.lineup),
@@ -830,7 +894,11 @@ fn pins(
         .partition(|l| writing.is_none() && l.id.is_some() && l.id == view.selected);
     let dim = writing.is_some() || !picked.is_empty();
     // Every area first, so no pin is under somebody else's area.
-    let areas = |lineup: &Lineup, ink: Color32| area(painter, square, lineup, scale, ink);
+    let run = |from: Pos2, way: Vec2, most: f32| floor.run(square, (from, way), most);
+    // Areas stay on the map, since Cosmic Divide has no end and a big one
+    // like Haunt's would cover the panel beside it.
+    let inside = painter.with_clip_rect(square.rect.intersect(painter.clip_rect()));
+    let areas = |lineup: &Lineup, ink: Color32| area(&inside, square, lineup, scale, (ink, &run));
     let faint =
         |lineup: &Lineup| tint(lineup.side.as_deref()).gamma_multiply(if dim { 0.45 } else { 0.9 });
     // In the colour the settings pick, or else the side's, dimmed the same
@@ -884,14 +952,15 @@ fn pins(
     }
 }
 
-/// The ground a lineup's ability covers, to the map's scale. It moves with
-/// the pins, since it is drawn from them.
+/// The ground a lineup's ability covers, to the map's scale, with trips and
+/// walls stopping at the map's walls. It moves with the pins, since it is
+/// drawn from them.
 fn area(
     painter: &egui::Painter,
     square: Square,
     lineup: &Lineup,
     scale: Option<f32>,
-    ink: Color32,
+    ink: (Color32, areas::Run<'_>),
 ) {
     let (Some(land), Some(reach), Some(scale)) = (
         lineup.land,
@@ -1579,7 +1648,7 @@ mod tests {
             })
             .collect();
         let image = egui::ColorImage::new([size, size], pixels);
-        let floor = Floor::new(Some(&image), 0);
+        let floor = Floor::new(Some(&image), 0, false);
         let label = |x: f32| Label {
             at: [x, 100.0],
             size: [30.0, 6.0],

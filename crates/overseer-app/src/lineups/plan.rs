@@ -386,6 +386,42 @@ fn floor_of(ctx: &egui::Context, square: Square, plan: &Plan) -> std::sync::Arc<
     floor
 }
 
+/// How far a turret at `from` sees along `way` on `square`, up to `most`
+/// points: to the first clear pixel of the minimap, which is off its floor,
+/// or off the map. Only that is sure to block it, as the lines drawn inside
+/// the floor are as often ledges and the edges of raised ground as walls.
+/// The edge is found to a sixteenth of a point, so the cone's rim runs smooth.
+fn sight(
+    image: &egui::ColorImage,
+    square: Square,
+    (from, way): (Pos2, Vec2),
+    most: f32,
+) -> Option<f32> {
+    let [w, h] = image.size;
+    let clear = |t: f32| {
+        let shown = (from + way * t - square.min) / square.width();
+        if !(0.0..1.0).contains(&shown.x) || !(0.0..1.0).contains(&shown.y) {
+            return true;
+        }
+        let [x, y] = shapes::turned([shown.x, shown.y], 4 - square.turn % 4);
+        let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
+        let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
+        image.pixels.get(py * w + px).is_none_or(|p| p.a() <= 128)
+    };
+    let steps = most.min(f32::from(u16::MAX)) as u16;
+    let hit = (1..=steps).map(f32::from).find(|&t| clear(t))?;
+    let (mut open, mut shut) = (hit - 1.0, hit);
+    for _ in 0..4 {
+        let middle = f32::midpoint(open, shut);
+        if clear(middle) {
+            shut = middle;
+        } else {
+            open = middle;
+        }
+    }
+    Some(open)
+}
+
 /// A box of cells, from its top left corner to just past its bottom right.
 type Cells = [i32; 4];
 
@@ -906,10 +942,20 @@ fn pins(
     let dim = writing.is_some() || !picked.is_empty();
     // Every area first, so no pin is under somebody else's area.
     let run = |from: Pos2, way: Vec2, most: f32| floor.run(square, (from, way), most);
+    let image = plan
+        .minimap
+        .as_deref()
+        .and_then(|path| art::file_pixels(painter.ctx(), path));
+    let see = |from: Pos2, way: Vec2, most: f32| {
+        image
+            .as_deref()
+            .and_then(|image| sight(image, square, (from, way), most))
+    };
     // Areas stay on the map, since Cosmic Divide has no end and a big one
     // like Haunt's would cover the panel beside it.
     let inside = painter.with_clip_rect(square.rect.intersect(painter.clip_rect()));
-    let areas = |lineup: &Lineup, ink: Color32| area(&inside, square, lineup, scale, (ink, &run));
+    let areas =
+        |lineup: &Lineup, ink: Color32| area(&inside, square, lineup, scale, (ink, &run, &see));
     let faint =
         |lineup: &Lineup| tint(lineup.side.as_deref()).gamma_multiply(if dim { 0.45 } else { 0.9 });
     // In the colour the settings pick, or else the side's, dimmed the same
@@ -1007,7 +1053,7 @@ fn area(
     square: Square,
     lineup: &Lineup,
     scale: Option<f32>,
-    ink: (Color32, areas::Run<'_>),
+    (ink, run, see): (Color32, areas::Run<'_>, areas::Run<'_>),
 ) {
     let (Some(land), Some(reach), Some(scale)) = (
         lineup.land,
@@ -1036,7 +1082,14 @@ fn area(
             painter,
             (stand, at, own),
             (reach, scale * square.width()),
-            ink,
+            (
+                ink,
+                if matches!(reach, Reach::Aim(_)) {
+                    see
+                } else {
+                    run
+                },
+            ),
         );
     }
 }
@@ -1369,12 +1422,14 @@ fn on_wall(lineup: &Lineup, square: Square, scale: Option<f32>, at: Pos2) -> boo
     .any(|p| p.distance(at) <= REACH)
 }
 
+/// How far a trip's two dots sit from it, in game units.
+const TRIP_DOT: f32 = 300.0;
+
 /// Keeps a lineup's points to what its ability allows, at `scale` map
 /// widths to a game unit. Smokes put down from afar stay within reach of
-/// where you stand, and no more of them than it has. A trip gets two ends
-/// three metres either side of where it lands, across the throw, and
-/// the one `held` is kept within its wire of the other. A bent wall ends at
-/// the most it can be. Any other ability has none.
+/// where you stand, and no more of them than it has. A trip gets two dots
+/// `TRIP_DOT` either side of it, across the throw at first, and turns to
+/// follow the one `held`. A bent wall ends at the most it can be. Any other ability has none.
 fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
     let ability = lineup.ability.clone();
     let reach = ability.as_deref().and_then(areas::reach);
@@ -1391,25 +1446,28 @@ fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
         return;
     };
     match reach {
-        Some(Reach::Wire(length)) => {
-            if lineup.points.len() != 2 {
-                lineup.points = lineup.land.map_or_else(Vec::new, |land| {
-                    let at = pos2(land[0], land[1]);
-                    let ahead = lineup.stand.map(|s| at - pos2(s[0], s[1]));
-                    let across = ahead
-                        .filter(|a| a.length() > 0.0)
-                        .map_or(Vec2::X, |a| a.normalized().rot90())
-                        * (300.0 * scale);
-                    [at - across, at + across].map(|p| [p.x, p.y]).to_vec()
-                });
-            }
-            if let [a, b] = lineup.points.as_mut_slice() {
-                if held == Some(0) {
-                    *a = within(*b, *a, length * scale);
-                } else {
-                    *b = within(*a, *b, length * scale);
-                }
-            }
+        Some(Reach::Wire(_)) => {
+            let Some(land) = lineup.land.map(|l| pos2(l[0], l[1])) else {
+                lineup.points.clear();
+                return;
+            };
+            let at = |p: [f32; 2]| pos2(p[0], p[1]);
+            // The dot held sets which way it runs, and the other mirrors it
+            // through the trip. Otherwise it keeps its way as the trip moves,
+            // and before it has one, it runs across the throw.
+            let way = match (lineup.points.as_slice(), held) {
+                (&[a, _], Some(0)) => land - at(a),
+                (&[_, b], Some(1)) => at(b) - land,
+                (&[a, b], _) => at(b) - at(a),
+                _ => lineup.stand.map_or(Vec2::Y, |s| (land - at(s)).rot90()),
+            };
+            let way = if way.length() > 0.0 {
+                way.normalized()
+            } else {
+                Vec2::Y
+            };
+            let reach = way * (TRIP_DOT * scale);
+            lineup.points = [land - reach, land + reach].map(|p| [p.x, p.y]).to_vec();
         }
         Some(Reach::Bent(length)) => {
             lineup.points.truncate(1);
@@ -2006,10 +2064,14 @@ mod tests {
         );
     }
 
-    /// A trip starts with two ends across the throw, and the one dragged
-    /// stays within its 15 metre wire of the other.
+    /// A trip's two dots sit three metres either side of it, across the
+    /// throw at first, and dragging one turns the trip round it while both
+    /// keep their distance. Moving the trip brings them along.
     #[test]
-    fn a_trip_has_two_ends_no_further_apart_than_its_wire() {
+    fn a_trips_dots_turn_it_and_keep_their_distance() {
+        let near =
+            |p: [f32; 2], q: [f32; 2]| (p[0] - q[0]).abs() < 1e-5 && (p[1] - q[1]).abs() < 1e-5;
+        let dots = |l: &Lineup, a: [f32; 2], b: [f32; 2]| matches!(l.points.as_slice(), &[p, q] if near(p, a) && near(q, b));
         let mut lineup = Lineup {
             ability: Some("Trapwire".to_owned()),
             stand: Some([0.1, 0.5]),
@@ -2017,18 +2079,25 @@ mod tests {
             ..Lineup::default()
         };
         settle(&mut lineup, Some(0.0001), None);
-        let &[a, b] = lineup.points.as_slice() else {
-            panic!("a trip should have two ends, not {:?}", lineup.points);
-        };
         assert!(
-            (a[0] - 0.5).abs() < 1e-5 && (b[0] - 0.5).abs() < 1e-5,
-            "{a:?} {b:?}"
+            dots(&lineup, [0.5, 0.53], [0.5, 0.47]),
+            "{:?}",
+            lineup.points
         );
-        assert!(((b[1] - a[1]).abs() - 0.06).abs() < 1e-5, "{a:?} {b:?}");
-        lineup.points = vec![a, [0.5, 0.9]];
+        lineup.points = vec![[0.5, 0.47], [0.9, 0.5]];
         settle(&mut lineup, Some(0.0001), Some(1));
-        let end = lineup.points.get(1).copied().unwrap_or_default();
-        assert!(((end[1] - a[1]) - 0.15).abs() < 1e-5, "{end:?}");
+        assert!(
+            dots(&lineup, [0.47, 0.5], [0.53, 0.5]),
+            "{:?}",
+            lineup.points
+        );
+        lineup.land = Some([0.2, 0.2]);
+        settle(&mut lineup, Some(0.0001), None);
+        assert!(
+            dots(&lineup, [0.17, 0.2], [0.23, 0.2]),
+            "{:?}",
+            lineup.points
+        );
         lineup.ability = Some("Incendiary".to_owned());
         settle(&mut lineup, Some(0.0001), None);
         assert!(lineup.points.is_empty(), "a molly has no points of its own");

@@ -396,7 +396,7 @@ fn wire((a, b): (Pos2, Pos2), most: f32, run: Run<'_>, line: (Color32, Stroke)) 
 }
 
 /// How many rays a turret's sight is traced in.
-const RAYS: u8 = 48;
+const RAYS: u8 = 96;
 
 /// What a turret at `from` facing `ahead` sees in a cone `degrees` wide:
 /// each ray runs until it meets a wall, or `far` points when none comes. It
@@ -415,15 +415,19 @@ fn sight(
             from + way * run(from, way, far).unwrap_or(far)
         })
         .collect();
-    let mut out: Vec<Shape> = ends
-        .iter()
-        .zip(ends.iter().skip(1))
-        .map(|(a, b)| Shape::convex_polygon(vec![from, *a, *b], fill, Stroke::NONE))
-        .collect();
+    // One mesh with no softened edges, since softening each thin slice on
+    // its own leaves spikes where they meet. The rim line smooths the edge.
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(from, fill);
+    for end in &ends {
+        mesh.colored_vertex(*end, fill);
+    }
+    for i in 1..=u32::from(RAYS) {
+        mesh.add_triangle(0, i, i + 1);
+    }
     let mut rim = vec![from];
     rim.extend(ends);
-    out.push(Shape::closed_line(rim, edge));
-    out
+    vec![Shape::mesh(mesh), Shape::closed_line(rim, edge)]
 }
 
 /// A cone out from `from` toward `ahead`, `far` points long and `degrees`

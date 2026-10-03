@@ -4,6 +4,7 @@
 //! none, and its lineup is only its pins.
 
 use egui::{Color32, Pos2, Shape, Stroke, Vec2};
+use overseer_ui::colour;
 
 /// The ground an ability covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,9 +37,9 @@ pub(super) enum Reach {
     /// apart, each running this far behind and this far ahead or until it
     /// meets a wall.
     Lanes(f32, f32, f32),
-    /// A cone this many degrees wide and this far out from where it lands,
-    /// pointing at the lineup's point.
-    Aim(f32, f32),
+    /// A cone this many degrees wide out from where it lands, pointing at
+    /// the lineup's point, as far as it can see before the walls.
+    Aim(f32),
     /// A circle this big where it lands and another where it bounces, which
     /// is the lineup's point.
     Bounce(f32),
@@ -166,7 +167,7 @@ pub(super) fn reach(ability: &str) -> Option<Reach> {
         ("Trapwire", Reach::Wire(1500.0)),
         ("High Tide", Reach::Bent(6000.0)),
         ("Fast Lane", Reach::Lanes(150.0, 4500.0, 350.0)),
-        ("TURRET", Reach::Aim(100.0, 2000.0)),
+        ("TURRET", Reach::Aim(100.0)),
         ("Relay Bolt", Reach::Bounce(500.0)),
         ("Blaze", Reach::Bent(2100.0)),
         ("Armageddon", Reach::Sweep(3200.0, 1200.0)),
@@ -218,15 +219,8 @@ fn outline(
         (Reach::Round(outer, inner), _) => {
             round(land, (outer * units, inner.map(|i| i * units)), ink)
         }
-        (Reach::Wire(_), _) => match points {
-            [a, b, ..] if a.distance(*b) > 0.0 => {
-                vec![band(
-                    *a,
-                    (*b - *a).normalized(),
-                    (0.0, a.distance(*b), 0.0),
-                    line,
-                )]
-            }
+        (Reach::Wire(length), _) => match points {
+            [a, b, ..] if a.distance(*b) > 0.0 => wire((*a, *b), length * units, run, line),
             _ => Vec::new(),
         },
         (Reach::Bent(length), _) => stand.map_or_else(Vec::new, |from| {
@@ -269,11 +263,16 @@ fn outline(
             .chain([&land])
             .flat_map(|at| round(*at, (radius * units, None), ink))
             .collect(),
-        (Reach::Aim(degrees, far), _) => points
+        (Reach::Aim(degrees), _) => points
             .first()
             .filter(|p| p.distance(land) > 0.0)
             .map_or_else(Vec::new, |p| {
-                vec![fan(land, *p - land, (far * units, degrees), (fill, edge))]
+                sight(
+                    (land, *p - land),
+                    (degrees, ENDLESS * units),
+                    run,
+                    (fill, edge),
+                )
             }),
         (Reach::Lanes(behind, far, apart), Some(ahead)) => lanes(
             (land - ahead, ahead),
@@ -376,6 +375,55 @@ fn lanes(
             band(start, way, (-back, on, 0.0), line)
         })
         .collect()
+}
+
+/// A trip wire through its ends `a` and `b`, run on out to the wall each
+/// side when the whole of it fits in `most` points and no wall stands between
+/// the ends. Otherwise it can't be put there, and the part between the ends
+/// is red and dashed.
+fn wire((a, b): (Pos2, Pos2), most: f32, run: Run<'_>, line: (Color32, Stroke)) -> Vec<Shape> {
+    let (way, between) = ((b - a).normalized(), a.distance(b));
+    let spare = most - between;
+    // A wall between the ends blocks it too. An end put on a wall line meets
+    // it just short of the end, which is fine.
+    let clear = run(a, way, between).is_none_or(|t| t >= 2.0f32.mul_add(-THINNEST, between));
+    match (run(a, -way, spare), run(b, way, spare)) {
+        (Some(back), Some(on)) if clear && back + on <= spare => {
+            vec![band(a, way, (-back, between + on, 0.0), line)]
+        }
+        _ => Shape::dashed_line(&[a, b], Stroke::new(THINNEST, colour::ENEMY), 6.0, 4.0),
+    }
+}
+
+/// How many rays a turret's sight is traced in.
+const RAYS: u8 = 48;
+
+/// What a turret at `from` facing `ahead` sees in a cone `degrees` wide:
+/// each ray runs until it meets a wall, or `far` points when none comes. It
+/// shoots at any range it can see, so there's no other limit.
+fn sight(
+    (from, ahead): (Pos2, Vec2),
+    (degrees, far): (f32, f32),
+    run: Run<'_>,
+    (fill, edge): (Color32, Stroke),
+) -> Vec<Shape> {
+    let (towards, half) = (ahead.angle(), degrees.to_radians() / 2.0);
+    let ends: Vec<Pos2> = (0..=RAYS)
+        .map(|i| {
+            let way =
+                Vec2::angled((f32::from(i) / f32::from(RAYS)).mul_add(2.0 * half, towards - half));
+            from + way * run(from, way, far).unwrap_or(far)
+        })
+        .collect();
+    let mut out: Vec<Shape> = ends
+        .iter()
+        .zip(ends.iter().skip(1))
+        .map(|(a, b)| Shape::convex_polygon(vec![from, *a, *b], fill, Stroke::NONE))
+        .collect();
+    let mut rim = vec![from];
+    rim.extend(ends);
+    out.push(Shape::closed_line(rim, edge));
+    out
 }
 
 /// A cone out from `from` toward `ahead`, `far` points long and `degrees`
@@ -517,23 +565,47 @@ mod tests {
         );
     }
 
-    /// A trip is drawn between its two ends, and not at all before it has
-    /// them.
+    /// A trip runs on from its two ends to the walls either side, and one
+    /// that can't reach a wall each way within its 15 metres is red and
+    /// dashed between its ends.
     #[test]
-    fn a_trip_runs_between_its_ends() {
+    fn a_trip_reaches_the_walls_or_turns_red() {
+        let ends = [pos2(100.0, -2.0), pos2(100.0, 2.0)];
+        let walled: (Color32, Run<'_>) = (Color32::WHITE, &corridor);
+        let trip = outline(
+            (None, pos2(100.0, 0.0), &ends),
+            (Reach::Wire(1500.0), 0.01),
+            walled,
+        );
+        let span = corners(&trip);
+        assert!(
+            same_corners(
+                &span,
+                &[[101.5, -5.0], [101.5, 5.0], [98.5, 5.0], [98.5, -5.0]]
+            ),
+            "{span:?}"
+        );
+        // Nine metres of wire can't cross a ten metre corridor.
+        let short = outline(
+            (None, pos2(100.0, 0.0), &ends),
+            (Reach::Wire(900.0), 0.01),
+            walled,
+        );
+        assert!(
+            short.iter().all(
+                |s| matches!(s, Shape::LineSegment { stroke, .. } if stroke.color == colour::ENEMY)
+            ),
+            "{short:?}"
+        );
         let floor: (Color32, Run<'_>) = (Color32::WHITE, &open);
-        let ends = [pos2(100.0, -5.0), pos2(100.0, 5.0)];
-        let trip = corners(&outline(
+        let loose = outline(
             (None, pos2(100.0, 0.0), &ends),
             (Reach::Wire(1500.0), 0.01),
             floor,
-        ));
+        );
         assert!(
-            same_corners(
-                &trip,
-                &[[101.5, -5.0], [101.5, 5.0], [98.5, 5.0], [98.5, -5.0]]
-            ),
-            "{trip:?}"
+            !loose.is_empty() && loose.iter().all(|s| matches!(s, Shape::LineSegment { .. })),
+            "{loose:?}"
         );
         assert!(
             outline(
@@ -597,9 +669,25 @@ mod tests {
         let floor: (Color32, Run<'_>) = (Color32::WHITE, &open);
         let bolt = outline(at, (Reach::Bounce(500.0), 0.01), floor);
         assert_eq!(bolt.len(), 4);
-        let cone = corners(&outline(at, (Reach::Aim(100.0, 2000.0), 0.01), floor));
-        let tip = cone.get(9).copied().unwrap_or_default();
-        assert!(tip.distance(pos2(10.0, 20.0)) < 1e-3, "{cone:?}");
+        // With no wall it sees to the end of the map and past, straight at
+        // its dot, and a wall stops each ray at it.
+        let cone = outline(at, (Reach::Aim(100.0), 0.01), floor);
+        let rim = cone.last().and_then(|s| match s {
+            Shape::Path(path) => path.points.get(usize::from((RAYS >> 1) + 1)).copied(),
+            _ => None,
+        });
+        let middle = rim.unwrap_or_default();
+        assert!(
+            (middle.x - 10.0).abs() < 1e-3 && middle.y >= 500.0 - 1e-2,
+            "{middle:?}"
+        );
+        let walled: (Color32, Run<'_>) = (Color32::WHITE, &corridor);
+        let boxed = outline(at, (Reach::Aim(100.0), 0.01), walled);
+        let rim = match boxed.last() {
+            Some(Shape::Path(path)) => path.points.clone(),
+            _ => Vec::new(),
+        };
+        assert!(rim.iter().all(|p| p.y <= 5.0 + 1e-3), "{rim:?}");
     }
 
     /// Barrier Mesh is an X of four walls at 45 degrees to the throw, each

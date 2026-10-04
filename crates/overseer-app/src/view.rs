@@ -173,7 +173,7 @@ fn keys(ui: &mut Ui) {
         ("w", "Jump to the next player worth a look"),
         (
             "o",
-            "Turn the overlay on or off. Ctrl+Alt+O does the same in game",
+            "Show the overlay for 15 seconds, or hide it. Ctrl+Alt+O does the same in game",
         ),
         ("up, down", "Select the previous or next player"),
         ("n", "Write a note about the selected player"),
@@ -266,13 +266,13 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
     );
     if switch(
         ui,
-        "Overlay",
-        "Show the overlay during matches",
-        settings.overlay.on,
+        "Overlay in Agent Select",
+        "Show it in agent select and the first 30 seconds of a match",
+        settings.overlay.auto,
         false,
         still,
     ) {
-        settings.overlay.on = !settings.overlay.on;
+        settings.overlay.auto = !settings.overlay.auto;
         changed = true;
     }
     for corner in Corner::ALL {

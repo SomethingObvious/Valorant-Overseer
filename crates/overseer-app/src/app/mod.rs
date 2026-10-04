@@ -44,9 +44,11 @@ const PANEL_MOST: f32 = 680.0;
 /// The least a dragged panel leaves the board, which is what the board has
 /// beside the narrowest panel in the narrowest window that has one.
 const BOARD_LEAST: f32 = COMPACT - PANEL_NARROW;
-/// How long the overlay shows itself after being switched on with nothing
-/// to show, in seconds.
-const GREETING: f64 = 4.0;
+/// How far into a match the overlay stays up by itself, in seconds: the
+/// loading screen and the first buy.
+const LINGER: f64 = 30.0;
+/// How long a press of the hotkey shows the overlay for, in seconds.
+const PEEK: f64 = 15.0;
 /// Seconds the pointer rests on a row before its history is asked for, so
 /// crossing the board asks nothing.
 const DWELL: f64 = 0.25;
@@ -160,9 +162,9 @@ pub(crate) struct Overseer {
     /// How tall the overlay's contents actually came out last time they
     /// were drawn, so the window can be exactly that tall.
     overlay_drew: Option<f32>,
-    /// When the overlay was last switched on, for the few seconds it shows
-    /// itself with nothing in it so switching it on is seen to work.
-    overlay_on_at: Option<f64>,
+    /// What decides whether the overlay is up, apart from the setting that
+    /// lets it show itself.
+    shown: Shown,
     /// Who the panel is currently faded in on, which lags the pointer by
     /// half the length of the fade.
     panel_showing: Option<String>,
@@ -184,10 +186,70 @@ pub(crate) struct Overseer {
     /// A few words for the footer and when they were said, for an action
     /// that would otherwise look like it did nothing.
     said: Option<(String, f64)>,
+    /// Where the window last was on screen, for a save made minimized.
+    place: Place,
 }
 
 /// How long the footer keeps something it was told to say, in seconds.
 const SAID: f64 = 2.5;
+
+/// The key eframe keeps the window's place under.
+const WINDOW_KEY: &str = "window";
+
+/// What decides whether the overlay is up, apart from the setting that lets
+/// it show itself.
+#[derive(Debug, Default)]
+struct Shown {
+    /// Until when a press of the hotkey keeps it up, on egui's clock.
+    peek_until: Option<f64>,
+    /// When agent select ended and the match began.
+    began_at: Option<f64>,
+    /// The board's state when it was hidden by hand. It stays hidden until
+    /// the board moves on.
+    hidden_in: Option<String>,
+}
+
+impl Shown {
+    /// Whether the overlay is up at `now` on a board in `state`: asked for in
+    /// the last `PEEK` seconds, or, when it may show itself and there are
+    /// `players` to show, in agent select and the match's first `LINGER`
+    /// seconds, unless it was hidden by hand in this state.
+    fn up(&self, auto: bool, state: Option<&str>, players: bool, now: f64) -> bool {
+        if self.peek_until.is_some_and(|until| now < until) {
+            return true;
+        }
+        let hidden = self.hidden_in.is_some() && self.hidden_in.as_deref() == state;
+        let by_itself = match state {
+            Some("PREGAME") => true,
+            Some("INGAME") => self.began_at.is_some_and(|at| now - at < LINGER),
+            _ => false,
+        };
+        auto && players && by_itself && !hidden
+    }
+}
+
+/// Where the window last was on screen, as eframe saved it.
+#[derive(Debug, Default)]
+struct Place {
+    /// Whether the window was minimized on the last frame.
+    minimized: bool,
+    /// eframe's last save of the window while it was on screen.
+    kept: Option<String>,
+}
+
+impl Place {
+    /// Puts back where the window last was on screen when eframe has just
+    /// saved it minimized. Windows reports a minimized window as nothing at
+    /// -32000, and eframe would open the next launch from that as the
+    /// smallest window it can make, in the corner of the main screen.
+    fn keep(&mut self, storage: &mut dyn eframe::Storage) {
+        if !self.minimized {
+            self.kept = storage.get_string(WINDOW_KEY);
+        } else if let Some(place) = &self.kept {
+            storage.set_string(WINDOW_KEY, place.clone());
+        }
+    }
+}
 
 /// How far in from the window's edge a press resizes it. A window without
 /// Windows' frame has no grab area outside its edge, so this one is wide. The
@@ -424,7 +486,7 @@ impl Overseer {
             roster: Vec::new(),
             roster_at: 0.0,
             overlay_drew: None,
-            overlay_on_at: None,
+            shown: Shown::default(),
             panel_showing: None,
             unreadable: (0, None),
             knocked,
@@ -432,6 +494,10 @@ impl Overseer {
             panel_visible: false,
             histories: HashMap::new(),
             said: None,
+            place: Place {
+                minimized: false,
+                kept: cc.storage.and_then(|s| s.get_string(WINDOW_KEY)),
+            },
         }
     }
 
@@ -456,8 +522,7 @@ impl Overseer {
         // tray is how the window comes back.
         let pressed = self.hotkey.as_ref().map_or(0, |k| k.presses().count());
         if pressed % 2 == 1 {
-            let on = !self.settings.overlay.on;
-            self.set_overlay(on);
+            self.flip_overlay(ctx.input(|i| i.time));
         }
         self.reach(ctx);
         for event in self.bridge.drain() {
@@ -497,10 +562,14 @@ impl Overseer {
                     {
                         self.lineups.follow(map);
                     }
+                    let began = match_began(was.as_deref(), self.board.state.as_deref());
+                    if began {
+                        self.shown.began_at = Some(ctx.input(|i| i.time));
+                    }
                     // Only when it isn't in use. Somebody reading it as the
                     // match loads wants it where it is.
                     if self.settings.step_aside
-                        && match_began(was.as_deref(), self.board.state.as_deref())
+                        && began
                         && !ctx.input(|i| i.viewport().focused.unwrap_or(false))
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
@@ -715,7 +784,7 @@ impl Overseer {
                     panel::copy(ctx, name);
                 }
             }
-            Hint::Overlay => self.set_overlay(!self.settings.overlay.on),
+            Hint::Overlay => self.flip_overlay(ctx.input(|i| i.time)),
             Hint::Settings => {
                 self.screen = if self.screen == Screen::Settings {
                     Screen::Board
@@ -743,18 +812,20 @@ impl Overseer {
                 } else {
                     // Opens on the map being played, when there is one.
                     self.screen = Screen::Lineups;
-                    // A new lineup starts with the agent you're on, or
-                    // in the lobby the one you've played most lately.
-                    let me = self.board.players.iter().find(|p| p.is_self);
-                    let main = me
+                    // The blacked-out figure is cut from the agent you've
+                    // played most lately.
+                    let main = self
+                        .board
+                        .players
+                        .iter()
+                        .find(|p| p.is_self)
                         .and_then(|p| p.top_agents.first())
                         .and_then(|t| t.agent.as_deref());
-                    let you = me.and_then(|p| p.agent.as_deref()).or(main);
                     self.lineups.open(
                         &self.bridge,
                         self.status == Status::Live,
                         self.board.map.as_deref(),
-                        (you, main),
+                        main,
                     );
                 }
             }
@@ -827,11 +898,11 @@ impl Overseer {
         for action in actions {
             match action {
                 Action::Window => {
-                    self.set_overlay(false);
+                    self.hide_overlay();
                     Self::reveal(ctx, true);
                 }
                 Action::Overlay => {
-                    self.set_overlay(true);
+                    self.peek_overlay(ctx.input(|i| i.time));
                     Self::reveal(ctx, false);
                 }
                 Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -859,19 +930,41 @@ impl Overseer {
         notes::save(&self.root, &self.notes);
     }
 
-    /// Switches the overlay and saves the setting straight away, because a
-    /// game often ends at the power button and not at a clean exit.
-    pub(crate) fn set_overlay(&mut self, on: bool) {
-        if self.settings.overlay.on == on {
-            return;
+    /// Hides the overlay if it is up, and otherwise shows it for `PEEK`
+    /// seconds. The hotkey, O and the footer's hint all come here.
+    pub(crate) fn flip_overlay(&mut self, now: f64) {
+        if self.overlay_up(now) {
+            self.hide_overlay();
+        } else {
+            self.peek_overlay(now);
         }
-        self.settings.overlay.on = on;
-        // Stamped on the next frame, which has a clock.
-        self.overlay_on_at = on.then_some(f64::NEG_INFINITY);
+    }
+
+    /// Shows the overlay for `PEEK` seconds.
+    fn peek_overlay(&mut self, now: f64) {
+        self.shown.peek_until = Some(now + PEEK);
+        self.shown.hidden_in = None;
         // Nothing in the overlay is clickable, so leaving a half finished
         // search or a settings screen behind it would be a trap.
         self.screen = Screen::Board;
-        settings::save(&self.root, &self.settings);
+    }
+
+    /// Hides the overlay until the board moves on to its next state.
+    fn hide_overlay(&mut self) {
+        self.shown.peek_until = None;
+        self.shown.hidden_in.clone_from(&self.board.state);
+    }
+
+    /// Whether the overlay is up: asked for in the last `PEEK` seconds, or
+    /// showing itself in agent select and the match's first `LINGER`
+    /// seconds, unless it was hidden by hand since.
+    pub(super) fn overlay_up(&self, now: f64) -> bool {
+        self.shown.up(
+            self.settings.overlay.auto,
+            self.board.state.as_deref(),
+            !self.board.players.is_empty(),
+            now,
+        )
     }
 
     /// How long an animation is allowed to take, given the tier.
@@ -1040,17 +1133,23 @@ impl App for Overseer {
     /// Called by eframe on the way out and every so often before. Notes save
     /// when their box loses the keyboard, and this catches a window closed
     /// with the caret still in one.
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
         notes::save(&self.root, &self.notes);
+        self.place.keep(storage);
     }
 
     /// Everything that has to run while the window is minimised, when eframe
     /// skips `ui`: the bridge, the hotkey, the tray and the close button.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+        self.place.minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         self.pump(ctx);
         self.closing(ctx);
         self.watch_frames(ctx, frame);
         let now = ctx.input(|i| i.time);
+        // Here and not in `ui`, which eframe skips while the window is
+        // minimized, and Minimize in Matches minimizes it just as the
+        // match loads.
+        self.overlay(ctx, now);
         // A history is only worth fetching for a panel somebody can see.
         if !self.panel_visible {
             return;
@@ -1156,7 +1255,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         roster: Vec::new(),
         roster_at: 0.0,
         overlay_drew: None,
-        overlay_on_at: None,
+        shown: Shown::default(),
         panel_showing: None,
         unreadable: (0, None),
         knocked: std::sync::Arc::default(),
@@ -1164,6 +1263,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         panel_visible: false,
         histories: HashMap::new(),
         said: None,
+        place: Place::default(),
     };
     let _pressed = egui::Panel::top("header")
         .exact_size(header::HEIGHT)
@@ -1177,7 +1277,85 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Wheel, connecting_text, match_began, panel_grip, panel_width};
+    use super::{Place, Shown, Wheel, connecting_text, match_began, panel_grip, panel_width};
+
+    /// Up by itself through agent select and the match's first 30 seconds,
+    /// never over a round otherwise, for 15 seconds after the hotkey, and
+    /// down for the rest of a state once hidden by hand.
+    #[test]
+    fn the_overlay_comes_up_for_agent_select_and_the_hotkey_only() {
+        let mut shown = Shown::default();
+        let pregame = Some("PREGAME");
+        let ingame = Some("INGAME");
+        assert!(shown.up(true, pregame, true, 0.0), "agent select");
+        assert!(!shown.up(false, pregame, true, 0.0), "the setting is off");
+        assert!(!shown.up(true, pregame, false, 0.0), "nobody to show yet");
+        assert!(!shown.up(true, ingame, true, 5.0), "opened mid-match");
+        shown.began_at = Some(100.0);
+        assert!(
+            shown.up(true, ingame, true, 129.0),
+            "the match's first seconds"
+        );
+        assert!(!shown.up(true, ingame, true, 131.0), "into the round");
+        assert!(!shown.up(true, Some("MENUS"), true, 0.0), "the menus");
+
+        shown.peek_until = Some(146.0);
+        assert!(
+            shown.up(false, ingame, false, 140.0),
+            "the hotkey shows it anywhere"
+        );
+        assert!(!shown.up(true, ingame, true, 147.0), "and only for a while");
+
+        shown.peek_until = None;
+        shown.hidden_in = Some("PREGAME".to_owned());
+        assert!(
+            !shown.up(true, pregame, true, 0.0),
+            "hidden in agent select"
+        );
+        assert!(
+            shown.up(true, ingame, true, 110.0),
+            "back for the loading screen"
+        );
+    }
+
+    /// A store in memory, standing in for eframe's file.
+    #[derive(Debug, Default)]
+    struct Disk(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for Disk {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    /// A save while minimized puts back the place the window last had on
+    /// screen, and a save on screen is the new place to keep.
+    #[test]
+    fn a_minimized_window_keeps_its_last_place_on_screen() {
+        use eframe::Storage as _;
+        let mut disk = Disk::default();
+        let mut place = Place::default();
+        disk.set_string("window", "maximized".to_owned());
+        place.keep(&mut disk);
+        place.minimized = true;
+        disk.set_string("window", "nothing at -32000".to_owned());
+        place.keep(&mut disk);
+        assert_eq!(disk.get_string("window").as_deref(), Some("maximized"));
+        place.minimized = false;
+        disk.set_string("window", "moved".to_owned());
+        place.keep(&mut disk);
+        assert_eq!(place.kept.as_deref(), Some("moved"));
+    }
 
     /// A careful notch goes the base distance, a quick run of them builds
     /// up to a cap, and a pause starts over.

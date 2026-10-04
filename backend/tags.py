@@ -20,7 +20,7 @@ from common.check import check
 # rounds that can say so. A Spectre is bought on every half buy, so it
 # takes a lot more of them to mean anything.
 WEAPONS: tuple[tuple[str, str, float, int], ...] = (
-    ("Operator", "op", 0.20, 4),
+    ("Operator", "op", 0.10, 4),
     ("Outlaw", "outlaw", 0.15, 3),
     ("Marshal", "marshal", 0.15, 3),
     ("Judge", "judge", 0.15, 3),

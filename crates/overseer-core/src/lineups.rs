@@ -110,6 +110,10 @@ pub struct Lineup {
     pub stand: Option<[f32; 2]>,
     /// Where it lands.
     pub land: Option<[f32; 2]>,
+    /// What its ability needs past those two: the other places a smoke put
+    /// down from afar lands, a trip wire's two ends, or the point a bent
+    /// wall goes through halfway along.
+    pub points: Vec<[f32; 2]>,
     /// The clip of the throw.
     pub clip: Option<Clip>,
 }

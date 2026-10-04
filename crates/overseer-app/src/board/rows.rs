@@ -30,6 +30,10 @@ pub(crate) struct Metrics {
     pub(crate) pip: f32,
     /// Whether there is room for a second line under the name, for the agent.
     pub(crate) agent_line: bool,
+    /// Whether that line gives the agent's place to the tags when there are
+    /// any. The overlay's cards are too narrow for both, and the face
+    /// already says who they play.
+    pub(crate) tags_first: bool,
 }
 
 impl Metrics {
@@ -50,6 +54,7 @@ pub(crate) const ENEMY: Metrics = Metrics {
     stat: 17.0,
     pip: 9.0,
     agent_line: true,
+    tags_first: false,
 };
 
 /// An ally, in the window: the same row, quieter.
@@ -62,6 +67,7 @@ pub(crate) const ALLY: Metrics = Metrics {
     stat: 14.0,
     pip: 7.0,
     agent_line: true,
+    tags_first: false,
 };
 
 /// An enemy, in a window too narrow for the full row.
@@ -74,6 +80,7 @@ pub(crate) const SMALL: Metrics = Metrics {
     stat: 15.0,
     pip: 8.0,
     agent_line: true,
+    tags_first: false,
 };
 
 /// The gap between two slabs.
@@ -355,7 +362,7 @@ pub(super) fn identity<'a>(
                 player,
                 pos2(x, m.name.mul_add(0.9, middle)),
                 limit,
-                standing_in,
+                standing_in || (m.tags_first && player.auto_tags.iter().any(|t| t.tag.is_some())),
             )
             .into_iter()
             .map(|(rect, tag)| (rect, Hover::Auto(tag))),

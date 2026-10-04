@@ -5,6 +5,7 @@
 //! Lineups stay in this window and never reach the overlay, since Riot's
 //! rules rule out telling somebody where to go in the middle of a round.
 
+mod areas;
 mod form;
 mod pick;
 mod pictures;
@@ -12,6 +13,7 @@ mod plan;
 mod player;
 mod shapes;
 mod side;
+mod sight;
 mod sketch;
 
 use std::path::{Path, PathBuf};
@@ -24,7 +26,7 @@ use overseer_ui::{art, colour};
 use crate::settings::MapTurn;
 use crate::view;
 
-use pick::ANY;
+use pick::{ANY, SPIKE};
 pub(crate) use player::{Prefs, SIZES, SPEEDS, speed_name};
 pub(crate) use shapes::COLOURS;
 pub(crate) use sketch::swatch;
@@ -150,6 +152,11 @@ enum Place {
     Stand,
     /// Where it lands.
     Land,
+    /// Another place a smoke put down from afar lands. A click adds one, or
+    /// takes off the one it is on.
+    More,
+    /// One of the lineup's own points, held by a drag.
+    Point(usize),
 }
 
 /// A lineup being written, with its clip's fields as they were typed.
@@ -298,11 +305,14 @@ impl Draft {
 
     /// The name it gets when it isn't given one, like A Site Incendiary.
     fn named(&self) -> String {
-        let what = self
-            .lineup
-            .ability
-            .clone()
-            .unwrap_or_else(|| format!("{} Lineup", self.lineup.agent));
+        let what = if self.lineup.agent == SPIKE {
+            "Spike Plant".to_owned()
+        } else {
+            self.lineup
+                .ability
+                .clone()
+                .unwrap_or_else(|| format!("{} Lineup", self.lineup.agent))
+        };
         match self.lineup.site.as_deref() {
             Some(site) => format!("{site} Site {what}"),
             None => what,
@@ -310,7 +320,15 @@ impl Draft {
     }
 
     /// What still stops it being saved, in words, or nothing once it can be.
-    const fn missing(&self) -> Option<&'static str> {
+    /// The Spike is only where it's planted.
+    fn missing(&self) -> Option<&'static str> {
+        if self.lineup.agent == SPIKE {
+            return self
+                .lineup
+                .land
+                .is_none()
+                .then_some("Click the map where the Spike is planted.");
+        }
         match (
             self.lineup.agent.is_empty(),
             self.lineup.stand.is_some(),
@@ -512,8 +530,10 @@ struct View {
     said: Option<(String, bool)>,
     /// Set by the first press of Delete, which the second one confirms.
     confirm: bool,
-    /// The agent you play, who a new lineup starts with.
-    you: Option<String>,
+    /// The agent a new lineup starts with, from the settings.
+    default_agent: String,
+    /// An agent Make Default was pressed on, for the settings to keep.
+    new_default: Option<String>,
     /// The agent you play most, whose outline the blacked-out figure is.
     main: Option<String>,
     /// Shapes changed on a map and not yet sent to be kept.
@@ -535,6 +555,8 @@ pub(crate) struct Look<'a> {
     pub(crate) names: bool,
     /// The colour of an ability's area, or by side when there is none.
     pub(crate) area: Option<&'a str>,
+    /// The agent a new lineup starts with.
+    pub(crate) agent: &'a str,
 }
 
 /// The Lineups screen.
@@ -547,17 +569,20 @@ pub(crate) struct Lineups {
 }
 
 impl Lineups {
+    /// The agent Make Default was last pressed on, once, for the settings.
+    pub(crate) const fn new_default(&mut self) -> Option<String> {
+        self.view.new_default.take()
+    }
+
     /// Asks for everything the screen draws from, on the current match's map
-    /// when there is one and nothing is being written. `you` is the agent a
-    /// new lineup starts with.
+    /// when there is one and nothing is being written.
     pub(crate) fn open(
         &mut self,
         bridge: &Bridge,
         live: bool,
         map: Option<&str>,
-        (you, main): (Option<&str>, Option<&str>),
+        main: Option<&str>,
     ) {
-        self.view.you = you.map(ToOwned::to_owned);
         // Only a board that knows replaces it. Out of a lobby the lineups'
         // own answer says, from your recorded matches.
         if let Some(main) = main {
@@ -870,6 +895,7 @@ impl Lineups {
         (self.view.prefs, self.view.turn_to) = (prefs, look.turn);
         self.view.names_by_default = look.names;
         self.view.area = look.area.map(shapes::ink);
+        look.agent.clone_into(&mut self.view.default_agent);
         if let Some((shown, at)) = &self.view.viewing {
             self.view.viewing =
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
@@ -1086,12 +1112,12 @@ impl View {
         }
     }
 
-    /// A new lineup on the map on screen, for the agent picked or else the
-    /// one you play. The map and the panel both start one here.
+    /// A new lineup on the map on screen, for the agent the list is cut to or
+    /// else the default one. The map and the panel both start one here.
     fn draft(&self) -> Draft {
         Draft::new(
             self.map.as_deref().unwrap_or_default(),
-            self.agent.as_deref().or(self.you.as_deref()),
+            self.agent.as_deref().or(Some(&self.default_agent)),
         )
     }
 
@@ -1190,7 +1216,14 @@ impl View {
 /// shows through.
 fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option<&str>) {
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    if agent == ANY {
+    if agent == SPIKE {
+        spike(
+            painter,
+            rect.center(),
+            rect.height() * 0.4,
+            Color32::WHITE.gamma_multiply(lit),
+        );
+    } else if agent == ANY {
         painter.rect_filled(rect, 0, colour::BG_INSET.gamma_multiply(lit));
         let figure = main
             .and_then(|m| art::agent(painter.ctx(), m))
@@ -1212,6 +1245,21 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
             rect,
             whole,
             Color32::WHITE.gamma_multiply(lit),
+        );
+    }
+}
+
+/// The Spike's icon `half` either way of `at`, in `ink`, with the middle of
+/// its core on `at` rather than the middle of the picture.
+fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, ink: Color32) {
+    if let Some(icon) = art::spike(painter.ctx()) {
+        let [x, y] = art::SPIKE_CORE;
+        let shift = egui::vec2(0.5 - x, 0.5 - y) * (half * 2.0);
+        painter.image(
+            icon.id(),
+            Rect::from_center_size(at + shift, egui::vec2(half, half) * 2.0),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            ink,
         );
     }
 }
@@ -1300,7 +1348,9 @@ fn length(clip: &Clip) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ANY, Draft, Lineups, Load, Mode, Order, View, ability, clock, matches, seconds};
+    use super::{
+        ANY, Draft, Lineups, Load, Mode, Order, SPIKE, View, ability, clock, matches, seconds,
+    };
     use overseer_core::{Ability, Atlas, Clip, Kit, Lineup};
 
     /// Out of a lobby the figure is cut from the agent your recorded matches
@@ -1402,6 +1452,12 @@ mod tests {
         assert_eq!(draft.sent().title, "Default Molly");
         draft.lineup.agent.clear();
         assert!(draft.missing().is_some());
+        let mut planted = Draft::new("Ascent", Some(SPIKE));
+        assert!(planted.missing().is_some());
+        planted.lineup.land = Some([0.5, 0.1]);
+        planted.lineup.site = Some("B".to_owned());
+        assert_eq!(planted.missing(), None, "the Spike has nowhere to stand");
+        assert_eq!(planted.sent().title, "B Site Spike Plant");
     }
 
     /// An ability is found in its own agent's kit, and for any agent in

@@ -664,6 +664,8 @@ def save(raw: Any, clip: Any = None) -> dict[str, Any]:
         "description": str(raw.get("description") or "").strip()[:_LONGEST_DESCRIPTION] or None,
         "stand": _point(raw.get("stand"), "you stand"),
         "land": _point(raw.get("land"), "it lands"),
+        # A bent wall's eight bends are the most any ability has.
+        "points": _points(raw.get("points"))[:8],
     }
     path = folder / f"{lineup_id}.json"
     kept = read_json(str(path), None) if path.exists() else None

@@ -10,8 +10,9 @@ use egui::{Align2, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2
 use overseer_core::{Atlas, Lineup, Plan};
 use overseer_ui::{Face, art, caps_text, caps_width, colour, motion, size, space};
 
+use super::areas::Reach;
 use super::shapes::{self, KINDS, Square};
-use super::{Mode, Place, View, ability, face};
+use super::{Mode, Place, SPIKE, View, ability, areas, face, sight, spike};
 use crate::controls;
 use crate::settings::MapTurn;
 
@@ -72,7 +73,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     for drawing in view.shapes(atlas) {
         shapes::paint(&painter, square, drawing);
     }
-    pins(&painter, (square, ui.clip_rect()), atlas, view, plan.scale);
+    pins(&painter, (square, ui.clip_rect()), atlas, view, plan);
     if view.export.is_some() {
         // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
@@ -243,6 +244,43 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) {
     }
 }
 
+/// How near plantable ground the Spike has to be put to move onto it, in game
+/// units. Further off it stays where it is put.
+const STICKY: f32 = 200.0;
+
+/// `at`, on the minimap `image`, moved onto the nearest plantable pixel
+/// within `reach` map widths when it is just off the plantable ground, or
+/// left where it is.
+fn stick(image: &egui::ColorImage, at: [f32; 2], reach: f32) -> [f32; 2] {
+    let [w, h] = image.size;
+    let on = |x: i64, y: i64| {
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return false;
+        };
+        x < w && y < h && image.pixels.get(y * w + x).is_some_and(|p| plantable(*p))
+    };
+    let (x, y) = ((at[0] * w as f32) as i64, (at[1] * h as f32) as i64);
+    if on(x, y) {
+        return at;
+    }
+    let far = (reach * w as f32).ceil() as i64;
+    let mut best: Option<(i64, i64, i64)> = None;
+    for dy in -far..=far {
+        for dx in -far..=far {
+            let gap = dx * dx + dy * dy;
+            if gap <= far * far && best.is_none_or(|b| gap < b.0) && on(x + dx, y + dy) {
+                best = Some((gap, dx, dy));
+            }
+        }
+    }
+    best.map_or(at, |(_, dx, dy)| {
+        [
+            ((x + dx) as f32 + 0.5) / w as f32,
+            ((y + dy) as f32 + 0.5) / h as f32,
+        ]
+    })
+}
+
 /// Whether a minimap pixel is the olive the game tints plantable ground in.
 fn plantable(pixel: Color32) -> bool {
     let [r, g, b, a] = pixel.to_srgba_unmultiplied();
@@ -327,7 +365,7 @@ fn spots(
         .minimap
         .as_deref()
         .and_then(|path| art::file_pixels(ctx, path));
-    let floor = Floor::new(image.as_deref(), square.turn);
+    let floor = Floor::new(image.as_deref(), square.turn, false);
     let cells = f32::from(CELLS);
     let cell = side / cells;
     let labels: Vec<Label> = plan
@@ -367,6 +405,39 @@ struct Label {
     letter: bool,
 }
 
+/// The floor of the map on screen, worked out once for each map and turn
+/// once its minimap is on disk. All floor until then.
+fn floor_of(ctx: &egui::Context, square: Square, plan: &Plan) -> std::sync::Arc<Floor> {
+    let id = egui::Id::new(("walled-floor", &plan.name, square.turn));
+    if let Some(kept) = ctx.data(|store| store.get_temp::<std::sync::Arc<Floor>>(id)) {
+        return kept;
+    }
+    let image = plan
+        .minimap
+        .as_deref()
+        .and_then(|path| art::file_pixels(ctx, path));
+    let floor = std::sync::Arc::new(Floor::new(image.as_deref(), square.turn, true));
+    if image.is_some() {
+        ctx.data_mut(|store| store.insert_temp(id, std::sync::Arc::clone(&floor)));
+    }
+    floor
+}
+
+/// The walls of a map's minimap, traced once it is on disk.
+fn walls_of(ctx: &egui::Context, plan: &Plan) -> Option<std::sync::Arc<sight::Walls>> {
+    let id = egui::Id::new(("walls", &plan.name));
+    if let Some(kept) = ctx.data(|store| store.get_temp::<std::sync::Arc<sight::Walls>>(id)) {
+        return Some(kept);
+    }
+    let image = plan
+        .minimap
+        .as_deref()
+        .and_then(|path| art::file_pixels(ctx, path))?;
+    let walls = std::sync::Arc::new(sight::walls(&image));
+    ctx.data_mut(|store| store.insert_temp(id, std::sync::Arc::clone(&walls)));
+    Some(walls)
+}
+
 /// A box of cells, from its top left corner to just past its bottom right.
 type Cells = [i32; 4];
 
@@ -378,18 +449,39 @@ struct Floor {
 
 impl Floor {
     /// The floor of `image` turned `turn` quarter turns, or all floor when
-    /// the minimap isn't on disk.
-    fn new(image: Option<&egui::ColorImage>, turn: u8) -> Self {
+    /// the minimap isn't on disk. With `lines`, the white lines Riot draws
+    /// for walls inside the floor are wall too. They are a pixel or two wide,
+    /// so then a cell is only floor when every pixel across it is.
+    fn new(image: Option<&egui::ColorImage>, turn: u8, lines: bool) -> Self {
         let row = usize::from(CELLS) + 1;
         let cells = f32::from(CELLS);
+        let across: &[f32] = if lines {
+            &[0.125, 0.375, 0.625, 0.875]
+        } else {
+            &[0.5]
+        };
+        let floor = |image: &egui::ColorImage, shown: [f32; 2]| {
+            let [w, h] = image.size;
+            let [x, y] = shapes::turned(shown, 4 - turn % 4);
+            let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
+            let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
+            // The floor is mid grey, the sites yellow and the wall lines
+            // white, so only the lines are this bright in red and green.
+            image
+                .pixels
+                .get(py * w + px)
+                .is_some_and(|p| p.a() > 128 && !(lines && p.r() > 190 && p.g() > 190))
+        };
         let on = |gx: u16, gy: u16| {
             image.is_none_or(|image| {
-                let [w, h] = image.size;
-                let shown = [(f32::from(gx) + 0.5) / cells, (f32::from(gy) + 0.5) / cells];
-                let [x, y] = shapes::turned(shown, 4 - turn % 4);
-                let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
-                let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
-                image.pixels.get(py * w + px).is_some_and(|p| p.a() > 128)
+                across.iter().all(|dy| {
+                    across.iter().all(|dx| {
+                        floor(
+                            image,
+                            [(f32::from(gx) + dx) / cells, (f32::from(gy) + dy) / cells],
+                        )
+                    })
+                })
             })
         };
         let mut sums = vec![0_u32; row];
@@ -414,6 +506,30 @@ impl Floor {
             .and_then(|at| self.sums.get(at))
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Whether the cell at `x`, `y` is wall, or off the map.
+    fn wall(&self, x: i32, y: i32) -> bool {
+        self.count([x, y, x + 1, y + 1]) == 0
+    }
+
+    /// How many points the floor runs from `from` along `way` on `square`
+    /// before a wall, when one comes within `most`. A point on a wall's edge
+    /// starts from the floor beside it, up to three cells out, since a trip
+    /// or a mesh is put against a wall. One deeper in the wall is at it.
+    fn run(&self, square: Square, (from, way): (Pos2, Vec2), most: f32) -> Option<f32> {
+        let cell = square.width() / f32::from(CELLS);
+        let wall = |t: f32| {
+            let at = (from + way * t - square.min) / cell;
+            self.wall(at.x.floor() as i32, at.y.floor() as i32)
+        };
+        let step = cell / 2.0;
+        let Some(start) = (0..=6_u8).map(|i| f32::from(i) * step).find(|&t| !wall(t)) else {
+            return Some(0.0);
+        };
+        std::iter::successors(Some(start), |t| Some(t + step))
+            .take_while(|&t| t <= most)
+            .find(|&t| wall(t))
     }
 
     /// How many cells of a box are floor.
@@ -482,11 +598,22 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
     let drawing;
     let words = match &view.mode {
         Mode::Browse => "Click a lineup to see it, or rest on one for its notes",
-        Mode::Edit(draft) => match (draft.placing, draft.lineup.land.is_some()) {
-            (Place::Stand, _) => "Click or drag from where you stand",
-            (Place::Land, false) => "Now click where it lands",
-            (Place::Land, true) => "Drag either pin to move it",
-        },
+        Mode::Edit(draft) => {
+            let reach = draft.lineup.ability.as_deref().and_then(areas::reach);
+            match (draft.placing, draft.lineup.land.is_some(), reach) {
+                _ if draft.lineup.agent == SPIKE => "Click where the Spike is planted",
+                (Place::Stand, ..) => "Click or drag from where you stand",
+                (Place::Land, false, _) => "Now click where it lands",
+                (Place::More, ..) => "Click to put down another, or click one to take it off",
+                (_, true, Some(Reach::Wire(_))) => "Drag the small dots to set the trip's two ends",
+                (_, true, Some(Reach::Bent(_))) => {
+                    "Click the wall to bend it there, or a bend to take it off"
+                }
+                (_, true, Some(Reach::Aim(..))) => "Drag the small dot to turn the turret",
+                (_, true, Some(Reach::Bounce(_))) => "Drag the small dot to where it bounces",
+                _ => "Drag either pin to move it",
+            }
+        }
         Mode::Draw(sketch) => {
             let name = KINDS.get(sketch.kind).map_or("shape", |(_, name)| name);
             drawing = match sketch.tool() {
@@ -816,8 +943,9 @@ fn pins(
     (square, room): (Square, Rect),
     atlas: &Atlas,
     view: &View,
-    scale: Option<f32>,
+    plan: &Plan,
 ) {
+    let (scale, floor) = (plan.scale, floor_of(painter.ctx(), square, plan));
     let main = view.main.as_deref();
     let writing = match &view.mode {
         Mode::Edit(draft) => Some(&draft.lineup),
@@ -830,7 +958,20 @@ fn pins(
         .partition(|l| writing.is_none() && l.id.is_some() && l.id == view.selected);
     let dim = writing.is_some() || !picked.is_empty();
     // Every area first, so no pin is under somebody else's area.
-    let areas = |lineup: &Lineup, ink: Color32| area(painter, square, lineup, scale, ink);
+    let run = |from: Pos2, way: Vec2, most: f32| floor.run(square, (from, way), most);
+    let walls = walls_of(painter.ctx(), plan);
+    // Areas stay on the map, since Cosmic Divide has no end and a big one
+    // like Haunt's would cover the panel beside it.
+    let inside = painter.with_clip_rect(square.rect.intersect(painter.clip_rect()));
+    let areas = |lineup: &Lineup, ink: Color32| {
+        area(
+            &inside,
+            square,
+            lineup,
+            scale,
+            (ink, &run, walls.as_deref()),
+        );
+    };
     let faint =
         |lineup: &Lineup| tint(lineup.side.as_deref()).gamma_multiply(if dim { 0.45 } else { 0.9 });
     // In the colour the settings pick, or else the side's, dimmed the same
@@ -853,7 +994,9 @@ fn pins(
     // move out of its way.
     let shown: Vec<&Lineup> = rest.iter().chain(&picked).copied().chain(writing).collect();
     let mut taken = covered(square, &shown);
-    let painter = &painter.with_clip_rect(room);
+    // A painter of its own over the whole screen, as one made from the map's
+    // painter is only ever as big as the map.
+    let painter = &egui::Painter::new(painter.ctx().clone(), painter.layer_id(), room);
     for lineup in &picked {
         pin(
             painter,
@@ -881,49 +1024,101 @@ fn pins(
     }
     if let Some(lineup) = writing {
         pin(painter, square, atlas, lineup, (colour::TEXT_STRONG, main));
+        handles(painter, square, lineup, scale);
     }
 }
 
-/// How far an ability hurts from where it lands, in game units, a hundredth
-/// of a metre: its edge, and the inner circle where it does full damage when
-/// it has one. From Riot's wiki, Hot Hands' being an estimate there. Only the
-/// ones that leave an area on the ground.
-fn reach(ability: &str) -> Option<(f32, Option<f32>)> {
-    match ability {
-        "Incendiary" | "Snake Bite" | "Nanoswarm" | "Hot Hands" => Some((450.0, None)),
-        "FRAG/ment" => Some((400.0, Some(100.0))),
-        "Mosh Pit" => Some((620.0, Some(550.0))),
-        _ => None,
+/// What only shows while a lineup is being written: how far a smoke put
+/// down from afar reaches from where you stand, a trip's two ends to drag,
+/// and the point a wall bends through.
+fn handles(painter: &egui::Painter, square: Square, lineup: &Lineup, scale: Option<f32>) {
+    let units = scale.map(|s| s * square.width());
+    let stand = lineup.stand.map(|p| point(square, p));
+    if let Some((_, Some(range))) = areas::spots(lineup.ability.as_deref())
+        && let (Some(from), Some(units)) = (stand, units)
+    {
+        painter.circle_stroke(from, range * units, Stroke::new(1.0, colour::TEXT_FAINT));
+    }
+    let dot = |at: Pos2| {
+        painter.circle_filled(at, DOT, colour::TEXT_STRONG);
+        painter.circle_stroke(at, DOT, Stroke::new(1.5, colour::VOID));
+    };
+    match lineup.ability.as_deref().and_then(areas::reach) {
+        Some(Reach::Wire(_) | Reach::Aim(..) | Reach::Bounce(_)) => {
+            lineup.points.iter().for_each(|p| dot(point(square, *p)));
+        }
+        Some(Reach::Bent(length)) => {
+            if let (Some(from), Some(to), Some(units)) =
+                (stand, lineup.land.map(|p| point(square, p)), units)
+            {
+                let bends: Vec<Pos2> = lineup.points.iter().map(|p| point(square, *p)).collect();
+                if bends.is_empty() {
+                    let path = areas::bent(from, &bends, to, length * units);
+                    path.get(path.len() >> 1).copied().into_iter().for_each(dot);
+                }
+                bends.into_iter().for_each(dot);
+            }
+        }
+        _ => {}
     }
 }
 
-/// The ground a lineup's ability covers where it lands, to the map's scale:
-/// faint inside, its edge solid, and the full damage circle inside it when
-/// there is one. It moves with the pin, since it is drawn from it.
+/// The ground a lineup's ability covers, to the map's scale, with trips and
+/// walls stopping at the map's walls. It moves with the pins, since it is
+/// drawn from them.
 fn area(
     painter: &egui::Painter,
     square: Square,
     lineup: &Lineup,
     scale: Option<f32>,
-    ink: Color32,
+    (ink, run, walls): (Color32, areas::Run<'_>, Option<&sight::Walls>),
 ) {
-    let (Some(land), Some((edge, inner)), Some(scale)) = (
-        lineup.land,
-        lineup.ability.as_deref().and_then(reach),
-        scale,
-    ) else {
+    let reach = if lineup.agent == SPIKE {
+        Some(areas::DEFUSE)
+    } else {
+        lineup.ability.as_deref().and_then(areas::reach)
+    };
+    let (Some(land), Some(reach), Some(scale)) = (lineup.land, reach, scale) else {
         return;
     };
-    let at = point(square, land);
-    let size = |units: f32| units * scale * square.width();
-    painter.circle(
-        at,
-        size(edge),
-        ink.gamma_multiply(0.14),
-        Stroke::new(1.5, ink.gamma_multiply(0.7)),
-    );
-    if let Some(inner) = inner {
-        painter.circle_stroke(at, size(inner), Stroke::new(1.0, ink.gamma_multiply(0.5)));
+    let stand = lineup.stand.map(|s| point(square, s));
+    let points: Vec<Pos2> = lineup.points.iter().map(|p| point(square, *p)).collect();
+    // A turret's view is worked out on the traced walls once there are any.
+    if let (Reach::Aim(degrees), Some(walls), Some(aim)) = (reach, walls, points.first()) {
+        let at = point(square, land);
+        let rim = sight::cone(walls, square, (at, *aim), degrees);
+        painter.extend(areas::seen(at, rim, ink));
+        return;
+    }
+    let afar = areas::spots(lineup.ability.as_deref()).is_some();
+    // Put down from afar, each point is another place it lands. Otherwise
+    // they are the ability's own, a trip's ends or a wall's bend.
+    let (lands, own): (Vec<Pos2>, &[Pos2]) = if afar {
+        (
+            std::iter::once(point(square, land))
+                .chain(points.iter().copied())
+                .collect(),
+            &[],
+        )
+    } else {
+        (vec![point(square, land)], &points)
+    };
+    for at in lands {
+        areas::draw(
+            painter,
+            (stand, at, own),
+            (reach, scale * square.width()),
+            (ink, run),
+        );
+    }
+}
+
+/// The other places a lineup put down from afar lands, which are its points.
+fn more_lands(lineup: &Lineup) -> &[[f32; 2]] {
+    if areas::spots(lineup.ability.as_deref()).is_some() {
+        &lineup.points
+    } else {
+        &[]
     }
 }
 
@@ -951,6 +1146,9 @@ fn pin(
     if let Some(to) = land {
         land_mark(painter, to, RING, atlas, lineup, ink);
     }
+    for more in more_lands(lineup) {
+        land_mark(painter, point(square, *more), RING, atlas, lineup, ink);
+    }
     if let Some(from) = stand {
         stand_mark(painter, from, FACE, lineup, (ink, main));
     }
@@ -966,6 +1164,11 @@ pub(super) fn land_mark(
     lineup: &Lineup,
     ink: Color32,
 ) {
+    // The Spike has no ring, as its defuse range is barely wider than one.
+    if lineup.agent == SPIKE {
+        spike(painter, at, radius * 0.75, ink);
+        return;
+    }
     painter.circle_filled(at, radius, colour::VOID.gamma_multiply(0.85));
     painter.circle_stroke(at, radius, Stroke::new(2.0, ink));
     let icon = lineup
@@ -1122,6 +1325,36 @@ fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
 /// A drag on the map while a lineup is being written: from where you stand
 /// to where it lands, or one of its pins picked up and moved.
 fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Response) {
+    if let Mode::Edit(draft) = &mut view.mode {
+        let held = match draft.grab {
+            Some(Place::Point(index)) => Some(index),
+            _ => None,
+        };
+        let scale = scale_of(atlas, &draft.lineup.map);
+        settle(&mut draft.lineup, scale, held);
+        // The Spike is only where it's planted, so a click always plants it.
+        if draft.lineup.agent == SPIKE {
+            draft.lineup.stand = None;
+            draft.lineup.ability = None;
+            draft.lineup.points.clear();
+            if draft.placing == Place::Stand {
+                draft.placing = Place::Land;
+            }
+            let image = atlas
+                .maps
+                .iter()
+                .find(|p| p.name == draft.lineup.map)
+                .and_then(|p| p.minimap.as_deref())
+                .and_then(|path| art::file_pixels(ui.ctx(), path));
+            if let (Some(image), Some(land), Some(scale)) = (image, draft.lineup.land, scale) {
+                draft.lineup.land = Some(stick(&image, land, STICKY * scale));
+            }
+        }
+        // Another ability can't put down more, so a click places it again.
+        if draft.placing == Place::More && areas::spots(draft.lineup.ability.as_deref()).is_none() {
+            draft.placing = Place::Land;
+        }
+    }
     if response.drag_started_by(egui::PointerButton::Primary)
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
     {
@@ -1144,10 +1377,27 @@ fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
         return;
     };
     let on = |p: Option<[f32; 2]>| p.is_some_and(|p| point(square, p).distance(origin) <= REACH);
-    draft.grab = Some(if on(draft.lineup.land) {
+    // A trip's ends sit close to where it lands, so they come first.
+    let own = draft
+        .lineup
+        .points
+        .iter()
+        .position(|p| point(square, *p).distance(origin) <= REACH);
+    let scale = scale_of(atlas, &draft.lineup.map);
+    draft.grab = Some(if let Some(index) = own {
+        Place::Point(index)
+    } else if on(draft.lineup.land) {
         Place::Land
     } else if on(draft.lineup.stand) {
         Place::Stand
+    } else if draft.lineup.agent == SPIKE {
+        draft.lineup.land = Some(shapes::spot(square, origin));
+        Place::Land
+    } else if let Some(at) = on_wall(&draft.lineup, square, scale, origin)
+        && draft.lineup.points.len() < BENDS
+    {
+        draft.lineup.points.insert(at, shapes::spot(square, origin));
+        Place::Point(at)
     } else {
         let spot = shapes::spot(square, origin);
         draft.lineup.stand = Some(snapped(atlas, &draft.lineup, spot, Place::Stand));
@@ -1173,6 +1423,12 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
         Place::Land => {
             draft.lineup.land = spot.map(|s| snapped(atlas, &draft.lineup, s, Place::Land));
         }
+        Place::Point(index) => {
+            if let (Some(at), Some(spot)) = (draft.lineup.points.get_mut(index), spot) {
+                *at = spot;
+            }
+        }
+        Place::More => {}
     }
     if done {
         draft.grab = None;
@@ -1185,17 +1441,173 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
     }
 }
 
+/// A click at `at` on a bendable wall being written: on one of its bends it
+/// takes that bend off, and elsewhere on the wall it adds one there. True
+/// when it did either.
+fn bend(draft: &mut super::Draft, scale: Option<f32>, square: Square, at: Pos2) -> bool {
+    if !matches!(
+        draft.lineup.ability.as_deref().and_then(areas::reach),
+        Some(Reach::Bent(_))
+    ) {
+        return false;
+    }
+    let points = &draft.lineup.points;
+    if let Some(index) = points
+        .iter()
+        .position(|p| point(square, *p).distance(at) <= REACH)
+    {
+        draft.lineup.points.remove(index);
+        return true;
+    }
+    match on_wall(&draft.lineup, square, scale, at) {
+        Some(index) if points.len() < BENDS => {
+            draft.lineup.points.insert(index, shapes::spot(square, at));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The game's scale on `map`, map widths to a game unit, once it is known.
+fn scale_of(atlas: &Atlas, map: &str) -> Option<f32> {
+    atlas
+        .maps
+        .iter()
+        .find(|p| p.name == map)
+        .and_then(|p| p.scale)
+}
+
+/// Where among a bendable wall's bends a new one at `at` goes, when `at` is
+/// on the wall it draws: after every bend before it along the wall.
+fn on_wall(lineup: &Lineup, square: Square, scale: Option<f32>, at: Pos2) -> Option<usize> {
+    let Some(Reach::Bent(length)) = lineup.ability.as_deref().and_then(areas::reach) else {
+        return None;
+    };
+    let (Some(from), Some(to), Some(scale)) = (lineup.stand, lineup.land, scale) else {
+        return None;
+    };
+    let bends: Vec<Pos2> = lineup.points.iter().map(|p| point(square, *p)).collect();
+    areas::wall(
+        point(square, from),
+        &bends,
+        point(square, to),
+        length * scale * square.width(),
+    )
+    .into_iter()
+    .map(|(p, stretch)| (p.distance(at), stretch))
+    .filter(|(far, _)| *far <= REACH)
+    .min_by(|a, b| a.0.total_cmp(&b.0))
+    .map(|(_, stretch)| stretch)
+}
+
+/// The most points a bendable wall can be bent through.
+const BENDS: usize = 8;
+
+/// How far a trip's two dots sit from it, in game units.
+const TRIP_DOT: f32 = 300.0;
+
+/// Keeps a lineup's points to what its ability allows, at `scale` map
+/// widths to a game unit. Smokes put down from afar stay within reach of
+/// where you stand, and no more of them than it has. A trip gets two dots
+/// `TRIP_DOT` either side of it, across the throw at first, and turns to
+/// follow the one `held`. A bent wall ends at the most it can be. Any other ability has none.
+fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
+    let ability = lineup.ability.clone();
+    let reach = ability.as_deref().and_then(areas::reach);
+    if let Some((most, range)) = areas::spots(ability.as_deref()) {
+        lineup.points.truncate(most.saturating_sub(1));
+        if let (Some(stand), Some(range), Some(scale)) = (lineup.stand, range, scale) {
+            let within = |p: [f32; 2]| within(stand, p, range * scale);
+            lineup.land = lineup.land.map(within);
+            lineup.points.iter_mut().for_each(|p| *p = within(*p));
+        }
+        return;
+    }
+    let Some(scale) = scale else {
+        return;
+    };
+    match reach {
+        Some(Reach::Wire(_)) => {
+            let Some(land) = lineup.land.map(|l| pos2(l[0], l[1])) else {
+                lineup.points.clear();
+                return;
+            };
+            let at = |p: [f32; 2]| pos2(p[0], p[1]);
+            // The dot held sets which way it runs, and the other mirrors it
+            // through the trip. Otherwise it keeps its way as the trip moves,
+            // and before it has one, it runs across the throw.
+            let way = match (lineup.points.as_slice(), held) {
+                (&[a, _], Some(0)) => land - at(a),
+                (&[_, b], Some(1)) => at(b) - land,
+                (&[a, b], _) => at(b) - at(a),
+                _ => lineup.stand.map_or(Vec2::Y, |s| (land - at(s)).rot90()),
+            };
+            let way = if way.length() > 0.0 {
+                way.normalized()
+            } else {
+                Vec2::Y
+            };
+            let reach = way * (TRIP_DOT * scale);
+            lineup.points = [land - reach, land + reach].map(|p| [p.x, p.y]).to_vec();
+        }
+        Some(Reach::Bent(length)) => {
+            lineup.points.truncate(BENDS);
+            // Moving the end changes the curve, so it takes a few goes to
+            // land on the most it can be. Bends past the end go with it.
+            for _ in 0..4 {
+                let (Some(stand), Some(land)) = (lineup.stand, lineup.land) else {
+                    break;
+                };
+                let bends: Vec<Pos2> = lineup.points.iter().map(|p| pos2(p[0], p[1])).collect();
+                let path = areas::wall(
+                    pos2(stand[0], stand[1]),
+                    &bends,
+                    pos2(land[0], land[1]),
+                    length * scale,
+                );
+                if let Some(&(end, stretch)) = path.last()
+                    && end.distance(pos2(land[0], land[1])) > 1e-6
+                {
+                    lineup.points.truncate(stretch);
+                    lineup.land = Some([end.x, end.y]);
+                }
+            }
+        }
+        Some(Reach::Aim(..) | Reach::Bounce(_)) => {
+            lineup.points.truncate(1);
+            if let (true, Some(land)) = (lineup.points.is_empty(), lineup.land) {
+                let at = pos2(land[0], land[1]);
+                let from = lineup.stand.map_or(at - Vec2::X, |s| pos2(s[0], s[1]));
+                // A turret points on the way it was thrown, ten metres out,
+                // and a bolt bounces halfway.
+                let start = if matches!(reach, Some(Reach::Aim(..))) {
+                    at + (at - from).normalized() * (1000.0 * scale)
+                } else {
+                    from.lerp(at, 0.5)
+                };
+                lineup.points = vec![[start.x, start.y]];
+            }
+        }
+        _ => lineup.points.clear(),
+    }
+}
+
+/// `p` moved toward `from` until it is no further than `most`.
+fn within(from: [f32; 2], p: [f32; 2], most: f32) -> [f32; 2] {
+    let way = pos2(p[0], p[1]) - pos2(from[0], from[1]);
+    if way.length() <= most {
+        return p;
+    }
+    let at = pos2(from[0], from[1]) + way.normalized() * most;
+    [at.x, at.y]
+}
+
 /// `spot` moved onto the nearest pin of the same kind on another lineup on
 /// the same map within `SAME_SPOT`: any lineup's landing spot, so two lineups
 /// for one spot share one ring, or where a lineup for the same agent is
 /// thrown from, so one corner is one agent pin.
 fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32; 2] {
-    let Some(scale) = atlas
-        .maps
-        .iter()
-        .find(|p| p.name == lineup.map)
-        .and_then(|p| p.scale)
-    else {
+    let Some(scale) = scale_of(atlas, &lineup.map) else {
         return spot;
     };
     atlas
@@ -1203,7 +1615,7 @@ fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32
         .iter()
         .filter(|l| l.map == lineup.map && (lineup.id.is_none() || l.id != lineup.id))
         .filter_map(|l| match place {
-            Place::Land => l.land,
+            Place::Land | Place::More | Place::Point(_) => l.land,
             Place::Stand => l
                 .stand
                 .filter(|_| l.agent.eq_ignore_ascii_case(&lineup.agent)),
@@ -1224,6 +1636,7 @@ fn under<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Vec<&'a
             let reach = [l.stand, l.land]
                 .into_iter()
                 .flatten()
+                .chain(more_lands(l).iter().copied())
                 .map(|p| point(square, p).distance(at))
                 .fold(f32::INFINITY, f32::min);
             (reach <= REACH).then_some((reach, l))
@@ -1316,6 +1729,11 @@ fn note(ui: &mut Ui, atlas: &Atlas, lineup: &Lineup) {
 /// lineup under the pointer, or else nothing picked.
 fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
     let spot = shapes::spot(square, at);
+    if let Mode::Edit(draft) = &mut view.mode
+        && bend(draft, scale_of(atlas, &draft.lineup.map), square, at)
+    {
+        return;
+    }
     if let Mode::Edit(draft) = &mut view.mode {
         match draft.placing {
             Place::Stand => {
@@ -1327,6 +1745,19 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
             Place::Land => {
                 draft.lineup.land = Some(snapped(atlas, &draft.lineup, spot, Place::Land));
             }
+            Place::More => {
+                let most = areas::spots(draft.lineup.ability.as_deref()).map_or(1, |s| s.0);
+                let points = &mut draft.lineup.points;
+                if let Some(index) = points
+                    .iter()
+                    .position(|p| point(square, *p).distance(at) <= REACH)
+                {
+                    points.remove(index);
+                } else if points.len() + 1 < most {
+                    points.push(spot);
+                }
+            }
+            Place::Point(_) => {}
         }
         return;
     }
@@ -1349,7 +1780,7 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
 mod tests {
     use super::{
         APART, Floor, Label, Mode, Place, Square, View, clear_of, click, follow, grab, plantable,
-        reach, turn_for,
+        settle, stick, turn_for,
     };
     use crate::settings::MapTurn;
     use egui::{Color32, Rect, pos2, vec2};
@@ -1388,7 +1819,7 @@ mod tests {
         };
         let mut view = View {
             map: Some("Ascent".to_owned()),
-            you: Some("Brimstone".to_owned()),
+            default_agent: "Brimstone".to_owned(),
             ..View::default()
         };
         click(&atlas, &mut view, square, pos2(90.0, 91.0));
@@ -1485,15 +1916,6 @@ mod tests {
         );
     }
 
-    /// The mollies reach 4.5 metres, KAY/O's and Gekko's have their full
-    /// damage circle inside, and a smoke has no area here.
-    #[test]
-    fn a_molly_reaches_as_far_as_the_game_says() {
-        assert_eq!(reach("Incendiary"), Some((450.0, None)));
-        assert_eq!(reach("FRAG/ment"), Some((400.0, Some(100.0))));
-        assert_eq!(reach("Sky Smoke"), None);
-    }
-
     /// Where you stand snaps onto where another lineup for the same agent is
     /// thrown from, by a click or by the drag that starts a lineup, and a
     /// different agent's spot stays apart.
@@ -1518,7 +1940,7 @@ mod tests {
         let stand = |agent: &str, how: &str| {
             let mut view = View {
                 map: Some("Ascent".to_owned()),
-                you: Some(agent.to_owned()),
+                default_agent: agent.to_owned(),
                 ..View::default()
             };
             view.mode = Mode::Edit(Box::new(view.draft()));
@@ -1606,7 +2028,7 @@ mod tests {
             })
             .collect();
         let image = egui::ColorImage::new([size, size], pixels);
-        let floor = Floor::new(Some(&image), 0);
+        let floor = Floor::new(Some(&image), 0, false);
         let label = |x: f32| Label {
             at: [x, 100.0],
             size: [30.0, 6.0],
@@ -1685,5 +2107,113 @@ mod tests {
             (beside.center().y - 200.0).abs() < 1.0,
             "{beside:?} left its row"
         );
+    }
+
+    /// Sky Smoke goes down in three places at most, each within its 55
+    /// metres of where you stand, and a click on one takes it off.
+    #[test]
+    fn smokes_from_afar_stay_in_reach_and_in_number() {
+        let square = Square::from(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0)));
+        let mut view = View::default();
+        let mut draft = view.draft();
+        draft.lineup.ability = Some("Sky Smoke".to_owned());
+        draft.lineup.stand = Some([0.1, 0.1]);
+        draft.lineup.land = Some([0.2, 0.1]);
+        draft.placing = Place::More;
+        view.mode = Mode::Edit(Box::new(draft));
+        for at in [pos2(300.0, 300.0), pos2(400.0, 400.0), pos2(500.0, 500.0)] {
+            click(&Atlas::default(), &mut view, square, at);
+        }
+        let Mode::Edit(draft) = &mut view.mode else {
+            panic!("the lineup should still be open");
+        };
+        assert_eq!(
+            draft.lineup.points,
+            [[0.3, 0.3], [0.4, 0.4]],
+            "a third is past its three"
+        );
+        // At a ten-thousandth of the map to a game unit, 55 metres is 0.55.
+        draft.lineup.points.push([0.95, 0.1]);
+        settle(&mut draft.lineup, Some(0.0001), None);
+        assert_eq!(draft.lineup.points.len(), 2);
+        draft.lineup.points = vec![[0.95, 0.1]];
+        settle(&mut draft.lineup, Some(0.0001), None);
+        let far = draft.lineup.points.first().copied().unwrap_or_default();
+        assert!(
+            (far[0] - 0.65).abs() < 1e-5 && (far[1] - 0.1).abs() < 1e-5,
+            "{far:?}"
+        );
+        click(&Atlas::default(), &mut view, square, pos2(650.0, 100.0));
+        let Mode::Edit(draft) = &view.mode else {
+            panic!("the lineup should still be open");
+        };
+        assert!(
+            draft.lineup.points.is_empty(),
+            "a click on one takes it off"
+        );
+    }
+
+    /// A trip's two dots sit three metres either side of it, across the
+    /// throw at first, and dragging one turns the trip round it while both
+    /// keep their distance. Moving the trip brings them along.
+    #[test]
+    fn a_trips_dots_turn_it_and_keep_their_distance() {
+        let near =
+            |p: [f32; 2], q: [f32; 2]| (p[0] - q[0]).abs() < 1e-5 && (p[1] - q[1]).abs() < 1e-5;
+        let dots = |l: &Lineup, a: [f32; 2], b: [f32; 2]| matches!(l.points.as_slice(), &[p, q] if near(p, a) && near(q, b));
+        let mut lineup = Lineup {
+            ability: Some("Trapwire".to_owned()),
+            stand: Some([0.1, 0.5]),
+            land: Some([0.5, 0.5]),
+            ..Lineup::default()
+        };
+        settle(&mut lineup, Some(0.0001), None);
+        assert!(
+            dots(&lineup, [0.5, 0.53], [0.5, 0.47]),
+            "{:?}",
+            lineup.points
+        );
+        lineup.points = vec![[0.5, 0.47], [0.9, 0.5]];
+        settle(&mut lineup, Some(0.0001), Some(1));
+        assert!(
+            dots(&lineup, [0.47, 0.5], [0.53, 0.5]),
+            "{:?}",
+            lineup.points
+        );
+        lineup.land = Some([0.2, 0.2]);
+        settle(&mut lineup, Some(0.0001), None);
+        assert!(
+            dots(&lineup, [0.17, 0.2], [0.23, 0.2]),
+            "{:?}",
+            lineup.points
+        );
+        lineup.ability = Some("Incendiary".to_owned());
+        settle(&mut lineup, Some(0.0001), None);
+        assert!(lineup.points.is_empty(), "a molly has no points of its own");
+    }
+
+    /// The Spike put down just off plantable ground moves onto it, and one
+    /// put down further off or already on it stays where it is.
+    #[test]
+    fn the_spike_sticks_to_plantable_ground_nearby() {
+        let olive = Color32::from_rgb(152, 152, 118);
+        let mut image = egui::ColorImage::new([10, 10], vec![Color32::TRANSPARENT; 100]);
+        for y in 0..10 {
+            for x in 5..10 {
+                if let Some(p) = image.pixels.get_mut(y * 10 + x) {
+                    *p = olive;
+                }
+            }
+        }
+        let lands = |at: [f32; 2], want: [f32; 2]| {
+            let got = stick(&image, at, 0.2);
+            assert!(
+                (got[0] - want[0]).abs() < 1e-6 && (got[1] - want[1]).abs() < 1e-6,
+                "{at:?} went to {got:?}"
+            );
+        };
+        lands([0.45, 0.55], [0.55, 0.55]);
+        lands([0.15, 0.55], [0.15, 0.55]);
+        lands([0.72, 0.31], [0.72, 0.31]);
     }
 }

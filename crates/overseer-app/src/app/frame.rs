@@ -32,8 +32,6 @@ impl Overseer {
             ui.ctx().request_repaint();
         }
 
-        self.overlay(ui, now);
-
         self.appear(ui, now);
 
         let chrome = egui::Frame::NONE.fill(colour::BG);

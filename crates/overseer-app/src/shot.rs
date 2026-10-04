@@ -823,6 +823,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
                                     turn: crate::settings::MapTurn::Drawn,
                                     names: false,
                                     area: None,
+                                    agent: "Brimstone",
                                 },
                             ),
                         );
@@ -892,6 +893,7 @@ fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
                                 turn: crate::settings::MapTurn::Drawn,
                                 names: false,
                                 area: None,
+                                agent: "Brimstone",
                             },
                         ),
                     );
@@ -1081,6 +1083,7 @@ fn lineups_live() {
                                     turn: crate::settings::MapTurn::Attack,
                                     names: false,
                                     area: None,
+                                    agent: "Brimstone",
                                 },
                             ),
                         );
@@ -1108,10 +1111,33 @@ fn lineups_live() {
 /// The overlay as the game sees it: the sample lobby drawn the way
 /// `overlay::show` draws it, at the overlay's width and its tallest.
 fn overlay_shot() -> egui_kittest::SnapshotResults {
-    let board = Board {
-        win_prob: Some(54.0),
+    let mut results = overlay_frame(
+        Board {
+            win_prob: Some(54.0),
+            ..sample()
+        },
+        "overlay",
+    );
+    // Agent select, where only your own team is known.
+    let full = sample();
+    let ours = Board {
+        state: Some("PREGAME".to_owned()),
+        score: None,
+        players: full
+            .players
+            .iter()
+            .filter(|p| p.team == full.self_team)
+            .cloned()
+            .collect(),
         ..sample()
     };
+    results.extend(overlay_frame(ours, "overlay-agent-select"));
+    results.extend(greeting_frame());
+    results
+}
+
+/// The overlay over `board`, saved as the snapshot `name`.
+fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
     let mut shot = Harness::builder()
         .with_size(vec2(crate::overlay::WIDTH, crate::overlay::CEILING))
         .build_ui_state(
@@ -1145,9 +1171,12 @@ fn overlay_shot() -> egui_kittest::SnapshotResults {
     *shot.state_mut() = true;
     shot.run();
     shot.run();
-    shot.snapshot("overlay");
-    let mut results = shot.take_snapshot_results();
+    shot.snapshot(name);
+    shot.take_snapshot_results()
+}
 
+/// The overlay's greeting, saved as its own snapshot.
+fn greeting_frame() -> egui_kittest::SnapshotResults {
     let mut greeting = Harness::builder()
         // The harness's own panel keeps 8 points round the edge.
         .with_size(vec2(crate::overlay::WIDTH + 16.0, crate::overlay::GREETING + 16.0))
@@ -1169,8 +1198,7 @@ fn overlay_shot() -> egui_kittest::SnapshotResults {
     *greeting.state_mut() = true;
     greeting.run();
     greeting.snapshot("overlay-greeting");
-    results.extend(greeting.take_snapshot_results());
-    results
+    greeting.take_snapshot_results()
 }
 
 /// The settings screen's snapshot, from a harness of its own.

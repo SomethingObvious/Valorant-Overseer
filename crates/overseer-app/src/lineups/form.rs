@@ -3,13 +3,13 @@
 //! section with a tick once it is done, the optional ones say so, and Save
 //! stays at the bottom of the panel where it can't scroll away.
 
-use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 use overseer_core::{Atlas, Plan, Tools};
 use overseer_ui::{Face, caps_text, colour, size, space};
 
 use super::player::{self, Player, Prefs};
 use super::side::{notice, title, words};
-use super::{Draft, Job, Measure, Mode, Place, Request, View, pick, pictures, plan};
+use super::{Draft, Job, Measure, Mode, Place, Request, SPIKE, View, areas, pick, pictures, plan};
 use crate::controls::{self, Tone};
 
 /// The page above the footer. Returns a request when the clip's source
@@ -20,26 +20,33 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
         mode: Mode::Edit(draft),
         player,
         prefs,
+        default_agent,
+        new_default,
         ..
     } = view
     else {
         return None;
     };
+    let default = &mut (default_agent.as_str(), new_default);
     let heading = if draft.lineup.id.is_some() {
         "Edit Lineup"
     } else {
         "Add a Lineup"
     };
     title(ui, heading, &draft.lineup.map.clone());
-    let placed = draft.lineup.stand.is_some() && draft.lineup.land.is_some();
+    let planted = draft.lineup.agent == SPIKE;
+    let placed = (planted || draft.lineup.stand.is_some()) && draft.lineup.land.is_some();
     section(ui, "On the Map", placed, false);
     placing(ui, atlas, draft, main.as_deref());
     section(ui, "Agent", !draft.lineup.agent.is_empty(), false);
-    pick::agent(ui, atlas, draft, main.as_deref());
-    section(ui, "Utility", draft.lineup.ability.is_some(), true);
-    if draft.lineup.agent.is_empty() {
+    pick::agent(ui, atlas, draft, (main.as_deref(), default));
+    if planted {
+        // The Spike has no utility to pick.
+    } else if draft.lineup.agent.is_empty() {
+        section(ui, "Utility", false, true);
         words(ui, "Pick the agent first.", colour::TEXT_FAINT);
     } else {
+        section(ui, "Utility", draft.lineup.ability.is_some(), true);
         pick::utility(ui, atlas, draft);
     }
     section(ui, "Side and Site", draft.lineup.site.is_some(), true);
@@ -173,14 +180,8 @@ const PLACE_ROW: f32 = 44.0;
 /// the map draws it. The one the next click on the map sets is lit like a
 /// picked lineup, and a placed one has a tick.
 fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
-    for (place, name, set) in [
-        (
-            Place::Stand,
-            "Where You Stand",
-            draft.lineup.stand.is_some(),
-        ),
-        (Place::Land, "Where It Lands", draft.lineup.land.is_some()),
-    ] {
+    let most = areas::spots(draft.lineup.ability.as_deref()).map_or(1, |s| s.0);
+    for (place, name, set) in rows(draft, most) {
         let next = draft.placing == place;
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), PLACE_ROW), Sense::click());
@@ -206,14 +207,12 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
             let at = pos2(rect.left() + 26.0, rect.center().y);
             match place {
                 Place::Stand => plan::stand_mark(painter, at, 13.0, &draft.lineup, (ink, main)),
-                Place::Land => plan::land_mark(painter, at, 12.0, atlas, &draft.lineup, ink),
+                Place::Land | Place::More | Place::Point(_) => {
+                    plan::land_mark(painter, at, 12.0, atlas, &draft.lineup, ink);
+                }
             }
-            let (status, tint) = match (set, next) {
-                (true, true) => ("Click the map to move it", colour::TEXT),
-                (true, false) => ("Placed", colour::TEXT_DIM),
-                (false, true) => ("Click the map to place it", colour::TEXT),
-                (false, false) => ("Not placed yet", colour::TEXT_FAINT),
-            };
+            let placed = draft.lineup.points.len() + usize::from(draft.lineup.land.is_some());
+            let (status, tint) = status(place, (set, next), (placed, most));
             let text_at = rect.left() + 52.0;
             let _name = caps_text(
                 painter,
@@ -231,7 +230,7 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
                 painter,
                 pos2(text_at, rect.top() + 31.0),
                 Align2::LEFT_CENTER,
-                status,
+                &status,
                 Face::Display.at(size::MICRO),
                 tint,
             );
@@ -246,6 +245,56 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
             draft.placing = place;
         }
     }
+}
+
+/// The rows under On the Map: where you stand and where it lands, or for
+/// the Spike only where it's planted, and a row for more places it lands
+/// when it can be put down in `most` of them.
+fn rows(draft: &Draft, most: usize) -> Vec<(Place, &'static str, bool)> {
+    let land = draft.lineup.land.is_some();
+    let mut rows = if draft.lineup.agent == SPIKE {
+        vec![(Place::Land, "Where It's Planted", land)]
+    } else {
+        vec![
+            (
+                Place::Stand,
+                "Where You Stand",
+                draft.lineup.stand.is_some(),
+            ),
+            (Place::Land, "Where It Lands", land),
+        ]
+    };
+    if most > 1 {
+        rows.push((
+            Place::More,
+            "More Places It Lands",
+            !draft.lineup.points.is_empty(),
+        ));
+    }
+    rows
+}
+
+/// What a row under On the Map says, and in what colour: whether it is
+/// placed and what a click on the map does. The row for more places it lands
+/// counts `placed` of the `most` it can.
+fn status(
+    place: Place,
+    (set, next): (bool, bool),
+    (placed, most): (usize, usize),
+) -> (String, Color32) {
+    let (words, tint) = match (place, set, next) {
+        (Place::More, _, next) => {
+            let words = format!(
+                "{placed} of {most} placed. Click the map to add one, or one to take it off"
+            );
+            return (words, if next { colour::TEXT } else { colour::TEXT_DIM });
+        }
+        (_, true, true) => ("Click the map to move it", colour::TEXT),
+        (_, true, false) => ("Placed", colour::TEXT_DIM),
+        (_, false, true) => ("Click the map to place it", colour::TEXT),
+        (_, false, false) => ("Not placed yet", colour::TEXT_FAINT),
+    };
+    (words.to_owned(), tint)
 }
 
 /// Which side and site it is for.

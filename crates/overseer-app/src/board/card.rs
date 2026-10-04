@@ -21,6 +21,7 @@ const CARD: Metrics = Metrics {
     stat: 13.0,
     pip: 8.0,
     agent_line: true,
+    tags_first: true,
 };
 
 /// One of your team: one line, quieter.
@@ -33,6 +34,7 @@ const LINE: Metrics = Metrics {
     stat: 12.0,
     pip: 6.0,
     agent_line: false,
+    tags_first: false,
 };
 
 /// The rank's zone: the emblem, the tier and what sits under it.
@@ -104,6 +106,11 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
     let top = ui.cursor().top();
     ui.add_space(GUTTER);
     strip(ui, scene.board);
+    let enemies = scene
+        .board
+        .players
+        .iter()
+        .any(|p| super::side_of(scene.board, p) == Side::Enemy);
     for (side, team) in order {
         let players = super::roster(scene.board, team, scene.sort, "");
         if players.is_empty() {
@@ -111,7 +118,13 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
         }
         ui.add_space(BETWEEN);
         let _clicked = heads::team(ui, scene.board, *side, team);
-        let metrics = if *side == Side::Enemy { CARD } else { LINE };
+        // In agent select only your team is known, and it gets the cards
+        // the enemy would, tags and all.
+        let metrics = if *side == Side::Enemy || !enemies {
+            CARD
+        } else {
+            LINE
+        };
         let mut placed = Vec::with_capacity(players.len());
         for player in &players {
             let look = look(scene, player, *side, metrics);
@@ -158,7 +171,8 @@ fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side, metrics: Metrics)
 }
 
 /// The match: the map, the side and the queue on the left, the score and
-/// the round on the right.
+/// the round on the right, and the key that hides it between them. The
+/// overlay takes no clicks, so that key is the only way it goes away.
 fn strip(ui: &mut Ui, board: &Board) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), STRIP), Sense::hover());
@@ -184,7 +198,7 @@ fn strip(ui: &mut Ui, board: &Board) {
             + space::SM;
     }
     if let Some(mode) = board.mode.as_deref() {
-        let _plate = crate::header::plate(painter, x, bottom, mode, colour::TEXT_DIM, false);
+        x = crate::header::plate(painter, x, bottom, mode, colour::TEXT_DIM, false).right();
     }
     let y = rect.center().y;
     let mut right = rect.right();
@@ -217,12 +231,24 @@ fn strip(ui: &mut Ui, board: &Board) {
         } else {
             colour::ENEMY
         };
-        let _chance = pair(
+        right = pair(
             painter,
             (right, y),
             "To Win",
             &format!("{chance:.0}%"),
             tint,
+        );
+    }
+    let hint = format!("{} Hides This", crate::hotkey::LABEL);
+    let wide = overseer_ui::caps_width(painter, &hint, paint::label());
+    if x + space::XL + wide + space::XL <= right {
+        let _hint = caps_text(
+            painter,
+            pos2(x + space::XL, y + 1.0),
+            Align2::LEFT_CENTER,
+            &hint,
+            paint::label(),
+            colour::TEXT_FAINT,
         );
     }
 }

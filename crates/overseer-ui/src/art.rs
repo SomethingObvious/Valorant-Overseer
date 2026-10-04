@@ -159,6 +159,22 @@ pub fn mark(ctx: &Context) -> Option<TextureHandle> {
     texture(ctx, "mark", include_bytes!("../assets/mark.png"))
 }
 
+/// The Spike as Riot draws it on the Standard mode's icon, for a lineup that
+/// is only the Spike, planted.
+const SPIKE: &[u8] = include_bytes!("../assets/spike.png");
+
+/// The Spike's icon, white on clear, for the caller to tint. It is drawn far
+/// smaller than it is, so it keeps mipmaps to stay sharp.
+#[must_use]
+pub fn spike(ctx: &Context) -> Option<TextureHandle> {
+    let options = TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+    cached_with(ctx, "spike", options, || decode(SPIKE))
+}
+
+/// Where the middle of the Spike's core is in its icon, as a share of its
+/// width and height, measured off the hexagon's edges.
+pub const SPIKE_CORE: [f32; 2] = [63.9 / 128.0, 49.85 / 128.0];
+
 /// One of the tables keyed by name, looked up by what the backend sent.
 fn named(ctx: &Context, kind: &str, table: &[(&str, &[u8])], name: &str) -> Option<TextureHandle> {
     let key = slug(name);
@@ -310,6 +326,16 @@ fn cached(
     key: &str,
     make: impl FnOnce() -> Option<egui::ColorImage>,
 ) -> Option<TextureHandle> {
+    cached_with(ctx, key, TextureOptions::LINEAR, make)
+}
+
+/// [`cached`], with the texture's own `options`.
+fn cached_with(
+    ctx: &Context,
+    key: &str,
+    options: TextureOptions,
+    make: impl FnOnce() -> Option<egui::ColorImage>,
+) -> Option<TextureHandle> {
     // Kept in the context's store, not a static, because a texture id only
     // means something to the context that made it, and the snapshot harness
     // builds contexts of its own.
@@ -319,7 +345,7 @@ fn cached(
     }
     // Linear, because these are drawn at about half their stored size on a
     // display of any scale.
-    let handle = ctx.load_texture(key, make()?, TextureOptions::LINEAR);
+    let handle = ctx.load_texture(key, make()?, options);
     ctx.data_mut(|store| store.insert_temp(id, handle.clone()));
     Some(handle)
 }
@@ -348,7 +374,9 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CARDS, GLOW_PAD, KILLFEED, MAPS, PORTRAITS, RANKS, bloom, decode, emblem, slug};
+    use super::{
+        CARDS, GLOW_PAD, KILLFEED, MAPS, PORTRAITS, RANKS, SPIKE, bloom, decode, emblem, slug,
+    };
 
     /// The slug has to survive the one agent with punctuation in its name.
     #[test]
@@ -378,6 +406,7 @@ mod tests {
         for (tier, bytes) in RANKS {
             assert!(decode(bytes).is_some(), "tier {tier} did not decode");
         }
+        assert!(decode(SPIKE).is_some(), "the Spike did not decode");
     }
 
     /// Brightest on the emblem and gone by the edge of its own picture, where

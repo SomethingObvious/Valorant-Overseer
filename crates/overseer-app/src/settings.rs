@@ -99,18 +99,27 @@ pub(crate) struct Settings {
     pub(crate) lineups: LineupSettings,
 }
 
-/// The overlay's settings, kept in the same file under the same names. Off
-/// until asked for, since a window over everything on the first run is not
-/// something anybody wants.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// The overlay's settings, kept in the same file under the same names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct OverlaySettings {
-    /// Whether the overlay is on. Kept across runs, because somebody who
-    /// plays with it on wants it on next time too.
+    /// Whether the overlay shows itself in agent select and the first
+    /// seconds of a match. The hotkey shows it any time either way.
     #[serde(rename = "overlay")]
-    pub(crate) on: bool,
+    pub(crate) auto: bool,
     /// Which corner it parks in.
     pub(crate) corner: Corner,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        // It only ever shows itself before the first round's fight, so it
+        // can be on from the start.
+        Self {
+            auto: true,
+            corner: Corner::default(),
+        }
+    }
 }
 
 /// The Lineups screen's settings, kept in the same file under the same names.
@@ -135,6 +144,8 @@ pub(crate) struct LineupSettings {
     /// The colour an ability's area is drawn in, from the drawing colours,
     /// or by the lineup's side when there is none.
     pub(crate) area_colour: Option<String>,
+    /// The agent a new lineup starts with.
+    pub(crate) default_agent: String,
 }
 
 impl Default for LineupSettings {
@@ -150,6 +161,7 @@ impl Default for LineupSettings {
             map_turn: MapTurn::Attack,
             lineup_names: false,
             area_colour: None,
+            default_agent: "Brimstone".to_owned(),
         }
     }
 }
@@ -297,10 +309,13 @@ mod tests {
             r#"{ "overlay": true, "corner": "top-left", "clip_speed": 2.0, "lineup_names": true }"#,
         )
         .unwrap();
-        assert!(read.overlay.on && read.lineups.lineup_names);
+        assert!(read.lineups.lineup_names);
+        assert!(read.overlay.auto);
+        assert_eq!(read.overlay.corner, crate::overlay::Corner::TopLeft);
         assert!((read.lineups.clip_speed - 2.0).abs() < f32::EPSILON);
         let written = serde_json::to_value(&read).unwrap();
         assert_eq!(written.get("overlay"), Some(&serde_json::json!(true)));
+        assert_eq!(written.get("corner"), Some(&serde_json::json!("top-left")));
         assert_eq!(written.get("clip_speed"), Some(&serde_json::json!(2.0)));
         assert!(written.get("lineups").is_none(), "no nesting in the file");
     }

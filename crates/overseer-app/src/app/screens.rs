@@ -12,7 +12,7 @@ use crate::{panel, view};
 use overseer_ui::{self, colour, motion, space};
 
 use super::waiting::empty;
-use super::{DWELL, GREETING, Overseer, RESTATE, Screen, panel_width};
+use super::{DWELL, LINGER, Overseer, RESTATE, Screen, panel_width};
 
 impl Overseer {
     /// The detail panel down the right: one surface, lifted off the board.
@@ -124,9 +124,14 @@ impl Overseer {
                             turn: self.settings.lineups.map_turn,
                             names: self.settings.lineups.lineup_names,
                             area: self.settings.lineups.area_colour.as_deref(),
+                            agent: &self.settings.lineups.default_agent,
                         },
                     ),
                 );
+                if let Some(agent) = self.lineups.new_default() {
+                    self.settings.lineups.default_agent = agent;
+                    settings::save(&self.root, &self.settings);
+                }
             }
         }
         self.panel_visible = false;
@@ -159,12 +164,7 @@ impl Overseer {
     /// one line while there are none. The window's empty state is too big to
     /// sit over a game.
     fn overlay_view(&self, ui: &mut Ui) -> f32 {
-        let enemies = self
-            .board
-            .players
-            .iter()
-            .any(|p| board::side_of(&self.board, p) == Side::Enemy);
-        if !enemies {
+        if self.board.players.is_empty() {
             return overlay::greeting(ui);
         }
         // No session foot here. It belongs in the window, and the overlay is
@@ -172,47 +172,42 @@ impl Overseer {
         self.rows(ui, Place::Overlay).drew
     }
 
-    /// The overlay's window, when there is something for it to show.
-    pub(super) fn overlay(&mut self, ui: &Ui, now: f64) {
-        // Only while there is an enemy to show, and for `GREETING` seconds
-        // after being switched on so that switching it on is seen to work.
-        let enemies = self
-            .board
-            .players
-            .iter()
-            .any(|p| board::side_of(&self.board, p) == Side::Enemy);
-        if self.overlay_on_at == Some(f64::NEG_INFINITY) {
-            self.overlay_on_at = Some(now);
+    /// The overlay's window, while it is up.
+    pub(super) fn overlay(&mut self, ctx: &egui::Context, now: f64) {
+        // Woken when a peek or the match's first seconds run out, so it goes
+        // away on time with nothing else happening.
+        let ends = [
+            self.shown.peek_until,
+            self.shown.began_at.map(|at| at + LINGER),
+        ];
+        if let Some(next) = ends
+            .into_iter()
+            .flatten()
+            .filter(|t| *t > now)
+            .reduce(f64::min)
+        {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(next - now));
         }
-        let greeting = self
-            .overlay_on_at
-            .map_or(0.0, |at| GREETING - (now - at))
-            .max(0.0);
-        if greeting > 0.0 && !enemies {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64(greeting));
-        }
-        if !(enemies || greeting > 0.0) {
+        if !self.overlay_up(now) {
             self.overlay_drew = None;
+            return;
         }
-        if self.settings.overlay.on && (enemies || greeting > 0.0) {
-            // Drawn before this window, so a frame where the board changed
-            // reaches both. Nothing in it takes a click.
-            let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
-            let mut drew = last;
-            {
-                let this = &*self;
-                overlay::show(ui.ctx(), this.settings.overlay.corner, last, |ui| {
-                    drew = this.overlay_view(ui);
-                });
-            }
-            // Sized to what the board really drew, which cannot go stale the
-            // way a height kept by hand can.
-            let drew = drew.min(overlay::CEILING);
-            if (drew - last).abs() > 0.5 {
-                self.overlay_drew = Some(drew);
-                ui.ctx().request_repaint();
-            }
+        // Drawn before this window, so a frame where the board changed
+        // reaches both. Nothing in it takes a click.
+        let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
+        let mut drew = last;
+        {
+            let this = &*self;
+            overlay::show(ctx, this.settings.overlay.corner, last, |ui| {
+                drew = this.overlay_view(ui);
+            });
+        }
+        // Sized to what the board really drew, which cannot go stale the
+        // way a height kept by hand can.
+        let drew = drew.min(overlay::CEILING);
+        if (drew - last).abs() > 0.5 {
+            self.overlay_drew = Some(drew);
+            ctx.request_repaint();
         }
     }
 

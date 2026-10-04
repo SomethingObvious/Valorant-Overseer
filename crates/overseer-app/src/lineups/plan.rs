@@ -1086,8 +1086,8 @@ fn area(
     // A turret's view is worked out on the traced walls once there are any.
     if let (Reach::Aim(degrees), Some(walls), Some(aim)) = (reach, walls, points.first()) {
         let at = point(square, land);
-        let rim = sight::cone(walls, square, (at, *aim), degrees);
-        painter.extend(areas::seen(at, rim, ink));
+        let (stands, rim) = sight::cone(walls, square, (at, *aim), degrees);
+        painter.extend(areas::seen(stands, rim, ink));
         return;
     }
     let afar = areas::spots(lineup.ability.as_deref()).is_some();

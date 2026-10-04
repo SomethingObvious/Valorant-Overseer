@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import refresh
 import requests
 import riot_client
 import valapi
@@ -811,6 +812,8 @@ class LiveMatch:
                 entry["kd"], entry["hs"] = kd, hs
                 entry["intel"] = intel
                 entry["kd_done"] = True
+                # On screen now, not at the board loop's next tick.
+                refresh.soon()
                 return
             _log(f"kd-fill {puuid[:8]} status={status} tries={entry['kd_tries']}")
             # No history is final. Throttling says nothing about the player, so
@@ -850,6 +853,7 @@ class LiveMatch:
                 entry["kd"], entry["hs"] = kd, hs
                 entry["intel"] = intel
             entry["kd_full"] = True
+            refresh.soon()
 
         def _run() -> None:
             try:
@@ -872,6 +876,9 @@ class LiveMatch:
             board = dict(self.build_lobby(presences))
             board["queue"] = self.queue_status()
             board["map"] = board["queue"].get("map")
+            if not board.get("players"):
+                # Signed in, with no VALORANT presence yet to read a lobby from.
+                board["waiting"] = "game"
             return board
         if state not in ("INGAME", "PREGAME"):
             held = self._held_board()
@@ -890,6 +897,8 @@ class LiveMatch:
                 "state": "MENUS",
                 "stateLabel": STATES["MENUS"],
                 "source": "local",
+                # In a match Riot's servers don't have the players of yet.
+                "waiting": "match",
                 "players": [],
                 "teams": {},
             }
@@ -1813,8 +1822,11 @@ def _self_check() -> None:
         fill("topup")
     check(not crashed.called, crashed.call_args)
     check("kd_full" not in entry, entry)
-    fill("topup")
+    # A top up that lands wakes the board loop rather than waiting for it.
+    with mock.patch.object(refresh, "soon") as woke:
+        fill("topup")
     check(entry["kd_full"] and entry["kd"] == 2.0, entry)
+    check(woke.called, "a finished top up didn't wake the board loop")
 
     # A five stack with one friend in it: presences show two of you, and the
     # party service shows all five, in the match and in the lobby.

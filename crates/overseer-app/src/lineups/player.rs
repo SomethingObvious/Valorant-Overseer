@@ -18,8 +18,14 @@ use overseer_ui::{colour, size, space};
 
 /// The most pixels a frame has on its longest side, which is 1080p either
 /// way up. Each keeps the video's own shape, so a short is as tall as a wide
-/// video is wide. ffmpeg makes these about twenty times faster than they play.
+/// video is wide. Frames are made the size they are drawn up to this.
 const LONGEST_SIDE: usize = 1920;
+/// The steps the frame size goes up in, so resizing the panel doesn't
+/// restart ffmpeg on every frame of the drag.
+const SIDE_STEP: f32 = 240.0;
+/// Windows' `BELOW_NORMAL_PRIORITY_CLASS`, so the game gets the CPU before
+/// the clip does.
+const BELOW_NORMAL: u32 = 0x0000_4000;
 /// Frames a second of the video, whatever the speed.
 const FPS: f64 = 30.0;
 /// How many decoded frames wait for their turn. A few is enough to ride out
@@ -136,6 +142,12 @@ pub(crate) struct Player {
     muted: bool,
     /// Whether it is showing full screen.
     big: bool,
+    /// How many pixels its frames have on their longest side, to fit where
+    /// it is drawn.
+    side: usize,
+    /// The frame to show when it is first drawn, once it knows how big to
+    /// make it.
+    first: Option<f64>,
     /// While the timeline is held: whether it was playing when taken, and
     /// the time under the pointer.
     scrub: Option<(bool, f64)>,
@@ -206,7 +218,7 @@ pub(super) fn of<'slot>(
 ) -> &'slot mut Player {
     if slot.as_ref().is_none_or(|p| p.file != file) {
         let mut fresh = Player::new(file, prefs);
-        fresh.still(at);
+        fresh.first = Some(at);
         *slot = Some(fresh);
     }
     let player = slot.get_or_insert_with(|| Player::new(file, prefs));
@@ -238,6 +250,8 @@ impl Player {
             followed: None,
             resound: None,
             big: false,
+            side: 720,
+            first: None,
             scrub: None,
             strip: None,
             shown_in: 0,
@@ -381,6 +395,22 @@ impl Player {
         self.play(if on { self.at } else { from }, to);
     }
 
+    /// Makes its frames the size of `rect` on screen, a step above it at
+    /// most, rather than 1080p for a clip a few hundred pixels wide. The
+    /// frame on screen is made again at the new size from where it is.
+    fn fit(&mut self, rect: Rect, pixels_per_point: f32) {
+        let longest = rect.width().max(rect.height()) * pixels_per_point;
+        let steps = (longest / SIDE_STEP).ceil().max(1.0) as usize;
+        let side = (steps * SIDE_STEP as usize).min(LONGEST_SIDE);
+        if side == self.side {
+            return;
+        }
+        self.side = side;
+        if self.run.is_some() || self.texture.is_some() {
+            self.seek(self.at);
+        }
+    }
+
     /// Goes to `at` within its part, playing on from there if it was playing.
     fn seek(&mut self, at: f64) {
         let (from, to) = self.span;
@@ -430,7 +460,7 @@ impl Player {
     fn spawn(&self, from: f64, length: Option<f64>) -> Option<Run> {
         let from = from.max(0.0);
         let speed = self.prefs.speed;
-        decode(&self.file, from, length, (LONGEST_SIDE, FPS))
+        decode(&self.file, from, length, (self.side, FPS))
             .ok()
             .map(|(child, frames)| Run {
                 child,
@@ -567,9 +597,6 @@ impl Player {
         self.advance(ui.ctx());
         self.shown_in = ui.ctx().cumulative_pass_nr();
         (self.span, self.gain) = (span, gain);
-        if std::mem::take(&mut self.prefs.autoplay) {
-            self.toggle();
-        }
         if let Some(at) = self.resound {
             if ui.input(|i| i.time) >= at {
                 self.resound = None;
@@ -590,6 +617,17 @@ impl Player {
             .min(left.max(SHORTEST));
         let (row, _) = ui.allocate_exact_size(vec2(wide, high), Sense::hover());
         let rect = Rect::from_center_size(row.center(), vec2(high * aspect, high));
+        if !self.big {
+            self.fit(rect, ui.ctx().pixels_per_point());
+        }
+        // After the size is known, so the first frames are made that size.
+        // Playing straight away needs no still to replace a moment later.
+        let first = self.first.take();
+        if std::mem::take(&mut self.prefs.autoplay) {
+            self.toggle();
+        } else if let Some(at) = first {
+            self.still(at);
+        }
         if self.big {
             if ui.is_rect_visible(rect) {
                 self.picture(ui.painter(), rect);
@@ -638,6 +676,7 @@ impl Player {
             .backdrop_color(Color32::from_black_alpha(215))
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(high * aspect, high), Sense::hover());
+                self.fit(rect, ctx.pixels_per_point());
                 self.screen(ui, rect, "big");
                 let spot =
                     Rect::from_center_size(rect.right_top() + vec2(-26.0, 26.0), vec2(34.0, 34.0));
@@ -1175,7 +1214,7 @@ fn decode(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .creation_flags(crate::NO_WINDOW)
+        .creation_flags(crate::NO_WINDOW | BELOW_NORMAL)
         .spawn()?;
     let Some(out) = child.stdout.take() else {
         end(&mut child);
@@ -1244,7 +1283,7 @@ fn sound(file: &str, from: f64, length: f64, volume: f32, speed: f32) -> std::io
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(crate::NO_WINDOW)
+        .creation_flags(crate::NO_WINDOW | BELOW_NORMAL)
         .spawn()
 }
 
@@ -1378,7 +1417,16 @@ mod tests {
         until(&mut shot, |p| p.texture.is_some() && p.run.is_none());
         let player = shot.state().as_ref().unwrap();
         let size = player.texture.as_ref().expect("no frame came").size();
-        assert_eq!(size, [720, 1280], "a short keeps its shape and its size");
+        let [wide, high] = size;
+        assert!(
+            high < 1280,
+            "made the size it is drawn, not the source's: {size:?}"
+        );
+        let shape = wide as f32 / high as f32;
+        assert!(
+            (shape - 0.5625).abs() < 0.01,
+            "a short keeps its shape: {size:?}"
+        );
         assert!(
             (player.at - 1.0).abs() < 0.05,
             "the still is at {}",

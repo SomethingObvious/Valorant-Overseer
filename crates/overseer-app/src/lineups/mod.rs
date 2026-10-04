@@ -62,6 +62,10 @@ enum Job {
     Delete,
     /// Keeping a map's shapes.
     Drawing,
+    /// Making a code of lineups to paste in a chat.
+    Share,
+    /// Saving the lineups in a pasted code.
+    Import,
 }
 
 /// What order the lineups are listed in, after what they share.
@@ -464,6 +468,12 @@ enum Request {
     Measure,
     /// Get a file of the clip's source the window can play.
     Watch,
+    /// Copy a code for the selected lineup.
+    Share,
+    /// Copy a code for every lineup on the map.
+    ShareMap,
+    /// Bring in the lineups in the code that was pasted.
+    Paste,
 }
 
 /// Where an exported map goes.
@@ -544,6 +554,13 @@ struct View {
     shot: Option<Rect>,
     /// The folder the last picture was saved in.
     saved_to: Option<PathBuf>,
+    /// The pass Paste Code asked for the clipboard on, until its text
+    /// arrives.
+    pasting: Option<u64>,
+    /// The clipboard's text once it arrives, for the backend to read.
+    pasted: Option<String>,
+    /// A code to put on the clipboard.
+    copy: Option<String>,
 }
 
 /// How the settings say the maps are drawn.
@@ -852,6 +869,17 @@ impl Lineups {
                 view.selected = None;
                 view.said = Some(("Deleted.".to_owned(), false));
             }
+            Job::Share | Job::Import => {
+                let said = value.get("said").and_then(serde_json::Value::as_str);
+                view.said = said.map(|s| (s.to_owned(), false));
+                let text = |key| value.get(key).and_then(serde_json::Value::as_str);
+                if job == Job::Share {
+                    view.copy = text("code").map(ToOwned::to_owned);
+                } else if let Some(map) = text("map") {
+                    view.map = Some(map.to_owned());
+                    view.selected = None;
+                }
+            }
             Job::Drawing => {}
         }
         let Load::Have(atlas) = &mut self.load else {
@@ -880,6 +908,16 @@ impl Lineups {
                     atlas.drawings.insert(map.to_owned(), kept);
                 }
             }
+            Job::Import => {
+                let added = value
+                    .get("added")
+                    .and_then(|a| serde_json::from_value::<Vec<Lineup>>(a.clone()).ok());
+                for lineup in added.unwrap_or_default() {
+                    atlas.lineups.retain(|l| l.id != lineup.id);
+                    atlas.lineups.push(lineup);
+                }
+            }
+            Job::Share => {}
         }
     }
 
@@ -957,6 +995,7 @@ impl Lineups {
             self.send(bridge, live, request);
         }
         self.keep_shapes(bridge, live);
+        self.paste(ui, bridge, live);
         if self.view.export.is_some() {
             let picture = ui.input(|i| {
                 i.raw.events.iter().find_map(|e| match e {
@@ -968,6 +1007,37 @@ impl Lineups {
                 Some(image) => self.view.exported(ui.ctx(), &image, root),
                 None => ui.ctx().request_repaint(),
             }
+        }
+    }
+
+    /// Puts a code that came back on the clipboard, and sends the
+    /// clipboard's text to be read once Paste Code has it.
+    fn paste(&mut self, ui: &Ui, bridge: &Bridge, live: bool) {
+        if let Some(code) = self.view.copy.take() {
+            ui.ctx().copy_text(code);
+        }
+        let Some(asked_on) = self.view.pasting else {
+            return;
+        };
+        let pasted = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Paste(text) => Some(text.clone()),
+                _ => None,
+            })
+        });
+        if let Some(text) = pasted {
+            self.view.pasting = None;
+            self.view.pasted = Some(text);
+            self.send(bridge, live, Request::Paste);
+        } else if ui.ctx().cumulative_pass_nr() > asked_on + 3 {
+            // An empty clipboard, or a picture on it, sends no paste at all.
+            self.view.pasting = None;
+            self.view.said = Some((
+                "There's no text on the clipboard. Copy a lineup code first.".to_owned(),
+                true,
+            ));
+        } else {
+            ui.ctx().request_repaint();
         }
     }
 
@@ -1011,6 +1081,10 @@ impl Lineups {
             return;
         }
         if view.pending.is_some() {
+            view.said = Some((
+                "Overseer is still on the last one. Try again once it's done.".to_owned(),
+                true,
+            ));
             return;
         }
         let map = view.map.clone().unwrap_or_default();
@@ -1022,10 +1096,36 @@ impl Lineups {
                 Job::Save,
             ),
             (_, Request::Delete) => ("lineup_delete", picked, Job::Delete),
+            (_, Request::Share) => (
+                "lineup_export",
+                serde_json::json!({ "ids": [view.selected] }),
+                Job::Share,
+            ),
+            (_, Request::ShareMap) => (
+                "lineup_export",
+                serde_json::json!({ "map": map }),
+                Job::Share,
+            ),
+            (_, Request::Paste) => (
+                "lineup_import",
+                serde_json::json!({ "code": view.pasted.take() }),
+                Job::Import,
+            ),
             _ => return,
         };
+        if matches!(job, Job::Save | Job::Delete) {
+            // Ends the player's ffmpeg, which has the clip open, before the
+            // backend replaces or deletes it.
+            view.player = None;
+        }
         view.pending = Some((bridge.ask(name, params), job));
-        view.said = None;
+        view.said = (job == Job::Import).then(|| {
+            (
+                "Bringing in the lineups and cutting their clips, which takes a few seconds each."
+                    .to_owned(),
+                false,
+            )
+        });
         view.confirm = false;
         // Back to the list straight away rather than sitting in the editor
         // while the clip is cut, which can take a while.
@@ -1617,5 +1717,66 @@ mod tests {
         assert_eq!(titles(&view), ["Default", "Retake", "Zed"]);
         view.looking_for = "retake".to_owned();
         assert_eq!(titles(&view), ["Retake"]);
+    }
+
+    /// The clipboard's text, once Paste Code asked for it, goes to the
+    /// backend to read, and the answer adds its lineups and moves to
+    /// their map.
+    #[test]
+    fn a_pasted_code_comes_in_on_its_map() {
+        let bridge = overseer_core::Bridge::start(std::path::Path::new("."), || {});
+        let mut screen = Lineups {
+            load: Load::Have(Box::default()),
+            ..Lineups::default()
+        };
+        screen.view.map = Some("Ascent".to_owned());
+        screen.view.pasting = Some(0);
+        let look = super::Look {
+            turn: crate::settings::MapTurn::Attack,
+            names: false,
+            area: None,
+            agent: "Brimstone",
+        };
+        let input = egui::RawInput {
+            events: vec![egui::Event::Paste("OVL1MFRGG9".to_owned())],
+            ..egui::RawInput::default()
+        };
+        let ctx = egui::Context::default();
+        overseer_ui::install_fonts(&ctx);
+        let mut frame = ctx.run_ui(input, |ui| {
+            let place = (&bridge, std::path::Path::new("."));
+            screen.show(ui, place, true, (1.0, super::Prefs::default(), look));
+        });
+        frame.textures_delta.clear();
+        let Some((id, super::Job::Import)) = screen.view.pending else {
+            panic!("the paste wasn't sent");
+        };
+        assert!(screen.view.pasting.is_none() && screen.view.pasted.is_none());
+
+        screen.answered(
+            id,
+            Ok(serde_json::json!({
+                "added": [{ "id": "b-2", "map": "Bind", "agent": "Brimstone", "title": "Hookah" }],
+                "map": "Bind",
+                "said": "Added 1 lineup to Bind.",
+            })),
+        );
+        assert_eq!(screen.view.map.as_deref(), Some("Bind"));
+        let Load::Have(atlas) = &screen.load else {
+            panic!("the atlas went away");
+        };
+        assert_eq!(atlas.lineups.len(), 1);
+        assert_eq!(
+            screen.view.said,
+            Some(("Added 1 lineup to Bind.".to_owned(), false))
+        );
+
+        // A code that comes back is kept for the clipboard.
+        screen.view.pending = Some((30, super::Job::Share));
+        screen.answered(
+            30,
+            Ok(serde_json::json!({ "code": "OVL1MFRGG9", "said": "Copied." })),
+        );
+        assert_eq!(screen.view.copy.as_deref(), Some("OVL1MFRGG9"));
     }
 }

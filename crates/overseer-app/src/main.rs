@@ -85,6 +85,10 @@ fn main() -> eframe::Result {
 
 /// Windows' `CREATE_NO_WINDOW`, for every program the window starts.
 pub(crate) const NO_WINDOW: u32 = 0x0800_0000;
+/// Windows' `BELOW_NORMAL_PRIORITY_CLASS`, for the backend. It fetches whole
+/// lobbies' match histories in bursts, and the game should win the CPU when
+/// they meet. Everything the backend starts inherits it.
+const BELOW_NORMAL: u32 = 0x0000_4000;
 
 /// Starts the backend under `run.py`. With no install to run, the window just
 /// waits for a backend.
@@ -105,7 +109,7 @@ fn serve(root: &Path) {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .creation_flags(NO_WINDOW)
+        .creation_flags(NO_WINDOW | BELOW_NORMAL)
         .spawn();
     if let Err(why) = started {
         println!("backend not started: {why}");

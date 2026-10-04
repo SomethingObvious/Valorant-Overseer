@@ -27,6 +27,7 @@ use rows::{ALLY, ENEMY, Look, Metrics, SMALL};
 pub(crate) const GUTTER: f32 = 22.0;
 
 pub(crate) use card::HEIGHT as OVERLAY_HEIGHT;
+pub(crate) use card::STRIP_MIDDLE;
 
 /// egui's spacing under every widget: `item_spacing.y` in the style.
 const ITEM: f32 = space::SM;

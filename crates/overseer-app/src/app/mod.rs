@@ -44,8 +44,8 @@ const PANEL_MOST: f32 = 680.0;
 /// The least a dragged panel leaves the board, which is what the board has
 /// beside the narrowest panel in the narrowest window that has one.
 const BOARD_LEAST: f32 = COMPACT - PANEL_NARROW;
-/// How far into a match the overlay stays up by itself, in seconds: the
-/// loading screen and the first buy.
+/// How long the overlay stays up each time it shows itself, in seconds:
+/// when agent select starts and when the match loads.
 const LINGER: f64 = 30.0;
 /// How long a press of the hotkey shows the overlay for, in seconds.
 const PEEK: f64 = 15.0;
@@ -202,29 +202,19 @@ const WINDOW_KEY: &str = "window";
 struct Shown {
     /// Until when a press of the hotkey keeps it up, on egui's clock.
     peek_until: Option<f64>,
-    /// When agent select ended and the match began.
-    began_at: Option<f64>,
-    /// The board's state when it was hidden by hand. It stays hidden until
-    /// the board moves on.
-    hidden_in: Option<String>,
+    /// Until when it shows itself, `LINGER` seconds from the start of
+    /// agent select or of the match.
+    auto_until: Option<f64>,
 }
 
 impl Shown {
-    /// Whether the overlay is up at `now` on a board in `state`: asked for in
-    /// the last `PEEK` seconds, or, when it may show itself and there are
-    /// `players` to show, in agent select and the match's first `LINGER`
-    /// seconds, unless it was hidden by hand in this state.
-    fn up(&self, auto: bool, state: Option<&str>, players: bool, now: f64) -> bool {
-        if self.peek_until.is_some_and(|until| now < until) {
-            return true;
-        }
-        let hidden = self.hidden_in.is_some() && self.hidden_in.as_deref() == state;
-        let by_itself = match state {
-            Some("PREGAME") => true,
-            Some("INGAME") => self.began_at.is_some_and(|at| now - at < LINGER),
-            _ => false,
-        };
-        auto && players && by_itself && !hidden
+    /// Whether the overlay is up at `now`: asked for in the last `PEEK`
+    /// seconds, or, when it may show itself and there are `players` to
+    /// show, in the `LINGER` seconds after agent select or the match began.
+    fn up(&self, auto: bool, players: bool, now: f64) -> bool {
+        let peeking = self.peek_until.is_some_and(|until| now < until);
+        let by_itself = self.auto_until.is_some_and(|until| now < until);
+        peeking || (auto && players && by_itself)
     }
 }
 
@@ -563,8 +553,10 @@ impl Overseer {
                         self.lineups.follow(map);
                     }
                     let began = match_began(was.as_deref(), self.board.state.as_deref());
-                    if began {
-                        self.shown.began_at = Some(ctx.input(|i| i.time));
+                    let picking = self.board.state.as_deref() == Some("PREGAME")
+                        && was.as_deref() != Some("PREGAME");
+                    if began || picking {
+                        self.shown.auto_until = Some(ctx.input(|i| i.time) + LINGER);
                     }
                     // Only when it isn't in use. Somebody reading it as the
                     // match loads wants it where it is.
@@ -943,16 +935,15 @@ impl Overseer {
     /// Shows the overlay for `PEEK` seconds.
     fn peek_overlay(&mut self, now: f64) {
         self.shown.peek_until = Some(now + PEEK);
-        self.shown.hidden_in = None;
         // Nothing in the overlay is clickable, so leaving a half finished
         // search or a settings screen behind it would be a trap.
         self.screen = Screen::Board;
     }
 
-    /// Hides the overlay until the board moves on to its next state.
-    fn hide_overlay(&mut self) {
+    /// Hides the overlay until it next shows itself or is asked for.
+    pub(super) const fn hide_overlay(&mut self) {
         self.shown.peek_until = None;
-        self.shown.hidden_in.clone_from(&self.board.state);
+        self.shown.auto_until = None;
     }
 
     /// Whether the overlay is up: asked for in the last `PEEK` seconds, or
@@ -961,7 +952,6 @@ impl Overseer {
     pub(super) fn overlay_up(&self, now: f64) -> bool {
         self.shown.up(
             self.settings.overlay.auto,
-            self.board.state.as_deref(),
             !self.board.players.is_empty(),
             now,
         )
@@ -1216,7 +1206,12 @@ fn connecting_text(detail: &str) -> String {
 /// The empty state, drawn for the snapshot test.
 #[cfg(test)]
 pub(crate) fn snapshot_empty(ui: &mut Ui) {
-    waiting::empty(ui, &Status::Live, None, RESTATE);
+    let board = Board {
+        waiting: Some("game".to_owned()),
+        ..Board::default()
+    };
+    // Still, the way the efficient tier draws it, so the picture holds.
+    waiting::empty(ui, (&Status::Live, &board), None, motion::EFFICIENT);
 }
 
 /// The header and the footer, drawn for the snapshot test without a window
@@ -1279,43 +1274,20 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
 mod tests {
     use super::{Place, Shown, Wheel, connecting_text, match_began, panel_grip, panel_width};
 
-    /// Up by itself through agent select and the match's first 30 seconds,
-    /// never over a round otherwise, for 15 seconds after the hotkey, and
-    /// down for the rest of a state once hidden by hand.
+    /// Up by itself for 30 seconds from when it was set off, never with
+    /// nobody to show, and for 15 seconds after the hotkey either way.
     #[test]
-    fn the_overlay_comes_up_for_agent_select_and_the_hotkey_only() {
+    fn the_overlay_comes_up_for_a_while_and_for_the_hotkey() {
         let mut shown = Shown::default();
-        let pregame = Some("PREGAME");
-        let ingame = Some("INGAME");
-        assert!(shown.up(true, pregame, true, 0.0), "agent select");
-        assert!(!shown.up(false, pregame, true, 0.0), "the setting is off");
-        assert!(!shown.up(true, pregame, false, 0.0), "nobody to show yet");
-        assert!(!shown.up(true, ingame, true, 5.0), "opened mid-match");
-        shown.began_at = Some(100.0);
-        assert!(
-            shown.up(true, ingame, true, 129.0),
-            "the match's first seconds"
-        );
-        assert!(!shown.up(true, ingame, true, 131.0), "into the round");
-        assert!(!shown.up(true, Some("MENUS"), true, 0.0), "the menus");
-
+        assert!(!shown.up(true, true, 0.0), "nothing set it off");
+        shown.auto_until = Some(130.0);
+        assert!(shown.up(true, true, 129.0), "its 30 seconds");
+        assert!(!shown.up(true, true, 131.0), "after them");
+        assert!(!shown.up(false, true, 100.0), "the setting is off");
+        assert!(!shown.up(true, false, 100.0), "nobody to show yet");
         shown.peek_until = Some(146.0);
-        assert!(
-            shown.up(false, ingame, false, 140.0),
-            "the hotkey shows it anywhere"
-        );
-        assert!(!shown.up(true, ingame, true, 147.0), "and only for a while");
-
-        shown.peek_until = None;
-        shown.hidden_in = Some("PREGAME".to_owned());
-        assert!(
-            !shown.up(true, pregame, true, 0.0),
-            "hidden in agent select"
-        );
-        assert!(
-            shown.up(true, ingame, true, 110.0),
-            "back for the loading screen"
-        );
+        assert!(shown.up(false, false, 140.0), "the hotkey shows it anyway");
+        assert!(!shown.up(true, true, 147.0), "and only for a while");
     }
 
     /// A store in memory, standing in for eframe's file.

@@ -5,7 +5,9 @@ use egui::{Align2, Color32, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::{Atlas, Lineup, Tools};
 use overseer_ui::{Face, caps_text, colour, motion, size, space};
 
-use super::{Draft, Export, Mode, Request, View, face, form, length, pictures, player, sketch};
+use super::{
+    Draft, Export, Job, Mode, Request, View, face, form, length, pictures, player, sketch,
+};
 use crate::controls::{self, Tone};
 
 /// How tall a lineup's line in the list is.
@@ -140,7 +142,7 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
     };
     title(ui, &map, &count);
     // One row of three, the width split evenly.
-    ui.horizontal(|ui| {
+    let shared = ui.horizontal(|ui| {
         let gap = ui.spacing().item_spacing.x;
         let wide = gap.mul_add(-2.0, ui.available_width()) / 3.0;
         if controls::button_wide(ui, "Add Lineup", (Tone::Primary, true), wide).clicked() {
@@ -151,8 +153,9 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
             view.mode = Mode::Draw(Box::new(view.sketch(atlas)));
             view.said = None;
         }
-        exports(ui, view, wide);
+        exports(ui, view, wide)
     });
+    let shared = shared.inner;
     if here.is_empty() {
         ui.add_space(space::MD);
         for step in [
@@ -163,7 +166,7 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
         ] {
             words(ui, step, colour::TEXT_DIM);
         }
-        return None;
+        return shared;
     }
     // Nothing picked lights every lineup on the map. One the filter has
     // hidden isn't picked any more.
@@ -183,15 +186,20 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
     let picked = atlas
         .lineups
         .iter()
-        .find(|l| l.id.is_some() && l.id == view.selected && l.map == map)?;
+        .find(|l| l.id.is_some() && l.id == view.selected && l.map == map);
+    let Some(picked) = picked else {
+        return shared;
+    };
     let id = egui::Id::new(("lineup-details", picked.id.clone()));
-    motion::arrive(ui, id, 0.0, |ui| details(ui, atlas.tools, picked, view))
+    motion::arrive(ui, id, 0.0, |ui| details(ui, atlas.tools, picked, view)).or(shared)
 }
 
-/// Saving the map as a picture, or copying it to paste into a chat.
-fn exports(ui: &mut Ui, view: &mut View, wide: f32) {
+/// Saving the map as a picture or copying it to paste into a chat, and
+/// sharing the map's lineups as a code.
+fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
     let busy = view.export.is_some();
-    let button = controls::button_wide(ui, "Picture", (Tone::Plain, !busy), wide);
+    let mut asked = None;
+    let button = controls::button_wide(ui, "Share", (Tone::Plain, !busy), wide);
     let _menu = egui::Popup::menu(&button)
         .align(egui::RectAlign::BOTTOM_END)
         .gap(4.0)
@@ -208,6 +216,18 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) {
                 view.said = None;
                 ui.close();
             }
+            if controls::menu_row(ui, "Copy Code", false, 150.0).clicked() {
+                asked = Some(Request::ShareMap);
+                ui.close();
+            }
+            if controls::menu_row(ui, "Paste Code", false, 150.0).clicked() {
+                // The clipboard's text comes back as a paste a frame later.
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                view.pasting = Some(ui.ctx().cumulative_pass_nr());
+                view.said = None;
+                ui.close();
+            }
             if let Some(folder) = view.saved_to.clone()
                 && controls::menu_row(ui, "Open Folder", false, 150.0).clicked()
             {
@@ -216,6 +236,7 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) {
                 ui.close();
             }
         });
+    asked
 }
 
 /// A box that narrows the list to lineups with those words, and a chip that
@@ -401,10 +422,13 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
     let busy = view.pending.is_some();
     let mut asked = None;
     ui.add_space(space::SM);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if controls::button(ui, "Edit", Tone::Plain, !busy).clicked() {
             view.mode = Mode::Edit(Box::new(Draft::of(lineup)));
             view.said = None;
+        }
+        if controls::button(ui, "Copy Code", Tone::Plain, !busy).clicked() {
+            asked = Some(Request::Share);
         }
         let delete = if view.confirm {
             "Click Again to Delete"
@@ -421,9 +445,16 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
     ui.add_space(space::SM);
     let clip = lineup.clip.as_ref();
     // The cut clip already has its volume in it, so it plays as it is.
+    // Windows won't let the backend replace or delete a file a player has
+    // open, so the clip stays off while it is cut again or thrown away.
+    let cutting = view
+        .saving
+        .as_ref()
+        .is_some_and(|d| d.lineup.id == lineup.id);
+    let deleting = matches!(view.pending, Some((_, Job::Delete)));
     let file = clip
         .and_then(|c| c.file.as_deref())
-        .filter(|_| tools.ffmpeg);
+        .filter(|_| tools.ffmpeg && !cutting && !deleting);
     let runs = clip.and_then(length).unwrap_or(form::LONGEST);
     if let Some(file) = file {
         player::of(&mut view.player, file, 0.0, view.prefs).show(ui, (0.0, runs), 100.0, 0.0);
@@ -442,7 +473,16 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
         words(ui, description, colour::TEXT_DIM);
     }
     if file.is_none() {
-        words(ui, "No clip yet. Edit it to add one.", colour::TEXT_DIM);
+        // A pasted lineup whose clip couldn't be cut still has its link.
+        let uncut = clip.is_some_and(|c| c.source.is_some() && c.file.is_none());
+        let hint = if cutting {
+            "Cutting the new clip."
+        } else if uncut {
+            "The clip isn't cut yet. Edit the lineup and save it to cut it."
+        } else {
+            "No clip yet. Edit it to add one."
+        };
+        words(ui, hint, colour::TEXT_DIM);
     }
     asked
 }

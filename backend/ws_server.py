@@ -19,6 +19,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import overseerlog
+import refresh
 from common import console_logger
 from vconstants import APP_VERSION
 
@@ -139,6 +140,10 @@ def _self_handshake(ws_port: int, timeout: float = 6.0) -> None:
         if reply.get("type") != "auth_ok":
             msg = f"self-handshake got {reply.get('type')!r}"
             raise RuntimeError(msg)
+
+
+# How long the board loop waits after an early wake for the rest of a burst.
+_SETTLE = 0.4
 
 
 def start(
@@ -287,7 +292,12 @@ def start(
                     if repr(e) != failing:
                         failing = repr(e)
                         LOG.exception("board broadcast failed")
-                await asyncio.sleep(interval)
+                # Sooner when something on the board changed. A moment's wait
+                # after the first ask lets the rest of a burst ride along, so
+                # ten players' K/D landing together is one board, not ten.
+                if await loop.run_in_executor(None, refresh.wait, interval):
+                    await asyncio.sleep(_SETTLE)
+                refresh.clear()
 
         async def _heartbeat_loop() -> None:
             while True:

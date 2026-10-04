@@ -1146,6 +1146,7 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
                     return;
                 }
                 crate::overlay::contents(ui, &mut |ui: &mut Ui| {
+                    let corner = ui.max_rect();
                     let _drew = crate::board::draw(
                         ui,
                         &crate::board::Scene {
@@ -1161,6 +1162,7 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
                             since: 10.0,
                         },
                     );
+                    let _hide = crate::overlay::hide_button(ui, corner);
                 });
             },
             false,

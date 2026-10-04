@@ -1,33 +1,100 @@
-//! What the window says while there is no board to draw.
+//! What the window says while there is no board to draw: how far the
+//! backend, the Riot client, VALORANT and the match have got, with the step
+//! being waited on moving, so waiting reads apart from stuck.
 
-use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
-use overseer_core::Status;
+use std::time::Duration;
+
+use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
+use overseer_core::{Board, Status};
 
 use crate::board;
 use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 
-/// What to say while there is no board. Nothing on it moves, because this is
-/// the screen the window shows most, and a pulse would cost frames the whole
-/// time somebody sits in the game's menus.
-pub(super) fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>, fade: f32) {
-    let (title, detail, reached): (&str, &str, f32) = match (trouble, status) {
-        (Some(why), _) => ("This Build Can't Read the Bridge", why, 0.0),
-        (None, Status::Live) => (
-            "Signed In, Nothing in Progress",
-            "Open VALORANT and this fills in by itself.",
-            2.0,
+/// The steps to a board, in order.
+const STEPS: [&str; 4] = ["Backend", "Riot Client", "VALORANT", "Match"];
+
+/// How often the step being waited on is redrawn as it moves, in seconds.
+/// This screen only shows while VALORANT is closed, starting or loading a
+/// match, so the frames it costs are never taken from a game.
+const TICK: f64 = 1.0 / 30.0;
+
+/// How long the light takes to run along the line into the step being
+/// waited on, and its pip to pulse once, in seconds.
+const BEAT: f64 = 1.2;
+
+/// What to say, which step is being waited on, and whether it failed
+/// rather than being slow.
+struct Stage<'a> {
+    title: &'a str,
+    detail: &'a str,
+    step: usize,
+    failed: bool,
+}
+
+/// Where things have got, from the bridge's status and what the empty board
+/// says it waits on.
+fn stage<'a>(status: &'a Status, board: &'a Board, trouble: Option<&'a str>) -> Stage<'a> {
+    let said = board.notice.as_ref().and_then(|n| n.message.as_deref());
+    let (title, detail, step, failed) = match (trouble, status, board.waiting.as_deref()) {
+        (Some(why), ..) => ("This Build Can't Read the Bridge", why, 0, true),
+        (None, Status::Connecting(_), _) => (
+            "Starting Up",
+            "Overseer's backend is starting, which takes a few seconds.",
+            0,
+            false,
         ),
-        (None, Status::Connecting(_)) => (
-            "Looking for the Backend",
-            "The window connects once the backend is up and listening.",
-            0.0,
+        (None, Status::Lost(why), _) => ("Not Connected", why.as_str(), 0, true),
+        (None, Status::Live, Some("riot")) => (
+            "Waiting for the Riot Client",
+            "Open VALORANT, or sign in to the Riot Client if it's open already.",
+            1,
+            false,
         ),
-        (None, Status::Lost(why)) => ("Not Connected", why, 0.0),
+        (None, Status::Live, Some("game")) => (
+            "Waiting for VALORANT",
+            "You're signed in. Your lobby shows up here once VALORANT reaches the menus.",
+            2,
+            false,
+        ),
+        (None, Status::Live, Some("match")) => (
+            "Loading the Match",
+            "Looking up everyone in it, which takes a few seconds.",
+            3,
+            false,
+        ),
+        (None, Status::Live, _) if board.state.as_deref() == Some("OFFLINE") => (
+            "Couldn't Read VALORANT",
+            said.unwrap_or("Close VALORANT completely and open it again."),
+            1,
+            true,
+        ),
+        (None, Status::Live, _) => (
+            "Looking for VALORANT",
+            "Checking whether the Riot Client is open.",
+            1,
+            false,
+        ),
     };
-    let broken = trouble.is_some() || matches!(status, Status::Lost(_));
+    Stage {
+        title,
+        detail,
+        step,
+        failed,
+    }
+}
+
+/// What to say while there is no board, on a plate with the steps along
+/// its foot and how long this one has taken.
+pub(super) fn empty(
+    ui: &mut Ui,
+    (status, board): (&Status, &Board),
+    trouble: Option<&str>,
+    fade: f32,
+) {
+    let stage = stage(status, board, trouble);
     let room = ui.available_rect_before_wrap();
     if room.height() < 210.0 {
-        plain(ui, title, detail);
+        plain(ui, stage.title, stage.detail);
         return;
     }
     let (rect, _response) = ui.allocate_exact_size(room.size(), Sense::hover());
@@ -35,11 +102,11 @@ pub(super) fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>, fade: f
         return;
     }
     let painter = ui.painter().clone();
-    let width = 420.0_f32.min(space::XXL.mul_add(-2.0, rect.width()));
+    let width = 440.0_f32.min(space::XXL.mul_add(-2.0, rect.width()));
     // Laid out first, because the plate is as tall as its sentence, and the
     // longest sentence is whatever the bridge last refused to do.
     let mut job = egui::text::LayoutJob::simple(
-        detail.to_owned(),
+        stage.detail.to_owned(),
         Face::Body.at(size::BODY),
         colour::TEXT_DIM,
         space::XL.mul_add(-2.0, width),
@@ -52,48 +119,64 @@ pub(super) fn empty(ui: &mut Ui, status: &Status, trouble: Option<&str>, fade: f
             rect.center().x,
             rect.top() + (rect.height() * 0.44).max(120.0),
         ),
-        vec2(width, 54.0 + sentence.size().y + space::XL + 48.0),
+        vec2(width, 54.0 + sentence.size().y + space::XL + 58.0),
     );
     board::paint::slab(&painter, plate, colour::BG_RAISED, 0.0, false);
+    let since = since(ui, stage.title);
     // The words fade in again whenever they change, and the steps light up
     // in turn, so the backend and Riot coming up read as progress.
     let mut ink = painter.clone();
-    ink.multiply_opacity(restated(ui, title, fade));
-    words(&ink, plate, title, sentence);
-    let lit = ui
-        .ctx()
-        .animate_value_with_time(egui::Id::new("empty-steps"), reached, fade * 2.0);
-    chain(&painter, plate, lit, broken);
+    if fade > 0.0 {
+        ink.multiply_opacity(motion::eased(since as f32 / fade));
+    }
+    words(&ink, plate, stage.title, sentence, since);
+    let lit = ui.ctx().animate_value_with_time(
+        egui::Id::new("empty-steps"),
+        stage.step as f32,
+        fade * 2.0,
+    );
+    let moving = fade > 0.0 && !stage.failed;
+    chain(
+        &painter,
+        plate,
+        (lit, stage.step, stage.failed),
+        moving.then_some(since),
+    );
+    // The clock only needs its next second, unless something is moving.
+    let fading = fade > 0.0 && since < f64::from(fade);
+    let next = if moving || fading {
+        TICK
+    } else {
+        // Never under half a second, so a frame that lands just before the
+        // second turns over doesn't ask for another straight away.
+        (1.0 - since.fract()).max(0.5)
+    };
+    ui.ctx()
+        .request_repaint_after(Duration::from_secs_f64(next));
 }
 
-/// How far the plate's words have faded in since `title` last changed.
-fn restated(ui: &Ui, title: &str, fade: f32) -> f32 {
+/// How long the screen has been saying `title`, in seconds.
+fn since(ui: &Ui, title: &str) -> f64 {
     let now = ui.input(|i| i.time);
     let key = egui::Id::new(title);
-    let since = ui.ctx().data_mut(|d| {
+    ui.ctx().data_mut(|d| {
         let kept = d.get_temp_mut_or_insert_with(egui::Id::new("empty-since"), || (key, now));
         if kept.0 != key {
             *kept = (key, now);
         }
         now - kept.1
-    });
-    if fade <= 0.0 {
-        return 1.0;
-    }
-    let shown = motion::eased(since as f32 / fade);
-    if shown < 1.0 {
-        ui.ctx().request_repaint();
-    }
-    shown
+    })
 }
 
-/// The words on the plate: the headline, and the sentence already laid
-/// out to decide how tall the plate had to be.
+/// The words on the plate: the headline, the sentence already laid out to
+/// decide how tall the plate had to be, and how long it has been waiting at
+/// the end of the line under them.
 fn words(
     painter: &egui::Painter,
     plate: Rect,
     title: &str,
     sentence: std::sync::Arc<egui::Galley>,
+    since: f64,
 ) {
     let _title = caps_text(
         painter,
@@ -108,51 +191,134 @@ fn words(
         sentence,
         colour::TEXT_DIM,
     );
+    let line = plate.bottom() - 58.0;
+    let seconds = since.max(0.0) as u64;
+    let clock = caps_text(
+        painter,
+        pos2(plate.right() - space::XL, line),
+        Align2::RIGHT_CENTER,
+        &format!("{}:{:02}", seconds.div_euclid(60), seconds % 60),
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
     painter.hline(
-        plate.left() + space::XL..=plate.right() - space::XL,
-        plate.bottom() - 48.0,
+        plate.left() + space::XL..=clock.left() - space::MD,
+        line,
         (1.0, colour::LINE),
     );
 }
 
-/// The backend, Riot and the match, lit up to where things have got. Each can
-/// fail alone and every failure looks like an empty window, so naming them
-/// tells waiting apart from stuck.
-fn chain(painter: &egui::Painter, plate: Rect, reached: f32, broken: bool) {
-    let middle = plate.bottom() - 22.0;
-    let mut x = plate.left() + space::XL;
-    let mut first = 0.0_f32;
-    for (step, name) in ["Backend", "Riot", "Match"].into_iter().enumerate() {
-        // How lit this step is, from 0 to 1, as `reached` eases towards it.
-        let on = (reached - first).clamp(0.0, 1.0);
-        first += 1.0;
-        let tint = if broken && step == 0 {
-            colour::ENEMY
-        } else {
-            colour::TEXT_FAINT.lerp_to_gamma(colour::ALLY, on)
+/// The steps across the foot of `plate`, lit up to `lit` as it eases
+/// towards `step`, the one being waited on. That one pulses with a light
+/// running along the line into it, `since` seconds into the wait, or is red
+/// when it `failed`.
+fn chain(
+    painter: &egui::Painter,
+    plate: Rect,
+    (lit, step, failed): (f32, usize, bool),
+    since: Option<f64>,
+) {
+    let column = space::XL.mul_add(-2.0, plate.width()) / STEPS.len() as f32;
+    let middle = |at: usize| plate.left() + space::XL + column * (at as f32 + 0.5);
+    let (pips, names) = (plate.bottom() - 34.0, plate.bottom() - 14.0);
+    let beat = since.map(|s| (s / BEAT).fract() as f32);
+    for (at, name) in STEPS.into_iter().enumerate() {
+        let x = middle(at);
+        // How done this step is, from 0 to 1, as `lit` eases past it.
+        let done = (lit - at as f32).clamp(0.0, 1.0);
+        let waited_on = at == step;
+        if at > 0 {
+            let (from, to) = (middle(at - 1) + 12.0, x - 12.0);
+            // Green once the step it leads to is done, so the line into the
+            // one being waited on stays grey under its moving light.
+            let reached = (lit - at as f32).clamp(0.0, 1.0);
+            painter.hline(
+                from..=to,
+                pips,
+                (1.5, colour::LINE.lerp_to_gamma(colour::ALLY, reached * 0.6)),
+            );
+            if waited_on
+                && !failed
+                && let Some(t) = beat
+            {
+                let head = (to - from).mul_add(motion::eased(t), from);
+                painter.hline(
+                    (head - 14.0).max(from)..=head,
+                    pips,
+                    (2.0, colour::ALLY.gamma_multiply(t.mul_add(-0.5, 1.0))),
+                );
+            }
+        }
+        let look = match (waited_on, failed) {
+            (true, true) => Pip::Failed,
+            (true, false) => Pip::Waiting(beat),
+            (false, _) => Pip::Done(done),
         };
-        let pip = Rect::from_center_size(pos2(x + 5.0, middle), vec2(10.0, 14.0));
-        let solid = if broken && step == 0 { 1.0 } else { on };
-        painter.add(board::paint::slant(
-            pip,
-            true,
-            true,
-            tint.gamma_multiply(0.65_f32.mul_add(solid, 0.35)),
-        ));
-        let after = caps_text(
+        pip(painter, pos2(x, pips), look);
+        let ink: Color32 = if waited_on {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT_FAINT.lerp_to_gamma(colour::TEXT, done)
+        };
+        let _name = caps_text(
             painter,
-            pos2(x + space::XL, middle),
-            Align2::LEFT_CENTER,
+            pos2(x, names),
+            Align2::CENTER_CENTER,
             name,
             Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT.lerp_to_gamma(colour::TEXT, on),
+            ink,
         );
-        x = after.right() + space::LG;
-        if step < 2 {
-            painter.hline(x..=x + space::LG, middle, (1.0, colour::LINE));
-            x += space::LG + space::LG;
-        }
     }
+}
+
+/// How a step's pip looks.
+#[derive(Debug, Clone, Copy)]
+enum Pip {
+    /// Done this far, from 0 to 1.
+    Done(f32),
+    /// Being waited on, this far through the beat when it moves.
+    Waiting(Option<f32>),
+    /// Being waited on, and failed.
+    Failed,
+}
+
+/// A step's pip at `centre`. The one being waited on is outlined, so it
+/// reads apart from the done ones even when nothing moves, and when it does
+/// move its fill fades and comes back once a beat as a ring goes out of it.
+fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
+    let size = vec2(12.0, 14.0);
+    let (fill, edge) = match look {
+        Pip::Done(done) => (
+            colour::TEXT_FAINT
+                .lerp_to_gamma(colour::ALLY, done)
+                .gamma_multiply(0.65_f32.mul_add(done, 0.35)),
+            egui::Stroke::NONE,
+        ),
+        Pip::Failed => (colour::ENEMY, egui::Stroke::NONE),
+        Pip::Waiting(beat) => {
+            if let Some(t) = beat {
+                let ring = Rect::from_center_size(centre, size * t.mul_add(1.2, 1.0));
+                painter.add(board::paint::slant(
+                    ring,
+                    true,
+                    true,
+                    colour::ALLY.gamma_multiply(0.35 * (1.0 - t)),
+                ));
+            }
+            let solid = beat.map_or(0.5, |t| {
+                0.45_f32.mul_add((t * std::f32::consts::TAU).cos(), 0.55)
+            });
+            (
+                colour::ALLY.gamma_multiply(solid * 0.6),
+                egui::Stroke::new(1.5, colour::ALLY),
+            )
+        }
+    };
+    painter.add(egui::Shape::convex_polygon(
+        board::paint::slanted(Rect::from_center_size(centre, size), true, true),
+        fill,
+        edge,
+    ));
 }
 
 /// The same words with no furniture, for a window too short to hold any.
@@ -179,4 +345,40 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
         Face::Body.at(size::BODY),
         colour::TEXT_DIM,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Board, Status, stage};
+
+    /// Each step lights only once the backend says it has got there, and
+    /// the last is the match loading, the one moment it can light.
+    #[test]
+    fn each_step_is_what_the_backend_says_it_waits_on() {
+        let waiting = |on: &str| Board {
+            waiting: Some(on.to_owned()),
+            ..Board::default()
+        };
+        let live = Status::Live;
+        let read = |status: &Status, board: &Board| {
+            let s = stage(status, board, None);
+            (s.step, s.failed)
+        };
+        let starting = Status::Connecting("no backend yet".to_owned());
+        assert_eq!(read(&starting, &Board::default()), (0, false));
+        assert_eq!(
+            read(&Status::Lost("gone".to_owned()), &Board::default()),
+            (0, true)
+        );
+        assert_eq!(read(&live, &Board::default()), (1, false));
+        assert_eq!(read(&live, &waiting("riot")), (1, false));
+        assert_eq!(read(&live, &waiting("game")), (2, false));
+        assert_eq!(read(&live, &waiting("match")), (3, false));
+        let broken = Board {
+            state: Some("OFFLINE".to_owned()),
+            ..Board::default()
+        };
+        assert_eq!(read(&live, &broken), (1, true));
+        assert_eq!(stage(&live, &waiting("game"), Some("old bridge")).step, 0);
+    }
 }

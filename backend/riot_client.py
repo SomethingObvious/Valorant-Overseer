@@ -152,6 +152,10 @@ class ClientNotReadyError(Exception):
     """The Riot client is running but has no entitlements to hand out yet."""
 
 
+class GameNotStartedError(Exception):
+    """VALORANT hasn't got far enough into starting to say which region it plays in."""
+
+
 def _lockfile_path() -> Path:
     return Path(os.getenv("LOCALAPPDATA", "")) / r"Riot Games\Riot Client\Config\lockfile"
 
@@ -192,6 +196,9 @@ class LocalAuth:
 
     def _get_region(self) -> list[Any]:
         pd_url = glz_url = None
+        if not _shooter_log_path().is_file():
+            msg = "VALORANT hasn't written ShooterGame.log yet"
+            raise GameNotStartedError(msg)
         with _shooter_log_path().open(encoding="utf8") as f:
             for line in f:
                 if ".a.pvp.net/account-xp/v1/" in line:
@@ -205,8 +212,10 @@ class LocalAuth:
                     if pd_url == "pbe":
                         return ["na", ["na-1", "na"]]
                     return [pd_url, glz_url]
+        # The log starts over each launch, and names the region's servers a
+        # little way into starting up.
         msg = "could not parse region from ShooterGame.log"
-        raise RuntimeError(msg)
+        raise GameNotStartedError(msg)
 
     def _local_headers(self) -> dict[str, str]:
         token = base64.b64encode(("riot:" + self.lockfile["password"]).encode()).decode()

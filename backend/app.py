@@ -33,13 +33,20 @@ import live_match
 import overseerlog
 import party_detector
 import past_games
+import refresh
 import sample_match
 import session_tracker
 import tags
 from agents import AGENTS
 from common import write_atomic
 from common.check import check
-from riot_client import ClientNotReadyError, LocalAuth, RiotClient
+from riot_client import (
+    ClientNotReadyError,
+    GameNotStartedError,
+    LocalAuth,
+    RiotClient,
+    chat_presences,
+)
 from vconstants import APP_VERSION
 
 import lineups
@@ -90,6 +97,19 @@ def _attach_stacks(board: dict[str, Any]) -> dict[str, Any]:
     return board
 
 
+def _waiting_for(e: Exception) -> str | None:
+    """Return what a board with no one on it waits on, from why the client couldn't be read.
+
+    That is the Riot client, or VALORANT starting. None is a failure that
+    waiting won't fix.
+    """
+    if not LocalAuth.available() or isinstance(e, (ClientNotReadyError, FileNotFoundError)):
+        return "riot"
+    if isinstance(e, GameNotStartedError):
+        return "game"
+    return None
+
+
 def _client_notice() -> dict[str, Any]:
     if not LocalAuth.available():
         return {
@@ -116,7 +136,10 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
     notice = None
     if _live_enabled():
         with _BUILD_LOCK:
-            if _LAST_GOOD["board"] and time.time() - _LAST_GOOD["at"] < _BUILD_FRESH:
+            # A board asked for early has something new in it, so the last one
+            # won't do however fresh it is.
+            stale = refresh.take_stale()
+            if _LAST_GOOD["board"] and not stale and time.time() - _LAST_GOOD["at"] < _BUILD_FRESH:
                 return _LAST_GOOD["board"]
             try:
                 lm = live_match.LiveMatch(LocalAuth())
@@ -152,9 +175,10 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 _LAST_GOOD["board"], _LAST_GOOD["at"] = board, time.time()
                 _LAST_GOOD["notReady"] = False
             except Exception as e:
-                if isinstance(e, ClientNotReadyError):
+                waiting = _waiting_for(e)
+                if waiting:
                     if not _LAST_GOOD["notReady"]:
-                        LOG.info("live scoreboard: %s, waiting for sign-in", e)
+                        LOG.info("live scoreboard: %s, waiting for %s", e, waiting)
                         _LAST_GOOD["notReady"] = True
                 else:
                     LOG.exception("live scoreboard failed")
@@ -168,6 +192,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                         "stateLabel": "Offline",
                         "source": "local",
                         "error": str(e),
+                        "waiting": waiting,
                         "players": [],
                         "teams": {},
                         "notice": notice,
@@ -201,6 +226,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
         "state": "OFFLINE",
         "stateLabel": "Waiting for VALORANT",
         "source": "idle",
+        "waiting": "riot",
         "players": [],
         "teams": {},
         "notice": notice
@@ -268,6 +294,10 @@ def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
             return lineups.watch(params.get("source"))
         if req_type == "lineup_drawing":
             return lineups.save_drawing(params.get("map"), params.get("shapes"))
+        if req_type == "lineup_export":
+            return lineups.export_code(params.get("map"), params.get("ids"))
+        if req_type == "lineup_import":
+            return lineups.import_code(params.get("code"))
     except lineups.LineupError as e:
         return {"error": str(e)}
     return {"error": f"The backend has no '{req_type}' request."}
@@ -381,6 +411,32 @@ def _start_ws_bridge() -> int:
     return ws_port
 
 
+def _watch_state() -> None:
+    """Wake the board loop the moment VALORANT changes state.
+
+    That is the menus, agent select or a match, noticed now rather than at the
+    loop's next tick. Your own presence comes from the client on this PC, so
+    asking each second sends nothing out.
+    """
+    lm = None
+    last = None
+    while True:
+        time.sleep(1.0)
+        if not _live_enabled():
+            continue
+        try:
+            lm = lm or live_match.LiveMatch(LocalAuth())
+            state = lm.game_state(chat_presences(lm.auth))
+        except Exception:
+            # The client closed or restarted, with a new lockfile to read.
+            lm, last = None, None
+            time.sleep(4.0)
+            continue
+        if last is not None and state != last:
+            refresh.soon()
+        last = state
+
+
 def _warm_lineups() -> None:
     """Fetch what the Lineups screen draws from while nobody waits on it.
 
@@ -465,12 +521,24 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
             _read = [t["tag"] for t in build_live()["players"][0]["autoTags"]]
             check("op" in _read, (_tick, _read))
 
-    print("app self-check OK (bridge requests answer in demo mode, cached boards keep their tags)")
+    # A board with no one on it says what it waits on, so the window can too.
+    with mock.patch.object(LocalAuth, "available", return_value=True):
+        check(_waiting_for(ClientNotReadyError()) == "riot")
+        check(_waiting_for(GameNotStartedError()) == "game")
+        check(_waiting_for(ValueError()) is None)
+    with mock.patch.object(LocalAuth, "available", return_value=False):
+        check(_waiting_for(ValueError()) == "riot")
+
+    print(
+        "app self-check OK (bridge requests answer in demo mode, cached boards keep their tags, "
+        "empty boards say what they wait on)"
+    )
     raise SystemExit(0)
 
 if __name__ == "__main__":
     port = _start_ws_bridge()
     threading.Thread(target=_warm_lineups, daemon=True, name="lineups-warm").start()
+    threading.Thread(target=_watch_state, daemon=True, name="state-watch").start()
     print(
         f"[app] Valorant Overseer bridge on ws://127.0.0.1:{port}  "
         f"(source={client.source_pref}, key={'set' if client.api_key else 'unset'})",

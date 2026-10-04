@@ -12,7 +12,7 @@ use crate::{panel, view};
 use overseer_ui::{self, colour, motion, space};
 
 use super::waiting::empty;
-use super::{DWELL, LINGER, Overseer, RESTATE, Screen, panel_width};
+use super::{DWELL, Overseer, RESTATE, Screen, panel_width};
 
 impl Overseer {
     /// The detail panel down the right: one surface, lifted off the board.
@@ -163,23 +163,22 @@ impl Overseer {
     /// The overlay's contents and the height they took: the enemy rows, or
     /// one line while there are none. The window's empty state is too big to
     /// sit over a game.
-    fn overlay_view(&self, ui: &mut Ui) -> f32 {
+    fn overlay_view(&self, ui: &mut Ui) -> (f32, bool) {
         if self.board.players.is_empty() {
-            return overlay::greeting(ui);
+            return (overlay::greeting(ui), false);
         }
+        let corner = ui.max_rect();
         // No session foot here. It belongs in the window, and the overlay is
         // exactly as tall as its rows.
-        self.rows(ui, Place::Overlay).drew
+        let drew = self.rows(ui, Place::Overlay).drew;
+        (drew, overlay::hide_button(ui, corner))
     }
 
     /// The overlay's window, while it is up.
     pub(super) fn overlay(&mut self, ctx: &egui::Context, now: f64) {
         // Woken when a peek or the match's first seconds run out, so it goes
         // away on time with nothing else happening.
-        let ends = [
-            self.shown.peek_until,
-            self.shown.began_at.map(|at| at + LINGER),
-        ];
+        let ends = [self.shown.peek_until, self.shown.auto_until];
         if let Some(next) = ends
             .into_iter()
             .flatten()
@@ -196,11 +195,16 @@ impl Overseer {
         // reaches both. Nothing in it takes a click.
         let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
         let mut drew = last;
+        let mut hidden = false;
         {
             let this = &*self;
             overlay::show(ctx, this.settings.overlay.corner, last, |ui| {
-                drew = this.overlay_view(ui);
+                (drew, hidden) = this.overlay_view(ui);
             });
+        }
+        if hidden {
+            self.hide_overlay();
+            ctx.request_repaint();
         }
         // Sized to what the board really drew, which cannot go stale the
         // way a height kept by hand can.
@@ -246,7 +250,12 @@ impl Overseer {
     /// call it too without the two windows disagreeing about the selection.
     fn rows(&self, ui: &mut Ui, place: Place) -> board::Touched {
         if self.board.players.is_empty() {
-            empty(ui, &self.status, self.reason(), self.pace(RESTATE));
+            empty(
+                ui,
+                (&self.status, &self.board),
+                self.reason(),
+                self.pace(RESTATE),
+            );
             return board::Touched::default();
         }
         let now = ui.input(|i| i.time);

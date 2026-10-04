@@ -24,13 +24,13 @@ pub(crate) const WIDTH: f32 = 620.0 + 2.0 * crate::board::GUTTER;
 pub(crate) enum Corner {
     /// Over the minimap.
     TopLeft,
-    /// Above the scoreboard side of the screen.
+    /// Above the scoreboard side of the screen, and where the overlay
+    /// starts, out of the way of the agents in agent select.
+    #[default]
     TopRight,
     /// Out of the way of everything the game draws at the top.
     BottomLeft,
-    /// The quietest corner in VALORANT's own layout, and where the
-    /// overlay starts.
-    #[default]
+    /// The quietest corner in VALORANT's own layout.
     BottomRight,
 }
 
@@ -185,6 +185,34 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
     GREETING
 }
 
+/// The overlay's hide button, in the top right corner of `rect` beside the
+/// score. Returns whether it was clicked.
+pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
+    let spot = Rect::from_center_size(
+        pos2(
+            rect.right() - crate::board::GUTTER - 11.0,
+            rect.top() + crate::board::GUTTER + crate::board::STRIP_MIDDLE,
+        ),
+        vec2(22.0, 20.0),
+    );
+    let response = ui
+        .interact(spot, ui.id().with("overlay-hide"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Hide the overlay. Ctrl+Alt+O brings it back.");
+    if ui.is_rect_visible(spot) {
+        let painter = ui.painter();
+        let (fill, ink) = if response.hovered() {
+            (colour::BG_HOVER, colour::TEXT_STRONG)
+        } else {
+            (colour::BG_INSET, colour::TEXT)
+        };
+        painter.add(crate::board::paint::slant(spot, true, true, fill));
+        let bar = Rect::from_center_size(spot.center() + vec2(0.0, 3.0), vec2(9.0, 2.0));
+        painter.rect_filled(bar, 0, ink);
+    }
+    response.clicked()
+}
+
 /// The window's identity. It carries the corner because a corner only takes
 /// effect when the window is built.
 fn id_for(corner: Corner) -> ViewportId {
@@ -200,8 +228,8 @@ fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
         .with_decorations(false)
         .with_always_on_top()
         .with_transparent(true)
-        // No clicks and no keyboard, so the game never loses the focus to it.
-        .with_mouse_passthrough(true)
+        // It takes clicks, for its hide button, but never the keyboard when
+        // it appears. A click on it does take the focus from the game.
         .with_active(false)
         // One task bar button for the app, not two.
         .with_taskbar(false)

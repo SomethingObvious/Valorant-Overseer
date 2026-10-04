@@ -13,13 +13,17 @@ the sites it reads, and this build never updates anything itself.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
 import time
+import unicodedata
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -561,7 +565,12 @@ def cut(clip: dict[str, Any], out: Path) -> None:
         said = (done.stderr or "").strip().splitlines()
         msg = f"ffmpeg couldn't cut the clip: {said[-1] if said else 'no reason given'}"
         raise LineupError(msg)
-    part.replace(out)
+    try:
+        part.replace(out)
+    except PermissionError as e:
+        part.unlink(missing_ok=True)
+        msg = "Couldn't replace the old clip, as another program has it open. Close it, then save."
+        raise LineupError(msg) from e
 
 
 # The pictures a lineup can carry, and what they may start as. Each is kept
@@ -700,11 +709,224 @@ def delete(map_name: Any, lineup_id: Any) -> dict[str, Any]:
     if not _SLUG.match(name):
         msg = "That lineup doesn't exist."
         raise LineupError(msg)
-    for suffix in (".json", ".mp4"):
-        (folder / f"{name}{suffix}").unlink(missing_ok=True)
+    try:
+        (folder / f"{name}.mp4").unlink(missing_ok=True)
+    except PermissionError as e:
+        msg = "Couldn't delete the clip, as another program has it open. Close it and try again."
+        raise LineupError(msg) from e
+    (folder / f"{name}.json").unlink(missing_ok=True)
     for picture in folder.glob(f"{name}-pic-*.png"):
         picture.unlink(missing_ok=True)
     return {"deleted": name}
+
+
+# A code is OVL1, the lineups as zlib'd JSON in base32, then a 9. Base32 is
+# only letters and 2 to 7, so chat markdown can't eat any of it and a
+# double-click picks the whole thing, and 9 can only be the end, so a code
+# that got cut short says so.
+_CODE = re.compile(r"OVL1([A-Z2-7]+)9", re.IGNORECASE)
+_SHARED = (
+    "map",
+    "agent",
+    "ability",
+    "side",
+    "site",
+    "title",
+    "notes",
+    "description",
+    "stand",
+    "land",
+    "points",
+)
+# A map's lineups come to about 700 characters. These are far past any real
+# code, and only stop a hostile one filling the disk or the memory.
+_MOST_SHARED = 100
+_MOST_UNPACKED = 256 * 1024
+_LONGEST_TITLE = 120
+_LONGEST_NOTES = 300
+# A pasted clip is only cut from sites people post lineups on, since anything
+# else has yt-dlp and ffmpeg fetching whatever a stranger's code points at.
+_CLIP_SITES = (
+    "youtube.com",
+    "youtu.be",
+    "twitch.tv",
+    "medal.tv",
+    "streamable.com",
+    "x.com",
+    "twitter.com",
+    "tiktok.com",
+)
+
+
+def _counted(n: int) -> str:
+    return f"{n} lineup" if n == 1 else f"{n} lineups"
+
+
+def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
+    """Return a code for a map's lineups, or for those with these ids.
+
+    It carries each clip's link and times and not the clip, so it is short
+    enough for a chat message. A clip from a file on this PC stays out, since
+    its path means nothing on another PC and names your folders.
+    """
+    wanted = {str(i) for i in ids} if isinstance(ids, list) else set()
+    folder = slug(str(map_name or ""))
+    out = []
+    for path in sorted(ROOT.glob("*/*.json")):
+        if path.stem not in wanted and path.parent.name != folder:
+            continue
+        lineup = read_json(str(path), None)
+        if not isinstance(lineup, dict):
+            continue
+        kept = {k: lineup[k] for k in _SHARED if lineup.get(k) not in (None, "", [])}
+        clip = lineup.get("clip") or {}
+        if str(clip.get("source") or "").startswith(("http://", "https://")):
+            kept["clip"] = {k: clip[k] for k in ("source", "from", "to", "volume") if k in clip}
+        out.append(kept)
+    if not out:
+        msg = "There are no lineups here to share yet."
+        raise LineupError(msg)
+    text = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
+    body = base64.b32encode(zlib.compress(text.encode(), 9)).decode().rstrip("=")
+    code = f"OVL1{body}9"
+    return {
+        "code": code,
+        "said": (
+            f"Copied the code for {_counted(len(out))}, {len(code)} characters. "
+            "Whoever you send it to copies it and picks Share, then Paste Code."
+        ),
+    }
+
+
+def _unpack(text: str) -> list[Any]:
+    # Chats wrap long lines and some slip in invisible formatting characters,
+    # so neither counts as part of the code.
+    flat = "".join(c for c in text if not c.isspace() and unicodedata.category(c) != "Cf")
+    found = _CODE.search(flat)
+    if not found:
+        msg = (
+            "That code is cut short. Copy all of it, up to the 9 at the end."
+            if "ovl1" in flat.lower()
+            else "There's no lineup code on the clipboard. Copy one first."
+        )
+        raise LineupError(msg)
+    body = found[1].upper()
+    damaged = "That code is damaged. Copy it again from where it was sent."
+    try:
+        unpack = zlib.decompressobj()
+        raw = unpack.decompress(base64.b32decode(body + "=" * (-len(body) % 8)), _MOST_UNPACKED)
+        whole = unpack.eof and not unpack.unconsumed_tail
+        shared = json.loads(raw) if whole else None
+    except (ValueError, zlib.error) as e:
+        raise LineupError(damaged) from e
+    if not isinstance(shared, list) or len(shared) > _MOST_SHARED:
+        raise LineupError(damaged)
+    return shared
+
+
+def _same(lineup: dict[str, Any]) -> str:
+    """Return what makes two lineups the same one, whoever saved it."""
+    keys = ("map", "agent", "title", "stand", "land")
+    return json.dumps([str(lineup.get(k)).lower() for k in keys])
+
+
+def _clip_site(source: str) -> bool:
+    parsed = urlparse(source)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in ("http", "https") and any(
+        host == site or host.endswith(f".{site}") for site in _CLIP_SITES
+    )
+
+
+def _arrive(raw: dict[str, Any], clip: dict[str, Any] | None) -> tuple[dict[str, Any] | None, str]:
+    """Save a pasted lineup, then cut its clip, and say what went wrong if anything did."""
+    try:
+        saved = save(raw)
+    except LineupError as e:
+        return None, str(e)
+    if not clip or "from" not in clip or "to" not in clip:
+        return saved, ""
+    try:
+        start, end, volume = _times(clip)
+    except LineupError:
+        return saved, ""
+    wanted = {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
+    try:
+        return save({**raw, "id": saved["id"]}, wanted), ""
+    except LineupError as e:
+        # Kept with the clip's link and times, so Edit then Save cuts it once
+        # the tools are installed or the site lets it.
+        path = _folder(saved["map"]) / f"{saved['id']}.json"
+        stored = read_json(str(path), None)
+        if isinstance(stored, dict):
+            stored["clip"] = wanted
+            write_atomic(str(path), stored, prefix=".lineup-")
+            return _shown(stored, path), str(e)
+        return saved, str(e)
+
+
+def import_code(text: Any) -> dict[str, Any]:
+    """Save the lineups in a code from `export_code`, cutting each clip from its link.
+
+    Each is checked the way the form checks one, against the maps, agents and
+    abilities the game has, and one you already have is left alone.
+    """
+    shared = _unpack(str(text or ""))
+    known = {m["name"].lower(): m["name"] for m in maps()}
+    kits = {a["name"].lower(): a for a in agents()}
+    if not known or not kits:
+        msg = "Overseer couldn't load the maps and agents to check that code against. Try again."
+        raise LineupError(msg)
+    have = {_same(lineup) for lineup in listing()}
+    coming: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    already = unreadable = 0
+    for entry in shared:
+        kit = kits.get(str(entry.get("agent") or "").lower()) if isinstance(entry, dict) else None
+        map_name = known.get(str(entry.get("map") or "").lower()) if kit else None
+        if not kit or not map_name:
+            unreadable += 1
+            continue
+        raw = {k: entry.get(k) for k in _SHARED}
+        raw["map"], raw["agent"] = map_name, kit["name"]
+        if raw["ability"] not in {ab["name"] for ab in kit["abilities"]}:
+            raw["ability"] = None
+        raw["title"] = str(raw["title"] or "")[:_LONGEST_TITLE]
+        raw["notes"] = str(raw["notes"] or "")[:_LONGEST_NOTES]
+        if _same(raw) in have:
+            already += 1
+            continue
+        have.add(_same(raw))
+        clip = entry.get("clip")
+        ok = isinstance(clip, dict) and _clip_site(str(clip.get("source") or ""))
+        coming.append((raw, clip if ok else None))
+    landed = list(_POOL.map(lambda pair: _arrive(*pair), coming))
+    added = [lineup for lineup, _ in landed if lineup]
+    uncut = [why for lineup, why in landed if lineup and why]
+    unreadable += len(landed) - len(added)
+    if not added and not already:
+        refused = next((why for lineup, why in landed if not lineup), "")
+        raise LineupError(refused or "None of the lineups in that code are ones Overseer can read.")
+    places = {lineup["map"] for lineup in added}
+    if not added:
+        said = ["You already have every lineup in that code."]
+    elif len(places) == 1:
+        said = [f"Added {_counted(len(added))} to {next(iter(places))}."]
+    else:
+        said = [f"Added {_counted(len(added))}."]
+    if added and already:
+        said.append(f"Left out {already} you already had.")
+    if unreadable:
+        said.append(f"Left out {unreadable} that couldn't be read.")
+    if uncut:
+        said.append(
+            f"The clips for {len(uncut)} of them couldn't be cut, and editing and saving "
+            f"one tries again. {uncut[0]}"
+        )
+    return {
+        "added": added,
+        "map": next(iter(places)) if len(places) == 1 else None,
+        "said": " ".join(said),
+    }
 
 
 def watch(source: Any) -> dict[str, str]:
@@ -761,6 +983,120 @@ def overview() -> dict[str, Any]:
         "drawings": drawings(),
         "tools": tools(),
     }
+
+
+def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
+    from unittest import mock
+
+    def code_of(lineups: list[Any]) -> str:
+        packed = zlib.compress(json.dumps(lineups).encode())
+        return f"OVL1{base64.b32encode(packed).decode().rstrip('=')}9"
+
+    recording = tmp / "mine.mp4"
+    recording.write_bytes(b"x")
+    game = {
+        "maps": [{"name": "Ascent"}],
+        "agents": [{"name": "Brimstone", "abilities": [{"name": "Incendiary"}]}],
+    }
+    with (
+        mock.patch(f"{__name__}._run", side_effect=fake_run),
+        mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
+        mock.patch(f"{__name__}.maps", return_value=game["maps"]),
+        mock.patch(f"{__name__}.agents", return_value=game["agents"]),
+    ):
+        linked = {"source": "https://www.youtube.com/watch?v=abc", "from": "5", "to": "9"}
+        first = save(
+            {
+                "map": "Ascent",
+                "agent": "Brimstone",
+                "ability": "Incendiary",
+                "title": "B Short",
+                "stand": [0.1, 0.2],
+                "land": [0.3, 0.4],
+            },
+            linked,
+        )
+        recorded = {"map": "Ascent", "agent": "Brimstone", "title": "Mine", "stand": [0.5, 0.5]}
+        mine = save(recorded, {"source": str(recording), "from": "1", "to": "3"})
+
+        # The code has no ids or pictures, and a clip from a file on this PC
+        # stays out. Pasted with the message around it and wrapped, it reads.
+        code = export_code("Ascent")["code"]
+        shared = _unpack(f"here you go\n{code[:40]}\n{code[40:]} have fun")
+        check([s.get("clip", {}).get("source") for s in shared] == [linked["source"], None])
+        check(not any("id" in s or "images" in s for s in shared), shared)
+        check(_unpack(code.lower()) == shared)
+        broken = code[:30] + ("B" if code[30] == "A" else "A") + code[31:]
+        for bad, said in ((code[:-20], "cut short"), (broken, "damaged"), ("hi", "no lineup")):
+            try:
+                _unpack(bad)
+            except LineupError as e:
+                check(said in str(e), str(e))
+                continue
+            raise AssertionError(bad)
+
+        check(import_code(code)["said"] == "You already have every lineup in that code.")
+        delete("Ascent", first["id"])
+        runs.clear()
+        back = import_code(code)
+        check(back["said"] == "Added 1 lineup to Ascent. Left out 1 you already had.", back)
+        (arrived,) = back["added"]
+        check(arrived["id"] != first["id"] and Path(arrived["clip"]["file"]).exists(), arrived)
+        # Cut from the part of the video the first save downloaded.
+        check([Path(r[0]).stem for r in runs] == ["ffmpeg"], runs)
+
+        # An id, a picture, a local clip or one from a site nobody posts
+        # lineups on all stay out, and nothing is fetched for them.
+        hostile = [
+            {
+                "map": "ascent",
+                "agent": "brimstone",
+                "title": "x" * 999,
+                "id": mine["id"],
+                "images": [str(recording)],
+                "stand": [0.9, 0.9],
+                "clip": {"source": str(recording), "from": 1, "to": 2},
+            },
+            {"map": "Nowhere", "agent": "Brimstone", "title": "Lost"},
+            {
+                "map": "Ascent",
+                "agent": "Brimstone",
+                "title": "Router",
+                "stand": [0.2, 0.2],
+                "clip": {"source": "http://192.168.0.1/v", "from": 1, "to": 2},
+            },
+        ]
+        runs.clear()
+        took = import_code(code_of(hostile))
+        check(runs == [] and "Left out 1 that couldn't be read." in took["said"], took)
+        long_one, router = took["added"]
+        check(len(long_one["title"]) == _LONGEST_TITLE and long_one["images"] == [], long_one)
+        check(long_one["id"] != mine["id"] and not long_one.get("clip") and not router.get("clip"))
+        check(Path(mine["clip"]["file"]).exists())
+        bomb = zlib.compress(b"[" + b"0," * 5_000_000 + b"0]")
+        try:
+            _unpack(f"OVL1{base64.b32encode(bomb).decode().rstrip('=')}9")
+        except LineupError:
+            pass
+        else:
+            msg = "a code that unpacks to 10 MB was read"
+            raise AssertionError(msg)
+
+    # Without the tools the lineup still comes in, keeping the clip's link and
+    # times so saving it later cuts the clip.
+    delete("Ascent", arrived["id"])
+    with (
+        mock.patch(f"{__name__}.shutil.which", return_value=None),
+        mock.patch(f"{__name__}._which", return_value=None),
+        mock.patch(f"{__name__}.maps", return_value=game["maps"]),
+        mock.patch(f"{__name__}.agents", return_value=game["agents"]),
+    ):
+        late = import_code(code)
+    (waiting,) = late["added"]
+    check("couldn't be cut" in late["said"] and "file" not in waiting["clip"], late)
+    check(waiting["clip"]["source"] == linked["source"] and waiting["clip"]["to"] == 9.0)
+    for lineup in listing():
+        delete(lineup["map"], lineup["id"])
 
 
 def _self_check() -> None:
@@ -881,6 +1217,7 @@ def _self_check() -> None:
         check([lineup["id"] for lineup in listing()] == [saved["id"]])
         delete("Ascent", saved["id"])
         check(listing() == [])
+        _check_codes(Path(tmp), fake_run, runs)
 
         # Shapes keep their kind, colour and points, a cone's width is held
         # to what can be drawn, and anything else is refused with why.
@@ -978,7 +1315,7 @@ def _self_check() -> None:
             check(len(fetched) == 1, "saving downloaded the clip again")
     print(
         "lineups self-check OK "
-        "(times, map points, download window, cut, cache, pictures, shapes, watch)"
+        "(times, map points, download window, cut, cache, pictures, codes, shapes, watch)"
     )
 
 

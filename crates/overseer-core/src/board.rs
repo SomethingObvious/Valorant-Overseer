@@ -403,6 +403,8 @@ pub struct Board {
     pub session: Option<Session>,
     /// Something the backend wants said out loud.
     pub notice: Option<Notice>,
+    /// What a board with no one on it waits on: `riot`, `game` or `match`.
+    pub waiting: Option<String>,
 }
 
 impl Board {

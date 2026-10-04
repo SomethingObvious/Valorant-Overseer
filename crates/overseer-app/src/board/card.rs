@@ -49,6 +49,11 @@ const SPACE: f32 = 14.0;
 const TAIL: f32 = 12.0;
 /// The match strip's height.
 const STRIP: f32 = 26.0;
+/// Where the middle of the match strip is, down from the overlay's gutter,
+/// for the hide button that sits at its right end.
+pub(crate) const STRIP_MIDDLE: f32 = STRIP / 2.0;
+/// The room the hide button takes at the strip's right end.
+const HIDE_ROOM: f32 = 32.0;
 /// How far a block sits under the one above it.
 const BETWEEN: f32 = 14.0;
 
@@ -64,11 +69,6 @@ pub(crate) const HEIGHT: f32 = GUTTER
     + ITEM
     + space::SM
     + (CARD.height + ITEM + rows::GAP) * 5.0
-    + BETWEEN
-    + space::ROW
-    + ITEM
-    + space::SM
-    + (LINE.height + ITEM + rows::GAP) * 5.0
     + GUTTER;
 
 /// Where the zones of a card or a line sit across it.
@@ -113,7 +113,9 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
         .any(|p| super::side_of(scene.board, p) == Side::Enemy);
     for (side, team) in order {
         let players = super::roster(scene.board, team, scene.sort, "");
-        if players.is_empty() {
+        // Your own team can be seen in the game, so once the other one is
+        // known the overlay is just them, and half the height.
+        if players.is_empty() || (enemies && *side != Side::Enemy) {
             continue;
         }
         ui.add_space(BETWEEN);
@@ -201,7 +203,7 @@ fn strip(ui: &mut Ui, board: &Board) {
         x = crate::header::plate(painter, x, bottom, mode, colour::TEXT_DIM, false).right();
     }
     let y = rect.center().y;
-    let mut right = rect.right();
+    let mut right = rect.right() - HIDE_ROOM;
     if let Some(score) = board.score.as_ref() {
         let font = Face::Heavy.at(20.0);
         for (text, tint) in [

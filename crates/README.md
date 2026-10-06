@@ -20,11 +20,15 @@ and never picks a folder.
 
 ## How It Fits Together
 
-There are four crates. `overseer-core` is the data layer: a client for
+There are five crates. `overseer-core` is the data layer: a client for
 `backend/ws_server.py` on its own thread, and the board and profile types,
 named the way `backend/` names them. `overseer-ui` is the design system the
 window and the wizard share, with the fonts and Riot's art. `overseer-app` is
-the window and `overseer-setup` is the wizard.
+the window and `overseer-setup` is the wizard. `overseer-video` plays a lineup's
+clip with Windows' media engine in a child of the window, decoded by the
+low-power GPU's video hardware, where ffmpeg and a redraw a frame took most of
+a core. The trimming form still plays through ffmpeg, which gives it the
+exact stills and the strip of frames that dragging a handle needs.
 
 The window is a client of the Python backend. It reads the port and the per-launch token from
 `.overseer/bridge.json` and connects to the bridge on 127.0.0.1. It sends no
@@ -138,7 +142,12 @@ The lint setup is afterimage's, adapted, because it is already stricter than
 anything worth writing from scratch. `rust-toolchain.toml` pins the toolchain,
 since "whatever rustc is on this machine" is how a lint appears or disappears
 without anybody changing a line. `unsafe_code` is forbidden rather than
-denied, so no `#[allow]` can switch it back on. `missing_docs` and the rustdoc
+denied, so no `#[allow]` can switch it back on. The one exception is
+`overseer-video`, whose Media Foundation, Direct3D and window calls are C APIs
+that are all `unsafe`. It carries its own copy of the lint table with
+`unsafe_code` allowed and `undocumented_unsafe_blocks` denied, so every block
+says why it holds, and three lints off for code the `windows` crate's
+`#[implement]` macro writes. `missing_docs` and the rustdoc
 lints are denied, and so are clippy's `pedantic`, `nursery` and `cargo` groups
 and a hand-picked set of `restriction` lints, like `unwrap_used`,
 `expect_used`, `panic`, `indexing_slicing` and `print_stderr`, which are the

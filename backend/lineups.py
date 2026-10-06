@@ -555,6 +555,10 @@ def cut(clip: dict[str, Any], out: Path) -> None:
         "veryfast",
         "-crf",
         "17",
+        # The window shows 30 frames a second, so a 60 fps clip only doubled
+        # what it decoded.
+        "-fpsmax",
+        "30",
         *sound,
         "-movflags",
         "+faststart",
@@ -1003,8 +1007,10 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
         mock.patch(f"{__name__}.maps", return_value=game["maps"]),
         mock.patch(f"{__name__}.agents", return_value=game["agents"]),
+        # The one site clips may come from here, so no outside host is named.
+        mock.patch(f"{__name__}._CLIP_SITES", ("localhost",)),
     ):
-        linked = {"source": "https://www.youtube.com/watch?v=abc", "from": "5", "to": "9"}
+        linked = {"source": "https://localhost/watch?v=abc", "from": "5", "to": "9"}
         first = save(
             {
                 "map": "Ascent",
@@ -1063,7 +1069,7 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
                 "agent": "Brimstone",
                 "title": "Router",
                 "stand": [0.2, 0.2],
-                "clip": {"source": "http://192.168.0.1/v", "from": 1, "to": 2},
+                "clip": {"source": "http://127.0.0.1:8080/v", "from": 1, "to": 2},
             },
         ]
         runs.clear()
@@ -1090,6 +1096,8 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         mock.patch(f"{__name__}._which", return_value=None),
         mock.patch(f"{__name__}.maps", return_value=game["maps"]),
         mock.patch(f"{__name__}.agents", return_value=game["agents"]),
+        # The one site clips may come from here, so no outside host is named.
+        mock.patch(f"{__name__}._CLIP_SITES", ("localhost",)),
     ):
         late = import_code(code)
     (waiting,) = late["added"]

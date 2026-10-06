@@ -1,69 +1,45 @@
-# The Rust half of Valorant Overseer: the window, its data layer, and the
-# installer. The Python backend and the terminal front end are unaffected by
-# everything here; see crates/README.md for the plan and the reasoning.
-#
-# The workspace root is crates/, so clippy.toml, rustfmt.toml and deny.toml
-# sit here beside it and cargo runs from here. lint.ps1 rejects any of them
-# anywhere else, since one in a crate would quietly loosen that crate.
+[package]
+name = "overseer-video"
+description = "Plays a clip with Windows' media engine in a child of the app's window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
 
-[workspace]
-resolver = "3"
-members = [
-  "overseer-core",
-  "overseer-ui",
-  "overseer-app",
-  "overseer-setup",
-  "overseer-video",
-]
-
-[workspace.package]
-version = "2.1.0"
-edition = "2024"
-rust-version = "1.98"
-publish = false
-
-[workspace.dependencies]
-egui = "0.36.2"
-# One PNG decoder for the agent portraits and rank emblems bound into the
-# design crate. The `image` crate would do the same job and bring a dozen
-# formats this app will never see; this is the one that `image` itself uses
-# for PNG.
-png = "0.18.0"
-# Default features on, deliberately. They are the wgpu renderer, the bundled
-# fonts, accesskit for screen readers, and winit's own defaults, which is where
-# raw-window-handle lives: turning them off to "keep it lean" removes the
-# renderer and the surface it draws on. `persistence` is the addition, so the
-# window remembers its size and which monitor it was on.
-eframe = { version = "0.36.2", features = ["persistence"] }
-# One key combination the whole machine listens for, so the overlay can be
-# switched off without clicking a window that takes no clicks.
-global-hotkey = "0.8.0"
-# The icon beside the clock: somewhere to put the window, and proof the app
-# is running while the overlay is the only thing on screen. Default features
-# are Linux's tray implementations, and this only ever builds for Windows.
-tray-icon = { version = "0.25.1", default-features = false }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.145"
-# Blocking, and deliberately so. This is one socket carrying about one message
-# a second; an async runtime would be the largest dependency in the tree and
-# would buy nothing. No TLS features: the bridge is plain ws on 127.0.0.1, and
-# ws_server.py rejects anything arriving with an Origin header, which is why
-# the connection lives here and not in a web view.
-tungstenite = { version = "0.30.0", default-features = false, features = [
-  "handshake",
+[dependencies]
+# The same version wgpu already builds, with the parts this crate calls.
+windows-core = "0.62.2"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
-[workspace.lints.rust]
-# `forbid` rather than `deny`: nothing in this workspace may re-enable it,
-# including a future contributor with an #[allow].
-unsafe_code = "forbid"
+# The workspace's lints, copied because a crate can't take them and change
+# one. The only differences are `unsafe_code` and `undocumented_unsafe_blocks`.
+[lints.rust]
+# Allowed here and nowhere else. Media Foundation, Direct3D and child windows
+# are C APIs, every call to them is `unsafe`, and this crate keeps them behind
+# a safe `Video` so the rest of the workspace can go on forbidding it.
+unsafe_code = "allow"
 
 missing_docs = "deny"
 missing_debug_implementations = "deny"
 unreachable_pub = "deny"
 unused_qualifications = "deny"
 unused_import_braces = "deny"
-trivial_casts = "deny"
+# The `windows` crate's `#[implement]` macro, which makes the engine's
+# event callback a COM object, writes a trivial cast, a reference cast to a
+# raw pointer and `#[inline(always)]` into code nobody here can edit. These
+# three are off in this crate for that and nothing else.
+trivial_casts = "allow"
 trivial_numeric_casts = "deny"
 variant_size_differences = "deny"
 single_use_lifetimes = "deny"
@@ -78,7 +54,7 @@ future_incompatible = { level = "deny", priority = -1 }
 let_underscore = { level = "deny", priority = -1 }
 unused = { level = "deny", priority = -1 }
 
-[workspace.lints.rustdoc]
+[lints.rustdoc]
 # missing_docs forces docs to exist; these check they are correct. They only
 # fire under rustdoc, so the gate runs `cargo doc` to reach them.
 broken_intra_doc_links = "deny"
@@ -90,7 +66,11 @@ bare_urls = "deny"
 unescaped_backticks = "deny"
 missing_crate_level_docs = "deny"
 
-[workspace.lints.clippy]
+[lints.clippy]
+# Every unsafe block says, in a `// SAFETY:` comment, why it holds.
+undocumented_unsafe_blocks = "deny"
+ref_as_ptr = "allow"
+inline_always = "allow"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }

@@ -19,6 +19,10 @@ serde.workspace = true
 serde_json.workspace = true
 overseer-core = { path = "../overseer-core", version = "2.1.0" }
 overseer-ui = { path = "../overseer-ui", version = "2.1.0" }
+overseer-video = { path = "../overseer-video", version = "2.1.0" }
+# Already in the tree through winit. It hands the window's handle to the
+# video crate, which plays clips in a child of the window.
+raw-window-handle = "0.6.2"
 
 [lints]
 workspace = true

@@ -2528,6 +2528,8 @@ dependencies = [
  "global-hotkey",
  "overseer-core",
  "overseer-ui",
+ "overseer-video",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tray-icon",
@@ -2558,6 +2560,14 @@ version = "2.1.0"
 dependencies = [
  "egui",
  "png",
+]
+
+[[package]]
+name = "overseer-video"
+version = "2.1.0"
+dependencies = [
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

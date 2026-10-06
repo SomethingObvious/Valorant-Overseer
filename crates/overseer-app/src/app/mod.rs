@@ -423,6 +423,12 @@ impl Overseer {
     ) -> Self {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
+        // Lineup clips play in a child of this window, through Windows' engine.
+        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(cc)
+            && let raw_window_handle::RawWindowHandle::Win32(window) = handle.as_raw()
+        {
+            overseer_video::set_window(window.hwnd.get());
+        }
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx
             .set_style_of(egui::Theme::Dark, overseer_ui::style());

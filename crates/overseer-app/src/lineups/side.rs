@@ -457,7 +457,9 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
         .filter(|_| tools.ffmpeg && !cutting && !deleting);
     let runs = clip.and_then(length).unwrap_or(form::LONGEST);
     if let Some(file) = file {
-        player::of(&mut view.player, file, 0.0, view.prefs).show(ui, (0.0, runs), 100.0, 0.0);
+        player::of(&mut view.player, file, 0.0, view.prefs)
+            .native()
+            .show(ui, (0.0, runs), 100.0, 0.0);
         ui.add_space(space::SM);
     }
     if !lineup.images.is_empty() {

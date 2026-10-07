@@ -1,7 +1,10 @@
 //! The overlay's window, kept from taking the focus, and whether the app's
 //! own window can be seen at all.
 
-use windows::Win32::Foundation::RECT;
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicIsize, Ordering};
+
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromWindow,
 };
@@ -10,6 +13,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, IsIconic, SetWindowLongPtrW, WS_EX_NOACTIVATE,
 };
 use windows_core::PCWSTR;
+
+/// The app's window, as its handle, which every video plays inside.
+static WINDOW: AtomicIsize = AtomicIsize::new(0);
+
+/// Tells the crate which window videos play in, by its Win32 handle.
+pub fn set_window(hwnd: isize) {
+    WINDOW.store(hwnd, Ordering::Relaxed);
+}
+
+/// The app's window, or an invalid handle before [`set_window`].
+pub(crate) fn window() -> HWND {
+    HWND(WINDOW.load(Ordering::Relaxed) as *mut c_void)
+}
 
 /// Stops the top-level window titled `title` from taking the focus on a click.
 ///
@@ -42,7 +58,7 @@ pub fn never_activate(title: &str) {
 /// The desktop doesn't count, though it covers the monitor too.
 #[must_use]
 pub fn hidden() -> bool {
-    let ours = crate::video::window();
+    let ours = window();
     if ours.is_invalid() {
         return false;
     }

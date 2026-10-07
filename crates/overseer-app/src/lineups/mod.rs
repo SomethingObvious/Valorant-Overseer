@@ -886,6 +886,9 @@ impl Lineups {
     /// decide the names again next time.
     pub(crate) fn leave(&mut self) {
         self.view.player = None;
+        // Ends the video process, which gives back what Windows' media
+        // engine and its drivers took.
+        overseer_native::let_go();
         self.view.names = None;
         self.view.turned = 0;
     }

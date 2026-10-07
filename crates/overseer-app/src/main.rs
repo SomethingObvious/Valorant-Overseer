@@ -45,6 +45,12 @@ const INITIAL_SIZE: [f32; 2] = [1280.0, 800.0];
 const MINIMUM_SIZE: [f32; 2] = [520.0, 360.0];
 
 fn main() -> eframe::Result {
+    // The video process, which plays lineup clips in the window named after
+    // the flag, and nothing else.
+    let mut args = std::env::args().skip_while(|a| a != "--video").skip(1);
+    if let Some(parent) = args.next().and_then(|p| p.parse::<isize>().ok()) {
+        std::process::exit(overseer_native::serve(parent));
+    }
     let root = install_root();
     if std::env::args().any(|a| a == "--probe") {
         probe::report(&root);

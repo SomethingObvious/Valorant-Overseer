@@ -1,11 +1,11 @@
-//! A clip played by Windows' own media engine in a child of the app's window.
-//! The low-power GPU's video hardware decodes it and Windows composites it,
-//! so neither the CPU nor the app's own frame touches its pixels.
+//! A clip played by Windows' own media engine in a child of the app's window,
+//! from the video process. The low-power GPU's video hardware decodes it and
+//! Windows composites it, so neither the CPU nor the app's own frame touches
+//! its pixels.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::{Arc, Once};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HMODULE, HWND, RECT};
@@ -25,30 +25,25 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MEDIA_ENGINE_CALLBACK, MF_MEDIA_ENGINE_DXGI_MANAGER, MF_MEDIA_ENGINE_EVENT_ENDED,
     MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_EVENT_FIRSTFRAMEREADY,
     MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA, MF_MEDIA_ENGINE_PLAYBACK_HWND,
-    MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC, MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, MF_VERSION,
-    MFCreateAttributes, MFCreateDXGIDeviceManager, MFSTARTUP_LITE, MFStartup,
+    MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC, MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, MFCreateAttributes,
+    MFCreateDXGIDeviceManager,
 };
-use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemServices::SS_BLACKRECT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, SW_HIDE, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetWindowPos, ShowWindow, WINDOW_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY,
+    SetWindowPos, ShowWindow, WINDOW_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_DISABLED,
+    WS_EX_NOPARENTNOTIFY,
 };
 use windows_core::{BSTR, Interface, PCWSTR, implement, w};
 
-/// The app's window, as its handle, which every video plays inside.
-static WINDOW: AtomicIsize = AtomicIsize::new(0);
+use crate::Area;
 
 /// How long a window just shown stays clipped to nothing while the engine
 /// draws into it at its size. Without it the window came up white on every
 /// try on the laptop this was tested on, and with 150 ms it never did.
 const SETTLE: Duration = Duration::from_millis(150);
-
-/// Media Foundation's start, once a process.
-static STARTED: Once = Once::new();
 
 thread_local! {
     /// The low-power GPU's device and the manager that shares it with the
@@ -56,20 +51,6 @@ thread_local! {
     /// making them took a moment on the window's thread each time.
     static DEVICE: RefCell<Option<IMFDXGIDeviceManager>> = const { RefCell::new(None) };
 }
-
-/// Tells the crate which window videos play in, by its Win32 handle.
-pub fn set_window(hwnd: isize) {
-    WINDOW.store(hwnd, Ordering::Relaxed);
-}
-
-/// The app's window, or an invalid handle before [`set_window`].
-pub(crate) fn window() -> HWND {
-    HWND(WINDOW.load(Ordering::Relaxed) as *mut c_void)
-}
-
-/// A box in the window's client area, in physical pixels: left, top, right
-/// and bottom.
-pub type Area = [i32; 4];
 
 /// What the engine has said since the app last asked. Set on Media
 /// Foundation's own threads, read on the window's.
@@ -82,7 +63,7 @@ struct Events {
     ended: AtomicBool,
     /// It couldn't read or play the file.
     failed: AtomicBool,
-    /// Asks the window for a frame, so it hears about each event.
+    /// Wakes the video process's loop, so it hears about each event.
     wake: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -110,9 +91,9 @@ impl IMFMediaEngineNotify_Impl for Notify_Impl {
     }
 }
 
-/// A video playing in a child window of the app's, shown where [`Video::place`]
+/// A clip playing in a child window of the app's, shown where [`Clip::place`]
 /// puts it. Dropping it stops the engine and removes the window.
-pub struct Video {
+pub(crate) struct Clip {
     /// The media engine, which decodes and presents into `child`.
     engine: IMFMediaEngine,
     /// The child window the video is drawn in.
@@ -131,36 +112,23 @@ pub struct Video {
     blank: bool,
 }
 
-impl std::fmt::Debug for Video {
+impl std::fmt::Debug for Clip {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Video")
+        f.debug_struct("Clip")
             .field("placed", &self.placed)
             .finish_non_exhaustive()
     }
 }
 
-impl Video {
-    /// Opens `file`, paused at its first frame and hidden until placed.
-    /// `wake` is called, from another thread, whenever the engine has news.
-    ///
-    /// # Errors
-    ///
-    /// Why it couldn't: no window was set, or Windows has no engine, device or
-    /// window to give it.
-    pub fn open(file: &str, wake: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
-        let window = WINDOW.load(Ordering::Relaxed);
-        if window == 0 {
-            return Err("there is no window to play the video in".to_owned());
-        }
-        STARTED.call_once(|| {
-            // SAFETY: called once, on the window's thread. A thread COM is
-            // already set up on answers S_FALSE or RPC_E_CHANGED_MODE, and
-            // either way COM works, so neither is an error worth stopping on.
-            let _apartment = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-            // SAFETY: the documented start of Media Foundation, once a process.
-            // Failing leaves every `open` after this to fail on its own.
-            let _started = unsafe { MFStartup(MF_VERSION, MFSTARTUP_LITE) };
-        });
+impl Clip {
+    /// Opens `file` in a child of `parent`, paused at its first frame and
+    /// hidden until placed. `wake` is called, from another thread, whenever
+    /// the engine has news.
+    pub(crate) fn open(
+        parent: HWND,
+        file: &str,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, String> {
         let events = Arc::new(Events {
             loaded: AtomicBool::new(false),
             ready: AtomicBool::new(false),
@@ -168,7 +136,6 @@ impl Video {
             failed: AtomicBool::new(false),
             wake: Box::new(wake),
         });
-        let parent = HWND(window as *mut c_void);
         open_in(parent, file, Arc::clone(&events))
             .map(|(engine, child)| Self {
                 engine,
@@ -183,41 +150,39 @@ impl Video {
     }
 
     /// Plays on from where it is.
-    pub fn play(&self) {
+    pub(crate) fn play(&self) {
         // SAFETY: `engine` is a live engine this value owns, used on the
         // thread that made it.
         let _played = unsafe { self.engine.Play() };
     }
 
     /// Stops where it is, keeping that frame on screen.
-    pub fn pause(&self) {
+    pub(crate) fn pause(&self) {
         // SAFETY: as in `play`.
         let _paused = unsafe { self.engine.Pause() };
     }
 
     /// Whether it is playing.
-    #[must_use]
-    pub fn playing(&self) -> bool {
+    pub(crate) fn playing(&self) -> bool {
         // SAFETY: as in `play`.
         unsafe { !self.engine.IsPaused().as_bool() && !self.engine.IsEnded().as_bool() }
     }
 
     /// Where it has got to, in seconds.
-    #[must_use]
-    pub fn time(&self) -> f64 {
+    pub(crate) fn time(&self) -> f64 {
         // SAFETY: as in `play`.
         unsafe { self.engine.GetCurrentTime() }
     }
 
     /// Goes to `at` seconds, playing on from there if it was playing.
-    pub fn seek(&self, at: f64) {
+    pub(crate) fn seek(&self, at: f64) {
         // SAFETY: as in `play`.
         let _sought = unsafe { self.engine.SetCurrentTime(at.max(0.0)) };
     }
 
-    /// Goes to `at` as [`Video::seek`] does, unless the last seek is still
+    /// Goes to `at` as [`Clip::seek`] does, unless the last seek is still
     /// going, so following a dragged handle doesn't queue a seek a frame.
-    pub fn scrub(&self, at: f64) {
+    pub(crate) fn scrub(&self, at: f64) {
         // SAFETY: as in `play`.
         unsafe {
             if !self.engine.IsSeeking().as_bool() {
@@ -227,7 +192,7 @@ impl Video {
     }
 
     /// Plays `rate` times as fast as recorded, the sound kept at its pitch.
-    pub fn set_rate(&self, rate: f64) {
+    pub(crate) fn set_rate(&self, rate: f64) {
         // SAFETY: as in `play`.
         unsafe {
             let _default = self.engine.SetDefaultPlaybackRate(rate);
@@ -236,7 +201,7 @@ impl Video {
     }
 
     /// How loud, from 0 for silent to 1 for as recorded.
-    pub fn set_volume(&self, share: f64) {
+    pub(crate) fn set_volume(&self, share: f64) {
         let share = share.clamp(0.0, 1.0);
         // SAFETY: as in `play`.
         unsafe {
@@ -246,8 +211,7 @@ impl Video {
     }
 
     /// The video's width and height, once the engine has read them.
-    #[must_use]
-    pub fn size(&self) -> Option<[u32; 2]> {
+    pub(crate) fn size(&self) -> Option<[u32; 2]> {
         let (mut wide, mut tall) = (0, 0);
         // SAFETY: as in `play`, with both pointers to locals that outlive the call.
         let read = unsafe {
@@ -258,14 +222,12 @@ impl Video {
     }
 
     /// Whether it played to the end since this was last asked.
-    #[must_use]
-    pub fn take_ended(&self) -> bool {
+    pub(crate) fn take_ended(&self) -> bool {
         self.events.ended.swap(false, Ordering::Relaxed)
     }
 
     /// Whether the engine couldn't read or play the file.
-    #[must_use]
-    pub fn failed(&self) -> bool {
+    pub(crate) fn failed(&self) -> bool {
         self.events.failed.load(Ordering::Relaxed)
     }
 
@@ -273,8 +235,7 @@ impl Video {
     /// showing only the part of it inside the second, or hides it. Returns
     /// whether to call again shortly, while a window just shown is still
     /// clipped to nothing.
-    #[must_use]
-    pub fn place(&mut self, shown: Option<(Area, Area)>) -> bool {
+    pub(crate) fn place(&mut self, shown: Option<(Area, Area)>) -> bool {
         // Shown straight away, the window is white until the engine has drawn
         // into it at its new size. So it waits for the engine's first frame,
         // then stays clipped to nothing for `SETTLE`.
@@ -343,7 +304,7 @@ impl Video {
     }
 }
 
-impl Drop for Video {
+impl Drop for Clip {
     fn drop(&mut self) {
         // SAFETY: the engine and the window are this value's, and nothing
         // uses either after this.
@@ -366,14 +327,16 @@ fn open_in(
     // made just above it, and pointers only to locals that outlive the call.
     unsafe {
         let instance = GetModuleHandleW(None)?;
-        // A static control, which lets clicks through to the window under it,
-        // so the app still hears a click on the video. Black, so there is no
-        // grey before the engine's first frame.
+        // A static control, black so there is no grey before the engine's
+        // first frame, and disabled, since Windows passes over a disabled
+        // child when it picks which window gets the mouse. The parent is
+        // another process's window, so that is the only way a click on the
+        // video reaches the app.
         let child = CreateWindowExW(
             WS_EX_NOPARENTNOTIFY,
             w!("STATIC"),
             PCWSTR::null(),
-            WS_CHILD | WS_CLIPSIBLINGS | WINDOW_STYLE(SS_BLACKRECT.0),
+            WS_CHILD | WS_CLIPSIBLINGS | WS_DISABLED | WINDOW_STYLE(SS_BLACKRECT.0),
             0,
             0,
             1,

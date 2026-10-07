@@ -831,9 +831,7 @@ impl Player {
             if in_sight && !hidden && shown.is_none() {
                 ui.ctx().request_repaint_after(Duration::from_millis(250));
             }
-            if video.place(shown) {
-                ui.ctx().request_repaint_after(Duration::from_millis(30));
-            }
+            video.place(shown);
         }
     }
 

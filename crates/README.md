@@ -27,8 +27,10 @@ window and the wizard share, with the fonts and Riot's art. `overseer-app` is
 the window and `overseer-setup` is the wizard. `overseer-native` plays a lineup's
 clip with Windows' media engine in a child of the window, decoded by the
 low-power GPU's video hardware, where ffmpeg and a redraw a frame took most of
-a core. The trimming form still plays through ffmpeg, which gives it the
-exact stills and the strip of frames that dragging a handle needs.
+a core. The engine runs in a second copy of the exe started with `--video`,
+which ends on leaving Lineups, since the memory its drivers take only comes
+back when the process that loaded them ends. The trimming form plays the same
+way, and ffmpeg is left for files Windows can't play.
 
 The window is a client of the Python backend. It reads the port and the per-launch token from
 `.overseer/bridge.json` and connects to the bridge on 127.0.0.1. It sends no

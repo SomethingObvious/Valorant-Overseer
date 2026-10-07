@@ -1,7 +1,13 @@
-//! The overlay's window, kept from taking the focus.
+//! The overlay's window, kept from taking the focus, and whether the app's
+//! own window can be seen at all.
 
+use windows::Win32::Foundation::RECT;
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromWindow,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE,
+    FindWindowW, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, SetWindowLongPtrW, WS_EX_NOACTIVATE,
 };
 use windows_core::PCWSTR;
 
@@ -26,5 +32,56 @@ pub fn never_activate(title: &str) {
         if style != wanted {
             let _was = SetWindowLongPtrW(window, GWL_EXSTYLE, wanted);
         }
+    }
+}
+
+/// Whether nobody can see the app's window.
+///
+/// That is when it is minimized, or when a window of another program covers
+/// its whole monitor, the way VALORANT does when it is played full screen.
+/// The desktop doesn't count, though it covers the monitor too.
+#[must_use]
+pub fn hidden() -> bool {
+    let ours = crate::video::window();
+    if ours.is_invalid() {
+        return false;
+    }
+    // SAFETY: documented calls given handles Windows just returned, checked
+    // before use, and locals that outlive each call.
+    unsafe {
+        if IsIconic(ours).as_bool() {
+            return true;
+        }
+        let front = GetForegroundWindow();
+        let mut owner = 0;
+        let _thread = GetWindowThreadProcessId(front, Some(&raw mut owner));
+        if front.is_invalid() || owner == std::process::id() {
+            return false;
+        }
+        let mut class = [0_u16; 16];
+        let length = usize::try_from(GetClassNameW(front, &mut class)).unwrap_or_default();
+        let name = String::from_utf16_lossy(class.get(..length).unwrap_or_default());
+        if name == "Progman" || name == "WorkerW" {
+            return false;
+        }
+        let monitor = MonitorFromWindow(ours, MONITOR_DEFAULTTONULL);
+        if monitor.is_invalid() || MonitorFromWindow(front, MONITOR_DEFAULTTONULL) != monitor {
+            return false;
+        }
+        let mut info = MONITORINFO {
+            cbSize: u32::try_from(size_of::<MONITORINFO>()).unwrap_or_default(),
+            ..MONITORINFO::default()
+        };
+        let mut covers = RECT::default();
+        if !GetMonitorInfoW(monitor, &raw mut info).as_bool()
+            || GetWindowRect(front, &raw mut covers).is_err()
+        {
+            return false;
+        }
+        let screen = info.rcMonitor;
+        covers.left <= screen.left
+            && covers.top <= screen.top
+            && covers.right >= screen.right
+            && covers.bottom >= screen.bottom
     }
 }

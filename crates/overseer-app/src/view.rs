@@ -38,8 +38,7 @@ pub(crate) struct Trouble<'a> {
 pub(crate) fn settings(
     ui: &mut Ui,
     settings: &mut Settings,
-    quality: Quality,
-    dropped: bool,
+    (quality, dropped, machine): (Quality, bool, &crate::machine::Machine),
     (trouble, root, offline): (Trouble<'_>, &std::path::Path, &mut Offline),
 ) -> bool {
     let mut changed = false;
@@ -92,6 +91,7 @@ pub(crate) fn settings(
 
             changed |= clips(ui, settings, still);
 
+            changed |= your_pc(ui, settings, machine, still);
             changed |= effort(ui, settings, quality, dropped);
             keys(ui);
             data(ui, root);
@@ -524,6 +524,36 @@ fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, dropped: bool)
     } else {
         note(ui, &format!("Currently using {}.", quality.label()));
     }
+    changed
+}
+
+/// Whether this PC counts as slow, and why Auto decided what it did.
+fn your_pc(
+    ui: &mut Ui,
+    settings: &mut Settings,
+    machine: &crate::machine::Machine,
+    still: bool,
+) -> bool {
+    let mut changed = false;
+    section(
+        ui,
+        "Your PC",
+        "How much Overseer holds back to leave VALORANT room.",
+    );
+    for option in crate::settings::Pc::ALL {
+        let (name, about) = option.label();
+        if switch(ui, name, about, settings.pc == option, true, still) {
+            settings.pc = option;
+            changed = true;
+        }
+    }
+    let why = machine.slow_because();
+    let said = match why.as_slice() {
+        [] => "This PC looks fast enough for full quality.".to_owned(),
+        [one] => format!("This PC looks slow: {one}."),
+        [rest @ .., last] => format!("This PC looks slow: {} and {last}.", rest.join(", ")),
+    };
+    note(ui, &said);
     changed
 }
 

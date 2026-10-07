@@ -824,6 +824,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
                                     names: false,
                                     area: None,
                                     agent: "Brimstone",
+                                    slow: false,
                                 },
                             ),
                         );
@@ -894,6 +895,7 @@ fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
                                 names: false,
                                 area: None,
                                 agent: "Brimstone",
+                                slow: false,
                             },
                         ),
                     );
@@ -1084,6 +1086,7 @@ fn lineups_live() {
                                     names: false,
                                     area: None,
                                     agent: "Brimstone",
+                                    slow: false,
                                 },
                             ),
                         );
@@ -1215,8 +1218,15 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
                     view::settings(
                         ui,
                         &mut state.1,
-                        Quality::Rich,
-                        false,
+                        (
+                            Quality::Rich,
+                            false,
+                            &crate::machine::Machine {
+                                memory: Some(16 << 30),
+                                threads: 8,
+                                card: true,
+                            },
+                        ),
                         // Both broken, so the longer notes and their
                         // wrapping are in the picture.
                         (

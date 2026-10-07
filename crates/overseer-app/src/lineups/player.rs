@@ -812,7 +812,12 @@ impl Player {
         }
         let spot = self.spot.take();
         if let Engine::Native { video, held } = &mut self.engine {
-            let shown = spot.and_then(|(rect, seen, layer)| placed(ui.ctx(), rect, seen, layer));
+            // Minimized, or behind a full screen game on its monitor, counts as
+            // out of sight too, and nothing redraws to look again until it is back.
+            let hidden = overseer_native::hidden();
+            let shown = spot
+                .filter(|_| !hidden)
+                .and_then(|(rect, seen, layer)| placed(ui.ctx(), rect, seen, layer));
             // Out of sight it stops decoding, and plays on once it is back.
             if shown.is_none() && video.playing() {
                 video.pause();
@@ -823,7 +828,7 @@ impl Player {
             // Hidden under a menu, it looks again shortly, since egui only
             // knows a menu has gone a frame after it has.
             let in_sight = spot.is_some_and(|(rect, seen, _)| rect.intersect(seen).is_positive());
-            if in_sight && shown.is_none() {
+            if in_sight && !hidden && shown.is_none() {
                 ui.ctx().request_repaint_after(Duration::from_millis(250));
             }
             if video.place(shown) {

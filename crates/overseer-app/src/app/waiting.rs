@@ -21,6 +21,11 @@ const TICK: f64 = 1.0 / 30.0;
 /// there all day beside another game.
 const LIVELY: f64 = 10.0;
 
+/// How long the screen can be away, in seconds, before the wait counts as
+/// a new one when it comes back. A look at Lineups or the settings carries
+/// on, where a match in between starts over.
+const AWAY: f64 = 300.0;
+
 /// How long the light takes to run along the line into the step being
 /// waited on, and its pip to pulse once, in seconds.
 const BEAT: f64 = 1.2;
@@ -161,19 +166,22 @@ pub(super) fn empty(
 }
 
 /// How long the screen has been saying `title`, in seconds. It starts
-/// again when the title changes, and when the screen comes back after a
-/// pass that drew something else, so a wait doesn't go on from the last
-/// time the same words showed, hours ago.
+/// again when the title changes, and when the screen comes back after
+/// [`AWAY`] seconds of drawing something else, so a wait doesn't go on from
+/// the last time the same words showed, hours ago. Coming back sooner
+/// carries on, without the step moving again.
 fn since(ui: &Ui, title: &str) -> f64 {
     let now = ui.input(|i| i.time);
     let pass = ui.ctx().cumulative_pass_nr();
     let key = egui::Id::new(title);
     ui.ctx().data_mut(|d| {
-        let kept = d.get_temp_mut_or_insert_with(egui::Id::new("empty-since"), || (key, now, pass));
-        if kept.0 != key || pass > kept.2.saturating_add(1) {
-            *kept = (key, now, pass);
+        let kept =
+            d.get_temp_mut_or_insert_with(egui::Id::new("empty-since"), || (key, now, pass, now));
+        let away = pass > kept.2.saturating_add(1) && now - kept.3 > AWAY;
+        if kept.0 != key || away {
+            *kept = (key, now, pass, now);
         }
-        kept.2 = pass;
+        (kept.2, kept.3) = (pass, now);
         now - kept.1
     })
 }
@@ -372,10 +380,10 @@ mod tests {
     use super::{Board, Status, clock, since, stage};
 
     /// The wait starts again with new words, and when the screen comes
-    /// back after a pass without it. Its clock counts seconds for a
-    /// minute, then minutes.
+    /// back after a long time away, but a quick look elsewhere carries it
+    /// on. Its clock counts seconds for a minute, then minutes.
     #[test]
-    fn a_wait_starts_again_when_the_screen_comes_back() {
+    fn a_wait_starts_again_after_a_long_time_away() {
         let ctx = egui::Context::default();
         let pass = |at: f64, title: Option<&str>| {
             let input = egui::RawInput {
@@ -390,12 +398,14 @@ mod tests {
         assert_eq!(pass(100.0, Some("Waiting")), Some(0.0));
         assert_eq!(pass(105.0, Some("Waiting")), Some(5.0));
         assert_eq!(pass(106.0, None), None);
+        assert_eq!(pass(107.0, Some("Waiting")), Some(7.0), "back from a look");
+        assert_eq!(pass(108.0, None), None);
         assert_eq!(
-            pass(107.0, Some("Waiting")),
+            pass(500.0, Some("Waiting")),
             Some(0.0),
-            "back after a pass away"
+            "back after a match"
         );
-        assert_eq!(pass(109.0, Some("Loading")), Some(0.0), "new words");
+        assert_eq!(pass(502.0, Some("Loading")), Some(0.0), "new words");
         assert_eq!(clock(42), "0:42");
         assert_eq!(clock(200), "3 min");
     }

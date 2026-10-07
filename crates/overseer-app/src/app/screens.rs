@@ -89,8 +89,7 @@ impl Overseer {
             changed = view::settings(
                 ui,
                 &mut self.settings,
-                quality,
-                dropped,
+                (quality, dropped, &self.machine),
                 (trouble, &self.root, &mut self.offline),
             );
         });
@@ -125,6 +124,7 @@ impl Overseer {
                             names: self.settings.lineups.lineup_names,
                             area: self.settings.lineups.area_colour.as_deref(),
                             agent: &self.settings.lineups.default_agent,
+                            slow: self.slow_pc(),
                         },
                     ),
                 );

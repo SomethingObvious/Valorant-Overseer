@@ -62,6 +62,11 @@ pub fn set_window(hwnd: isize) {
     WINDOW.store(hwnd, Ordering::Relaxed);
 }
 
+/// The app's window, or an invalid handle before [`set_window`].
+pub(crate) fn window() -> HWND {
+    HWND(WINDOW.load(Ordering::Relaxed) as *mut c_void)
+}
+
 /// A box in the window's client area, in physical pixels: left, top, right
 /// and bottom.
 pub type Area = [i32; 4];

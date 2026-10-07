@@ -530,8 +530,8 @@ def _times(clip: dict[str, Any]) -> tuple[float, float, int]:
     return start, end, max(0, min(200, volume))
 
 
-def cut(clip: dict[str, Any], out: Path) -> None:
-    """Cuts `clip` from its source into `out`, at its volume."""
+def cut(clip: dict[str, Any], out: Path, *, small: bool = False) -> None:
+    """Cuts `clip` from its source into `out`, at its volume, and at 720p when `small`."""
     start, end, volume = _times(clip)
     source, begins = fetch(str(clip.get("source") or ""), start, end)
     sound = (
@@ -563,6 +563,13 @@ def cut(clip: dict[str, Any], out: Path) -> None:
         # neither Windows' engine nor a GPU's decoder.
         "-pix_fmt",
         "yuv420p",
+        # On a slow PC the short side stops at 720, which takes about a quarter
+        # less of a graphics chip the game shares to play.
+        *(
+            ["-vf", "scale=w='if(gte(iw,ih),-2,min(iw,720))':h='if(gte(iw,ih),min(ih,720),-2)'"]
+            if small
+            else []
+        ),
         # The window shows 30 frames a second, so a 60 fps clip only doubled
         # what it decoded. Slowed to a quarter, it shows 7.5 a second.
         "-fpsmax",
@@ -673,8 +680,8 @@ def _shown(lineup: dict[str, Any], path: Path) -> dict[str, Any]:
     return shown
 
 
-def save(raw: Any, clip: Any = None) -> dict[str, Any]:
-    """Save a lineup, cutting its clip first when one comes with it."""
+def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
+    """Save a lineup, cutting its clip first when one comes with it, at 720p when `small`."""
     if not isinstance(raw, dict):
         msg = "That lineup is empty."
         raise LineupError(msg)
@@ -712,7 +719,7 @@ def save(raw: Any, clip: Any = None) -> dict[str, Any]:
         wanted = {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
         if wanted != old_clip or not video.exists():
             folder.mkdir(parents=True, exist_ok=True)
-            cut(wanted, video)
+            cut(wanted, video, small=small)
             # The whole video was only for trimming. The clip is cut now. A
             # cut from it still running keeps it, and a day's pruning takes it.
             with contextlib.suppress(PermissionError):
@@ -924,7 +931,7 @@ def _arrival(
     return raw, {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
 
 
-def _cut_later(path: Path, wanted: dict[str, Any]) -> None:
+def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
     """Cut a pasted lineup's clip on the cutter's thread.
 
     The lineup already keeps the clip's link and times, so one that fails is
@@ -935,7 +942,7 @@ def _cut_later(path: Path, wanted: dict[str, Any]) -> None:
         if not path.exists():
             return
         try:
-            cut(wanted, path.with_suffix(".mp4"))
+            cut(wanted, path.with_suffix(".mp4"), small=small)
         except (LineupError, OSError) as e:
             LOG.warning("couldn't cut the pasted clip for %s: %s", path.stem, e)
         if not path.exists():
@@ -944,7 +951,7 @@ def _cut_later(path: Path, wanted: dict[str, Any]) -> None:
     _CUTTER.submit(run)
 
 
-def import_code(text: Any) -> dict[str, Any]:
+def import_code(text: Any, *, small: bool = False) -> dict[str, Any]:
     """Save the lineups in a code from `export_code`, and start cutting their clips.
 
     Each is checked the way the form checks one, and one you already have is
@@ -976,7 +983,7 @@ def import_code(text: Any) -> dict[str, Any]:
         if clip and cutting < _MOST_CUT and isinstance(stored, dict):
             stored["clip"] = clip
             write_atomic(str(path), stored, prefix=".lineup-")
-            _cut_later(path, clip)
+            _cut_later(path, clip, small=small)
             saved = _shown(stored, path)
             cutting += 1
         added.append(saved)
@@ -1233,6 +1240,25 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     check(save(clipped)["clip"]["file"] == str(video) and video.exists())
     gone = save(clipped, {"source": ""})
     check("clip" not in gone and not video.exists(), gone)
+    # A slow PC's clip is scaled down, and only then.
+    with (
+        mock.patch(f"{__name__}._run", side_effect=fake_run),
+        mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
+    ):
+        for small in (False, True):
+            runs.clear()
+            save(
+                {
+                    "map": "Ascent",
+                    "agent": "Brimstone",
+                    "title": f"Small {small}",
+                    "stand": [0.7, 0.2],
+                },
+                {"source": "https://localhost/v?id=8", "from": "1", "to": "2"},
+                small=small,
+            )
+            scaled = [r for r in runs if Path(r[0]).stem == "ffmpeg" and "-vf" in r]
+            check(bool(scaled) == small, runs)
     for lineup in listing():
         delete(lineup["map"], lineup["id"])
 

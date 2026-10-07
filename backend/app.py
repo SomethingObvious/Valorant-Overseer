@@ -294,7 +294,9 @@ def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
             # board only knows in a lobby, so History's record answers otherwise.
             return {**lineups.overview(), "main": history.main_agent()}
         if req_type == "lineup_save":
-            return lineups.save(params.get("lineup"), params.get("clip"))
+            return lineups.save(
+                params.get("lineup"), params.get("clip"), small=bool(params.get("small"))
+            )
         if req_type == "lineup_delete":
             return lineups.delete(params.get("map"), params.get("id"))
         if req_type == "lineup_probe":
@@ -307,7 +309,7 @@ def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
         if req_type == "lineup_export":
             return lineups.export_code(params.get("map"), params.get("ids"))
         if req_type == "lineup_import":
-            return lineups.import_code(params.get("code"))
+            return lineups.import_code(params.get("code"), small=bool(params.get("small")))
     except lineups.LineupError as e:
         return {"error": str(e)}
     return {"error": f"The backend has no '{req_type}' request."}

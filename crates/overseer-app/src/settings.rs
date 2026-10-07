@@ -34,6 +34,39 @@ impl Quality {
     }
 }
 
+/// How much Overseer holds back to leave the game room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Pc {
+    /// Decided from what the PC has.
+    #[default]
+    Auto,
+    /// Clips cut at full quality.
+    Fast,
+    /// Clips cut at 720p, which takes about a quarter less to play.
+    Slow,
+}
+
+impl Pc {
+    /// Every choice, in the order the settings list them.
+    pub(crate) const ALL: [Self; 3] = [Self::Auto, Self::Fast, Self::Slow];
+
+    /// What the settings call it, and a sentence about it.
+    pub(crate) const fn label(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Auto => (
+                "Auto",
+                "Decide from this PC's memory, processor and graphics",
+            ),
+            Self::Fast => ("Fast PC", "Clips cut at full quality"),
+            Self::Slow => (
+                "Slow PC",
+                "Clips cut at 720p, which takes about a quarter less to play",
+            ),
+        }
+    }
+}
+
 /// Which way up a lineup map is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +109,8 @@ impl MapTurn {
 pub(crate) struct Settings {
     /// How much to spend on looking good.
     pub(crate) quality: Quality,
+    /// Whether this PC is slow, decided from what it has unless set.
+    pub(crate) pc: Pc,
     /// Columns switched off by hand, by their heading.
     pub(crate) hidden_columns: Vec<String>,
     /// Whether the detail panel takes the right of the window.
@@ -172,6 +207,7 @@ impl Default for Settings {
         // what the app can do.
         Self {
             quality: Quality::Auto,
+            pc: Pc::Auto,
             hidden_columns: Vec::new(),
             panel: true,
             panel_width: None,

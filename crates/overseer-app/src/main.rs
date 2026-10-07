@@ -19,6 +19,7 @@ mod history;
 mod hotkey;
 mod instance;
 mod lineups;
+mod machine;
 mod notes;
 mod offline;
 mod overlay;

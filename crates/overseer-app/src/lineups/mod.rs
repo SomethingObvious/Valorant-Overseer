@@ -617,6 +617,8 @@ struct View {
     pasted: Option<String>,
     /// A code to put on the clipboard.
     copy: Option<String>,
+    /// Whether this PC counts as slow, from the settings.
+    slow: bool,
 }
 
 /// How the settings say the maps are drawn.
@@ -630,6 +632,8 @@ pub(crate) struct Look<'a> {
     pub(crate) area: Option<&'a str>,
     /// The agent a new lineup starts with.
     pub(crate) agent: &'a str,
+    /// Whether this PC counts as slow, which cuts clips at 720p.
+    pub(crate) slow: bool,
 }
 
 /// The Lineups screen.
@@ -1004,6 +1008,7 @@ impl Lineups {
         self.view.names_by_default = look.names;
         self.view.area = look.area.map(shapes::ink);
         look.agent.clone_into(&mut self.view.default_agent);
+        self.view.slow = look.slow;
         if let Some((shown, at)) = &self.view.viewing {
             self.view.viewing =
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
@@ -1187,7 +1192,11 @@ impl Lineups {
         let (name, params, job) = match (&view.mode, request) {
             (Mode::Edit(draft), Request::Save) => (
                 "lineup_save",
-                serde_json::json!({ "lineup": draft.sent(), "clip": draft.clip() }),
+                serde_json::json!({
+                    "lineup": draft.sent(),
+                    "clip": draft.clip(),
+                    "small": view.slow,
+                }),
                 Job::Save,
             ),
             (_, Request::Delete) => ("lineup_delete", picked, Job::Delete),
@@ -1203,7 +1212,7 @@ impl Lineups {
             ),
             (_, Request::Paste) => (
                 "lineup_import",
-                serde_json::json!({ "code": view.pasted.take() }),
+                serde_json::json!({ "code": view.pasted.take(), "small": view.slow }),
                 Job::Import,
             ),
             _ => return,
@@ -1877,6 +1886,7 @@ mod tests {
             names: false,
             area: None,
             agent: "Brimstone",
+            slow: false,
         };
         let input = egui::RawInput {
             events: vec![egui::Event::Paste("OVL1MFRGG9".to_owned())],

@@ -185,6 +185,8 @@ pub(crate) struct Overseer {
     said: Option<(String, f64)>,
     /// Where the window last was on screen, for a save made minimized.
     place: Place,
+    /// What this PC has, which decides whether it counts as slow.
+    machine: crate::machine::Machine,
 }
 
 /// How long the footer keeps something it was told to say, in seconds.
@@ -501,6 +503,7 @@ impl Overseer {
             panel_visible: false,
             histories: HashMap::new(),
             said: None,
+            machine: crate::machine::Machine::detect(),
             place: Place {
                 minimized: false,
                 kept: cc.storage.and_then(|s| s.get_string(WINDOW_KEY)),
@@ -979,6 +982,15 @@ impl Overseer {
         }
     }
 
+    /// Whether to hold back for a slow PC, as set or as detected.
+    fn slow_pc(&self) -> bool {
+        match self.settings.pc {
+            settings::Pc::Auto => !self.machine.slow_because().is_empty(),
+            settings::Pc::Fast => false,
+            settings::Pc::Slow => true,
+        }
+    }
+
     /// The tier in force, once auto has made up its mind.
     const fn quality(&self) -> Quality {
         match self.settings.quality {
@@ -1272,6 +1284,11 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
         histories: HashMap::new(),
         said: None,
         place: Place::default(),
+        machine: crate::machine::Machine {
+            memory: None,
+            threads: 8,
+            card: true,
+        },
     };
     let _pressed = egui::Panel::top("header")
         .exact_size(header::HEIGHT)

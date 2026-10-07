@@ -1,7 +1,7 @@
 //! Ctrl+Alt+O, registered for the whole machine.
 //!
-//! The overlay takes no clicks, so this is how it goes on and off while
-//! VALORANT has the foreground. It is plain `RegisterHotKey`, the API every
+//! This is how the overlay goes on and off while VALORANT has the
+//! foreground. It is plain `RegisterHotKey`, the API every
 //! screenshot tool uses: nothing is injected, no input is sent, and no other
 //! process is read.
 

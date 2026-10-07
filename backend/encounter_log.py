@@ -122,6 +122,12 @@ def rosters_for(owner: str | None) -> list[dict[str, Any]]:
         return [dict(r) for r in _account(str(owner)).get("rosters") or []]
 
 
+# When the store was last written by record_board, and how often a board that
+# only moved everyone's last seen writes it.
+_SAVED = {"at": 0}
+_SEEN_EVERY = 60
+
+
 def record_board(board: dict[str, Any] | None) -> None:
     """Log everyone on a live board as a teammate or an opponent of its owner."""
     if not isinstance(board, dict) or board.get("source") != "local":
@@ -151,19 +157,24 @@ def record_board(board: dict[str, Any] | None) -> None:
                 match_ids.append(match_id)
                 entry["matchIds"] = match_ids[-80:]
                 entry["lastMatchId"] = match_id
+                changed = True
             for key in _PROFILE_FIELDS:
-                if player.get(key) is not None:
+                if player.get(key) is not None and entry.get(key) != player.get(key):
                     entry[key] = player.get(key)
+                    changed = True
             entry["lastSeen"] = now
             agent = player.get("agent")
             if agent and agent != "Unknown" and agent not in entry.setdefault("agents", []):
                 entry["agents"].append(agent)
                 entry["agents"] = entry["agents"][-8:]
-            changed = True
+                changed = True
         if _record_roster(owner, match_id, board, now):
             changed = True
-        if changed:
+        # A board comes every few seconds and only moves when someone is seen
+        # again, so that alone is written once a minute, not each time.
+        if changed or now - _SAVED["at"] >= _SEEN_EVERY:
             _save()
+            _SAVED["at"] = now
 
 
 def record_result(board: dict[str, Any] | None, result: str | None) -> None:

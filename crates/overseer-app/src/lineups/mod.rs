@@ -33,6 +33,16 @@ pub(crate) use sketch::swatch;
 
 /// How wide the panel down the right is.
 const SIDE: f32 = 380.0;
+/// The most of the window the panel may take, dragged or widened for a
+/// clip or picture wider than it is tall.
+const SIDE_SHARE: f32 = 0.6;
+/// How often the list is asked for again while pasted lineups' clips are
+/// cut, in seconds.
+const POLL: f64 = 4.0;
+/// How long that goes on at most, in seconds.
+const POLL_FOR: f64 = 300.0;
+/// The most text Paste Code sends, far more than any code holds.
+const PASTE_MOST: usize = 512 * 1024;
 
 /// Everything the screen draws from, or where the request for it has got to.
 #[derive(Debug, Default)]
@@ -198,6 +208,13 @@ struct Draft {
     notes_open: bool,
     /// How long the clip's source runs, for the trim bar.
     measure: Measure,
+    /// The clip as it was last cut, its file and how long it runs, shown
+    /// until Load Video gets its source to trim it again.
+    cut: Option<(String, f64)>,
+    /// The clip as it was opened. Saving leaves one that was cut as it is
+    /// rather than cutting it again, and takes one with its source cleared
+    /// off.
+    opened: serde_json::Value,
 }
 
 /// What is known about how long a clip's source runs.
@@ -251,13 +268,19 @@ impl Draft {
             clip_open: false,
             notes_open: false,
             measure: Measure::default(),
+            cut: None,
+            opened: serde_json::Value::Null,
         }
     }
 
     /// A saved lineup, opened to change it.
     fn of(lineup: &Lineup) -> Self {
         let clip = lineup.clip.clone().unwrap_or_default();
-        Self {
+        let cut = clip
+            .file
+            .clone()
+            .map(|file| (file, length(&clip).unwrap_or(form::LONGEST)));
+        let mut draft = Self {
             lineup: Lineup {
                 clip: None,
                 notes: None,
@@ -281,12 +304,14 @@ impl Draft {
             choosing: false,
             clip_open: lineup.clip.is_some(),
             notes_open: lineup.notes.is_some(),
-            // Its video was loaded once already, so it loads again unasked.
-            measure: Measure {
-                wanted: true,
-                ..Measure::default()
-            },
-        }
+            // Nothing is fetched until Load Video, which for a link is a
+            // download, and the cut clip plays meanwhile.
+            measure: Measure::default(),
+            cut,
+            opened: serde_json::Value::Null,
+        };
+        draft.opened = draft.clip();
+        draft
     }
 
     /// The lineup as the backend saves it, named for its ability and site
@@ -345,17 +370,39 @@ impl Draft {
         }
     }
 
-    /// The clip as the backend cuts it, or nothing when no source is given.
+    /// The clip as the backend cuts it. Nothing when no source is given or
+    /// the clip is the one it was opened with and was cut, which the backend
+    /// then keeps as it is. An empty source when the one it was opened with
+    /// was taken off, which deletes it. One pasted and never cut goes as it
+    /// is, to be cut.
     fn clip(&self) -> serde_json::Value {
         if self.source.trim().is_empty() {
-            return serde_json::Value::Null;
+            return if self.opened.is_object() {
+                serde_json::json!({ "source": "" })
+            } else {
+                serde_json::Value::Null
+            };
         }
-        serde_json::json!({
+        let clip = serde_json::json!({
             "source": self.source.trim(),
             "from": self.from.trim(),
             "to": self.to.trim(),
             "volume": self.volume.round(),
-        })
+        });
+        if clip == self.opened && self.cut.is_some() {
+            serde_json::Value::Null
+        } else {
+            clip
+        }
+    }
+
+    /// Whether the clip still comes from the source it was opened with, so
+    /// the clip cut from that is the one to show.
+    fn same_source(&self) -> bool {
+        self.opened
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            == Some(self.source.trim())
     }
 }
 
@@ -499,10 +546,19 @@ struct View {
     order: Order,
     /// The lineup picked, by id.
     selected: Option<String>,
-    /// Lineups stacked on one spot that a click landed on, by id, for the
-    /// player to pick one of: where the click was, the ids, and the frame the
-    /// list opened on, which a click that opened it can't also close it on.
-    choosing: Option<(egui::Pos2, Vec<String>, u64)>,
+    /// Pasted lineups whose clips the backend is cutting in the background,
+    /// by id. The list is asked for again every [`POLL`] seconds until
+    /// they are cut, for [`POLL_FOR`] at most.
+    cutting: Vec<String>,
+    /// When the list started being asked for again for them, and when it
+    /// last was, on egui's clock.
+    polled: Option<(f64, f64)>,
+    /// How much wider the panel's contents want to be for a clip or picture
+    /// wider than it is tall, done before the panel is drawn next.
+    widen: Option<f32>,
+    /// The lineup the panel last widened for, so it widens once a pick and
+    /// a panel dragged narrower after stays that way.
+    widened: Option<String>,
     /// What the side panel is doing.
     mode: Mode,
     /// A request in flight, and what it was.
@@ -858,6 +914,19 @@ impl Lineups {
     /// Puts a finished request's answer on screen.
     fn done(&mut self, job: Job, value: serde_json::Value) {
         let view = &mut self.view;
+        let added: Vec<Lineup> = value
+            .get("added")
+            .filter(|_| job == Job::Import)
+            .and_then(|a| serde_json::from_value(a.clone()).ok())
+            .unwrap_or_default();
+        // Their clips are cut after the answer, so the list is asked for
+        // again until they are.
+        view.cutting.extend(
+            added
+                .iter()
+                .filter(|l| l.clip.as_ref().is_some_and(|c| c.file.is_none()))
+                .filter_map(|l| l.id.clone()),
+        );
         // What it says goes up whatever the list is doing, or a save that
         // lands while the screen is away leaves "Saving" up for good.
         match job {
@@ -875,7 +944,11 @@ impl Lineups {
                 let text = |key| value.get(key).and_then(serde_json::Value::as_str);
                 if job == Job::Share {
                     view.copy = text("code").map(ToOwned::to_owned);
-                } else if let Some(map) = text("map") {
+                } else if let Some(map) = text("map")
+                    && matches!(view.mode, Mode::Browse)
+                {
+                    // Only while reading, or a sketch or a lineup being
+                    // written would end up on the other map.
                     view.map = Some(map.to_owned());
                     view.selected = None;
                 }
@@ -909,10 +982,7 @@ impl Lineups {
                 }
             }
             Job::Import => {
-                let added = value
-                    .get("added")
-                    .and_then(|a| serde_json::from_value::<Vec<Lineup>>(a.clone()).ok());
-                for lineup in added.unwrap_or_default() {
+                for lineup in added {
                     atlas.lineups.retain(|l| l.id != lineup.id);
                     atlas.lineups.push(lineup);
                 }
@@ -947,12 +1017,16 @@ impl Lineups {
         if !typing && ui.input(|i| i.key_pressed(egui::Key::R)) {
             self.view.turned = (self.view.turned + 1) % 4;
         }
+        self.poll(ui, bridge, live);
         let atlas = match &self.load {
             Load::Have(atlas)
             | Load::Asking {
                 kept: Some(atlas), ..
             } => atlas,
             other => {
+                // Nothing draws the video now, and Windows' engine would
+                // stay where it was over this.
+                self.view.player = None;
                 CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(colour::BG))
                     .show(ui, |ui| {
@@ -963,17 +1037,10 @@ impl Lineups {
             }
         };
         let mut asked = None;
-        // Wider or narrower by dragging its edge, since the form reads
-        // better with room and the map with less.
-        Panel::right("lineups-side")
-            .resizable(true)
-            .default_size(SIDE)
-            .size_range(320.0..=640.0)
-            .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
-            .show(ui, |ui| {
-                ui.multiply_opacity(opacity);
-                asked = side::show(ui, atlas, &mut self.view);
-            });
+        self.view.side_panel(ui).show(ui, |ui| {
+            ui.multiply_opacity(opacity);
+            asked = side::show(ui, atlas, &mut self.view);
+        });
         CentralPanel::default()
             .frame(egui::Frame::NONE.fill(colour::BG))
             .show(ui, |ui| {
@@ -1027,6 +1094,13 @@ impl Lineups {
         });
         if let Some(text) = pasted {
             self.view.pasting = None;
+            if text.len() > PASTE_MOST {
+                self.view.said = Some((
+                    "That's far too much text to be a lineup code.".to_owned(),
+                    true,
+                ));
+                return;
+            }
             self.view.pasted = Some(text);
             self.send(bridge, live, Request::Paste);
         } else if ui.ctx().cumulative_pass_nr() > asked_on + 3 {
@@ -1039,6 +1113,27 @@ impl Lineups {
         } else {
             ui.ctx().request_repaint();
         }
+    }
+
+    /// Asks for the list again every [`POLL`] seconds while pasted lineups'
+    /// clips are being cut, so each shows once it's ready.
+    fn poll(&mut self, ui: &Ui, bridge: &Bridge, live: bool) {
+        if self.view.cutting.is_empty() || !live {
+            return;
+        }
+        let now = ui.input(|i| i.time);
+        let (began, last) = *self.view.polled.get_or_insert((now, now));
+        if now - began > POLL_FOR {
+            self.view.cutting.clear();
+            self.view.polled = None;
+            return;
+        }
+        if now - last >= POLL && !matches!(self.load, Load::Asking { .. }) {
+            self.view.polled = Some((began, now));
+            self.ask(bridge);
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(POLL));
     }
 
     /// Sends a map's changed shapes to be kept, once nothing else is waiting.
@@ -1119,13 +1214,7 @@ impl Lineups {
             view.player = None;
         }
         view.pending = Some((bridge.ask(name, params), job));
-        view.said = (job == Job::Import).then(|| {
-            (
-                "Bringing in the lineups and cutting their clips, which takes a few seconds each."
-                    .to_owned(),
-                false,
-            )
-        });
+        view.said = (job == Job::Import).then(|| ("Bringing in the lineups.".to_owned(), false));
         view.confirm = false;
         // Back to the list straight away rather than sitting in the editor
         // while the clip is cut, which can take a while.
@@ -1142,6 +1231,30 @@ impl View {
     /// Whether every lineup's name shows on the map.
     fn naming(&self) -> bool {
         self.names.unwrap_or(self.names_by_default)
+    }
+
+    /// The panel down the right, wider or narrower by dragging its edge,
+    /// since the form reads better with room and the map with less. A clip
+    /// or picture wider than it is tall widens it, once a pick.
+    fn side_panel(&mut self, ui: &Ui) -> Panel {
+        let most = (ui.available_width() * SIDE_SHARE).max(640.0);
+        let id = egui::Id::new("lineups-side");
+        let side = Panel::right(id)
+            .resizable(true)
+            .default_size(SIDE)
+            .size_range(320.0..=most)
+            .frame(egui::Frame::NONE.fill(colour::BG_RAISED));
+        let Some(more) = self.widen.take() else {
+            return side;
+        };
+        let now = egui::PanelState::load(ui.ctx(), id).map_or(SIDE, |s| s.size().x);
+        let wanted = (now + more).min(most);
+        if wanted <= now + 1.0 {
+            return side;
+        }
+        // With no width kept, the panel takes its default.
+        ui.ctx().data_mut(|d| d.remove::<egui::PanelState>(id));
+        side.default_size(wanted)
     }
 
     /// Opens the editor again on a lineup whose save didn't go through, if
@@ -1209,6 +1322,16 @@ impl View {
         }
         if self.main.is_none() {
             self.main.clone_from(&atlas.main);
+        }
+        // Pasted lineups whose clips are cut now, or that are gone, are
+        // waited on no longer.
+        self.cutting.retain(|id| {
+            atlas.lineups.iter().any(|l| {
+                l.id.as_ref() == Some(id) && l.clip.as_ref().is_some_and(|c| c.file.is_none())
+            })
+        });
+        if self.cutting.is_empty() {
+            self.polled = None;
         }
     }
 
@@ -1505,8 +1628,11 @@ mod tests {
         }
     }
 
-    /// A saved lineup opens with its clip's fields filled in as typed, and
-    /// goes back without the notes box's blank lines or an empty clip.
+    /// A saved lineup opens with its clip's fields filled in as typed and
+    /// its cut clip to show, fetching nothing, and goes back without the
+    /// notes box's blank lines. An untouched clip goes back as nothing,
+    /// which the backend keeps without cutting it again, a changed one goes
+    /// back whole, and one taken off goes back with no source.
     #[test]
     fn a_saved_lineup_round_trips_through_the_editor() {
         let saved = Lineup {
@@ -1527,12 +1653,27 @@ mod tests {
         };
         let mut draft = Draft::of(&saved);
         assert_eq!((draft.from.as_str(), draft.to.as_str()), ("1:10", "1:17.5"));
-        assert_eq!(draft.clip().get("volume").unwrap(), 60.0);
+        assert_eq!(draft.cut, Some(("C:/clip.mp4".to_owned(), 7.5)));
+        assert!(!draft.measure.wanted, "its source is fetched unasked");
+        assert!(
+            draft.clip().is_null(),
+            "an untouched clip is sent to be cut"
+        );
+        draft.volume = 80.0;
+        assert_eq!(draft.clip().get("volume").unwrap(), 80.0);
         draft.notes = "  \n".to_owned();
         assert_eq!(draft.sent().notes, None);
         assert_eq!(draft.sent().clip, None);
+        assert!(draft.same_source());
         draft.source.clear();
-        assert!(draft.clip().is_null());
+        assert_eq!(draft.clip(), serde_json::json!({ "source": "" }));
+        assert!(Draft::new("Ascent", None).clip().is_null());
+        // One pasted and never cut is sent as it is, to be cut.
+        let uncut = Lineup {
+            clip: saved.clip.clone().map(|c| Clip { file: None, ..c }),
+            ..saved
+        };
+        assert!(!Draft::of(&uncut).clip().is_null());
     }
 
     /// A lineup nobody named is named for its ability and site, and it can

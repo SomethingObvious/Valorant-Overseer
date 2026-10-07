@@ -309,6 +309,12 @@ class LiveMatch:
             _OWN_PARTY.update(id=own, at=time.time(), members=members)
         return own, members
 
+    def valorant_open(self, presences: list[Any]) -> bool:
+        """Return whether VALORANT itself is running, by your own presence in it."""
+        return any(
+            p.get("puuid") == self.self_puuid and p.get("product") == "valorant" for p in presences
+        )
+
     def party_members(self, presences: list[Any]) -> list[Any]:
         """Return the members of your party, from your friends' presences."""
 
@@ -849,11 +855,14 @@ class LiveMatch:
                 _log(f"top up failed for {puuid[:8]}: {type(e).__name__}: {e}")
                 return
             kd, hs, _, _, intel = self.kd_hs(puuid, count=5)
+            before = (entry.get("kd"), entry.get("hs"), entry.get("intel"))
             if kd is not None:
                 entry["kd"], entry["hs"] = kd, hs
                 entry["intel"] = intel
             entry["kd_full"] = True
-            refresh.soon()
+            # Only a top up that changed something is worth a new board.
+            if (entry.get("kd"), entry.get("hs"), entry.get("intel")) != before:
+                refresh.soon()
 
         def _run() -> None:
             try:
@@ -872,6 +881,17 @@ class LiveMatch:
 
         if state == "MENUS":
             _LAST_BOARD["board"] = None
+            if not self.valorant_open(presences):
+                # Signed in to the Riot client with VALORANT closed or still
+                # starting, where the lobby would be you alone.
+                return {
+                    "state": "MENUS",
+                    "stateLabel": STATES["MENUS"],
+                    "source": "local",
+                    "waiting": "game",
+                    "players": [],
+                    "teams": {},
+                }
 
             board = dict(self.build_lobby(presences))
             board["queue"] = self.queue_status()
@@ -1663,6 +1683,12 @@ def finalize(
 
 
 def _self_check() -> None:
+    # VALORANT is open when your own presence is in it, not just the client.
+    lm = LiveMatch.__new__(LiveMatch)
+    lm.self_puuid = "me"
+    check(lm.valorant_open([{"puuid": "me", "product": "valorant"}]))
+    check(not lm.valorant_open([{"puuid": "me", "product": "keystone"}]))
+    check(not lm.valorant_open([{"puuid": "friend", "product": "valorant"}]))
 
     # Sides. Agent select is the case that matters: it is what you pick an
     # agent for, and no round has been played, so the starting side is the

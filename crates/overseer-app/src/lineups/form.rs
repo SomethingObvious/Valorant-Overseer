@@ -462,7 +462,8 @@ fn clip(
 }
 
 /// The video, once there is a file of it to play, or else what is still
-/// being done to get one, playing the part kept.
+/// being done to get one, playing the part kept. Before Load Video, a
+/// saved lineup shows its clip as it was cut.
 fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
     let Some(file) = draft.measure.file.as_deref() else {
         if draft.measure.asking {
@@ -475,6 +476,19 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
             );
         } else if let Some(why) = draft.measure.failed.as_deref() {
             notice(ui, why, colour::WARN);
+        } else if let Some((cut, runs)) = draft.cut.as_ref().filter(|_| draft.same_source()) {
+            // Its volume is in it already, so it plays as it is.
+            let prefs = Prefs {
+                autoplay: false,
+                size: prefs.size * 0.6,
+                ..prefs
+            };
+            player::of(slot, cut, 0.0, prefs).show(ui, (0.0, *runs), 100.0, CUTTING_ROOM);
+            words(
+                ui,
+                "The clip as it was saved. Load Video to trim it again.",
+                colour::TEXT_FAINT,
+            );
         }
         return;
     };
@@ -493,9 +507,10 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
     player.show(ui, span, 100.0, CUTTING_ROOM);
 }
 
-/// The trim bar, and the video following a handle while it is dragged: a
-/// strip frame straight away, then the exact frame once it is let go. The
-/// strip is decoded for the stretch the bar shows whenever nothing is held.
+/// The trim bar, and the video following a handle while it is dragged, then
+/// on the exact frame once it is let go. Windows' engine seeks as the handle
+/// moves. When ffmpeg plays it instead, a strip of small frames is decoded
+/// for the stretch the bar shows whenever nothing is held.
 fn scrub(ui: &mut Ui, draft: &mut Draft, slot: &mut Option<Player>) {
     let held = draft.measure.held.is_some();
     let dragged = trim(ui, draft, slot.as_ref().and_then(Player::playhead));
@@ -550,10 +565,6 @@ fn missing(ui: &mut Ui, tools: Tools, link: bool) {
         (
             !tools.ffmpeg,
             "ffmpeg isn't installed, so a clip can't be watched or cut. Install it with: winget install Gyan.FFmpeg",
-        ),
-        (
-            !tools.ffplay,
-            "ffplay isn't installed, so clips play without sound. It comes with ffmpeg.",
         ),
     ] {
         if needed {

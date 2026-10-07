@@ -176,23 +176,17 @@ impl Overseer {
 
     /// The overlay's window, while it is up.
     pub(super) fn overlay(&mut self, ctx: &egui::Context, now: f64) {
-        // Woken when a peek or the match's first seconds run out, so it goes
-        // away on time with nothing else happening.
-        let ends = [self.shown.peek_until, self.shown.auto_until];
-        if let Some(next) = ends
-            .into_iter()
-            .flatten()
-            .filter(|t| *t > now)
-            .reduce(f64::min)
-        {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(next - now));
+        // Woken when a peek runs out, so it goes away on time with nothing
+        // else happening.
+        if let Some(until) = self.shown.peek_until.filter(|t| *t > now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(until - now));
         }
         if !self.overlay_up(now) {
-            self.overlay_drew = None;
             return;
         }
         // Drawn before this window, so a frame where the board changed
-        // reaches both. Nothing in it takes a click.
+        // reaches both. The last height it drew is kept between showings,
+        // so a bottom corner is usually placed right the first time.
         let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
         let mut drew = last;
         let mut hidden = false;
@@ -202,6 +196,9 @@ impl Overseer {
                 (drew, hidden) = this.overlay_view(ui);
             });
         }
+        // A click on it, the hide button's included, would otherwise take
+        // the focus from the game.
+        overseer_native::never_activate(overlay::TITLE);
         if hidden {
             self.hide_overlay();
             ctx.request_repaint();

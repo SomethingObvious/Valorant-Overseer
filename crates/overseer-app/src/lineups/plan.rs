@@ -96,27 +96,15 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         {
             click(atlas, view, square, at);
         }
-        if matches!(view.mode, Mode::Browse) {
-            choose(ui, atlas, view);
-        }
         // Every lineup under the pointer, one under another, when several
         // share a spot.
         let under_pointer = response
             .hover_pos()
             .map(|at| under(atlas, view, square, at));
         if matches!(view.mode, Mode::Browse)
-            && view.choosing.is_none()
             && let Some(found) = under_pointer.filter(|f| !f.is_empty())
         {
-            let _shown = response.clone().on_hover_ui_at_pointer(|ui| {
-                for (index, lineup) in found.iter().enumerate() {
-                    if index > 0 {
-                        ui.add_space(space::SM);
-                        ui.separator();
-                    }
-                    note(ui, atlas, lineup);
-                }
-            });
+            notes(&response, atlas, &found);
         }
     }
 }
@@ -1646,55 +1634,26 @@ fn under<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Vec<&'a
     found.into_iter().map(|(_, l)| l).collect()
 }
 
-/// The list a click on stacked lineups opens, beside the click: one row
-/// each, and picking one shows it. A click anywhere else or Escape closes it.
-fn choose(ui: &Ui, atlas: &Atlas, view: &mut View) {
-    let Some((at, ids, opened)) = view.choosing.clone() else {
-        return;
-    };
-    let pass = ui.ctx().cumulative_pass_nr();
-    if opened == 0
-        && let Some(choice) = &mut view.choosing
-    {
-        choice.2 = pass;
-    }
-    let main = view.main.clone();
-    let mut picked = None;
-    let shown = egui::Area::new(egui::Id::new("lineup-stack"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(at + vec2(12.0, 12.0))
-        .constrain(true)
-        .show(ui.ctx(), |ui| {
-            controls::menu_card().show(ui, |ui| {
-                ui.set_width(300.0);
-                let _heading = caps_text(
-                    ui.painter(),
-                    ui.cursor().min + vec2(space::SM, space::SM),
-                    Align2::LEFT_TOP,
-                    "Lineups on this spot",
-                    Face::Display.at(size::MICRO),
-                    colour::TEXT_DIM,
-                );
-                ui.add_space(space::XL);
-                for id in &ids {
-                    let Some(lineup) = atlas.lineups.iter().find(|l| l.id.as_ref() == Some(id))
-                    else {
-                        continue;
-                    };
-                    let on = view.selected.as_ref() == Some(id);
-                    if super::side::row(ui, atlas, lineup, (on, main.as_deref())).clicked() {
-                        picked = Some(id.clone());
-                    }
-                }
-            });
-        });
-    let away = opened != 0 && opened != pass && shown.response.clicked_elsewhere();
-    if let Some(id) = picked {
-        view.selected = Some(id);
-        view.choosing = None;
-    } else if away || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        view.choosing = None;
-    }
+/// The notes of every lineup in `found` beside the pointer, one under
+/// another, and when there are several, that a click goes to the next.
+fn notes(response: &Response, atlas: &Atlas, found: &[&Lineup]) {
+    let _shown = response.clone().on_hover_ui_at_pointer(|ui| {
+        for (index, lineup) in found.iter().enumerate() {
+            if index > 0 {
+                ui.add_space(space::SM);
+                ui.separator();
+            }
+            note(ui, atlas, lineup);
+        }
+        if found.len() > 1 {
+            ui.add_space(space::SM);
+            ui.label(overseer_ui::caps(
+                "Click again for the next one",
+                Face::Display.at(size::MICRO),
+                colour::TEXT_DIM,
+            ));
+        }
+    });
 }
 
 /// What shows beside the pointer resting on a lineup's pin: its name, what
@@ -1762,18 +1721,22 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         return;
     }
     view.confirm = false;
-    // One lineup there is picked straight away. Several stacked on one spot
-    // open a list to pick from.
+    // The nearest lineup there is picked, and a click on one of several
+    // stacked on one spot goes to the next of them, round and round in an
+    // order that doesn't depend on where the click was.
     let ids: Vec<String> = under(atlas, view, square, at)
         .iter()
         .filter_map(|l| l.id.clone())
         .collect();
-    view.choosing = None;
-    match ids.as_slice() {
-        [] => view.selected = None,
-        [one] => view.selected = Some(one.clone()),
-        _ => view.choosing = Some((at, ids, 0)),
-    }
+    let mut ring = ids.clone();
+    ring.sort_unstable();
+    view.selected = ring
+        .iter()
+        .position(|id| view.selected.as_ref() == Some(id))
+        .map_or_else(
+            || ids.first().cloned(),
+            |on| ring.get((on + 1) % ring.len()).cloned(),
+        );
 }
 
 #[cfg(test)]
@@ -2046,10 +2009,11 @@ mod tests {
         assert!(apart, "{placed:?}");
     }
 
-    /// A click on two lineups stacked on one spot opens a list of both and
-    /// picks neither, and a click on a lone pin still picks it.
+    /// A click on lineups stacked on one spot picks one of them, and each
+    /// click after goes to the next, round and round. A click on a lone
+    /// pin still picks it.
     #[test]
-    fn a_click_on_stacked_lineups_asks_which() {
+    fn a_click_on_stacked_lineups_goes_round_them() {
         let square = Square::from(Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)));
         let lineup = |id: &str, land: [f32; 2]| Lineup {
             id: Some(id.to_owned()),
@@ -2069,13 +2033,25 @@ mod tests {
             map: Some("Ascent".to_owned()),
             ..View::default()
         };
-        click(&atlas, &mut view, square, pos2(50.0, 50.0));
-        let asked = view.choosing.as_ref().map(|c| c.1.clone());
-        assert_eq!(asked, Some(vec!["a".to_owned(), "b".to_owned()]));
-        assert_eq!(view.selected, None);
+        let mut picks = Vec::new();
+        for _ in 0..3 {
+            click(&atlas, &mut view, square, pos2(50.0, 50.0));
+            picks.extend(view.selected.clone());
+        }
+        let [first, second, third] = picks.as_slice() else {
+            panic!("three clicks picked {picks:?}");
+        };
+        assert!(
+            first != second
+                && [first, second]
+                    .iter()
+                    .all(|p| ["a", "b"].contains(&p.as_str()))
+        );
+        assert_eq!(third, first, "round to the first again");
         click(&atlas, &mut view, square, pos2(90.0, 90.0));
         assert_eq!(view.selected.as_deref(), Some("c"));
-        assert!(view.choosing.is_none());
+        click(&atlas, &mut view, square, pos2(10.0, 90.0));
+        assert_eq!(view.selected, None, "a click on nothing picks nothing");
     }
 
     /// Names on one spot stack upwards with a gap between them, one that

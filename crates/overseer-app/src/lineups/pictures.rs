@@ -1,5 +1,6 @@
-//! The pictures a lineup carries: a few thumbnails in the panel, and one at a
-//! time big in the middle of the window over a dark backdrop.
+//! The pictures a lineup carries: thumbnails in the form, each one whole
+//! down the panel, and one at a time big in the middle of the window over
+//! a dark backdrop.
 
 use egui::{
     Align2, Color32, CursorIcon, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2,
@@ -10,6 +11,9 @@ use super::player::cross;
 
 /// How many thumbnails share a row.
 const ACROSS: usize = 3;
+
+/// The most of the window's height a picture down the panel takes.
+pub(super) const TALLEST: f32 = 0.6;
 
 /// The kinds of file a picture can be added from, by extension.
 pub(super) const KINDS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
@@ -70,6 +74,37 @@ pub(super) fn thumbnails(
         });
     }
     (opened, removed)
+}
+
+/// The width over the height of the picture at `path`, once it is read.
+pub(super) fn aspect(ctx: &egui::Context, path: &str) -> Option<f32> {
+    art::file(ctx, path).map(|t| {
+        let size = t.size_vec2();
+        size.x / size.y.max(1.0)
+    })
+}
+
+/// `pictures` one under another, each as wide as the panel in its own
+/// shape, so a screenshot reads without opening it. Returns the one
+/// clicked.
+pub(super) fn column(ui: &mut Ui, pictures: &[String]) -> Option<usize> {
+    let wide = ui.available_width();
+    let tallest = ui.ctx().content_rect().height() * TALLEST;
+    let mut opened = None;
+    for (index, path) in pictures.iter().enumerate() {
+        let shape = aspect(ui.ctx(), path).unwrap_or(16.0 / 9.0);
+        let high = (wide / shape).min(tallest);
+        let (row, response) = ui.allocate_exact_size(vec2(wide, high), Sense::click());
+        let rect = Rect::from_center_size(row.center(), vec2(high * shape, high));
+        let response = response.on_hover_cursor(CursorIcon::PointingHand);
+        if ui.is_rect_visible(rect) {
+            tile_picture(ui, rect, path, response.hovered());
+        }
+        if response.clicked() {
+            opened = Some(index);
+        }
+    }
+    opened
 }
 
 /// One thumbnail in `rect`, or a word saying the file is gone.

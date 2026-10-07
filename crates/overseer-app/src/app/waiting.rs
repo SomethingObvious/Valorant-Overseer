@@ -14,9 +14,12 @@ use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 const STEPS: [&str; 4] = ["Backend", "Riot Client", "VALORANT", "Match"];
 
 /// How often the step being waited on is redrawn as it moves, in seconds.
-/// This screen only shows while VALORANT is closed, starting or loading a
-/// match, so the frames it costs are never taken from a game.
 const TICK: f64 = 1.0 / 30.0;
+
+/// How long the step being waited on moves for, in seconds. Each frame
+/// redraws the whole window, and with VALORANT closed this screen can sit
+/// there all day beside another game.
+const LIVELY: f64 = 10.0;
 
 /// How long the light takes to run along the line into the step being
 /// waited on, and its pip to pulse once, in seconds.
@@ -135,37 +138,54 @@ pub(super) fn empty(
         stage.step as f32,
         fade * 2.0,
     );
-    let moving = fade > 0.0 && !stage.failed;
+    let moving = fade > 0.0 && !stage.failed && since < LIVELY;
     chain(
         &painter,
         plate,
         (lit, stage.step, stage.failed),
         moving.then_some(since),
     );
-    // The clock only needs its next second, unless something is moving.
+    // The clock only needs its next second, or its next minute after the
+    // first, unless something is moving.
     let fading = fade > 0.0 && since < f64::from(fade);
+    let step = if since < 60.0 { 1.0 } else { 60.0 };
     let next = if moving || fading {
         TICK
     } else {
         // Never under half a second, so a frame that lands just before the
-        // second turns over doesn't ask for another straight away.
-        (1.0 - since.fract()).max(0.5)
+        // clock turns over doesn't ask for another straight away.
+        (step - since.rem_euclid(step)).max(0.5)
     };
     ui.ctx()
         .request_repaint_after(Duration::from_secs_f64(next));
 }
 
-/// How long the screen has been saying `title`, in seconds.
+/// How long the screen has been saying `title`, in seconds. It starts
+/// again when the title changes, and when the screen comes back after a
+/// pass that drew something else, so a wait doesn't go on from the last
+/// time the same words showed, hours ago.
 fn since(ui: &Ui, title: &str) -> f64 {
     let now = ui.input(|i| i.time);
+    let pass = ui.ctx().cumulative_pass_nr();
     let key = egui::Id::new(title);
     ui.ctx().data_mut(|d| {
-        let kept = d.get_temp_mut_or_insert_with(egui::Id::new("empty-since"), || (key, now));
-        if kept.0 != key {
-            *kept = (key, now);
+        let kept = d.get_temp_mut_or_insert_with(egui::Id::new("empty-since"), || (key, now, pass));
+        if kept.0 != key || pass > kept.2.saturating_add(1) {
+            *kept = (key, now, pass);
         }
+        kept.2 = pass;
         now - kept.1
     })
+}
+
+/// The clock for a wait `seconds` long: to the second for its first
+/// minute, and in whole minutes after that.
+fn clock(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("0:{seconds:02}")
+    } else {
+        format!("{} min", seconds.div_euclid(60))
+    }
 }
 
 /// The words on the plate: the headline, the sentence already laid out to
@@ -197,7 +217,7 @@ fn words(
         painter,
         pos2(plate.right() - space::XL, line),
         Align2::RIGHT_CENTER,
-        &format!("{}:{:02}", seconds.div_euclid(60), seconds % 60),
+        &clock(seconds),
         Face::Display.at(size::MICRO),
         colour::TEXT_FAINT,
     );
@@ -349,7 +369,36 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, Status, stage};
+    use super::{Board, Status, clock, since, stage};
+
+    /// The wait starts again with new words, and when the screen comes
+    /// back after a pass without it. Its clock counts seconds for a
+    /// minute, then minutes.
+    #[test]
+    fn a_wait_starts_again_when_the_screen_comes_back() {
+        let ctx = egui::Context::default();
+        let pass = |at: f64, title: Option<&str>| {
+            let input = egui::RawInput {
+                time: Some(at),
+                ..egui::RawInput::default()
+            };
+            let mut waited = None;
+            let mut drawn = ctx.run_ui(input, |ui| waited = title.map(|t| since(ui, t)));
+            drawn.textures_delta.clear();
+            waited
+        };
+        assert_eq!(pass(100.0, Some("Waiting")), Some(0.0));
+        assert_eq!(pass(105.0, Some("Waiting")), Some(5.0));
+        assert_eq!(pass(106.0, None), None);
+        assert_eq!(
+            pass(107.0, Some("Waiting")),
+            Some(0.0),
+            "back after a pass away"
+        );
+        assert_eq!(pass(109.0, Some("Loading")), Some(0.0), "new words");
+        assert_eq!(clock(42), "0:42");
+        assert_eq!(clock(200), "3 min");
+    }
 
     /// Each step lights only once the backend says it has got there, and
     /// the last is the match loading, the one moment it can light.

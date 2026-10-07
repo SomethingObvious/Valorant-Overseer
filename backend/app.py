@@ -106,7 +106,11 @@ def _waiting_for(e: Exception) -> str | None:
     if not LocalAuth.available() or isinstance(e, (ClientNotReadyError, FileNotFoundError)):
         return "riot"
     if isinstance(e, GameNotStartedError):
-        return "game"
+        now = time.time()
+        began = _GAME_WAIT.setdefault("since", now)
+        # VALORANT names its region within a minute of starting, so a log
+        # that still hasn't after two is something waiting won't fix.
+        return "game" if now - began < _GAME_PATIENCE else None
     return None
 
 
@@ -125,6 +129,9 @@ def _client_notice() -> dict[str, Any]:
 
 
 _LAST_GOOD: dict[str, Any] = {"board": None, "at": 0.0, "notReady": False}
+# When the client was first found up with VALORANT's region still unknown.
+_GAME_WAIT: dict[str, float] = {}
+_GAME_PATIENCE = 120.0
 _HOLD_SECS = 12
 
 _BUILD_LOCK = threading.Lock()
@@ -174,6 +181,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 board["appVersion"] = APP_VERSION
                 _LAST_GOOD["board"], _LAST_GOOD["at"] = board, time.time()
                 _LAST_GOOD["notReady"] = False
+                _GAME_WAIT.clear()
             except Exception as e:
                 waiting = _waiting_for(e)
                 if waiting:
@@ -186,7 +194,9 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 if _LAST_GOOD["board"] and time.time() - _LAST_GOOD["at"] < _HOLD_SECS:
                     return _LAST_GOOD["board"]
                 notice = _client_notice()
-                if client.source_pref == "local":
+                # Under the default auto as much as local, so the window can
+                # say what it waits on.
+                if client.source_pref != "demo":
                     return {
                         "state": "OFFLINE",
                         "stateLabel": "Offline",
@@ -414,24 +424,30 @@ def _start_ws_bridge() -> int:
 def _watch_state() -> None:
     """Wake the board loop the moment VALORANT changes state.
 
-    That is the menus, agent select or a match, noticed now rather than at the
-    loop's next tick. Your own presence comes from the client on this PC, so
-    asking each second sends nothing out.
+    That is the menus, agent select or a match, noticed within two seconds
+    rather than at the loop's next tick. Your own presence comes from the
+    client on this PC, so asking sends nothing out.
     """
     lm = None
     last = None
+    failing = None
     while True:
-        time.sleep(1.0)
+        # Every two seconds, since each ask returns every friend's presence.
+        time.sleep(2.0)
         if not _live_enabled():
             continue
         try:
             lm = lm or live_match.LiveMatch(LocalAuth())
             state = lm.game_state(chat_presences(lm.auth))
-        except Exception:
+        except Exception as e:
             # The client closed or restarted, with a new lockfile to read.
+            if repr(e) != failing:
+                failing = repr(e)
+                LOG.warning("watching VALORANT's state failed: %r", e)
             lm, last = None, None
             time.sleep(4.0)
             continue
+        failing = None
         if last is not None and state != last:
             refresh.soon()
         last = state
@@ -528,6 +544,27 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
         check(_waiting_for(ValueError()) is None)
     with mock.patch.object(LocalAuth, "available", return_value=False):
         check(_waiting_for(ValueError()) == "riot")
+    # VALORANT that never names its region stops being one that is starting.
+    _GAME_WAIT.clear()
+    with (
+        mock.patch.object(LocalAuth, "available", return_value=True),
+        mock.patch(f"{__name__}.time.time", side_effect=[1000.0, 1000.0 + _GAME_PATIENCE]),
+    ):
+        check(_waiting_for(GameNotStartedError()) == "game")
+        check(_waiting_for(GameNotStartedError()) is None)
+    _GAME_WAIT.clear()
+    # Under the default auto, an empty board still says what it waits on.
+    _auth = mock.MagicMock()
+    _auth.available.return_value = True
+    with (
+        mock.patch.object(client, "source_pref", "auto"),
+        mock.patch(f"{__name__}.LocalAuth", _auth),
+        mock.patch.object(live_match, "LiveMatch", side_effect=GameNotStartedError("soon")),
+    ):
+        _LAST_GOOD["board"] = None
+        _waited = build_live()
+    check(_waited["state"] == "OFFLINE" and _waited["waiting"] == "game", _waited)
+    _GAME_WAIT.clear()
 
     print(
         "app self-check OK (bridge requests answer in demo mode, cached boards keep their tags, "

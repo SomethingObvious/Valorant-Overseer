@@ -14,6 +14,7 @@ the sites it reads, and this build never updates anything itself.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ import unicodedata
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import overseerlog
@@ -34,6 +35,9 @@ import valapi
 from common.check import check
 from common.jsonstore import data_path, read_json, write_atomic
 from common.png import save_png
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 LOG = overseerlog.get_logger("lineups")
 
@@ -520,7 +524,7 @@ def _times(clip: dict[str, Any]) -> tuple[float, float, int]:
     raw = clip.get("volume")
     try:
         volume = 100 if raw is None else round(float(raw))
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, OverflowError) as e:
         msg = "The volume is a percentage, like 60."
         raise LineupError(msg) from e
     return start, end, max(0, min(200, volume))
@@ -555,8 +559,12 @@ def cut(clip: dict[str, Any], out: Path) -> None:
         "veryfast",
         "-crf",
         "17",
+        # 8-bit 4:2:0, since a 10-bit or 4:4:4 source cut as it is plays in
+        # neither Windows' engine nor a GPU's decoder.
+        "-pix_fmt",
+        "yuv420p",
         # The window shows 30 frames a second, so a 60 fps clip only doubled
-        # what it decoded.
+        # what it decoded. Slowed to a quarter, it shows 7.5 a second.
         "-fpsmax",
         "30",
         *sound,
@@ -570,11 +578,26 @@ def cut(clip: dict[str, Any], out: Path) -> None:
         msg = f"ffmpeg couldn't cut the clip: {said[-1] if said else 'no reason given'}"
         raise LineupError(msg)
     try:
-        part.replace(out)
+        _patiently(lambda: part.replace(out))
     except PermissionError as e:
         part.unlink(missing_ok=True)
         msg = "Couldn't replace the old clip, as another program has it open. Close it, then save."
         raise LineupError(msg) from e
+
+
+def _patiently(action: Callable[[], object]) -> None:
+    """Do something to a file, waiting a moment while a player lets go of it.
+
+    Windows' media engine closes a clip a little after it is told to stop.
+    """
+    for wait in (0.2, 0.4, 0.8):
+        try:
+            action()
+        except PermissionError:
+            time.sleep(wait)
+        else:
+            return
+    action()
 
 
 # The pictures a lineup can carry, and what they may start as. Each is kept
@@ -683,18 +706,23 @@ def save(raw: Any, clip: Any = None) -> dict[str, Any]:
     path = folder / f"{lineup_id}.json"
     kept = read_json(str(path), None) if path.exists() else None
     old_clip = (kept or {}).get("clip") if isinstance(kept, dict) else None
+    video = path.with_suffix(".mp4")
     if isinstance(clip, dict) and str(clip.get("source") or "").strip():
         start, end, volume = _times(clip)
         wanted = {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
-        video = path.with_suffix(".mp4")
         if wanted != old_clip or not video.exists():
             folder.mkdir(parents=True, exist_ok=True)
             cut(wanted, video)
-            # The whole video was only for trimming. The clip is cut now.
-            (ROOT / ".cache" / f"{_key(str(wanted['source']))}-watch-hd.mp4").unlink(
-                missing_ok=True
-            )
+            # The whole video was only for trimming. The clip is cut now. A
+            # cut from it still running keeps it, and a day's pruning takes it.
+            with contextlib.suppress(PermissionError):
+                (ROOT / ".cache" / f"{_key(str(wanted['source']))}-watch-hd.mp4").unlink(
+                    missing_ok=True
+                )
         lineup["clip"] = wanted
+    elif isinstance(clip, dict):
+        # A clip with no source is one taken off, its file with it.
+        _patiently(lambda: video.unlink(missing_ok=True))
     elif old_clip:
         lineup["clip"] = old_clip
     old_pictures = (kept or {}).get("images") if isinstance(kept, dict) else None
@@ -714,7 +742,7 @@ def delete(map_name: Any, lineup_id: Any) -> dict[str, Any]:
         msg = "That lineup doesn't exist."
         raise LineupError(msg)
     try:
-        (folder / f"{name}.mp4").unlink(missing_ok=True)
+        _patiently(lambda: (folder / f"{name}.mp4").unlink(missing_ok=True))
     except PermissionError as e:
         msg = "Couldn't delete the clip, as another program has it open. Close it and try again."
         raise LineupError(msg) from e
@@ -728,7 +756,8 @@ def delete(map_name: Any, lineup_id: Any) -> dict[str, Any]:
 # only letters and 2 to 7, so chat markdown can't eat any of it and a
 # double-click picks the whole thing, and 9 can only be the end, so a code
 # that got cut short says so.
-_CODE = re.compile(r"OVL1([A-Z2-7]+)9", re.IGNORECASE)
+_PREFIX, _END = "OVL1", "9"
+_CODE = re.compile(rf"{_PREFIX}([A-Z2-7]+){_END}", re.IGNORECASE)
 _SHARED = (
     "map",
     "agent",
@@ -762,8 +791,22 @@ _CLIP_SITES = (
 )
 
 
+# Clips for pasted lineups are cut one at a time on a thread of their own,
+# so a code answers at once and its downloads never hold up the window's
+# other requests. A real map's worth is under ten.
+_CUTTER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lineup-cuts")
+_MOST_CUT = 20
+
+
 def _counted(n: int) -> str:
     return f"{n} lineup" if n == 1 else f"{n} lineups"
+
+
+def _pack(lineups: list[Any]) -> str:
+    """Return `lineups` as a code, the way `_unpack` reads one."""
+    text = json.dumps(lineups, separators=(",", ":"), ensure_ascii=False)
+    body = base64.b32encode(zlib.compress(text.encode(), 9)).decode().rstrip("=")
+    return f"{_PREFIX}{body}{_END}"
 
 
 def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
@@ -776,30 +819,35 @@ def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
     wanted = {str(i) for i in ids} if isinstance(ids, list) else set()
     folder = slug(str(map_name or ""))
     out = []
+    left = 0
     for path in sorted(ROOT.glob("*/*.json")):
         if path.stem not in wanted and path.parent.name != folder:
             continue
         lineup = read_json(str(path), None)
-        if not isinstance(lineup, dict):
+        # A map's drawing.json sits beside its lineups, and isn't one.
+        if not isinstance(lineup, dict) or lineup.get("id") != path.stem:
             continue
         kept = {k: lineup[k] for k in _SHARED if lineup.get(k) not in (None, "", [])}
         clip = lineup.get("clip") or {}
-        if str(clip.get("source") or "").startswith(("http://", "https://")):
+        if _clip_site(str(clip.get("source") or "")):
             kept["clip"] = {k: clip[k] for k in ("source", "from", "to", "volume") if k in clip}
+        elif clip:
+            left += 1
         out.append(kept)
     if not out:
         msg = "There are no lineups here to share yet."
         raise LineupError(msg)
-    text = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
-    body = base64.b32encode(zlib.compress(text.encode(), 9)).decode().rstrip("=")
-    code = f"OVL1{body}9"
-    return {
-        "code": code,
-        "said": (
+    code = _pack(out)
+    said = [
+        (
             f"Copied the code for {_counted(len(out))}, {len(code)} characters. "
             "Whoever you send it to copies it and picks Share, then Paste Code."
-        ),
-    }
+        )
+    ]
+    if left:
+        clips = "clip stays" if left == 1 else "clips stay"
+        said.append(f"{left} {clips} out, as they aren't from a video site.")
+    return {"code": code, "said": " ".join(said)}
 
 
 def _unpack(text: str) -> list[Any]:
@@ -810,7 +858,7 @@ def _unpack(text: str) -> list[Any]:
     if not found:
         msg = (
             "That code is cut short. Copy all of it, up to the 9 at the end."
-            if "ovl1" in flat.lower()
+            if _PREFIX.lower() in flat.lower()
             else "There's no lineup code on the clipboard. Copy one first."
         )
         raise LineupError(msg)
@@ -821,7 +869,7 @@ def _unpack(text: str) -> list[Any]:
         raw = unpack.decompress(base64.b32decode(body + "=" * (-len(body) % 8)), _MOST_UNPACKED)
         whole = unpack.eof and not unpack.unconsumed_tail
         shared = json.loads(raw) if whole else None
-    except (ValueError, zlib.error) as e:
+    except (ValueError, zlib.error, RecursionError) as e:
         raise LineupError(damaged) from e
     if not isinstance(shared, list) or len(shared) > _MOST_SHARED:
         raise LineupError(damaged)
@@ -835,45 +883,73 @@ def _same(lineup: dict[str, Any]) -> str:
 
 
 def _clip_site(source: str) -> bool:
-    parsed = urlparse(source)
-    host = (parsed.hostname or "").lower()
+    try:
+        parsed = urlparse(source)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
     return parsed.scheme in ("http", "https") and any(
         host == site or host.endswith(f".{site}") for site in _CLIP_SITES
     )
 
 
-def _arrive(raw: dict[str, Any], clip: dict[str, Any] | None) -> tuple[dict[str, Any] | None, str]:
-    """Save a pasted lineup, then cut its clip, and say what went wrong if anything did."""
-    try:
-        saved = save(raw)
-    except LineupError as e:
-        return None, str(e)
-    if not clip or "from" not in clip or "to" not in clip:
-        return saved, ""
-    try:
-        start, end, volume = _times(clip)
-    except LineupError:
-        return saved, ""
-    wanted = {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
-    try:
-        return save({**raw, "id": saved["id"]}, wanted), ""
-    except LineupError as e:
-        # Kept with the clip's link and times, so Edit then Save cuts it once
-        # the tools are installed or the site lets it.
-        path = _folder(saved["map"]) / f"{saved['id']}.json"
-        stored = read_json(str(path), None)
-        if isinstance(stored, dict):
-            stored["clip"] = wanted
-            write_atomic(str(path), stored, prefix=".lineup-")
-            return _shown(stored, path), str(e)
-        return saved, str(e)
+def _arrival(
+    entry: Any, known: dict[str, str], kits: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Return a pasted entry as a lineup to save and the clip to cut for it.
+
+    It is checked against the game's maps, agents and abilities, and its clip
+    is only kept when it comes from a video site with both its times.
+    """
+    if not isinstance(entry, dict):
+        msg = "That isn't a lineup."
+        raise LineupError(msg)
+    kit = kits.get(str(entry.get("agent") or "").lower())
+    map_name = known.get(str(entry.get("map") or "").lower())
+    if not kit or not map_name:
+        msg = "That lineup is for a map or an agent the game doesn't have."
+        raise LineupError(msg)
+    raw = {k: entry.get(k) for k in _SHARED}
+    raw["map"], raw["agent"] = map_name, kit["name"]
+    ability = str(raw["ability"] or "")
+    raw["ability"] = ability if ability in {ab["name"] for ab in kit["abilities"]} else None
+    raw["title"] = str(raw["title"] or "")[:_LONGEST_TITLE]
+    raw["notes"] = str(raw["notes"] or "")[:_LONGEST_NOTES]
+    clip = entry.get("clip")
+    if not isinstance(clip, dict) or "from" not in clip or "to" not in clip:
+        return raw, None
+    if not _clip_site(str(clip.get("source") or "")):
+        return raw, None
+    start, end, volume = _times(clip)
+    return raw, {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
+
+
+def _cut_later(path: Path, wanted: dict[str, Any]) -> None:
+    """Cut a pasted lineup's clip on the cutter's thread.
+
+    The lineup already keeps the clip's link and times, so one that fails is
+    left for Edit then Save to try again, and one deleted meanwhile is skipped.
+    """
+
+    def run() -> None:
+        if not path.exists():
+            return
+        try:
+            cut(wanted, path.with_suffix(".mp4"))
+        except (LineupError, OSError) as e:
+            LOG.warning("couldn't cut the pasted clip for %s: %s", path.stem, e)
+        if not path.exists():
+            path.with_suffix(".mp4").unlink(missing_ok=True)
+
+    _CUTTER.submit(run)
 
 
 def import_code(text: Any) -> dict[str, Any]:
-    """Save the lineups in a code from `export_code`, cutting each clip from its link.
+    """Save the lineups in a code from `export_code`, and start cutting their clips.
 
-    Each is checked the way the form checks one, against the maps, agents and
-    abilities the game has, and one you already have is left alone.
+    Each is checked the way the form checks one, and one you already have is
+    left alone. It answers once the lineups are saved, and their clips are cut
+    one at a time after, up to `_MOST_CUT` of them.
     """
     shared = _unpack(str(text or ""))
     known = {m["name"].lower(): m["name"] for m in maps()}
@@ -882,34 +958,31 @@ def import_code(text: Any) -> dict[str, Any]:
         msg = "Overseer couldn't load the maps and agents to check that code against. Try again."
         raise LineupError(msg)
     have = {_same(lineup) for lineup in listing()}
-    coming: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-    already = unreadable = 0
+    added: list[dict[str, Any]] = []
+    already = unreadable = cutting = 0
     for entry in shared:
-        kit = kits.get(str(entry.get("agent") or "").lower()) if isinstance(entry, dict) else None
-        map_name = known.get(str(entry.get("map") or "").lower()) if kit else None
-        if not kit or not map_name:
+        try:
+            raw, clip = _arrival(entry, known, kits)
+            if _same(raw) in have:
+                already += 1
+                continue
+            saved = save(raw)
+        except (LineupError, TypeError, ValueError, OverflowError, RecursionError):
             unreadable += 1
             continue
-        raw = {k: entry.get(k) for k in _SHARED}
-        raw["map"], raw["agent"] = map_name, kit["name"]
-        if raw["ability"] not in {ab["name"] for ab in kit["abilities"]}:
-            raw["ability"] = None
-        raw["title"] = str(raw["title"] or "")[:_LONGEST_TITLE]
-        raw["notes"] = str(raw["notes"] or "")[:_LONGEST_NOTES]
-        if _same(raw) in have:
-            already += 1
-            continue
         have.add(_same(raw))
-        clip = entry.get("clip")
-        ok = isinstance(clip, dict) and _clip_site(str(clip.get("source") or ""))
-        coming.append((raw, clip if ok else None))
-    landed = list(_POOL.map(lambda pair: _arrive(*pair), coming))
-    added = [lineup for lineup, _ in landed if lineup]
-    uncut = [why for lineup, why in landed if lineup and why]
-    unreadable += len(landed) - len(added)
+        path = _folder(saved["map"]) / f"{saved['id']}.json"
+        stored = read_json(str(path), None)
+        if clip and cutting < _MOST_CUT and isinstance(stored, dict):
+            stored["clip"] = clip
+            write_atomic(str(path), stored, prefix=".lineup-")
+            _cut_later(path, clip)
+            saved = _shown(stored, path)
+            cutting += 1
+        added.append(saved)
     if not added and not already:
-        refused = next((why for lineup, why in landed if not lineup), "")
-        raise LineupError(refused or "None of the lineups in that code are ones Overseer can read.")
+        msg = "None of the lineups in that code are ones Overseer can read."
+        raise LineupError(msg)
     places = {lineup["map"] for lineup in added}
     if not added:
         said = ["You already have every lineup in that code."]
@@ -921,14 +994,14 @@ def import_code(text: Any) -> dict[str, Any]:
         said.append(f"Left out {already} you already had.")
     if unreadable:
         said.append(f"Left out {unreadable} that couldn't be read.")
-    if uncut:
-        said.append(
-            f"The clips for {len(uncut)} of them couldn't be cut, and editing and saving "
-            f"one tries again. {uncut[0]}"
-        )
+    if cutting == 1:
+        said.append("Its clip is being cut in the background, which takes a few seconds.")
+    elif cutting:
+        said.append(f"Their {cutting} clips are being cut in the background, a few seconds each.")
     return {
         "added": added,
         "map": next(iter(places)) if len(places) == 1 else None,
+        "cutting": cutting,
         "said": " ".join(said),
     }
 
@@ -992,9 +1065,9 @@ def overview() -> dict[str, Any]:
 def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     from unittest import mock
 
-    def code_of(lineups: list[Any]) -> str:
-        packed = zlib.compress(json.dumps(lineups).encode())
-        return f"OVL1{base64.b32encode(packed).decode().rstrip('=')}9"
+    def cut_all() -> None:
+        # The cutter takes one job at a time, so one queued behind them waits.
+        _CUTTER.submit(lambda: None).result()
 
     recording = tmp / "mine.mp4"
     recording.write_bytes(b"x")
@@ -1024,10 +1097,16 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         )
         recorded = {"map": "Ascent", "agent": "Brimstone", "title": "Mine", "stand": [0.5, 0.5]}
         mine = save(recorded, {"source": str(recording), "from": "1", "to": "3"})
+        # A drawing sits beside the lineups and must not go out as one.
+        save_drawing(
+            "Ascent", [{"kind": "circle", "colour": "#ff4655", "a": [0.5, 0.5], "b": [0.6, 0.5]}]
+        )
 
         # The code has no ids or pictures, and a clip from a file on this PC
         # stays out. Pasted with the message around it and wrapped, it reads.
-        code = export_code("Ascent")["code"]
+        made = export_code("Ascent")
+        code = made["code"]
+        check("for 2 lineups" in made["said"] and "1 clip stays out" in made["said"], made)
         shared = _unpack(f"here you go\n{code[:40]}\n{code[40:]} have fun")
         check([s.get("clip", {}).get("source") for s in shared] == [linked["source"], None])
         check(not any("id" in s or "images" in s for s in shared), shared)
@@ -1045,14 +1124,23 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         delete("Ascent", first["id"])
         runs.clear()
         back = import_code(code)
-        check(back["said"] == "Added 1 lineup to Ascent. Left out 1 you already had.", back)
+        check(
+            back["said"] == "Added 1 lineup to Ascent. Left out 1 you already had. "
+            "Its clip is being cut in the background, which takes a few seconds.",
+            back,
+        )
         (arrived,) = back["added"]
-        check(arrived["id"] != first["id"] and Path(arrived["clip"]["file"]).exists(), arrived)
+        # It answers before the clip is cut, with the clip's link to cut from.
+        check(arrived["id"] != first["id"] and back["cutting"] == 1, back)
+        cut_all()
+        cut_now = next(item for item in listing() if item["id"] == arrived["id"])
+        check(Path(cut_now["clip"]["file"]).exists(), cut_now)
         # Cut from the part of the video the first save downloaded.
         check([Path(r[0]).stem for r in runs] == ["ffmpeg"], runs)
 
         # An id, a picture, a local clip or one from a site nobody posts
-        # lineups on all stay out, and nothing is fetched for them.
+        # lineups on all stay out, and nothing is fetched for them. Odd values
+        # count as unreadable rather than stopping the rest.
         hostile = [
             {
                 "map": "ascent",
@@ -1071,21 +1159,46 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
                 "stand": [0.2, 0.2],
                 "clip": {"source": "http://127.0.0.1:8080/v", "from": 1, "to": 2},
             },
+            {
+                "map": "Ascent",
+                "agent": "Brimstone",
+                "title": "Odd",
+                "ability": [],
+                "stand": [0.3, 0.3],
+            },
+            {
+                "map": "Ascent",
+                "agent": "Brimstone",
+                "title": "Loud",
+                "stand": [0.4, 0.4],
+                "clip": {"source": "https://localhost/v", "from": 1, "to": 2, "volume": 1e400},
+            },
+            {
+                "map": "Ascent",
+                "agent": "Brimstone",
+                "title": "Bad link",
+                "stand": [0.6, 0.6],
+                "clip": {"source": "https://localhost:[/v", "from": 1, "to": 2},
+            },
+            "not a lineup",
         ]
         runs.clear()
-        took = import_code(code_of(hostile))
-        check(runs == [] and "Left out 1 that couldn't be read." in took["said"], took)
-        long_one, router = took["added"]
+        took = import_code(_pack(hostile))
+        cut_all()
+        check(runs == [] and "Left out 3 that couldn't be read." in took["said"], took)
+        long_one, router, odd, bad_link = took["added"]
         check(len(long_one["title"]) == _LONGEST_TITLE and long_one["images"] == [], long_one)
         check(long_one["id"] != mine["id"] and not long_one.get("clip") and not router.get("clip"))
+        check(odd["ability"] is None and not bad_link.get("clip"), (odd, bad_link))
         check(Path(mine["clip"]["file"]).exists())
         bomb = zlib.compress(b"[" + b"0," * 5_000_000 + b"0]")
-        try:
-            _unpack(f"OVL1{base64.b32encode(bomb).decode().rstrip('=')}9")
-        except LineupError:
-            pass
-        else:
-            msg = "a code that unpacks to 10 MB was read"
+        deep = zlib.compress(b"[" * 3000 + b"]" * 3000)
+        for hostile_code in (bomb, deep):
+            try:
+                _unpack(f"{_PREFIX}{base64.b32encode(hostile_code).decode().rstrip('=')}{_END}")
+            except LineupError:
+                continue
+            msg = "a code that unpacks to 10 MB, or nests 3000 deep, was read"
             raise AssertionError(msg)
 
     # Without the tools the lineup still comes in, keeping the clip's link and
@@ -1100,9 +1213,26 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         mock.patch(f"{__name__}._CLIP_SITES", ("localhost",)),
     ):
         late = import_code(code)
+        cut_all()
     (waiting,) = late["added"]
-    check("couldn't be cut" in late["said"] and "file" not in waiting["clip"], late)
-    check(waiting["clip"]["source"] == linked["source"] and waiting["clip"]["to"] == 9.0)
+    stored = next(item for item in listing() if item["id"] == waiting["id"])
+    check("being cut" in late["said"] and "file" not in stored["clip"], stored)
+    check(stored["clip"]["source"] == linked["source"] and stored["clip"]["to"] == 9.0)
+
+    # A clip with no source takes the clip off, file and all, where no clip
+    # at all leaves it be.
+    with (
+        mock.patch(f"{__name__}._run", side_effect=fake_run),
+        mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
+    ):
+        clipped = save(
+            {"map": "Ascent", "agent": "Brimstone", "title": "Takes Off", "stand": [0.7, 0.7]},
+            {"source": "https://localhost/v?id=9", "from": "1", "to": "2"},
+        )
+    video = Path(clipped["clip"]["file"])
+    check(save(clipped)["clip"]["file"] == str(video) and video.exists())
+    gone = save(clipped, {"source": ""})
+    check("clip" not in gone and not video.exists(), gone)
     for lineup in listing():
         delete(lineup["map"], lineup["id"])
 

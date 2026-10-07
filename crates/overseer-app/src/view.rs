@@ -80,11 +80,11 @@ pub(crate) fn settings(
                 ui,
                 "Minimize in Matches",
                 "Minimize this window when agent select ends, so closing a browser takes you back to the game",
-                settings.step_aside,
+                settings.minimize_in_matches,
                 false,
                 still,
             ) {
-                settings.step_aside = !settings.step_aside;
+                settings.minimize_in_matches = !settings.minimize_in_matches;
                 changed = true;
             }
 
@@ -262,12 +262,12 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
     section(
         ui,
         "Overlay",
-        "A small window over the game that shows the enemy team. It never takes clicks.",
+        "A small window over the game that shows the enemy team. It never takes the focus from the game.",
     );
     if switch(
         ui,
         "Overlay in Agent Select",
-        "Show it in agent select and the first 30 seconds of a match",
+        "Show it through agent select, until the match loads",
         settings.overlay.auto,
         false,
         still,

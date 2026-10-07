@@ -334,11 +334,13 @@ fn off_line(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 impl Walls {
-    /// Where a turret put down at `at` stands: the middle of its pixel, or of
-    /// the nearest one it can see from when `at` is in a wall, since a wall a
-    /// few pixels thick is easy to drop it on, and from inside one it would
-    /// see only a sliver along the inside of the wall.
-    fn standing(&self, at: Pos2) -> Pos2 {
+    /// Where a turret put down at `at` and aimed at `aim` stands: the middle
+    /// of its pixel, or of the nearest one it can see from when `at` is in a
+    /// wall, since a wall a few pixels thick is easy to drop it on, and from
+    /// inside one it would see only a sliver along the inside of the wall.
+    /// The side of the wall it is aimed at comes first, so it looks out of
+    /// the wall and not back into it.
+    fn standing(&self, at: Pos2, aim: Pos2) -> Pos2 {
         let [wide, tall] = self.size;
         let (x, y) = (at.x.floor() as i64, at.y.floor() as i64);
         let open = |col: i64, row: i64| {
@@ -349,13 +351,17 @@ impl Walls {
                     .and_then(|i| self.blocked.get(i))
                     .is_some_and(|b| !*b)
         };
-        let mut best: Option<(f32, Pos2)> = None;
+        if open(x, y) {
+            return pos2(x as f32 + 0.5, y as f32 + 0.5);
+        }
+        let way = aim - at;
+        let mut best: Option<((bool, f32), Pos2)> = None;
         for row in y - STEP_OUT..=y + STEP_OUT {
             for col in x - STEP_OUT..=x + STEP_OUT {
                 let middle = pos2(col as f32 + 0.5, row as f32 + 0.5);
-                let gap = middle.distance_sq(at);
-                if open(col, row) && best.is_none_or(|(nearest, _)| gap < nearest) {
-                    best = Some((gap, middle));
+                let rank = ((middle - at).dot(way) <= 0.0, middle.distance_sq(at));
+                if open(col, row) && best.is_none_or(|(nearest, _)| rank < nearest) {
+                    best = Some((rank, middle));
                 }
             }
         }
@@ -470,7 +476,7 @@ pub(super) fn cone(
         let [x, y] = shapes::turned([p.x / wide, p.y / tall], square.turn % 4);
         square.min + vec2(x, y) * square.width()
     };
-    let from = walls.standing(to_image(at));
+    let from = walls.standing(to_image(at), to_image(aim));
     let towards = (to_image(aim) - from).angle();
     let half = degrees.to_radians() / 2.0;
     let far = wide.hypot(tall) * 2.0;
@@ -568,7 +574,8 @@ mod tests {
 
     /// A turret dropped inside a wall four pixels thick stands on the floor
     /// beside it and sees along it, where from inside it saw a sliver of the
-    /// wall's own inside. One put down on the floor stands where it was put.
+    /// wall's own inside, and on the side it is aimed at, even past the
+    /// wall's middle. One put down on the floor stands where it was put.
     #[test]
     fn a_turret_dropped_in_a_thin_wall_stands_beside_it() {
         let mut image = ColorImage::new([64, 64], vec![egui::Color32::from_gray(118); 64 * 64]);
@@ -580,9 +587,16 @@ mod tests {
             }
         }
         let walls = walls(&image);
-        assert_eq!(walls.standing(pos2(10.2, 10.9)), pos2(10.5, 10.5));
-        let stands = walls.standing(pos2(31.2, 32.5));
-        assert_eq!(stands, pos2(29.5, 32.5));
+        let up = pos2(31.2, 0.0);
+        assert_eq!(walls.standing(pos2(10.2, 10.9), up), pos2(10.5, 10.5));
+        // Aimed along the wall, it stands beside it on the near side, a pixel
+        // on towards where it looks.
+        let stands = walls.standing(pos2(31.2, 32.5), up);
+        assert_eq!(stands, pos2(29.5, 31.5));
+        let east = walls.standing(pos2(31.2, 32.5), pos2(60.0, 32.5));
+        assert_eq!(east, pos2(34.5, 32.5));
+        let west = walls.standing(pos2(33.4, 32.5), pos2(2.0, 32.5));
+        assert_eq!(west, pos2(29.5, 32.5));
         let up = -std::f32::consts::FRAC_PI_2;
         let rim = walls.seen(stands, (up - 0.5, up + 0.5), 500.0);
         assert!(

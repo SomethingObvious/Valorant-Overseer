@@ -2,7 +2,7 @@
 //! the frame the lineup form and the drawing tools sit in.
 
 use egui::{Align2, Color32, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
-use overseer_core::{Atlas, Lineup, Tools};
+use overseer_core::{Atlas, Lineup};
 use overseer_ui::{Face, caps_text, colour, motion, size, space};
 
 use super::{
@@ -191,7 +191,7 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
         return shared;
     };
     let id = egui::Id::new(("lineup-details", picked.id.clone()));
-    motion::arrive(ui, id, 0.0, |ui| details(ui, atlas.tools, picked, view)).or(shared)
+    motion::arrive(ui, id, 0.0, |ui| details(ui, picked, view)).or(shared)
 }
 
 /// Saving the map as a picture or copying it to paste into a chat, and
@@ -397,6 +397,27 @@ pub(super) fn row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Asks for a wider panel when the picked lineup's clip, `clip` times as
+/// wide as it is tall or 0 with none, or one of its pictures is wider than it
+/// is tall and the panel is too narrow to show it at its tallest. Once a pick.
+fn make_room(ui: &Ui, lineup: &Lineup, view: &mut View, clip: f32) {
+    if view.widened == lineup.id {
+        return;
+    }
+    view.widened.clone_from(&lineup.id);
+    let tall = ui.ctx().content_rect().height();
+    let pictures = lineup
+        .images
+        .iter()
+        .filter_map(|p| pictures::aspect(ui.ctx(), p))
+        .fold(0.0, f32::max)
+        * tall
+        * pictures::TALLEST;
+    let clip = clip * tall * view.prefs.size;
+    let more = pictures.max(clip) - ui.available_width();
+    view.widen = (more > 1.0).then_some(more);
+}
+
 /// What a lineup is for, in a line: the ability and its key, the side and
 /// the site.
 pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
@@ -418,7 +439,7 @@ pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
 
 /// The picked lineup: what can be done with it, then its clip, its pictures
 /// and its words, in that order, so the clip is always on screen whole.
-fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Option<Request> {
+fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
     let busy = view.pending.is_some();
     let mut asked = None;
     ui.add_space(space::SM);
@@ -454,19 +475,21 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
     let deleting = matches!(view.pending, Some((_, Job::Delete)));
     let file = clip
         .and_then(|c| c.file.as_deref())
-        .filter(|_| tools.ffmpeg && !cutting && !deleting);
+        .filter(|_| !cutting && !deleting);
     let runs = clip.and_then(length).unwrap_or(form::LONGEST);
+    let mut shape = Some(0.0);
     if let Some(file) = file {
-        player::of(&mut view.player, file, 0.0, view.prefs)
-            .native()
-            .show(ui, (0.0, runs), 100.0, 0.0);
+        let player = player::of(&mut view.player, file, 0.0, view.prefs);
+        player.show(ui, (0.0, runs), 100.0, 0.0);
+        shape = player.shape();
         ui.add_space(space::SM);
     }
-    if !lineup.images.is_empty() {
-        let (opened, _) = pictures::thumbnails(ui, &lineup.images, false);
-        if let Some(at) = opened {
-            view.viewing = Some((lineup.images.clone(), at));
-        }
+    // Not before the clip's shape is known.
+    if let Some(shape) = shape {
+        make_room(ui, lineup, view, shape);
+    }
+    if let Some(at) = pictures::column(ui, &lineup.images) {
+        view.viewing = Some((lineup.images.clone(), at));
     }
     if let Some(notes) = lineup.notes.as_deref() {
         words(ui, &notes.to_uppercase(), colour::TEXT);
@@ -477,8 +500,16 @@ fn details(ui: &mut Ui, tools: Tools, lineup: &Lineup, view: &mut View) -> Optio
     if file.is_none() {
         // A pasted lineup whose clip couldn't be cut still has its link.
         let uncut = clip.is_some_and(|c| c.source.is_some() && c.file.is_none());
+        let queued = lineup
+            .id
+            .as_ref()
+            .is_some_and(|id| view.cutting.contains(id));
         let hint = if cutting {
             "Cutting the new clip."
+        } else if deleting {
+            "Deleting the lineup."
+        } else if queued {
+            "Its clip is being cut, and shows here once it's ready."
         } else if uncut {
             "The clip isn't cut yet. Edit the lineup and save it to cut it."
         } else {

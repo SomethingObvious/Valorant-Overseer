@@ -13,7 +13,7 @@ members = [
   "overseer-ui",
   "overseer-app",
   "overseer-setup",
-  "overseer-video",
+  "overseer-native",
 ]
 
 [workspace.package]
@@ -36,7 +36,7 @@ png = "0.18.0"
 # window remembers its size and which monitor it was on.
 eframe = { version = "0.36.2", features = ["persistence"] }
 # One key combination the whole machine listens for, so the overlay can be
-# switched off without clicking a window that takes no clicks.
+# switched on and off while the game has the keyboard.
 global-hotkey = "0.8.0"
 # The icon beside the clock: somewhere to put the window, and proof the app
 # is running while the overlay is the only thing on screen. Default features

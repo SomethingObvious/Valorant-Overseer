@@ -24,7 +24,7 @@ There are five crates. `overseer-core` is the data layer: a client for
 `backend/ws_server.py` on its own thread, and the board and profile types,
 named the way `backend/` names them. `overseer-ui` is the design system the
 window and the wizard share, with the fonts and Riot's art. `overseer-app` is
-the window and `overseer-setup` is the wizard. `overseer-video` plays a lineup's
+the window and `overseer-setup` is the wizard. `overseer-native` plays a lineup's
 clip with Windows' media engine in a child of the window, decoded by the
 low-power GPU's video hardware, where ffmpeg and a redraw a frame took most of
 a core. The trimming form still plays through ffmpeg, which gives it the
@@ -143,7 +143,7 @@ anything worth writing from scratch. `rust-toolchain.toml` pins the toolchain,
 since "whatever rustc is on this machine" is how a lint appears or disappears
 without anybody changing a line. `unsafe_code` is forbidden rather than
 denied, so no `#[allow]` can switch it back on. The one exception is
-`overseer-video`, whose Media Foundation, Direct3D and window calls are C APIs
+`overseer-native`, whose Media Foundation, Direct3D and window calls are C APIs
 that are all `unsafe`. It carries its own copy of the lint table with
 `unsafe_code` allowed and `undocumented_unsafe_blocks` denied, so every block
 says why it holds, and three lints off for code the `windows` crate's

@@ -1,8 +1,8 @@
-//! The overlay: the match in a strip, the enemy as cards and your team as
-//! lines. Every card has the same zones at the same x, the face and the
-//! name, then the rank, the K/D and the rest, so a number sits under the one
-//! above it and reads without a heading. Your team's lines use the same
-//! zones, one line high.
+//! The overlay: the match in a strip and the enemy as cards, or in agent
+//! select your own team, the only one known yet. Every card has the same
+//! zones at the same x, the face and the name, then the rank, the K/D and
+//! the rest, so a number sits under the one above it and reads without a
+//! heading.
 
 use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
@@ -22,19 +22,6 @@ const CARD: Metrics = Metrics {
     pip: 8.0,
     agent_line: true,
     tags_first: true,
-};
-
-/// One of your team: one line, quieter.
-const LINE: Metrics = Metrics {
-    height: 30.0,
-    name: 14.0,
-    emblem: 20.0,
-    tier: 12.0,
-    kd: 17.0,
-    stat: 12.0,
-    pip: 6.0,
-    agent_line: false,
-    tags_first: false,
 };
 
 /// The rank's zone: the emblem, the tier and what sits under it.
@@ -57,10 +44,9 @@ const HIDE_ROOM: f32 = 32.0;
 /// How far a block sits under the one above it.
 const BETWEEN: f32 = 14.0;
 
-/// How tall the overlay is with a full match: the strip, both plates, five
-/// cards and five lines, and the gutter round them. egui's spacing under
-/// every widget counts too, or a bottom corner is placed for a shorter
-/// window than it draws.
+/// How tall the overlay is with one team of five: the strip, a plate and
+/// five cards, and the gutter round them. egui's spacing under every
+/// widget counts too. A deathmatch draws more cards than this.
 pub(crate) const HEIGHT: f32 = GUTTER
     + STRIP
     + ITEM
@@ -120,16 +106,9 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
         }
         ui.add_space(BETWEEN);
         let _clicked = heads::team(ui, scene.board, *side, team);
-        // In agent select only your team is known, and it gets the cards
-        // the enemy would, tags and all.
-        let metrics = if *side == Side::Enemy || !enemies {
-            CARD
-        } else {
-            LINE
-        };
         let mut placed = Vec::with_capacity(players.len());
         for player in &players {
-            let look = look(scene, player, *side, metrics);
+            let look = look(scene, player, *side);
             placed.push(row(ui, player, &look));
         }
         let members: Vec<&Player> = scene
@@ -154,11 +133,11 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
 }
 
 /// How one row is drawn, from the scene and the player.
-fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side, metrics: Metrics) -> Look<'a> {
+fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side) -> Look<'a> {
     let id = player.puuid.as_deref();
     Look {
         side,
-        metrics,
+        metrics: CARD,
         selected: false,
         noted: id.is_some_and(|id| scene.notes.has(id)),
         tag: id.and_then(|id| scene.notes.tag(id)),
@@ -173,8 +152,7 @@ fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side, metrics: Metrics)
 }
 
 /// The match: the map, the side and the queue on the left, the score and
-/// the round on the right, and the key that hides it between them. The
-/// overlay takes no clicks, so that key is the only way it goes away.
+/// the round on the right, and the key that hides it between them.
 fn strip(ui: &mut Ui, board: &Board) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), STRIP), Sense::hover());

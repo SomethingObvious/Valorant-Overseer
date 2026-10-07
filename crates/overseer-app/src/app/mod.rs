@@ -44,9 +44,6 @@ const PANEL_MOST: f32 = 680.0;
 /// The least a dragged panel leaves the board, which is what the board has
 /// beside the narrowest panel in the narrowest window that has one.
 const BOARD_LEAST: f32 = COMPACT - PANEL_NARROW;
-/// How long the overlay stays up each time it shows itself, in seconds:
-/// when agent select starts and when the match loads.
-const LINGER: f64 = 30.0;
 /// How long a press of the hotkey shows the overlay for, in seconds.
 const PEEK: f64 = 15.0;
 /// Seconds the pointer rests on a row before its history is asked for, so
@@ -202,19 +199,33 @@ const WINDOW_KEY: &str = "window";
 struct Shown {
     /// Until when a press of the hotkey keeps it up, on egui's clock.
     peek_until: Option<f64>,
-    /// Until when it shows itself, `LINGER` seconds from the start of
-    /// agent select or of the match.
-    auto_until: Option<f64>,
+    /// Whether it is showing itself, which it does through agent select.
+    by_itself: bool,
+    /// The match whose agent select it last showed itself for, so hiding
+    /// it by hand keeps it hidden until the next one.
+    armed_for: Option<String>,
 }
 
 impl Shown {
     /// Whether the overlay is up at `now`: asked for in the last `PEEK`
     /// seconds, or, when it may show itself and there are `players` to
-    /// show, in the `LINGER` seconds after agent select or the match began.
+    /// show, in agent select.
     fn up(&self, auto: bool, players: bool, now: f64) -> bool {
         let peeking = self.peek_until.is_some_and(|until| now < until);
-        let by_itself = self.auto_until.is_some_and(|until| now < until);
-        peeking || (auto && players && by_itself)
+        peeking || (auto && players && self.by_itself)
+    }
+
+    /// Follows the game's `state` in the match `game`: up by itself once
+    /// each agent select, and gone when that ends, as the match loads or
+    /// somebody dodges.
+    fn follow(&mut self, state: Option<&str>, game: Option<&str>) {
+        let game = game.unwrap_or_default();
+        if state != Some("PREGAME") {
+            self.by_itself = false;
+        } else if self.armed_for.as_deref() != Some(game) {
+            self.armed_for = Some(game.to_owned());
+            self.by_itself = true;
+        }
     }
 }
 
@@ -427,7 +438,7 @@ impl Overseer {
         if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(cc)
             && let raw_window_handle::RawWindowHandle::Win32(window) = handle.as_raw()
         {
-            overseer_video::set_window(window.hwnd.get());
+            overseer_native::set_window(window.hwnd.get());
         }
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx
@@ -558,15 +569,12 @@ impl Overseer {
                     {
                         self.lineups.follow(map);
                     }
+                    self.shown
+                        .follow(self.board.state.as_deref(), self.board.match_id.as_deref());
                     let began = match_began(was.as_deref(), self.board.state.as_deref());
-                    let picking = self.board.state.as_deref() == Some("PREGAME")
-                        && was.as_deref() != Some("PREGAME");
-                    if began || picking {
-                        self.shown.auto_until = Some(ctx.input(|i| i.time) + LINGER);
-                    }
                     // Only when it isn't in use. Somebody reading it as the
                     // match loads wants it where it is.
-                    if self.settings.step_aside
+                    if self.settings.minimize_in_matches
                         && began
                         && !ctx.input(|i| i.viewport().focused.unwrap_or(false))
                     {
@@ -909,7 +917,7 @@ impl Overseer {
     }
 
     /// Puts the window back on screen, and takes the keyboard only with
-    /// `focus`. The overlay never takes it from the game.
+    /// `focus`, which a peek at the overlay mid-game must not.
     fn reveal(ctx: &egui::Context, focus: bool) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         if focus {
@@ -941,20 +949,19 @@ impl Overseer {
     /// Shows the overlay for `PEEK` seconds.
     fn peek_overlay(&mut self, now: f64) {
         self.shown.peek_until = Some(now + PEEK);
-        // Nothing in the overlay is clickable, so leaving a half finished
-        // search or a settings screen behind it would be a trap.
+        // The overlay draws the window's board, and a half finished search
+        // or a settings screen behind it would be a trap.
         self.screen = Screen::Board;
     }
 
     /// Hides the overlay until it next shows itself or is asked for.
     pub(super) const fn hide_overlay(&mut self) {
         self.shown.peek_until = None;
-        self.shown.auto_until = None;
+        self.shown.by_itself = false;
     }
 
     /// Whether the overlay is up: asked for in the last `PEEK` seconds, or
-    /// showing itself in agent select and the match's first `LINGER`
-    /// seconds, unless it was hidden by hand since.
+    /// showing itself in agent select, unless it was hidden by hand since.
     pub(super) fn overlay_up(&self, now: f64) -> bool {
         self.shown.up(
             self.settings.overlay.auto,
@@ -1280,17 +1287,31 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64) {
 mod tests {
     use super::{Place, Shown, Wheel, connecting_text, match_began, panel_grip, panel_width};
 
-    /// Up by itself for 30 seconds from when it was set off, never with
-    /// nobody to show, and for 15 seconds after the hotkey either way.
+    /// Up by itself through agent select, once a match and gone when it
+    /// loads, never with nobody to show, and for 15 seconds after the
+    /// hotkey either way.
     #[test]
-    fn the_overlay_comes_up_for_a_while_and_for_the_hotkey() {
+    fn the_overlay_comes_up_in_agent_select_and_for_the_hotkey() {
         let mut shown = Shown::default();
         assert!(!shown.up(true, true, 0.0), "nothing set it off");
-        shown.auto_until = Some(130.0);
-        assert!(shown.up(true, true, 129.0), "its 30 seconds");
-        assert!(!shown.up(true, true, 131.0), "after them");
+        shown.follow(Some("PREGAME"), Some("first"));
+        assert!(shown.up(true, true, 100.0), "agent select");
         assert!(!shown.up(false, true, 100.0), "the setting is off");
         assert!(!shown.up(true, false, 100.0), "nobody to show yet");
+        shown.follow(Some("INGAME"), Some("first"));
+        assert!(!shown.up(true, true, 100.0), "the match loaded");
+        shown.follow(Some("PREGAME"), Some("second"));
+        shown.by_itself = false;
+        shown.follow(Some("PREGAME"), Some("second"));
+        assert!(
+            !shown.up(true, true, 100.0),
+            "hidden by hand, it stays hidden"
+        );
+        shown.follow(Some("MENUS"), None);
+        assert!(!shown.up(true, true, 100.0), "a dodge");
+        shown.follow(Some("PREGAME"), Some("third"));
+        assert!(shown.up(true, true, 100.0), "the next agent select");
+        shown.follow(Some("INGAME"), Some("third"));
         shown.peek_until = Some(146.0);
         assert!(shown.up(false, false, 140.0), "the hotkey shows it anyway");
         assert!(!shown.up(true, true, 147.0), "and only for a while");

@@ -1,12 +1,11 @@
-//! A video played inside the window. In the lineup panel Windows' own media
-//! engine plays it in a child window, decoded by the low-power GPU and
-//! composited by Windows, so playing costs a few percent of a core and the
-//! window only redraws to move the timeline. Everywhere else, and wherever
-//! that engine can't open the file, ffmpeg decodes it to raw frames on a
-//! thread of its own, the window shows each one when its time comes, and
-//! ffplay plays the sound with no window of its own. Over the bottom of the
-//! video sits a bar like a video site's: play and pause, a timeline to skim
-//! along, the volume, the speed and full screen.
+//! A video played inside the window. Windows' own media engine plays it in
+//! a child window, decoded by the low-power GPU and composited by Windows,
+//! so playing costs a few percent of a core and the window only redraws to
+//! move the timeline. Where that engine can't open the file, ffmpeg decodes
+//! it to raw frames on a thread of its own, the window shows each one when
+//! its time comes, and ffplay plays the sound with no window of its own.
+//! Under the video sits a bar like a video site's: play and pause, a
+//! timeline to skim along, the volume, the speed and full screen.
 
 use std::io::{BufRead, BufReader, Read};
 use std::os::windows::process::CommandExt;
@@ -27,9 +26,6 @@ const LONGEST_SIDE: usize = 1920;
 /// The steps the frame size goes up in, so resizing the panel doesn't
 /// restart ffmpeg on every frame of the drag.
 const SIDE_STEP: f32 = 240.0;
-/// Windows' `BELOW_NORMAL_PRIORITY_CLASS`, so the game gets the CPU before
-/// the clip does.
-const BELOW_NORMAL: u32 = 0x0000_4000;
 /// Frames a second of the video, whatever the speed.
 const FPS: f64 = 30.0;
 /// How many decoded frames wait for their turn. A few is enough to ride out
@@ -62,6 +58,12 @@ const STRIP_MOST: f64 = 240.0;
 /// The least height the video keeps when little of the panel is left under
 /// it.
 const SHORTEST: f32 = 180.0;
+/// The least width of the bar under a video Windows' engine plays, which
+/// takes the room beside a narrow one so its buttons and the time fit.
+const BAR_LEAST: f32 = 300.0;
+/// The room kept either side of a full screen video Windows' engine plays,
+/// for the X beside its top right corner.
+const CLOSE_ASIDE: f32 = 40.0;
 /// How far the arrow keys skip, in seconds.
 const SKIP: f64 = 5.0;
 
@@ -163,10 +165,8 @@ pub(crate) struct Player {
     strip: Option<Strip>,
     /// The pass it was last drawn in, so the screen can drop one nobody sees.
     pub(super) shown_in: u64,
-    /// Windows' engine playing it, once [`Player::native`] asked for it and
-    /// it opened. While it is here, nothing below starts an ffmpeg.
-    native: Option<overseer_video::Video>,
-    /// Whether to use Windows' engine: asked for, and not failed yet.
+    /// What plays it. While Windows' engine does, nothing above starts an
+    /// ffmpeg.
     engine: Engine,
     /// Where the engine's video goes this frame: the box, the part of the
     /// screen that can be seen, and the layer it is drawn on.
@@ -174,12 +174,16 @@ pub(crate) struct Player {
 }
 
 /// Which engine plays a clip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Engine {
-    /// ffmpeg, which the trimming form needs for its stills and strip.
-    Ffmpeg,
-    /// Windows' media engine, for the lineup panel.
-    Native,
+    /// Windows' media engine, opened when the clip first shows.
+    Wanted,
+    /// Windows' media engine, open. `held` is set while it was playing
+    /// when it went out of sight or under a menu, so it plays on when it
+    /// is back.
+    Native {
+        video: overseer_native::Video,
+        held: bool,
+    },
     /// Windows' engine couldn't open or play it, so ffmpeg does.
     Failed,
 }
@@ -282,61 +286,61 @@ impl Player {
             scrub: None,
             strip: None,
             shown_in: 0,
-            native: None,
-            engine: Engine::Ffmpeg,
+            engine: Engine::Wanted,
             spot: None,
         }
     }
 
-    /// Plays it with Windows' media engine, unless that has already failed
-    /// for this file.
-    pub(super) fn native(&mut self) -> &mut Self {
-        if self.engine == Engine::Ffmpeg {
-            self.engine = Engine::Native;
+    /// Windows' engine, while it plays this.
+    const fn video(&self) -> Option<&overseer_native::Video> {
+        match &self.engine {
+            Engine::Native { video, .. } => Some(video),
+            _ => None,
         }
-        self
     }
 
     /// Opens Windows' engine the first time it is wanted, falling back to
     /// ffmpeg for good when it can't open the file or later can't play it.
+    /// A clip that was playing plays on, and one that wasn't shows the
+    /// frame it was on.
     fn open_native(&mut self, ctx: &egui::Context) {
-        if self
-            .native
-            .as_ref()
-            .is_some_and(overseer_video::Video::failed)
+        if let Engine::Native { video, held } = &self.engine
+            && video.failed()
         {
-            self.native = None;
+            if *held || video.playing() {
+                self.prefs.autoplay = true;
+            } else {
+                self.first = Some(self.at);
+            }
             self.engine = Engine::Failed;
-            self.first = Some(self.at);
         }
-        if self.engine != Engine::Native || self.native.is_some() {
+        if !matches!(self.engine, Engine::Wanted) {
             return;
         }
         let ctx = ctx.clone();
-        match overseer_video::Video::open(&self.file, move || ctx.request_repaint()) {
+        match overseer_native::Video::open(&self.file, move || ctx.request_repaint()) {
             Ok(video) => {
-                self.native = Some(video);
+                self.engine = Engine::Native { video, held: false };
                 self.sound();
             }
             Err(_) => self.engine = Engine::Failed,
         }
     }
 
-    /// Whether it is playing.
+    /// Whether it is playing, counting one held while it can't be seen.
     pub(super) fn playing(&self) -> bool {
         self.rest.is_some()
             || self.run.as_ref().is_some_and(|r| r.clock.is_some())
-            || self
-                .native
-                .as_ref()
-                .is_some_and(overseer_video::Video::playing)
+            || matches!(&self.engine, Engine::Native { video, held } if *held || video.playing())
     }
 
     /// Decodes small frames of `from` to `to` ahead, unless the strip it
     /// has covers them already. One that couldn't start is not tried again
     /// for the same stretch.
     pub(super) fn prepare(&mut self, (from, to): (f64, f64)) {
+        // Windows' engine seeks fast enough to need none.
         if to <= from
+            || self.video().is_some()
             || self
                 .strip
                 .as_ref()
@@ -380,6 +384,16 @@ impl Player {
     /// handle or the timeline is dragged, or the exact one the slow way when
     /// the strip hasn't got that far.
     pub(super) fn preview(&mut self, ctx: &egui::Context, at: f64) {
+        if self.video().is_some() {
+            if self.playing() {
+                self.stop();
+            }
+            self.at = at;
+            if let Some(video) = self.video() {
+                video.scrub(at);
+            }
+            return;
+        }
         let image = self.strip.as_ref().and_then(|strip| {
             let index = ((at - strip.from) * strip.fps).round();
             if at < strip.from || at > strip.to || index < 0.0 {
@@ -441,7 +455,7 @@ impl Player {
         if self.playing() {
             self.stop();
         }
-        if let Some(video) = &self.native {
+        if let Some(video) = self.video() {
             video.seek(at);
             self.at = at;
             return;
@@ -457,15 +471,15 @@ impl Player {
     fn play(&mut self, from: f64, to: f64) {
         self.stop();
         self.till = to;
-        if let Some(video) = &self.native {
+        self.at = from;
+        if let Some(video) = self.video() {
             video.set_rate(f64::from(self.prefs.speed));
             video.seek(from);
             video.play();
-            self.at = from;
-            self.sound();
-            return;
+        } else {
+            self.start(from, Some(to - from));
         }
-        self.start(from, Some(to - from));
+        // From `at`, which is where this part starts.
         self.sound();
     }
 
@@ -485,7 +499,7 @@ impl Player {
     /// most, rather than 1080p for a clip a few hundred pixels wide. The
     /// frame on screen is made again at the new size from where it is.
     fn fit(&mut self, rect: Rect, pixels_per_point: f32) {
-        if self.native.is_some() {
+        if self.video().is_some() {
             // Windows' engine scales the picture itself.
             return;
         }
@@ -522,7 +536,7 @@ impl Player {
         } else {
             self.gain * self.prefs.volume / 100.0
         };
-        if let Some(video) = &self.native {
+        if let Some(video) = self.video() {
             video.set_volume(f64::from(volume) / 100.0);
             return;
         }
@@ -542,8 +556,9 @@ impl Player {
             end(&mut sound);
         }
         self.next_still = None;
-        if let Some(video) = &self.native {
+        if let Engine::Native { video, held } = &mut self.engine {
             video.pause();
+            *held = false;
         }
     }
 
@@ -666,8 +681,10 @@ impl Player {
 
     /// Follows Windows' engine: where it has got to, and a loop held on its
     /// last frame for [`REST`] before it starts over, as the ffmpeg one does.
+    /// A part of a longer video, as the trimming form plays, stops at its
+    /// end rather than at the end of the file.
     fn advance_native(&mut self, ctx: &egui::Context) {
-        let Some(video) = &self.native else {
+        let Engine::Native { video, .. } = &self.engine else {
             return;
         };
         let now = ctx.input(|i| i.time);
@@ -681,33 +698,43 @@ impl Player {
             video.seek(from);
             video.play();
         }
-        if video.take_ended() && self.prefs.looping {
-            self.rest = Some(now + REST);
-            ctx.request_repaint_after(Duration::from_secs_f64(REST));
-            return;
+        let past = self.till > from && video.playing() && video.time() >= self.till;
+        if video.take_ended() || past {
+            video.pause();
+            if self.prefs.looping {
+                self.rest = Some(now + REST);
+                ctx.request_repaint_after(Duration::from_secs_f64(REST));
+                return;
+            }
         }
         self.at = video.time();
         if video.playing() {
-            ctx.request_repaint_after(Duration::from_secs_f64(TICK));
+            // A few times a second, and right as the part ends so it
+            // stops there and not up to a tick later.
+            let left = (self.till - self.at) / f64::from(self.prefs.speed);
+            ctx.request_repaint_after(Duration::from_secs_f64(TICK.min(left).max(0.005)));
         }
     }
 
     /// The video's width over its height, 16:9 until a frame says.
     fn aspect(&self) -> f32 {
-        if let Some([w, h]) = self.native.as_ref().and_then(overseer_video::Video::size) {
-            return w as f32 / h.max(1) as f32;
-        }
-        self.texture.as_ref().map_or(16.0 / 9.0, |t| {
-            let [w, h] = t.size();
-            w as f32 / h.max(1) as f32
-        })
+        self.shape().unwrap_or(16.0 / 9.0)
+    }
+
+    /// The video's width over its height, once a frame says.
+    pub(super) fn shape(&self) -> Option<f32> {
+        let [w, h] = match self.video() {
+            Some(video) => video.size()?.map(|v| v as usize),
+            None => self.texture.as_ref()?.size(),
+        };
+        Some(w as f32 / h.max(1) as f32)
     }
 
     /// The frame on screen, on black, filling `rect`. The first frame of a
     /// video fades up out of the black rather than snapping on.
     fn picture(&mut self, painter: &egui::Painter, rect: Rect) {
         painter.rect_filled(rect, 0, Color32::BLACK);
-        if self.native.is_some() {
+        if self.video().is_some() {
             // Windows' engine draws over this, once it is placed.
             self.spot = Some((rect, painter.clip_rect(), painter.layer_id()));
             return;
@@ -733,7 +760,7 @@ impl Player {
     pub(super) fn show(&mut self, ui: &mut Ui, span: (f64, f64), gain: f32, room: f32) {
         (self.span, self.gain) = (span, gain);
         self.open_native(ui.ctx());
-        if self.native.is_some() {
+        if self.video().is_some() {
             self.advance_native(ui.ctx());
         } else {
             self.advance(ui.ctx());
@@ -758,7 +785,7 @@ impl Player {
         let under = self.bar_under();
         let high = (wide / aspect)
             .min(ui.ctx().content_rect().height() * self.prefs.size)
-            .min(left.max(SHORTEST) - under);
+            .min((left - under).max(SHORTEST));
         let (row, _) = ui.allocate_exact_size(vec2(wide, high + under), Sense::hover());
         let rect = Rect::from_center_size(
             row.center() - vec2(0.0, under / 2.0),
@@ -784,22 +811,31 @@ impl Player {
             self.screen(ui, rect, "panel");
         }
         let spot = self.spot.take();
-        if let Some(video) = &mut self.native {
+        if let Engine::Native { video, held } = &mut self.engine {
             let shown = spot.and_then(|(rect, seen, layer)| placed(ui.ctx(), rect, seen, layer));
+            // Out of sight it stops decoding, and plays on once it is back.
+            if shown.is_none() && video.playing() {
+                video.pause();
+                *held = true;
+            } else if shown.is_some() && std::mem::take(held) {
+                video.play();
+            }
             // Hidden under a menu, it looks again shortly, since egui only
             // knows a menu has gone a frame after it has.
             let in_sight = spot.is_some_and(|(rect, seen, _)| rect.intersect(seen).is_positive());
             if in_sight && shown.is_none() {
-                ui.ctx().request_repaint_after(Duration::from_millis(100));
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
             }
-            video.place(shown);
+            if video.place(shown) {
+                ui.ctx().request_repaint_after(Duration::from_millis(30));
+            }
         }
     }
 
     /// How much room the bar takes under the video, which is none unless
     /// Windows' engine is playing it.
     const fn bar_under(&self) -> f32 {
-        if self.native.is_some() { STRIP } else { 0.0 }
+        if self.video().is_some() { STRIP } else { 0.0 }
     }
 
     /// Space plays or pauses, F goes full screen and back, and the arrows
@@ -831,9 +867,12 @@ impl Player {
     /// The video big in the middle of the window over a dark backdrop, with
     /// an X in its corner. The X, a click on the backdrop or Escape go back.
     fn fullscreen(&mut self, ctx: &egui::Context) {
-        let room = ctx.content_rect().shrink(40.0);
         let aspect = self.aspect();
         let under = self.bar_under();
+        // Nothing can be drawn over Windows' engine, so its X goes beside
+        // the video, and the video keeps clear of the sides for it.
+        let aside = if under > 0.0 { CLOSE_ASIDE } else { 0.0 };
+        let room = ctx.content_rect().shrink2(vec2(40.0 + aside, 40.0));
         let high = (room.height() - under).min(room.width() / aspect);
         let mut close = false;
         let shown = egui::Modal::new(Id::new("lineup-video-big"))
@@ -845,9 +884,8 @@ impl Player {
                 let rect = Rect::from_min_size(whole.min, vec2(whole.width(), high));
                 self.fit(rect, ctx.pixels_per_point());
                 self.screen(ui, rect, "big");
-                // Above the video when Windows' engine would cover it.
                 let corner = if under > 0.0 {
-                    vec2(-17.0, -22.0)
+                    vec2(CLOSE_ASIDE / 2.0 + 4.0, 17.0)
                 } else {
                     vec2(-26.0, 26.0)
                 };
@@ -872,14 +910,14 @@ impl Player {
             .interact(rect, id, Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
         let near = ui.rect_contains_pointer(rect)
-            || self.native.is_some()
+            || self.video().is_some()
             || !self.playing()
             || self.scrub.is_some()
             || egui::Popup::is_id_open(ui.ctx(), id.with("speed"));
         let fade = ui.ctx().animate_bool_with_time(id.with("fade"), near, 0.2);
         if ui.is_rect_visible(rect) {
             self.picture(ui.painter(), rect);
-            if !self.playing() && self.native.is_none() {
+            if !self.playing() && self.video().is_none() {
                 mark(ui.painter(), rect.center(), video.hovered());
             }
         }
@@ -896,7 +934,7 @@ impl Player {
     /// full screen on the right.
     fn controls(&mut self, ui: &Ui, rect: Rect, id: Id, fade: f32) {
         let under = self.bar_under();
-        let rect = Rect::from_min_max(rect.min, rect.max + vec2(0.0, under));
+        let rect = bar_area(ui, rect, under);
         let painter = ui.painter_at(rect);
         let strip = Rect::from_min_max(pos2(rect.left(), rect.bottom() - STRIP), rect.max);
         if under > 0.0 {
@@ -1207,26 +1245,29 @@ impl Drop for Player {
 
 /// Where Windows' engine puts the video for `rect` on screen, in the
 /// window's pixels, with the part of it inside `seen` that can be seen.
-/// Nothing while it is out of sight, or while a menu or a dialog on another
-/// layer is over it, since the engine's window would cover that.
+/// Nothing while it is out of sight, or while a menu, a tooltip or a dialog
+/// on a layer above it overlaps it, since the engine's window would cover
+/// that.
 fn placed(
     ctx: &egui::Context,
     rect: Rect,
     seen: Rect,
     layer: egui::LayerId,
-) -> Option<(overseer_video::Area, overseer_video::Area)> {
+) -> Option<(overseer_native::Area, overseer_native::Area)> {
     let seen = rect.intersect(seen);
     if seen.width() < 1.0 || seen.height() < 1.0 {
         return None;
     }
-    let inside = seen.shrink(1.0);
-    let covered = (0..=4_u8).any(|row| {
-        (0..=4_u8).any(|col| {
-            let at = pos2(
-                inside.width().mul_add(f32::from(col) / 4.0, inside.left()),
-                inside.height().mul_add(f32::from(row) / 4.0, inside.top()),
-            );
-            ctx.layer_id_at(at).is_some_and(|top| top != layer)
+    // Every shown area, clickable or not, since a tooltip takes no clicks.
+    // Within one order egui doesn't say which is on top, so another area
+    // there counts as over it.
+    let covered = ctx.memory(|memory| {
+        memory.areas().visible_layer_ids().into_iter().any(|other| {
+            other != layer
+                && other.order >= layer.order
+                && memory
+                    .area_rect(other.id)
+                    .is_some_and(|area| area.intersect(seen).is_positive())
         })
     });
     if covered {
@@ -1236,6 +1277,22 @@ fn placed(
     let pixels =
         |r: Rect| [r.left(), r.top(), r.right(), r.bottom()].map(|v| (v * scale).round() as i32);
     Some((pixels(rect), pixels(seen)))
+}
+
+/// Where the bar and the video in `rect` go together, with the bar `under`
+/// it when Windows' engine plays it. Under a video narrower than
+/// [`BAR_LEAST`] the bar takes the room beside it, within `ui`'s.
+fn bar_area(ui: &Ui, rect: Rect, under: f32) -> Rect {
+    if under <= 0.0 || rect.width() >= BAR_LEAST {
+        return Rect::from_min_max(rect.min, rect.max + vec2(0.0, under));
+    }
+    let room = ui.max_rect().x_range();
+    let wide = BAR_LEAST.min(room.span()).max(rect.width());
+    // Centred under the video, and moved in off an edge it would cross.
+    let left = (rect.center().x - wide / 2.0)
+        .min(room.max - wide)
+        .max(room.min);
+    Rect::from_x_y_ranges(left..=left + wide, rect.top()..=rect.bottom() + under)
 }
 
 /// A click target in `rect` with a pointing hand over it.
@@ -1431,7 +1488,7 @@ fn decode(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .creation_flags(crate::NO_WINDOW | BELOW_NORMAL)
+        .creation_flags(crate::NO_WINDOW | crate::BELOW_NORMAL)
         .spawn()?;
     let Some(out) = child.stdout.take() else {
         end(&mut child);
@@ -1500,7 +1557,7 @@ fn sound(file: &str, from: f64, length: f64, volume: f32, speed: f32) -> std::io
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(crate::NO_WINDOW | BELOW_NORMAL)
+        .creation_flags(crate::NO_WINDOW | crate::BELOW_NORMAL)
         .spawn()
 }
 
@@ -1561,7 +1618,8 @@ mod tests {
 
     /// Windows' engine puts the video where egui drew its box, in the
     /// window's pixels and cut to the part that can be seen, and hides it
-    /// while it is scrolled away or a menu is over it.
+    /// while it is scrolled away or a menu is over it, even a tooltip that
+    /// takes no clicks.
     #[test]
     fn the_engines_video_follows_its_box_and_gives_way() {
         let ctx = egui::Context::default();
@@ -1572,6 +1630,8 @@ mod tests {
             let mut drawn = ctx.run_ui(egui::RawInput::default(), |ui| {
                 if menu {
                     let _menu = egui::Area::new(egui::Id::new("menu"))
+                        .order(egui::Order::Tooltip)
+                        .interactable(false)
                         .fixed_pos(egui::pos2(40.0, 40.0))
                         .show(ui.ctx(), |ui| {
                             ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click())

@@ -1,9 +1,9 @@
 //! The overlay, a second window for when the game has the screen.
 //!
 //! It has no title bar, stays on top in a corner, is as tall as its rows and
-//! lets every click through so the game keeps the focus. The hotkey and the
-//! tray drive it. It shows over VALORANT's default borderless mode, and
-//! nothing can draw over exclusive fullscreen.
+//! never takes the focus, even when its hide button is clicked, so the game
+//! keeps it. The hotkey and the tray drive it. It shows over VALORANT's
+//! default borderless mode, and nothing can draw over exclusive fullscreen.
 
 use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2, ViewportBuilder, ViewportId, pos2, vec2};
 use overseer_ui::{Face, caps_text, colour, space};
@@ -18,6 +18,9 @@ const TASKBAR: f32 = 48.0;
 /// Cards of 620 points, room for every zone and a name, and a gutter each
 /// side for the party tab.
 pub(crate) const WIDTH: f32 = 620.0 + 2.0 * crate::board::GUTTER;
+/// The overlay window's title, which is how it is found to keep it from
+/// taking the focus.
+pub(crate) const TITLE: &str = "Valorant Overseer Overlay";
 /// Which corner of the screen the overlay sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -77,8 +80,8 @@ pub(crate) fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
     }
 }
 
-/// The match strip, both plates, five cards and five lines. The overlay is
-/// placed from this height, whatever it measures.
+/// The height of the match strip, a plate and five cards, which the overlay
+/// is built for before it has measured what it draws.
 pub(crate) const DESIGNED: f32 = crate::board::OVERLAY_HEIGHT;
 
 /// A little more than a full match needs, so a board that grows without
@@ -91,7 +94,8 @@ const PLATE: f32 = 32.0;
 /// The greeting's height: its plate and a margin above and below.
 pub(crate) const GREETING: f32 = PLATE + 2.0 * space::MD;
 
-/// Draws the overlay in its own window, `height` tall.
+/// Draws the overlay in its own window, `height` tall, which is what it
+/// last drew.
 pub(crate) fn show(
     ctx: &egui::Context,
     corner: Corner,
@@ -103,17 +107,18 @@ pub(crate) fn show(
         ctx.request_repaint();
         return;
     };
-    // A window moved after it is shown stops being composited on this
-    // machine, though it still says it is visible. So it is placed once,
-    // from the designed height, and after that only resized.
-    let at = place(corner, monitor, vec2(WIDTH, DESIGNED));
     // As tall as the board, not a fixed size: this adapter presents opaque,
     // and the transparent part of a taller window would be a black slab over
     // the game.
     let size = vec2(WIDTH, height.clamp(GREETING, CEILING));
-    ctx.show_viewport_immediate(id_for(corner), attributes(at, size), |ui, _class| {
-        contents(ui, &mut board);
-    });
+    let at = place(corner, monitor, size);
+    ctx.show_viewport_immediate(
+        id_for(corner, size.y),
+        attributes(at, size),
+        |ui, _class| {
+            contents(ui, &mut board);
+        },
+    );
 }
 
 /// What the overlay's window holds: its ground, the board, and a hairline
@@ -178,7 +183,7 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
             middle,
         ),
         Align2::RIGHT_CENTER,
-        "Ctrl+Alt+O Hides It",
+        &format!("{} Hides It", crate::hotkey::LABEL),
         label,
         colour::BG,
     );
@@ -198,7 +203,10 @@ pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
     let response = ui
         .interact(spot, ui.id().with("overlay-hide"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Hide the overlay. Ctrl+Alt+O brings it back.");
+        .on_hover_text(format!(
+            "Hide the overlay. {} brings it back.",
+            crate::hotkey::LABEL
+        ));
     if ui.is_rect_visible(spot) {
         let painter = ui.painter();
         let (fill, ink) = if response.hovered() {
@@ -214,22 +222,27 @@ pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
 }
 
 /// The window's identity. It carries the corner because a corner only takes
-/// effect when the window is built.
-fn id_for(corner: Corner) -> ViewportId {
-    ViewportId::from_hash_of(("overseer-overlay", corner.label()))
+/// effect when the window is built. A window moved after it is shown stops
+/// being composited on this machine, though it still says it is visible,
+/// so a bottom corner, which is placed from the window's `height`, carries
+/// that too and a new height there builds a new window.
+fn id_for(corner: Corner, height: f32) -> ViewportId {
+    let bottom = matches!(corner, Corner::BottomLeft | Corner::BottomRight);
+    let placed_by = bottom.then(|| height.to_bits());
+    ViewportId::from_hash_of(("overseer-overlay", corner.label(), placed_by))
 }
 
 /// The overlay window, all decided before it exists.
 fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
     ViewportBuilder::default()
-        .with_title("Valorant Overseer Overlay")
+        .with_title(TITLE)
         .with_position(at)
         .with_inner_size(size)
         .with_decorations(false)
         .with_always_on_top()
         .with_transparent(true)
-        // It takes clicks, for its hide button, but never the keyboard when
-        // it appears. A click on it does take the focus from the game.
+        // Never the keyboard when it appears. `never_activate` stops a click
+        // from taking it after that.
         .with_active(false)
         // One task bar button for the app, not two.
         .with_taskbar(false)
@@ -240,19 +253,29 @@ fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
 mod tests {
     use egui::vec2;
 
-    use super::{Corner, MARGIN, TASKBAR, place};
+    use super::{Corner, DESIGNED, MARGIN, TASKBAR, place};
 
     /// Changing corner has to build a new window, because a shown window that
-    /// moves stops being drawn.
+    /// moves stops being drawn, and so does a new height in a bottom corner.
+    /// A top corner only grows down, so its window just resizes.
     #[test]
     fn a_corner_is_part_of_the_windows_identity() {
         let mut seen = std::collections::HashSet::new();
         for corner in Corner::ALL {
             assert!(
-                seen.insert(super::id_for(corner)),
+                seen.insert(super::id_for(corner, DESIGNED)),
                 "{corner:?} shares a window with another corner"
             );
         }
+        let taller = DESIGNED + 200.0;
+        assert_ne!(
+            super::id_for(Corner::BottomRight, DESIGNED),
+            super::id_for(Corner::BottomRight, taller)
+        );
+        assert_eq!(
+            super::id_for(Corner::TopRight, DESIGNED),
+            super::id_for(Corner::TopRight, taller)
+        );
     }
 
     /// Every corner puts the window fully on screen, in that corner.

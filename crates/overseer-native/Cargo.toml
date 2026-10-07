@@ -1,6 +1,6 @@
 [package]
-name = "overseer-video"
-description = "Plays a clip with Windows' media engine in a child of the app's window"
+name = "overseer-native"
+description = "What Overseer needs from Windows itself: the clip engine and the overlay's window style"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,11 +19,14 @@ windows = { version = "0.62.2", features = [
   "Win32_Media_MediaFoundation",
   "Win32_System_Com",
   "Win32_System_LibraryLoader",
+  "Win32_System_SystemServices",
   "Win32_UI_WindowsAndMessaging",
 ] }
 
 # The workspace's lints, copied because a crate can't take them and change
-# one. The only differences are `unsafe_code` and `undocumented_unsafe_blocks`.
+# some. The differences are `unsafe_code` allowed, `undocumented_unsafe_blocks`
+# denied, and `trivial_casts`, `ref_as_ptr` and `inline_always` allowed for the
+# code the `windows` crate's `#[implement]` macro writes.
 [lints.rust]
 # Allowed here and nowhere else. Media Foundation, Direct3D and child windows
 # are C APIs, every call to them is `unsafe`, and this crate keeps them behind

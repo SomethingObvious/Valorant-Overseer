@@ -85,8 +85,8 @@ pub(crate) struct Settings {
     pub(crate) panel_width: Option<f32>,
     /// Whether the window minimizes itself when agent select ends. VALORANT
     /// minimizes when it loses the focus, so without this, closing a
-    /// browser opened over the game brings this window up instead.
-    pub(crate) step_aside: bool,
+    /// browser opened over the game can bring this window up instead.
+    pub(crate) minimize_in_matches: bool,
     /// Whether the overlay is on, and where.
     #[serde(flatten)]
     pub(crate) overlay: OverlaySettings,
@@ -175,7 +175,7 @@ impl Default for Settings {
             hidden_columns: Vec::new(),
             panel: true,
             panel_width: None,
-            step_aside: true,
+            minimize_in_matches: false,
             overlay: OverlaySettings::default(),
             // The five you cannot see in game are the five worth the top of
             // the window.

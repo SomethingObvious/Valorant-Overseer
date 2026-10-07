@@ -425,7 +425,9 @@ def _hidden_riot_process_kwargs() -> dict[str, Any]:
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
-        "creationflags": subprocess.CREATE_NO_WINDOW,
+        # The backend runs below normal, and a child without its own class
+        # takes that, so the Riot client and VALORANT would run below it too.
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.NORMAL_PRIORITY_CLASS,
         "startupinfo": startup,
     }
 
@@ -958,7 +960,8 @@ def _hidden_relay_process_kwargs() -> dict[str, Any]:
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "close_fds": True,
-        "creationflags": subprocess.CREATE_NO_WINDOW,
+        # Normal, as the Riot client the relay starts inherits its class.
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.NORMAL_PRIORITY_CLASS,
     }
 
 

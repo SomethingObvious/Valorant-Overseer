@@ -24,6 +24,9 @@ Thumbs.db
 # Claude Code local config, and the design notes kept beside it
 .claude/
 /crates/DESIGN.md
+/DESIGN.md
+/PRODUCT.md
+/.impeccable/
 
 # The Rust build tree.
 target/

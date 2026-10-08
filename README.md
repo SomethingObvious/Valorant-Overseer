@@ -11,6 +11,22 @@ friends in Riot chat.
 
 **[Download Valorant Overseer for Windows](https://github.com/SomethingObvious/Valorant-Overseer/releases/latest)**
 
+There's more on the [Valorant Overseer site](https://somethingobvious.github.io/Valorant-Overseer/).
+
+## Screenshots
+
+These come from the app's demo mode, so the players are made up.
+
+![The Overseer board in a VALORANT match, with each player's rank, peak rank and K/D](docs/assets/shots/board-1600.webp)
+
+![Overseer in agent select, with your team's ranks, a duo and the rank ladder](docs/assets/shots/pregame-1600.webp)
+
+![The Overseer overlay over VALORANT in agent select](docs/assets/shots/overlay-full.webp)
+
+![Overseer's match history with a game opened to its scoreboard](docs/assets/shots/history-1600.webp)
+
+![Overseer's lineup planner on Haven](docs/assets/shots/lineups-1600.webp)
+
 ## How It Works
 
 Overseer reads your match from the Riot Client's own local API, the same one
@@ -25,9 +41,10 @@ opens it. The app never updates itself.
 
 ## Installing
 
-Download `Valorant-Overseer-Setup.exe`, open it and pick your region. It
-installs into `AppData\Local\Programs\Valorant Overseer` with its own copy of
-Python and doesn't need admin rights. If Windows says it protected your PC,
+Overseer runs on Windows 10 and 11. Download `Valorant-Overseer-Setup.exe`,
+open it and pick your region. It installs into
+`AppData\Local\Programs\Valorant Overseer` with its own copy of Python and
+doesn't need admin rights. If Windows says it protected your PC,
 click More info, then Run anyway.
 
 Then open VALORANT and join a lobby. Running setup again repairs or upgrades it

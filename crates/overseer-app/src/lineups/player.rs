@@ -1455,6 +1455,11 @@ fn decode(
     (from, length, paced): (f64, Option<f64>, bool),
     (side, fps): (usize, f64),
 ) -> std::io::Result<(Child, Receiver<Frame>)> {
+    // A clip still being cut has no file yet, and an ffmpeg started on it
+    // would only keep the window redrawing until it gave up.
+    if !std::path::Path::new(file).is_file() {
+        return Err(std::io::ErrorKind::NotFound.into());
+    }
     let mut command = Command::new(program("ffmpeg"));
     command.args(["-v", "error", "-nostdin"]);
     if paced {

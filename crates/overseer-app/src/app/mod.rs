@@ -760,7 +760,8 @@ impl Overseer {
                 self.perform(ctx, hint);
             }
         }
-        if up || down {
+        // On Lineups the arrows step through the lineups on the map instead.
+        if (up || down) && self.screen != Screen::Lineups {
             self.step(down);
         }
     }
@@ -775,6 +776,7 @@ impl Overseer {
                 }
                 self.next_flagged(None);
             }
+            Hint::Pick if self.screen == Screen::Lineups => self.lineups.step_down(),
             Hint::Pick => self.step(true),
             Hint::Find => {
                 self.search.focus = true;

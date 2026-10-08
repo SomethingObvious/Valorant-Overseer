@@ -707,6 +707,52 @@ impl Lineups {
         }
     }
 
+    /// The next lineup down the map, as the Down arrow goes, for the footer's
+    /// hint.
+    pub(crate) fn step_down(&mut self) {
+        self.step(plan::Way::Down);
+    }
+
+    /// Picks the lineup an arrow goes to, while browsing.
+    fn step(&mut self, way: plan::Way) {
+        if let Load::Have(atlas)
+        | Load::Asking {
+            kept: Some(atlas), ..
+        } = &self.load
+            && matches!(self.view.mode, Mode::Browse)
+            && let Some(next) = plan::stepped(atlas, &self.view, way)
+        {
+            self.view.selected = Some(next);
+            self.view.confirm = false;
+        }
+    }
+
+    /// The arrows go from lineup to lineup, taken before the clip in the
+    /// panel sees them. A clip or picture full screen, an open menu and the
+    /// lineup form keep them.
+    fn arrows(&mut self, ui: &Ui) {
+        if !matches!(self.view.mode, Mode::Browse)
+            || self.fullscreen()
+            || egui::Popup::is_any_open(ui.ctx())
+        {
+            return;
+        }
+        let pressed = ui.input_mut(|i| {
+            [
+                (egui::Key::ArrowUp, plan::Way::Up),
+                (egui::Key::ArrowDown, plan::Way::Down),
+                (egui::Key::ArrowLeft, plan::Way::Left),
+                (egui::Key::ArrowRight, plan::Way::Right),
+            ]
+            .map(|(key, way)| (i.consume_key(egui::Modifiers::NONE, key), way))
+        });
+        for (hit, way) in pressed {
+            if hit {
+                self.step(way);
+            }
+        }
+    }
+
     /// Whether a clip or a picture is showing full screen.
     pub(crate) fn fullscreen(&self) -> bool {
         self.view.viewing.is_some() || self.view.player.as_ref().is_some_and(player::Player::big)
@@ -1024,6 +1070,9 @@ impl Lineups {
         }
         if !typing && ui.input(|i| i.key_pressed(egui::Key::R)) {
             self.view.turned = (self.view.turned + 1) % 4;
+        }
+        if !typing {
+            self.arrows(ui);
         }
         self.poll(ui, bridge, live);
         let atlas = match &self.load {
@@ -1932,5 +1981,81 @@ mod tests {
             Ok(serde_json::json!({ "code": "OVL1MFRGG9", "said": "Copied." })),
         );
         assert_eq!(screen.view.copy.as_deref(), Some("OVL1MFRGG9"));
+    }
+
+    /// On the screen itself an arrow picks the next lineup along it, from
+    /// the top when nothing is picked, and the lineup form leaves the
+    /// arrows to itself.
+    #[test]
+    fn the_arrows_pick_on_the_screen_and_not_in_the_form() {
+        let bridge = overseer_core::Bridge::start(std::path::Path::new("."), || {});
+        let lineup = |id: &str, land: [f32; 2]| Lineup {
+            id: Some(id.to_owned()),
+            map: "Ascent".to_owned(),
+            agent: "Brimstone".to_owned(),
+            title: id.to_owned(),
+            land: Some(land),
+            stand: Some(land),
+            ..Lineup::default()
+        };
+        let atlas = Atlas {
+            maps: vec![overseer_core::Plan {
+                name: "Ascent".to_owned(),
+                ..overseer_core::Plan::default()
+            }],
+            lineups: vec![lineup("low", [0.5, 0.8]), lineup("high", [0.5, 0.2])],
+            ..Atlas::default()
+        };
+        let mut screen = Lineups {
+            load: Load::Have(Box::new(atlas)),
+            ..Lineups::default()
+        };
+        screen.view.map = Some("Ascent".to_owned());
+        let look = super::Look {
+            turn: crate::settings::MapTurn::Attack,
+            names: false,
+            area: None,
+            agent: "Brimstone",
+            slow: false,
+        };
+        let ctx = egui::Context::default();
+        overseer_ui::install_fonts(&ctx);
+        let press = |screen: &mut Lineups, key: egui::Key| {
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..egui::RawInput::default()
+            };
+            let mut frame = ctx.run_ui(input, |ui| {
+                let place = (&bridge, std::path::Path::new("."));
+                screen.show(ui, place, true, (1.0, super::Prefs::default(), look));
+            });
+            frame.textures_delta.clear();
+            screen.view.selected.clone()
+        };
+        assert_eq!(
+            press(&mut screen, egui::Key::ArrowDown).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            press(&mut screen, egui::Key::ArrowDown).as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            press(&mut screen, egui::Key::ArrowUp).as_deref(),
+            Some("high")
+        );
+
+        screen.view.mode = Mode::Edit(Box::new(Draft::new("Ascent", None)));
+        assert_eq!(
+            press(&mut screen, egui::Key::ArrowDown).as_deref(),
+            Some("high"),
+            "the form keeps the arrows"
+        );
     }
 }

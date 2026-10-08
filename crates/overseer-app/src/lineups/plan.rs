@@ -1739,11 +1739,76 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         );
 }
 
+/// The way an arrow key steps through the lineups on the map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Way {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// The lineup an arrow key goes to: the next one along that arrow's side of
+/// the map as it is drawn. Up and Down go by height and Left and Right by
+/// width, so either pair alone reaches every lineup and the two mix freely.
+/// A lineup is where it lands, which is what it is for and where its name
+/// goes, and lineups landing on one spot go by where you stand. With
+/// nothing picked the first press starts from the edge it moves away from,
+/// and past the last one there is nothing.
+pub(super) fn stepped(atlas: &Atlas, view: &View, way: Way) -> Option<String> {
+    let plan = atlas
+        .maps
+        .iter()
+        .find(|p| Some(&p.name) == view.map.as_ref())?;
+    let turn = (turn_for(plan, view.turn_to) + view.turned) % 4;
+    let across = matches!(way, Way::Left | Way::Right);
+    let place = |lineup| place_of(lineup, turn, across);
+    let order = |a: &([f32; 4], &str), b: &([f32; 4], &str)| {
+        a.0.iter()
+            .zip(&b.0)
+            .map(|(x, y)| x.total_cmp(y))
+            .find(|o| o.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(b.1))
+    };
+    let mut places: Vec<([f32; 4], &str)> =
+        view.shown(atlas).into_iter().filter_map(place).collect();
+    places.sort_by(order);
+    // Where the picked one is, whether the filter lists it or not.
+    let from = atlas
+        .lineups
+        .iter()
+        .find(|l| l.id.is_some() && l.id == view.selected && Some(&l.map) == view.map.as_ref())
+        .and_then(place);
+    let forward = matches!(way, Way::Down | Way::Right);
+    let next = match (from, forward) {
+        (None, true) => places.first(),
+        (None, false) => places.last(),
+        (Some(at), true) => places.iter().find(|p| order(p, &at).is_gt()),
+        (Some(at), false) => places.iter().rev().find(|p| order(p, &at).is_lt()),
+    };
+    next.map(|(_, id)| (*id).to_owned())
+}
+
+/// Where `lineup` is along an arrow's side of the map turned `turn`, by
+/// where it lands and then where you stand, with its id.
+fn place_of(lineup: &Lineup, turn: u8, across: bool) -> Option<([f32; 4], &str)> {
+    let id = lineup.id.as_deref()?;
+    let land = shapes::turned(lineup.land.or(lineup.stand)?, turn);
+    let stand = shapes::turned(lineup.stand.or(lineup.land)?, turn);
+    let at = if across {
+        [land[0], land[1], stand[0], stand[1]]
+    } else {
+        [land[1], land[0], stand[1], stand[0]]
+    };
+    Some((at, id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        APART, Floor, Label, Mode, Place, Square, View, clear_of, click, follow, grab, plantable,
-        settle, stick, turn_for,
+        APART, Floor, Label, Mode, Place, Square, View, Way, clear_of, click, follow, grab,
+        plantable, settle, stepped, stick, turn_for,
     };
     use crate::settings::MapTurn;
     use egui::{Color32, Rect, pos2, vec2};
@@ -2052,6 +2117,73 @@ mod tests {
         assert_eq!(view.selected.as_deref(), Some("c"));
         click(&atlas, &mut view, square, pos2(10.0, 90.0));
         assert_eq!(view.selected, None, "a click on nothing picks nothing");
+    }
+
+    /// Up and Down alone go through every lineup by where it lands, top to
+    /// bottom, and Left and Right alone do the same across. The two mix
+    /// from wherever the pick is, two landing on one spot go by where you
+    /// stand, the ends stay put, and a turned map turns the arrows with it.
+    #[test]
+    fn the_arrows_step_through_every_lineup_either_way_and_mix() {
+        let lineup = |id: Option<&str>, map: &str, land: [f32; 2], stand: [f32; 2]| Lineup {
+            id: id.map(ToOwned::to_owned),
+            map: map.to_owned(),
+            land: Some(land),
+            stand: Some(stand),
+            ..Lineup::default()
+        };
+        let atlas = Atlas {
+            maps: vec![Plan {
+                name: "Ascent".to_owned(),
+                ..Plan::default()
+            }],
+            lineups: vec![
+                lineup(Some("d"), "Ascent", [0.5, 0.6], [0.1, 0.6]),
+                lineup(Some("b"), "Ascent", [0.8, 0.3], [0.5, 0.9]),
+                lineup(Some("a"), "Ascent", [0.2, 0.1], [0.2, 0.9]),
+                lineup(Some("c"), "Ascent", [0.5, 0.6], [0.9, 0.6]),
+                lineup(Some("elsewhere"), "Bind", [0.0, 0.0], [0.0, 0.0]),
+                lineup(None, "Ascent", [0.0, 0.0], [0.0, 0.0]),
+            ],
+            ..Atlas::default()
+        };
+        let mut view = View {
+            map: Some("Ascent".to_owned()),
+            ..View::default()
+        };
+        let walk = |view: &mut View, way: Way| {
+            view.selected = None;
+            let mut seen = Vec::new();
+            while let Some(next) = stepped(&atlas, view, way) {
+                seen.push(next.clone());
+                view.selected = Some(next);
+            }
+            seen.join("")
+        };
+        assert_eq!(walk(&mut view, Way::Down), "abdc", "top to bottom");
+        assert_eq!(walk(&mut view, Way::Up), "cdba", "bottom to top");
+        assert_eq!(walk(&mut view, Way::Right), "adcb", "left to right");
+        assert_eq!(walk(&mut view, Way::Left), "bcda", "right to left");
+
+        view.selected = Some("b".to_owned());
+        let mut mixed = String::new();
+        for way in [Way::Left, Way::Up, Way::Right] {
+            view.selected = stepped(&atlas, &view, way);
+            mixed.push_str(view.selected.as_deref().unwrap_or("-"));
+        }
+        assert_eq!(mixed, "cdc", "each arrow goes on from where the pick is");
+        assert_eq!(
+            stepped(&atlas, &view, Way::Down),
+            None,
+            "the bottom stays put"
+        );
+
+        view.turned = 1;
+        assert_eq!(
+            walk(&mut view, Way::Down),
+            "adcb",
+            "a quarter turn turns the arrows"
+        );
     }
 
     /// Names on one spot stack upwards with a gap between them, one that

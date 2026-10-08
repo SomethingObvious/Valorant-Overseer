@@ -32,9 +32,9 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemServices::SS_BLACKRECT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, SW_HIDE, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetWindowPos, ShowWindow, WINDOW_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_DISABLED,
-    WS_EX_NOPARENTNOTIFY,
+    CreateWindowExW, DestroyWindow, SW_HIDE, SWP_DEFERERASE, SWP_NOACTIVATE, SWP_NOCOPYBITS,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, WINDOW_STYLE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_DISABLED, WS_EX_NOPARENTNOTIFY,
 };
 use windows_core::{BSTR, Interface, PCWSTR, implement, w};
 
@@ -260,7 +260,13 @@ impl Clip {
                     top,
                     right - left,
                     bottom - top,
-                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
+                    // No waiting on the app's window to repaint behind it, which is
+                    // another process, and no copying old pixels the engine redraws.
+                    SWP_NOACTIVATE
+                        | SWP_NOZORDER
+                        | SWP_SHOWWINDOW
+                        | SWP_DEFERERASE
+                        | SWP_NOCOPYBITS,
                 );
                 let seen = if settling {
                     CreateRectRgn(0, 0, 0, 0)

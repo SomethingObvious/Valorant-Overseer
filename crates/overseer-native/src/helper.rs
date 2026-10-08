@@ -171,15 +171,16 @@ fn obey(
         ("scrub", [at]) => clip.scrub(*at),
         ("rate", [rate]) => clip.set_rate(*rate),
         ("volume", [share]) => clip.set_volume(*share),
+        // Only kept here and put in place once every waiting line is read,
+        // since a drag sends one a frame and moving the window takes longer
+        // than that, so placing each would fall seconds behind.
         ("place", [l, t, r, b, sl, st, sr, sb]) => {
             let area = |v: [f64; 4]| v.map(|n| n as i32);
             shown.wanted = Some((area([*l, *t, *r, *b]), area([*sl, *st, *sr, *sb])));
-            shown.settling = shown.clip.place(shown.wanted);
             return;
         }
         ("hide", []) => {
             shown.wanted = None;
-            shown.settling = shown.clip.place(None);
             return;
         }
         _ => return,

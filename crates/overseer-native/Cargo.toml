@@ -1,0 +1,162 @@
+[package]
+name = "overseer-native"
+description = "What Overseer needs from Windows itself: the clip engine and the overlay's window style"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The same version wgpu already builds, with the parts this crate calls.
+windows-core = "0.62.2"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# The workspace's lints, copied because a crate can't take them and change
+# some. The differences are `unsafe_code` allowed, `undocumented_unsafe_blocks`
+# denied, and `trivial_casts`, `ref_as_ptr` and `inline_always` allowed for the
+# code the `windows` crate's `#[implement]` macro writes.
+[lints.rust]
+# Allowed here and nowhere else. Media Foundation, Direct3D and child windows
+# are C APIs, every call to them is `unsafe`, and this crate keeps them behind
+# a safe `Video` so the rest of the workspace can go on forbidding it.
+unsafe_code = "allow"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+# The `windows` crate's `#[implement]` macro, which makes the engine's
+# event callback a COM object, writes a trivial cast, a reference cast to a
+# raw pointer and `#[inline(always)]` into code nobody here can edit. These
+# three are off in this crate for that and nothing else.
+trivial_casts = "allow"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+single_use_lifetimes = "deny"
+elided_lifetimes_in_paths = "deny"
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+non_ascii_idents = "deny"
+noop_method_call = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+let_underscore = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[lints.rustdoc]
+# missing_docs forces docs to exist; these check they are correct. They only
+# fire under rustdoc, so the gate runs `cargo doc` to reach them.
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+unescaped_backticks = "deny"
+missing_crate_level_docs = "deny"
+
+[lints.clippy]
+# Every unsafe block says, in a `// SAFETY:` comment, why it holds.
+undocumented_unsafe_blocks = "deny"
+ref_as_ptr = "allow"
+inline_always = "allow"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# clippy::restriction is explicitly not meant to be enabled wholesale: many of
+# its lints contradict each other. These are the individually chosen ones, and
+# they are the ones that stop a scoreboard from taking the app down while
+# somebody is in a match.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+float_cmp_const = "deny"
+lossy_float_literal = "deny"
+string_slice = "deny"
+integer_division = "deny"
+modulo_arithmetic = "deny"
+as_underscore = "deny"
+verbose_file_reads = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+same_name_method = "deny"
+suspicious_xor_used_as_pow = "deny"
+try_err = "deny"
+empty_drop = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+partial_pub_fields = "deny"
+str_to_string = "deny"
+unnecessary_self_imports = "deny"
+# A semantic backstop for this repository's ban on inline suppressions, which
+# is otherwise a regular expression over file text. These reject #[allow] at
+# the syntax tree, where text cannot hide it.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# --- The only relaxations, each with its reason. There are no #[allow]
+# --- attributes anywhere in crates/; a lint that is wrong here is argued for
+# --- in the open, in this file.
+
+# The one lint pair that contradicts itself. `unreachable_pub` says a `pub` item
+# in a binary crate, which nothing can import, must be `pub(crate)`.
+# `clippy::redundant_pub_crate` says a `pub(crate)` item inside a private module
+# should be `pub`. Every module of a binary is a private module, so the two
+# cannot both be satisfied. `unreachable_pub` is the one that catches a real
+# mistake in a library, so it wins, and this is switched off rather than
+# sprinkling the crate with the attributes this repository forbids.
+redundant_pub_crate = "allow"
+
+# Duplicate versions in other crates' dependencies: `windows-sys` four times
+# over, `windows-targets`, `hashbrown`, `miniz_oxide`, `rustc-hash`,
+# `keyboard-types` and `syn` twice. Each comes from a dependency of egui,
+# winit or the tray crate pinning its own major version, and this workspace
+# depends on none of those versions directly, so nothing here can unify them
+# short of forking those crates. `cargo deny` still refuses an unexpected
+# licence or a known advisory in every one of them, which is the part that
+# matters.
+multiple_crate_versions = "allow"
+
+# The three cast lints, which no code in this workspace can satisfy, because
+# the standard library has no other way to do these conversions.
+#
+# A float to an integer: `as` is the only way. `f32::to_int_unchecked` is the
+# other, and it is `unsafe` and undefined for NaN and out of range values,
+# which a layout can produce. Every pixel turned into a row, a column, a byte
+# or a frame index goes through one, so `cast_possible_truncation` and
+# `cast_sign_loss` fire on each with nothing to replace it.
+#
+# An integer to a float: `From` only exists from the 8 and 16 bit integers,
+# and from `u32` and `i32` to `f64`. Every cast this lint flags here is one of
+# the others, `usize`, `u32`, `i32` or `i64` to `f32`, or `usize` or `i64` to
+# `f64`, so `cast_precision_loss` has no lossless conversion to suggest
+# either. The values are counts, sizes and milliseconds, far below the 2^24
+# where an `f32` stops being exact.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+

@@ -1,0 +1,17 @@
+---
+# yamllint, strict. Everything is an error, with no "warning" tier to ignore,
+# because the few YAML files here (this one and .markdownlint-cli2.yaml) are
+# easy to let slip.
+extends: default
+rules:
+  line-length: {max: 100, level: error}
+  document-start: {present: true, level: error}
+  truthy: {allowed-values: ["true", "false"], check-keys: true, level: error}
+  comments: {min-spaces-from-content: 1, level: error}
+  indentation: {spaces: 2, indent-sequences: true, level: error}
+  quoted-strings: {quote-type: any, required: only-when-needed, level: error}
+  empty-values: {forbid-in-block-mappings: true, forbid-in-flow-mappings: true, level: error}
+  octal-values: {forbid-implicit-octal: true, forbid-explicit-octal: true, level: error}
+  key-duplicates: {level: error}
+  new-line-at-end-of-file: {level: error}
+  trailing-spaces: {level: error}

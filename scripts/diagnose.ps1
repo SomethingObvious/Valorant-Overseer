@@ -1,0 +1,237 @@
+﻿param(
+    [switch]$Bundle,
+    [string]$BundlePath = ""
+)
+
+# What install and start would check, printed for a support request. -Bundle
+# also zips the report and the recent logs, redacted, onto the desktop.
+. (Join-Path $PSScriptRoot "common.ps1")
+
+$report = New-Object System.Collections.Generic.List[string]
+function DiagLine([string]$line) { $report.Add($line); Write-Host "  $line" }
+function RSection([string]$t) { $report.Add(""); $report.Add("== $t =="); Write-Host ""; Write-Host "==> $t" -ForegroundColor Cyan }
+
+$exitCode = 0
+function Bad([string]$line) { $script:exitCode = 1; DiagLine "[X] $line" }
+function Good([string]$line) { DiagLine "[OK] $line" }
+
+Write-Host ""
+Write-Host "  OVERSEER DIAGNOSTICS" -ForegroundColor Red
+
+RSection "App"
+DiagLine "version: $(Get-LocalVersion)"
+try {
+    $mf = Get-RuntimeManifest
+    DiagLine "channel: $($mf.app.channel), supported runtime: CPython $($mf.python.version) $($mf.python.arch), protocol: $($mf.protocol.version)"
+    if ($mf.app.version -ne (Get-LocalVersion)) { Bad "runtime.json says $($mf.app.version) but VERSION says $(Get-LocalVersion)" }
+}
+catch { Bad "runtime.json: $($_.Exception.Message)" }
+$relMf = Join-Path $Root "release-manifest.json"
+if (Test-Path $relMf) {
+    try { DiagLine "release commit: $((Get-Content $relMf -Raw | ConvertFrom-Json).commit)" } catch { }
+}
+else { DiagLine "release commit: none (a source tree, or a release older than the manifest)" }
+
+RSection "Windows"
+$os = [Environment]::OSVersion.Version
+DiagLine "windows: $($os.Major).$($os.Minor) build $($os.Build), 64-bit OS: $([Environment]::Is64BitOperatingSystem)"
+$arch = $env:PROCESSOR_ARCHITECTURE
+if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
+if ($arch -eq "AMD64") { Good "architecture: x64" } else { Bad "architecture: $arch (only x64 is supported)" }
+DiagLine "windows powershell: $($PSVersionTable.PSVersion)"
+$pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+if ($pwsh) {
+    try { DiagLine "powershell 7: $((& pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null))" } catch { DiagLine "powershell 7: present" }
+}
+else { DiagLine "powershell 7: not installed, and not needed" }
+
+RSection "Install Path"
+$special = @()
+if ($Root -match '\s') { $special += "spaces" }
+if ($Root -match "['&()%!]") { $special += "special characters" }
+if ($Root -match '[^\x00-\x7F]') { $special += "non-ASCII" }
+if ($Root.Length -gt 180) { $special += "very long path ($($Root.Length) chars)" }
+$cat = "normal"
+if ($Root -match 'OneDrive') { $cat = "OneDrive-synced" }
+elseif ($Root -match '\\Downloads\\') { $cat = "Downloads" }
+elseif ($Root -match '\.zip[\\/]|\\Temp1_') { $cat = "INSIDE A ZIP (must extract first)" }
+DiagLine "path category: $cat$(if ($special) { ' (' + ($special -join ', ') + ')' })"
+if ($cat -like "INSIDE*") { Bad "running from inside a ZIP" }
+try {
+    $t = Join-Path $Root (".vs-diag-" + [Guid]::NewGuid().ToString("N"))
+    [System.IO.File]::WriteAllText($t, "x"); Remove-Item $t -Force
+    Good "install folder writable"
+}
+catch { Bad "install folder isn't writable" }
+try {
+    $t = Join-Path $env:TEMP (".vs-diag-" + [Guid]::NewGuid().ToString("N"))
+    [System.IO.File]::WriteAllText($t, "x"); Remove-Item $t -Force
+    Good "TEMP writable"
+}
+catch { Bad "TEMP isn't writable" }
+try {
+    $drive = (Get-Item $Root).PSDrive
+    DiagLine ("free disk space: {0:N1} GB" -f ($drive.Free / 1GB))
+    if ($drive.Free -lt 2GB) { Bad "less than 2 GB free" }
+}
+catch { }
+
+RSection "Python"
+try {
+    $py = Find-ExactPython
+    if ($py) {
+        $id = Get-PythonIdentity $py.Exe $py.Args
+        Good "supported python found: $($id.executable) ($($id.version) $($id.machine) $($id.bits)-bit)"
+    }
+    else {
+        Bad "no CPython $((Get-RuntimeManifest).python.version) x64 found on this PC (install.bat installs it)"
+    }
+}
+catch { Bad "python discovery failed: $($_.Exception.Message)" }
+
+if (Test-Path $VenvPy) {
+    $venv = Test-Venv
+    if ($venv.Ok) { Good ".venv healthy (python, pip $(Get-VenvPipVersion), packages, imports)" }
+    else { foreach ($r in $venv.Reasons) { Bad ".venv: $r" } }
+}
+else {
+    Bad ".venv is missing. Run install.bat."
+}
+
+$markers = Test-Markers
+if ($markers.Ok) { Good "install markers valid (schema $MarkerSchemaVersion)" }
+else { Bad "install markers: $($markers.Reason)" }
+
+RSection "Ports"
+function Get-PortOwner([int]$port) {
+    $conns = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
+    foreach ($c in $conns) {
+        $portPid = $c.OwningProcess
+        try {
+            # The listener is the base interpreter running app.py by a relative
+            # path, so it is the venv's python.exe above it that names this
+            # install.
+            if (Test-ProcessUnder $portPid $Root) { return "ours (Valorant Overseer, PID $portPid)" }
+            $exe = (Get-CimInstance Win32_Process -Filter "ProcessId=$portPid" -ErrorAction Stop).ExecutablePath
+            return "foreign: $(Split-Path -Leaf ($exe + '')) (PID $portPid)"
+        }
+        catch { return "unknown process (PID $portPid)" }
+    }
+    return "free"
+}
+$wsPort = 7878
+if (Test-Path $EnvFile) {
+    $wp = Get-Content $EnvFile -Encoding UTF8 | Select-String '^\s*WS_PORT\s*=\s*(\d+)'
+    if ($wp) { $wsPort = [int]$wp.Matches[0].Groups[1].Value }
+}
+$runtimeState = Join-Path $OverseerDir "runtime-state.json"
+if (Test-Path $runtimeState) {
+    try {
+        $rs = Get-Content $runtimeState -Raw -Encoding UTF8 | ConvertFrom-Json
+        $rp = Get-CimInstance Win32_Process -Filter "ProcessId=$($rs.pid)" -ErrorAction Stop
+        $identity = (($rp.ExecutablePath + " " + $rp.CommandLine) + "").ToLowerInvariant()
+        $rootLower = $Root.ToLowerInvariant()
+
+        if ($identity -eq $rootLower -or $identity.Contains($rootLower + '\')) {
+            $wsPort = [int]$rs.wsPort
+            DiagLine "the running launcher picked websocket port $wsPort"
+        }
+        else {
+            DiagLine "runtime-state.json is stale (PID now belongs to another program)"
+        }
+    }
+    catch { DiagLine "runtime-state.json is stale (launcher is not running)" }
+}
+DiagLine "websocket port $wsPort`: $(Get-PortOwner $wsPort)"
+
+RSection "Running App"
+$bridgeFile = Join-Path $OverseerDir "bridge.json"
+$bridgeReported = $false
+if (Test-Path $bridgeFile) {
+    try {
+        $b = Get-Content $bridgeFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $null = Get-CimInstance Win32_Process -Filter "ProcessId=$($b.pid)" -ErrorAction Stop
+        if ((Get-PortOwner ([int]$b.wsPort)) -like "ours*") {
+            Good "backend bridge healthy (protocol $($b.protocol), ws $($b.wsPort), PID $($b.pid))"
+        }
+        else {
+            Bad "bridge.json names port $($b.wsPort), but no Valorant Overseer process is listening there"
+        }
+        $bridgeReported = $true
+    }
+    catch { }
+}
+if (-not $bridgeReported) { DiagLine "backend: not running (start it with start.bat)" }
+
+RSection "Riot"
+$lockfile = Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Config\lockfile"
+if (Test-Path $lockfile) {
+    try {
+        # The Riot Client keeps it open for writing, and ReadAllText only
+        # shares with other readers, so it fails whenever the client is up.
+        $fs = New-Object System.IO.FileStream($lockfile, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try { $null = (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+        Good "Riot lockfile present and readable (Riot Client is running)"
+    }
+    catch {
+        Bad "VG-RIOT-001 Riot lockfile exists but can't be read. Restart the Riot Client."
+    }
+}
+else {
+    DiagLine "Riot lockfile: not found, so the Riot Client isn't running. Live data needs the game open."
+}
+
+RSection "Recent Errors (Redacted)"
+$any = $false
+foreach ($log in @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")) {
+    $f = Join-Path $OverseerDir "$log.log"
+    if (-not (Test-Path $f)) { continue }
+    $errs = Get-Content $f -Encoding UTF8 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '\bERROR\b|\bVG-[A-Z]+-\d+\b|Traceback' } |
+        Select-Object -Last 5
+    foreach ($e in $errs) { $any = $true; DiagLine "[$log] $(Protect-OverseerText $e)" }
+}
+if (-not $any) { DiagLine "none found" }
+
+if ($Bundle) {
+    RSection "Support Bundle"
+    $dest = $BundlePath
+    if (-not $dest) {
+        $dest = Join-Path ([Environment]::GetFolderPath("Desktop")) `
+        ("overseer-support-" + [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss") + ".zip")
+    }
+    $work = Join-Path $env:TEMP ("vs-bundle-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $work | Out-Null
+    try {
+        Write-FileNoBom (Join-Path $work "diagnose-report.txt") (($report | ForEach-Object { Protect-OverseerText $_ }) -join "`r`n")
+        foreach ($rel in @("VERSION", "runtime.json", "release-manifest.json")) {
+            $p = Join-Path $Root $rel
+            if (Test-Path $p) { Copy-Item $p (Join-Path $work (Split-Path -Leaf $rel)) }
+        }
+        foreach ($name in @("installed.json", "deps.json")) {
+            $p = Join-Path $OverseerDir $name
+            if (Test-Path $p) {
+                Write-FileNoBom (Join-Path $work $name) (Protect-OverseerText (Get-Content $p -Raw -Encoding UTF8))
+            }
+        }
+        foreach ($log in @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")) {
+            $f = Join-Path $OverseerDir "$log.log"
+            if (Test-Path $f) {
+                $lines = Get-Content $f -Encoding UTF8 | Select-Object -Last 400 | ForEach-Object { Protect-OverseerText $_ }
+                Write-FileNoBom (Join-Path $work "$log.log") ($lines -join "`r`n")
+            }
+        }
+        if (Test-Path $dest) { Remove-Item -Force $dest }
+        Compress-Archive -Path (Join-Path $work "*") -DestinationPath $dest
+        Good "support bundle written: $dest"
+    }
+    finally {
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+}
+
+Write-Host ""
+if ($exitCode -eq 0) { Ok "Diagnostics finished. Nothing is blocking the app." }
+else { Warn "Diagnostics finished. Fix the [X] items above. install.bat repairs most of them." }
+exit $exitCode

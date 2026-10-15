@@ -1,0 +1,5 @@
+#!/bin/sh
+# git runs hooks through its bundled sh. Everything else here is PowerShell, so
+# this only hands over to the .ps1 of the same name.
+top=$(git rev-parse --show-toplevel) || exit
+exec powershell -NoProfile -ExecutionPolicy Bypass -File "${top}/.githooks/pre-commit.ps1" "$@"

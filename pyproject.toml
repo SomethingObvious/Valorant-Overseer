@@ -1,0 +1,119 @@
+# The Python half of scripts/lint.ps1, ruff first and then mypy. Root only,
+# since a config in a subdirectory is a suppression nobody can see, and
+# lint.ps1 rejects one.
+
+[tool.ruff]
+# 100 columns because that is what this code was written to: 24 lines exceeded
+# 110 and 50 exceeded 100, so 100 is the narrowest limit that describes the
+# existing style rather than inventing a new one. `ruff format` owns the layout
+# from here; lint.ps1 runs `ruff format --check` and fails on a difference.
+line-length = 100
+target-version = "py312"
+cache-dir = ".overseer/cache/ruff"
+
+extend-exclude = [".venv", "dist"]
+
+# backend/ and scripts/ are folders of scripts run by path, each importing its
+# siblings by name. They are namespace packages on purpose: an __init__.py
+# would make each a package and change how every import in it resolves.
+namespace-packages = ["backend", "scripts"]
+
+[tool.ruff.lint]
+# Every rule ruff has. Hand-picking families is how a rule that would have
+# caught something never gets a chance to: this config used to name 37 of them
+# and ignore BLE001 and C901, neither of whose family was in the list, so both
+# ignores were dead and both rules had never run.
+#
+# Preview rules are deliberately not enabled. They change between releases and
+# a lint suite that moves under you on `pip install --upgrade` is one people
+# start passing --no-verify to.
+select = ["ALL"]
+
+# Every entry below is an exception with a reason. Add one only with its reason
+# written next to it; that is the whole point of arguing it here instead of
+# hiding a `# noqa` at the call site, which lint.ps1 rejects outright.
+ignore = [
+  # --- style the formatter owns -------------------------------------------
+  # COM812 in particular fights `ruff format` directly; ruff's own docs say not
+  # to run the two together.
+  "COM",
+
+  # --- documentation --------------------------------------------------------
+  # D203 and D211 contradict each other, as do D212 and D213, so one of each
+  # pair has to go. These are the two ruff itself leaves out by default.
+  "D203", "D213",
+  # Every function is annotated, which mypy --strict holds it to. What is
+  # left is `Any`, on values that are Riot's JSON: an undocumented payload
+  # that changes with each patch has no truer type to give it.
+  "ANN401",
+
+  # --- deliberate architecture ----------------------------------------------
+  # The scoreboard must never take the app down. Riot's local API returns
+  # whatever it feels like mid-patch, and every `except Exception` here exists
+  # to keep a stale board on screen instead of a traceback.
+  "BLE001",
+
+  # Driving Windows is this program's job: taskkill, netstat, powershell,
+  # ffmpeg, yt-dlp. The rule fires on every subprocess call there is, as a
+  # reminder to check what goes in, so no code that starts a program can pass
+  # it. Every call here passes an argv list, never a string, so there is no
+  # shell to inject into, and Windows' own tools go by full path.
+  "S603",
+
+  # The prints left are a program's output: run.py narrating a launch, each
+  # self-check saying it passed, the scripts' reports and console_logger's
+  # one line. T201 can't tell those from a debugging print left in by mistake.
+  "T201",
+
+  # Deliberate: `import offline_launch` inside a route keeps a 1300-line module
+  # and its chat-proxy threads out of a backend that may never launch offline
+  # mode, and several imports are local purely to break an import cycle.
+  "PLC0415",
+
+  # Thresholds, HTTP codes and rank tiers read better as the number than as a
+  # constant named after the number.
+  "PLR2004",
+
+  # Branchy functions and long argument lists. These are request dispatchers
+  # with a return per request type, row builders taking every field of a row
+  # by keyword, and parsers of Riot's JSON, which is branchy because Riot's
+  # responses are. Splitting them would scatter one decision across helpers.
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "C901",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The demo is the same every time because random.Random is seeded, which the
+# secrets module can't be. Nothing here makes a token or a key.
+"backend/sample_data.py" = ["S311"]
+"backend/sample_match.py" = ["S311"]
+
+# mypy, the type checker, at --strict.
+#
+# Rust gets this from the compiler; Python has to opt in, and opting in on a
+# mature codebase is a choice about how far to go. The answer here is: all the
+# way. Every function in backend/ and scripts/ is annotated,
+# every generic is parameterised, and mypy is fatal in scripts\lint.ps1.
+#
+# It was worth doing for more than the ratchet. Guessing a return type wrong is
+# an error mypy reports, so annotating 460 signatures turned into a review of
+# what they actually return: _current_players returns a 4-tuple where the name
+# suggests 3, kd_hs returns five values of which two can be None, and
+# fetch_rank was declared to return nothing while returning a pair.
+[tool.mypy]
+python_version = "3.12"
+files = ["backend", "scripts"]
+cache_dir = ".overseer/cache/mypy"
+strict = true
+
+# Two relaxations, each with its reason.
+
+# Every one of the forty-five sites this fires on returns a value pulled
+# straight out of Riot's JSON or an untyped cache dict, which is Any by
+# construction. A cast() at each would assert something no one has checked and
+# add a line of syntax to say it.
+warn_return_any = false
+
+# requests ships no types of its own and python-dotenv has none either. Their
+# stub packages would be a dependency installed only for this check.
+ignore_missing_imports = true
+

@@ -138,6 +138,9 @@ pub struct Clip {
     pub volume: Option<u32>,
     /// The cut clip on disk.
     pub file: Option<String>,
+    /// Why the clip couldn't be cut, when it couldn't.
+    #[serde(skip_serializing)]
+    pub failed: Option<String>,
 }
 
 /// A shape drawn on a map, to show a range or an area.

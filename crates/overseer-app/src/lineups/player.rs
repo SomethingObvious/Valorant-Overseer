@@ -49,7 +49,7 @@ const STRIP: f32 = 46.0;
 const TICK: f64 = 0.25;
 /// How long a looping part holds its last frame before it starts over, so
 /// the end of the throw reads before the start of the next.
-const REST: f64 = 0.4;
+const REST: f64 = 0.6;
 /// How big a scrub strip's frames are on their longest side. Small, since
 /// they only show while a handle is dragged, and many of them are kept.
 const STRIP_SIDE: usize = 360;
@@ -58,9 +58,6 @@ const STRIP_MOST: f64 = 240.0;
 /// The least height the video keeps when little of the panel is left under
 /// it.
 const SHORTEST: f32 = 180.0;
-/// The least width of the bar under a video Windows' engine plays, which
-/// takes the room beside a narrow one so its buttons and the time fit.
-const BAR_LEAST: f32 = 300.0;
 /// The room kept either side of a full screen video Windows' engine plays,
 /// for the X beside its top right corner.
 const CLOSE_ASIDE: f32 = 40.0;
@@ -168,6 +165,8 @@ pub(crate) struct Player {
     /// What plays it. While Windows' engine does, nothing above starts an
     /// ffmpeg.
     engine: Engine,
+    /// Loop pressed on the bar, to this, for the settings to keep.
+    pub(super) looped: Option<bool>,
     /// Where the engine's video goes this frame: the box, the part of the
     /// screen that can be seen, and the layer it is drawn on.
     spot: Option<(Rect, Rect, egui::LayerId)>,
@@ -287,6 +286,7 @@ impl Player {
             strip: None,
             shown_in: 0,
             engine: Engine::Wanted,
+            looped: None,
             spot: None,
         }
     }
@@ -698,13 +698,21 @@ impl Player {
             video.seek(from);
             video.play();
         }
-        let past = self.till > from && video.playing() && video.time() >= self.till;
-        if video.take_ended() || past {
+        // A frame short of the end, so the engine never reaches the end of
+        // the file, where it can show black, and the last frame stays up.
+        let past = self.till > from && video.playing() && video.time() >= self.till - 1.0 / FPS;
+        let ended = video.take_ended();
+        if ended || past {
             video.pause();
             if self.prefs.looping {
                 self.rest = Some(now + REST);
                 ctx.request_repaint_after(Duration::from_secs_f64(REST));
                 return;
+            }
+            if ended {
+                // A file a little shorter than its part gets to the end
+                // first, so it goes back to the last frame.
+                video.seek((video.time() - 1.0 / FPS).max(from));
             }
         }
         self.at = video.time();
@@ -781,16 +789,11 @@ impl Player {
         // for what comes after it, so the clip, its bar and that are all in
         // view without scrolling.
         let left = ui.clip_rect().bottom() - ui.cursor().top() - space::SM - room;
-        // Nothing can be drawn over Windows' engine, so its bar goes under it.
-        let under = self.bar_under();
         let high = (wide / aspect)
             .min(ui.ctx().content_rect().height() * self.prefs.size)
-            .min((left - under).max(SHORTEST));
-        let (row, _) = ui.allocate_exact_size(vec2(wide, high + under), Sense::hover());
-        let rect = Rect::from_center_size(
-            row.center() - vec2(0.0, under / 2.0),
-            vec2(high * aspect, high),
-        );
+            .min(left.max(SHORTEST));
+        let (row, _) = ui.allocate_exact_size(vec2(wide, high), Sense::hover());
+        let rect = Rect::from_center_size(row.center(), vec2(high * aspect, high));
         if !self.big {
             self.fit(rect, ui.ctx().pixels_per_point());
         }
@@ -835,12 +838,6 @@ impl Player {
         }
     }
 
-    /// How much room the bar takes under the video, which is none unless
-    /// Windows' engine is playing it.
-    const fn bar_under(&self) -> f32 {
-        if self.video().is_some() { STRIP } else { 0.0 }
-    }
-
     /// Space plays or pauses, F goes full screen and back, and the arrows
     /// skip [`SKIP`] seconds, while no text box has the keyboard.
     fn keys(&mut self, ui: &Ui) {
@@ -871,23 +868,21 @@ impl Player {
     /// an X in its corner. The X, a click on the backdrop or Escape go back.
     fn fullscreen(&mut self, ctx: &egui::Context) {
         let aspect = self.aspect();
-        let under = self.bar_under();
+        let native = self.video().is_some();
         // Nothing can be drawn over Windows' engine, so its X goes beside
         // the video, and the video keeps clear of the sides for it.
-        let aside = if under > 0.0 { CLOSE_ASIDE } else { 0.0 };
+        let aside = if native { CLOSE_ASIDE } else { 0.0 };
         let room = ctx.content_rect().shrink2(vec2(40.0 + aside, 40.0));
-        let high = (room.height() - under).min(room.width() / aspect);
+        let high = room.height().min(room.width() / aspect);
         let mut close = false;
         let shown = egui::Modal::new(Id::new("lineup-video-big"))
             .frame(egui::Frame::NONE)
             .backdrop_color(Color32::from_black_alpha(215))
             .show(ctx, |ui| {
-                let (whole, _) =
-                    ui.allocate_exact_size(vec2(high * aspect, high + under), Sense::hover());
-                let rect = Rect::from_min_size(whole.min, vec2(whole.width(), high));
+                let (rect, _) = ui.allocate_exact_size(vec2(high * aspect, high), Sense::hover());
                 self.fit(rect, ctx.pixels_per_point());
                 self.screen(ui, rect, "big");
-                let corner = if under > 0.0 {
+                let corner = if native {
                     vec2(CLOSE_ASIDE / 2.0 + 4.0, 17.0)
                 } else {
                     vec2(-26.0, 26.0)
@@ -906,20 +901,26 @@ impl Player {
 
     /// The video in `rect` with its controls over the bottom of it. They
     /// show while the pointer is over it, and always while it is paused. A
-    /// click on the video plays or pauses it.
+    /// click on the video plays or pauses it. Nothing can be drawn over
+    /// Windows' engine, so while they show, its window is cut short by
+    /// their height for them, and the video keeps its size.
     fn screen(&mut self, ui: &Ui, rect: Rect, salt: &str) {
         let id = ui.id().with(("lineup-video", salt));
         let video = ui
             .interact(rect, id, Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
         let near = ui.rect_contains_pointer(rect)
-            || self.video().is_some()
             || !self.playing()
             || self.scrub.is_some()
             || egui::Popup::is_id_open(ui.ctx(), id.with("speed"));
-        let fade = ui.ctx().animate_bool_with_time(id.with("fade"), near, 0.2);
+        let fade = ui.ctx().animate_bool_with_time(id.with("fade"), near, 0.15);
         if ui.is_rect_visible(rect) {
             self.picture(ui.painter(), rect);
+            if fade > 0.0
+                && let Some((_, seen, _)) = &mut self.spot
+            {
+                seen.max.y = seen.max.y.min(rect.bottom() - STRIP);
+            }
             if !self.playing() && self.video().is_none() {
                 mark(ui.painter(), rect.center(), video.hovered());
             }
@@ -936,19 +937,13 @@ impl Player {
     /// then play and the time on the left, and the volume, the speed and
     /// full screen on the right.
     fn controls(&mut self, ui: &Ui, rect: Rect, id: Id, fade: f32) {
-        let under = self.bar_under();
-        let rect = bar_area(ui, rect, under);
         let painter = ui.painter_at(rect);
         let strip = Rect::from_min_max(pos2(rect.left(), rect.bottom() - STRIP), rect.max);
-        if under > 0.0 {
-            painter.rect_filled(strip, 0, Color32::BLACK);
-        } else {
-            shade(
-                &painter,
-                Rect::from_min_max(strip.min - vec2(0.0, 24.0), strip.max),
-                fade,
-            );
-        }
+        shade(
+            &painter,
+            Rect::from_min_max(strip.min - vec2(0.0, 24.0), strip.max),
+            fade,
+        );
         let line = Rect::from_min_max(
             pos2(strip.left() + 10.0, strip.top()),
             pos2(strip.right() - 10.0, strip.top() + 14.0),
@@ -992,6 +987,8 @@ impl Player {
             self.big = !self.big;
         }
         x = spot.left() - 4.0;
+
+        x = self.loop_button(ui, &painter, (x, y), (id, fade));
 
         x = self.speed_button(ui, &painter, pos2(x, y), id, fade) - 8.0;
 
@@ -1132,6 +1129,39 @@ impl Player {
             knob,
             colour::TEXT_STRONG.gamma_multiply(fade),
         );
+    }
+
+    /// Loop on the bar, ending at `right`: lit when a clip plays again from
+    /// the start, dim when it stops on its last frame. Returns where the next
+    /// control has to end.
+    fn loop_button(
+        &mut self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        (right, y): (f32, f32),
+        (id, fade): (Id, f32),
+    ) -> f32 {
+        let spot = Rect::from_min_max(pos2(right - 28.0, y - 14.0), pos2(right, y + 14.0));
+        let again = button(ui, spot, id.with("loop")).on_hover_text(if self.prefs.looping {
+            "Plays it again from the start. Click to stop on the last frame instead."
+        } else {
+            "Stops on the last frame. Click to play it again from the start."
+        });
+        let ink = if again.hovered() {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT
+        };
+        let lit = if self.prefs.looping { 1.0 } else { 0.4 };
+        looping(painter, spot, ink.gamma_multiply(fade * lit));
+        if again.clicked() {
+            self.prefs.looping = !self.prefs.looping;
+            self.looped = Some(self.prefs.looping);
+            if !self.prefs.looping {
+                self.rest = None;
+            }
+        }
+        spot.left() - 4.0
     }
 
     /// The speed's name as a button whose right end is at `end`, opening the
@@ -1282,22 +1312,6 @@ fn placed(
     Some((pixels(rect), pixels(seen)))
 }
 
-/// Where the bar and the video in `rect` go together, with the bar `under`
-/// it when Windows' engine plays it. Under a video narrower than
-/// [`BAR_LEAST`] the bar takes the room beside it, within `ui`'s.
-fn bar_area(ui: &Ui, rect: Rect, under: f32) -> Rect {
-    if under <= 0.0 || rect.width() >= BAR_LEAST {
-        return Rect::from_min_max(rect.min, rect.max + vec2(0.0, under));
-    }
-    let room = ui.max_rect().x_range();
-    let wide = BAR_LEAST.min(room.span()).max(rect.width());
-    // Centred under the video, and moved in off an edge it would cross.
-    let left = (rect.center().x - wide / 2.0)
-        .min(room.max - wide)
-        .max(room.min);
-    Rect::from_x_y_ranges(left..=left + wide, rect.top()..=rect.bottom() + under)
-}
-
 /// A click target in `rect` with a pointing hand over it.
 fn button(ui: &Ui, rect: Rect, id: Id) -> egui::Response {
     ui.interact(rect, id, Sense::click())
@@ -1360,6 +1374,30 @@ fn corners(painter: &egui::Painter, rect: Rect, leave: bool, ink: Color32) {
         painter.line_segment([corner, corner + vec2(sx * arm, 0.0)], stroke);
         painter.line_segment([corner, corner + vec2(0.0, sy * arm)], stroke);
     }
+}
+
+/// Loop's mark: most of a ring with an arrowhead where it ends.
+fn looping(painter: &egui::Painter, rect: Rect, ink: Color32) {
+    let centre = rect.center();
+    let radius = 7.0;
+    let at = |turn: f32| {
+        let angle = turn * std::f32::consts::TAU;
+        centre + vec2(angle.cos(), angle.sin()) * radius
+    };
+    let ring: Vec<egui::Pos2> = (0..=20)
+        .map(|step| at(0.08 + 0.78 * step as f32 / 20.0))
+        .collect();
+    painter.add(Shape::line(ring, Stroke::new(2.0, ink)));
+    let tip = at(0.86);
+    painter.add(Shape::convex_polygon(
+        vec![
+            tip + vec2(-4.0, -4.0),
+            tip + vec2(3.0, -1.0),
+            tip + vec2(-2.0, 3.0),
+        ],
+        ink,
+        Stroke::NONE,
+    ));
 }
 
 /// The X that leaves full screen: a dark disc with a cross, brighter under

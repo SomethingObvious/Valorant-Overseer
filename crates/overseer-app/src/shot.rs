@@ -857,7 +857,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
                                     area: None,
                                     agent: "Brimstone",
                                     slow: false,
-                                    redraws_seen: &[],
+                                    redraws: &crate::settings::RedrawSettings::default(),
                                 },
                             ),
                         );
@@ -936,7 +936,7 @@ fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
                                 area: None,
                                 agent: "Brimstone",
                                 slow: false,
-                                redraws_seen: &[],
+                                redraws: &crate::settings::RedrawSettings::default(),
                             },
                         ),
                     );
@@ -1128,7 +1128,7 @@ fn lineups_live() {
                                     area: None,
                                     agent: "Brimstone",
                                     slow: false,
-                                    redraws_seen: &[],
+                                    redraws: &crate::settings::RedrawSettings::default(),
                                 },
                             ),
                         );

@@ -22,8 +22,9 @@ use std::sync::Arc;
 use egui::{CentralPanel, Color32, Panel, Rect, Ui, pos2};
 use overseer_core::{Ability, Atlas, Bridge, Clip, Drawing, Kit, Lineup};
 use overseer_ui::{art, colour};
+use serde::Deserialize;
 
-use crate::settings::MapTurn;
+use crate::settings::{MapTurn, RedrawSettings};
 use crate::view;
 
 use pick::{ANY, SPIKE};
@@ -36,11 +37,12 @@ const SIDE: f32 = 380.0;
 /// The most of the window the panel may take, dragged or widened for a
 /// clip or picture wider than it is tall.
 const SIDE_SHARE: f32 = 0.6;
-/// How often the list is asked for again while pasted lineups' clips are
-/// cut, in seconds.
-const POLL: f64 = 4.0;
-/// How long that goes on at most, in seconds.
-const POLL_FOR: f64 = 300.0;
+/// How often the list is asked for again while lineups' clips are cut, in
+/// seconds.
+const POLL: f64 = 2.0;
+/// How long that goes on at most, in seconds: the backend's ten minutes for
+/// a download and five for the cut.
+const POLL_FOR: f64 = 900.0;
 /// The most text Paste Code sends, far more than any code holds.
 const PASTE_MOST: usize = 512 * 1024;
 
@@ -76,6 +78,8 @@ enum Job {
     Share,
     /// Saving the lineups in a pasted code.
     Import,
+    /// Marking a lineup as checked since its map changed.
+    Confirm,
 }
 
 /// What order the lineups are listed in, after what they share.
@@ -521,6 +525,8 @@ enum Request {
     ShareMap,
     /// Bring in the lineups in the code that was pasted.
     Paste,
+    /// Mark the selected lineup as checked since its map changed.
+    Confirm,
 }
 
 /// Where an exported map goes.
@@ -546,7 +552,7 @@ struct View {
     order: Order,
     /// The lineup picked, by id.
     selected: Option<String>,
-    /// Pasted lineups whose clips the backend is cutting in the background,
+    /// Lineups whose clips the backend is cutting in the background,
     /// by id. The list is asked for again every [`POLL`] seconds until
     /// they are cut, for [`POLL_FOR`] at most.
     cutting: Vec<String>,
@@ -619,10 +625,12 @@ struct View {
     copy: Option<String>,
     /// Whether this PC counts as slow, from the settings.
     slow: bool,
-    /// The map redraws already said, from the settings.
-    redraws_seen: Vec<String>,
+    /// What the settings say about lineups from before their map changed.
+    redraws: RedrawSettings,
     /// A map redraw Got It was pressed on, for the settings to keep.
     redraw_seen: Option<String>,
+    /// Loop pressed on a clip's bar, to this, for the settings to keep.
+    new_looping: Option<bool>,
 }
 
 /// How the settings say the maps are drawn.
@@ -638,8 +646,8 @@ pub(crate) struct Look<'a> {
     pub(crate) agent: &'a str,
     /// Whether this PC counts as slow, which cuts clips at 720p.
     pub(crate) slow: bool,
-    /// The map redraws already said.
-    pub(crate) redraws_seen: &'a [String],
+    /// What is said about lineups from before their map changed.
+    pub(crate) redraws: &'a RedrawSettings,
 }
 
 /// The Lineups screen.
@@ -655,6 +663,11 @@ impl Lineups {
     /// The agent Make Default was last pressed on, once, for the settings.
     pub(crate) const fn new_default(&mut self) -> Option<String> {
         self.view.new_default.take()
+    }
+
+    /// Loop as it was last pressed on a clip's bar, once, for the settings.
+    pub(crate) const fn new_looping(&mut self) -> Option<bool> {
+        self.view.new_looping.take()
     }
 
     /// The map redraw Got It was last pressed on, once, for the settings.
@@ -715,6 +728,18 @@ impl Lineups {
         {
             self.view.map = Some(map.to_owned());
             self.view.selected = None;
+        }
+    }
+
+    /// What the settings say about the screen, kept for this frame.
+    fn take_look(&mut self, prefs: Prefs, look: Look<'_>) {
+        (self.view.prefs, self.view.turn_to) = (prefs, look.turn);
+        self.view.names_by_default = look.names;
+        self.view.area = look.area.map(shapes::ink);
+        look.agent.clone_into(&mut self.view.default_agent);
+        self.view.slow = look.slow;
+        if self.view.redraws != *look.redraws {
+            self.view.redraws.clone_from(look.redraws);
         }
     }
 
@@ -823,7 +848,7 @@ impl Lineups {
                 self.view.reopen(saving);
                 self.view.said = Some((why, true));
             }
-            Ok(value) => self.done(job, value),
+            Ok(value) => self.done(job, &value),
         }
     }
 
@@ -976,27 +1001,28 @@ impl Lineups {
     }
 
     /// Puts a finished request's answer on screen.
-    fn done(&mut self, job: Job, value: serde_json::Value) {
+    fn done(&mut self, job: Job, value: &serde_json::Value) {
         let view = &mut self.view;
         let added: Vec<Lineup> = value
             .get("added")
             .filter(|_| job == Job::Import)
             .and_then(|a| serde_json::from_value(a.clone()).ok())
             .unwrap_or_default();
-        // Their clips are cut after the answer, so the list is asked for
-        // again until they are.
-        view.cutting.extend(
-            added
-                .iter()
-                .filter(|l| l.clip.as_ref().is_some_and(|c| c.file.is_none()))
-                .filter_map(|l| l.id.clone()),
-        );
+        let saved = matches!(job, Job::Save | Job::Confirm)
+            .then(|| Lineup::deserialize(value).ok())
+            .flatten();
+        let later = view.wait_for(added.iter().chain(&saved));
         // What it says goes up whatever the list is doing, or a save that
         // lands while the screen is away leaves "Saving" up for good.
         match job {
             Job::Save => {
-                let title = value.get("title").and_then(serde_json::Value::as_str);
-                view.said = Some((format!("Saved {}.", title.unwrap_or("the lineup")), false));
+                let title = saved.as_ref().map_or("the lineup", |l| l.title.as_str());
+                let later = if later {
+                    " Its clip plays once it's cut."
+                } else {
+                    ""
+                };
+                view.said = Some((format!("Saved {title}.{later}"), false));
             }
             Job::Delete => {
                 view.selected = None;
@@ -1017,17 +1043,17 @@ impl Lineups {
                     view.selected = None;
                 }
             }
-            Job::Drawing => {}
+            Job::Drawing | Job::Confirm => {}
         }
         let Load::Have(atlas) = &mut self.load else {
             if job == Job::Save {
-                view.late = serde_json::from_value::<Lineup>(value).ok();
+                view.late = saved;
             }
             return;
         };
         match job {
-            Job::Save => {
-                if let Ok(saved) = serde_json::from_value::<Lineup>(value) {
+            Job::Save | Job::Confirm => {
+                if let Some(saved) = saved {
                     atlas.lineups.retain(|l| l.id != saved.id);
                     atlas.lineups.push(saved);
                 }
@@ -1064,14 +1090,7 @@ impl Lineups {
         live: bool,
         (opacity, prefs, look): (f32, Prefs, Look<'_>),
     ) {
-        (self.view.prefs, self.view.turn_to) = (prefs, look.turn);
-        self.view.names_by_default = look.names;
-        self.view.area = look.area.map(shapes::ink);
-        look.agent.clone_into(&mut self.view.default_agent);
-        self.view.slow = look.slow;
-        if self.view.redraws_seen != look.redraws_seen {
-            self.view.redraws_seen = look.redraws_seen.to_vec();
-        }
+        self.take_look(prefs, look);
         if let Some((shown, at)) = &self.view.viewing {
             self.view.viewing =
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
@@ -1118,6 +1137,11 @@ impl Lineups {
                 ui.multiply_opacity(opacity);
                 plan::show(ui, atlas, &mut self.view);
             });
+        // Loop pressed on the bar holds for every clip after, too.
+        if let Some(on) = self.view.player.as_mut().and_then(|p| p.looped.take()) {
+            self.view.prefs.looping = on;
+            self.view.new_looping = Some(on);
+        }
         // A video nothing drew this frame belongs to a form or a lineup
         // that has gone, and dropping it stops its sound.
         let pass = ui.ctx().cumulative_pass_nr();
@@ -1266,6 +1290,7 @@ impl Lineups {
                 Job::Save,
             ),
             (_, Request::Delete) => ("lineup_delete", picked, Job::Delete),
+            (_, Request::Confirm) => ("lineup_confirm", picked, Job::Confirm),
             (_, Request::Share) => (
                 "lineup_export",
                 serde_json::json!({ "ids": [view.selected] }),
@@ -1303,6 +1328,28 @@ impl Lineups {
 }
 
 impl View {
+    /// Whether `lineup` is marked as saved before its map changed.
+    fn marked(&self, atlas: &Atlas, lineup: &Lineup) -> bool {
+        self.redraws.mark_redrawn && from_before(atlas, lineup)
+    }
+
+    /// Waits on those of `lineups` whose clips the backend cuts after it
+    /// answers, asking for the list again until they're cut, and says
+    /// whether there were any.
+    fn wait_for<'a>(&mut self, lineups: impl Iterator<Item = &'a Lineup>) -> bool {
+        let before = self.cutting.len();
+        self.cutting.extend(
+            lineups
+                .filter(|l| l.clip.as_ref().is_some_and(uncut))
+                .filter_map(|l| l.id.clone()),
+        );
+        let more = self.cutting.len() > before;
+        if more {
+            self.polled = None;
+        }
+        more
+    }
+
     /// Whether every lineup's name shows on the map.
     fn naming(&self) -> bool {
         self.names.unwrap_or(self.names_by_default)
@@ -1398,12 +1445,13 @@ impl View {
         if self.main.is_none() {
             self.main.clone_from(&atlas.main);
         }
-        // Pasted lineups whose clips are cut now, or that are gone, are
-        // waited on no longer.
+        // Lineups whose clips are cut now, couldn't be, or that are gone,
+        // are waited on no longer.
         self.cutting.retain(|id| {
-            atlas.lineups.iter().any(|l| {
-                l.id.as_ref() == Some(id) && l.clip.as_ref().is_some_and(|c| c.file.is_none())
-            })
+            atlas
+                .lineups
+                .iter()
+                .any(|l| l.id.as_ref() == Some(id) && l.clip.as_ref().is_some_and(uncut))
         });
         if self.cutting.is_empty() {
             self.polled = None;
@@ -1639,6 +1687,23 @@ fn seconds(text: &str) -> Option<f64> {
     Some(total)
 }
 
+/// Whether `lineup` was saved before a game update changed its map, so it
+/// may not land where it did.
+fn from_before(atlas: &Atlas, lineup: &Lineup) -> bool {
+    let changed = atlas
+        .maps
+        .iter()
+        .find(|m| m.name == lineup.map)
+        .and_then(|m| m.changed);
+    changed.is_some_and(|at| lineup.saved.is_some_and(|saved| saved < at))
+}
+
+/// Whether the backend is still to cut `clip`: it has no file, and no
+/// reason it couldn't be cut.
+const fn uncut(clip: &Clip) -> bool {
+    clip.file.is_none() && clip.failed.is_none()
+}
+
 /// How long a clip runs, for the panel.
 fn length(clip: &Clip) -> Option<f64> {
     Some(clip.to? - clip.from?).filter(|s| *s > 0.0)
@@ -1690,6 +1755,7 @@ mod tests {
                 to: Some(77.5),
                 volume: Some(60),
                 file: Some("C:/clip.mp4".to_owned()),
+                failed: None,
             }),
             ..Lineup::default()
         };

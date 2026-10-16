@@ -191,7 +191,8 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
         return shared;
     };
     let id = egui::Id::new(("lineup-details", picked.id.clone()));
-    motion::arrive(ui, id, 0.0, |ui| details(ui, picked, view)).or(shared)
+    let marked = view.marked(atlas, picked);
+    motion::arrive(ui, id, 0.0, |ui| details(ui, picked, view, marked)).or(shared)
 }
 
 /// Saving the map as a picture or copying it to paste into a chat, and
@@ -265,7 +266,12 @@ fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &m
         .iter()
         .find(|l| l.id.is_some() && l.id == view.selected);
     let response = if let Some(lineup) = picked {
-        row(ui, atlas, lineup, (open, main.as_deref()))
+        row(
+            ui,
+            atlas,
+            lineup,
+            (open, main.as_deref(), view.marked(atlas, lineup)),
+        )
     } else {
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
@@ -299,7 +305,8 @@ fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &m
             ScrollArea::vertical().max_height(tallest).show(ui, |ui| {
                 for lineup in list {
                     let on = lineup.id.is_some() && lineup.id == view.selected;
-                    if row(ui, atlas, lineup, (on, main.as_deref())).clicked() {
+                    let marked = view.marked(atlas, lineup);
+                    if row(ui, atlas, lineup, (on, main.as_deref(), marked)).clicked() {
                         view.selected.clone_from(&lineup.id);
                         view.confirm = false;
                         ui.close();
@@ -351,7 +358,7 @@ pub(super) fn row(
     ui: &mut Ui,
     atlas: &Atlas,
     lineup: &Lineup,
-    (picked, main): (bool, Option<&str>),
+    (picked, main, marked): (bool, Option<&str>, bool),
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
     if !ui.is_rect_visible(rect) {
@@ -371,6 +378,9 @@ pub(super) fn row(
     painter.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, ROW)), 0, rail);
     let portrait = Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(36.0, 36.0));
     face(painter, portrait, &lineup.agent, 1.0, main);
+    if marked {
+        super::plan::badge(painter, portrait.right_top() + vec2(-2.0, 2.0));
+    }
     let text_at = portrait.right() + space::LG;
     let font = Face::Display.at(size::TITLE);
     let _title = caps_text(
@@ -439,7 +449,7 @@ pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
 
 /// The picked lineup: what can be done with it, then its clip, its pictures
 /// and its words, in that order, so the clip is always on screen whole.
-fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
+fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View, marked: bool) -> Option<Request> {
     let busy = view.pending.is_some();
     let mut asked = None;
     ui.add_space(space::SM);
@@ -464,6 +474,9 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
         }
     });
     ui.add_space(space::SM);
+    if marked && still_lands(ui, lineup, busy) {
+        asked = Some(Request::Confirm);
+    }
     let clip = lineup.clip.as_ref();
     // The cut clip already has its volume in it, so it plays as it is.
     // Windows won't let the backend replace or delete a file a player has
@@ -476,12 +489,22 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
     let file = clip
         .and_then(|c| c.file.as_deref())
         .filter(|_| !cutting && !deleting);
+    let queued = lineup
+        .id
+        .as_ref()
+        .is_some_and(|id| view.cutting.contains(id));
+    let coming = (cutting || queued) && !deleting;
     let runs = clip.and_then(length).unwrap_or(form::LONGEST);
-    let mut shape = Some(0.0);
+    // Not before the clip's shape is known, or a wide one never widens
+    // the panel.
+    let mut shape = (!coming).then_some(0.0);
     if let Some(file) = file {
         let player = player::of(&mut view.player, file, 0.0, view.prefs);
         player.show(ui, (0.0, runs), 100.0, 0.0);
         shape = player.shape();
+        ui.add_space(space::SM);
+    } else if coming {
+        on_its_way(ui);
         ui.add_space(space::SM);
     }
     // Not before the clip's shape is known.
@@ -497,20 +520,15 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
     if let Some(description) = lineup.description.as_deref() {
         words(ui, description, colour::TEXT_DIM);
     }
-    if file.is_none() {
-        // A pasted lineup whose clip couldn't be cut still has its link.
-        let uncut = clip.is_some_and(|c| c.source.is_some() && c.file.is_none());
-        let queued = lineup
-            .id
-            .as_ref()
-            .is_some_and(|id| view.cutting.contains(id));
-        let hint = if cutting {
-            "Cutting the new clip."
-        } else if deleting {
-            "Deleting the lineup."
-        } else if queued {
-            "Its clip is being cut, and shows here once it's ready."
-        } else if uncut {
+    if deleting {
+        words(ui, "Deleting the lineup.", colour::TEXT_DIM);
+    } else if let Some(why) = clip.and_then(|c| c.failed.as_deref()) {
+        let said =
+            format!("The clip couldn't be cut. {why} Edit the lineup and save it to try again.");
+        notice(ui, &said, colour::WARN);
+    } else if file.is_none() && !coming {
+        // A pasted lineup whose clip was never cut still has its link.
+        let hint = if clip.is_some_and(|c| c.source.is_some()) {
             "The clip isn't cut yet. Edit the lineup and save it to cut it."
         } else {
             "No clip yet. Edit it to add one."
@@ -518,4 +536,45 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View) -> Option<Request> {
         words(ui, hint, colour::TEXT_DIM);
     }
     asked
+}
+
+/// What the picked lineup says when it was saved before a game update
+/// changed its map, and Confirm, to say it still lands. True when that was
+/// pressed.
+fn still_lands(ui: &mut Ui, lineup: &Lineup, busy: bool) -> bool {
+    let said = format!(
+        "Saved before {} changed in a game update. Check it still lands where it should, then confirm it.",
+        lineup.map
+    );
+    notice(ui, &said, colour::WARN);
+    let confirmed = controls::button(ui, "Confirm", Tone::Plain, !busy).clicked();
+    ui.add_space(space::SM);
+    confirmed
+}
+
+/// Where a clip still being cut goes, for a lineup picked straight after
+/// it was saved: black like the player, with a spinner and a line saying
+/// it's on its way.
+fn on_its_way(ui: &mut Ui) {
+    let width = ui.available_width();
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(width, (width * 9.0 / 16.0).min(220.0)), Sense::hover());
+    ui.painter().rect_filled(rect, 0, Color32::BLACK);
+    let spinner = Rect::from_center_size(rect.center() - vec2(0.0, 14.0), vec2(28.0, 28.0));
+    egui::Spinner::new()
+        .color(colour::TEXT_DIM)
+        .paint_at(ui, spinner);
+    let mut job = egui::text::LayoutJob::simple(
+        "Cutting the clip. It plays here once it's ready.".to_owned(),
+        Face::Body.at(size::MICRO + 1.0),
+        colour::TEXT_DIM,
+        rect.shrink(space::MD).width(),
+    );
+    job.halign = egui::Align::Center;
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        pos2(rect.center().x, spinner.bottom() + space::SM),
+        galley,
+        colour::TEXT_DIM,
+    );
 }

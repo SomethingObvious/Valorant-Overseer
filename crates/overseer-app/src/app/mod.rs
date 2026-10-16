@@ -145,6 +145,8 @@ pub(crate) struct Overseer {
     offline: Offline,
     /// The daily look for a newer release.
     update: crate::update::Update,
+    /// Questions out for the art of agents and maps newer than this build.
+    art_asks: Vec<u64>,
     /// The account under the pointer. The panel follows it without a click,
     /// so reading five enemies takes five glances.
     hovered: Option<String>,
@@ -447,6 +449,7 @@ impl Overseer {
     ) -> Self {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
+        overseer_ui::art::set_fetched_dir(root.join("backend").join("data").join("art"));
         // Lineup clips play in a child of this window, through Windows' engine.
         if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(cc)
             && let raw_window_handle::RawWindowHandle::Win32(window) = handle.as_raw()
@@ -501,6 +504,7 @@ impl Overseer {
             lineups: Lineups::default(),
             offline: Offline::default(),
             update: crate::update::Update::default(),
+            art_asks: Vec::new(),
             hovered: None,
             hovered_at: 0.0,
             wheel: Wheel::default(),
@@ -532,6 +536,9 @@ impl Overseer {
             self.lineups.answered(id, result);
         } else if self.offline.waiting_on(id) {
             self.offline.answered(result);
+        } else if let Some(at) = self.art_asks.iter().position(|asked| *asked == id) {
+            // Whatever came back is on disk now, and the art looks for it.
+            self.art_asks.swap_remove(at);
         } else if self.update.waiting_on(id) {
             let now = crate::update::now();
             self.update
@@ -1205,6 +1212,12 @@ impl App for Overseer {
         if self.status == Status::Live {
             self.update
                 .ask(&self.bridge, &self.settings.updates, crate::update::now());
+            // An agent or map newer than this build, drawn as soon as its art
+            // is fetched.
+            for (kind, name) in overseer_ui::art::wanted() {
+                let asked = serde_json::json!({ "kind": kind.label(), "name": name });
+                self.art_asks.push(self.bridge.ask("art", asked));
+            }
         }
         self.closing(ctx);
         self.watch_frames(ctx, frame);
@@ -1318,6 +1331,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
         lineups: Lineups::default(),
         offline: Offline::default(),
         update: crate::update::Update::default(),
+        art_asks: Vec::new(),
         hovered: None,
         hovered_at: 0.0,
         wheel: Wheel::default(),

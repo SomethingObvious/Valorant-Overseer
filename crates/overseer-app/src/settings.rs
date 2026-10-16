@@ -206,9 +206,30 @@ pub(crate) struct LineupSettings {
     pub(crate) area_colour: Option<String>,
     /// The agent a new lineup starts with.
     pub(crate) default_agent: String,
+    /// What is said about lineups from before their map changed.
+    #[serde(flatten)]
+    pub(crate) redraws: RedrawSettings,
+}
+
+/// What is said about lineups saved before a game update changed their map,
+/// kept in the same file under the same names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct RedrawSettings {
     /// The map redraws already said, as the map's name and when it changed,
     /// so each is said once.
     pub(crate) redraws_seen: Vec<String>,
+    /// Whether each such lineup is marked until it is confirmed.
+    pub(crate) mark_redrawn: bool,
+}
+
+impl Default for RedrawSettings {
+    fn default() -> Self {
+        Self {
+            redraws_seen: Vec::new(),
+            mark_redrawn: true,
+        }
+    }
 }
 
 impl Default for LineupSettings {
@@ -225,7 +246,7 @@ impl Default for LineupSettings {
             lineup_names: false,
             area_colour: None,
             default_agent: "Brimstone".to_owned(),
-            redraws_seen: Vec::new(),
+            redraws: RedrawSettings::default(),
         }
     }
 }

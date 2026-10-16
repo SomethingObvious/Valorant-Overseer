@@ -2567,6 +2567,7 @@ name = "overseer-ui"
 version = "2.1.0"
 dependencies = [
  "egui",
+ "image",
  "png",
 ]
 

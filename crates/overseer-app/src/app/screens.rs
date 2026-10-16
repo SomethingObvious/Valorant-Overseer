@@ -125,7 +125,7 @@ impl Overseer {
                             area: self.settings.lineups.area_colour.as_deref(),
                             agent: &self.settings.lineups.default_agent,
                             slow: self.slow_pc(),
-                            redraws_seen: &self.settings.lineups.redraws_seen,
+                            redraws: &self.settings.lineups.redraws,
                         },
                     ),
                 );
@@ -133,8 +133,12 @@ impl Overseer {
                     self.settings.lineups.default_agent = agent;
                     settings::save(&self.root, &self.settings);
                 }
+                if let Some(on) = self.lineups.new_looping() {
+                    self.settings.lineups.clip_loop = on;
+                    settings::save(&self.root, &self.settings);
+                }
                 if let Some(redraw) = self.lineups.redraw_seen() {
-                    self.settings.lineups.redraws_seen.push(redraw);
+                    self.settings.lineups.redraws.redraws_seen.push(redraw);
                     settings::save(&self.root, &self.settings);
                 }
             }

@@ -101,11 +101,7 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
         cancelled = controls::button(ui, "Cancel", Tone::Plain, busy.is_none()).clicked();
     });
     match (busy, missing) {
-        (Some(Job::Save), _) => words(
-            ui,
-            "Saving. A clip from a link downloads first, which can take a minute.",
-            colour::TEXT_DIM,
-        ),
+        (Some(Job::Save), _) => words(ui, "Saving.", colour::TEXT_DIM),
         (_, Some(why)) => notice(ui, why, colour::WARN),
         _ => notice(ui, "Ready to save.", colour::ALLY),
     }

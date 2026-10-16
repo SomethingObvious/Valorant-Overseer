@@ -26,6 +26,8 @@ except Exception as e:
 
 import contextlib
 
+import agents
+import art
 import cards
 import encounter_log
 import history
@@ -300,6 +302,8 @@ def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
             )
         if req_type == "lineup_delete":
             return lineups.delete(params.get("map"), params.get("id"))
+        if req_type == "lineup_confirm":
+            return lineups.confirm(params.get("map"), params.get("id"))
         if req_type == "lineup_probe":
             source = str(params.get("source") or "").strip()
             return {"source": source, "length": lineups.length(source)}
@@ -392,6 +396,11 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
         if req_type == "offline_set":
             return _offline_set(on=bool(params.get("on")))
 
+        if req_type == "art":
+            if client.source_pref == "demo":
+                return {"ok": False}
+            return art.fetch(params.get("kind"), params.get("name"))
+
         if req_type == "newest":
             # Demo mode never reaches out, so a demo can't say anything about
             # the real releases either.
@@ -466,11 +475,12 @@ def _warm_lineups() -> None:
 
     The maps and agents come from valorant-api and the minimaps and icons go
     onto disk, so the first time the screen asks, the answer comes from memory
-    instead of the network.
+    instead of the network. An agent newer than this build is learned here too.
     """
     try:
         lineups.prune_cache()
         lineups.overview()
+        agents.learn()
     except Exception:
         LOG.exception("lineups warm-up failed")
 

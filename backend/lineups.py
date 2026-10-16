@@ -455,13 +455,8 @@ def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
     you recorded is read where it is.
     """
     source = source.strip()
-    local = Path(source)
-    if source and not source.startswith(("http://", "https://")) and local.is_file():
-        return local, 0.0
-    parsed = urlparse(source)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        msg = "Paste a link to the video, or the path of a video file on this PC."
-        raise LineupError(msg)
+    if _cuttable(source):
+        return Path(source), 0.0
     # The whole video, if it was downloaded to trim. Cutting from it is a
     # couple of seconds, where downloading the clip's part again took ten or so.
     whole = ROOT / ".cache" / f"{_key(source)}-watch-hd.mp4"
@@ -502,6 +497,23 @@ def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
         msg = _download_failed(said)
         raise LineupError(msg)
     return out, begins
+
+
+def _cuttable(source: str) -> bool:
+    """Raise why `source` can't be cut, and return whether it is a file on this PC.
+
+    It is what can be told at once, so a save says so before the lineup
+    waits on a cut that can't work.
+    """
+    _tool("ffmpeg")
+    if source and not source.startswith(("http://", "https://")) and Path(source).is_file():
+        return True
+    parsed = urlparse(source)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        msg = "Paste a link to the video, or the path of a video file on this PC."
+        raise LineupError(msg)
+    _tool("ytdlp")
+    return False
 
 
 def _run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -733,9 +745,14 @@ def _shown(lineup: dict[str, Any], path: Path) -> dict[str, Any]:
     """
     shown = dict(lineup)
     clip = shown.get("clip") or {}
-    video = path.with_suffix(".mp4")
+    video, failed = path.with_suffix(".mp4"), path.with_suffix(".failed")
     if clip and video.exists():
         shown["clip"] = {**clip, "file": str(video)}
+    elif clip and failed.exists():
+        # Why its cut didn't work, for the window to say.
+        with contextlib.suppress(OSError):
+            why = failed.read_text(encoding="utf-8", errors="replace").strip()
+            shown["clip"] = {**clip, "failed": why[:400] or "no reason given"}
     pictures = [path.parent / name for name in shown.get("images") or []]
     shown["images"] = [str(p) for p in pictures if p.exists()]
     # When it was last saved, so the window can tell one made on a map since
@@ -745,7 +762,11 @@ def _shown(lineup: dict[str, Any], path: Path) -> dict[str, Any]:
 
 
 def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
-    """Save a lineup, cutting its clip first when one comes with it, at 720p when `small`."""
+    """Save a lineup, and cut the clip that comes with it after, at 720p when `small`.
+
+    It answers once the lineup is written, so it is on the map straight away,
+    and the list has the clip's file once the cut is done.
+    """
     if not isinstance(raw, dict):
         msg = "That lineup is empty."
         raise LineupError(msg)
@@ -778,18 +799,21 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
     kept = read_json(str(path), None) if path.exists() else None
     old_clip = (kept or {}).get("clip") if isinstance(kept, dict) else None
     video = path.with_suffix(".mp4")
+    later = None
     if isinstance(clip, dict) and str(clip.get("source") or "").strip():
         start, end, volume = _times(clip)
         wanted = {"source": str(clip["source"]).strip(), "from": start, "to": end, "volume": volume}
         if wanted != old_clip or not video.exists():
-            folder.mkdir(parents=True, exist_ok=True)
-            cut(wanted, video, small=small)
-            # The whole video was only for trimming. The clip is cut now. A
-            # cut from it still running keeps it, and a day's pruning takes it.
-            with contextlib.suppress(PermissionError):
-                (ROOT / ".cache" / f"{_key(str(wanted['source']))}-watch-hd.mp4").unlink(
-                    missing_ok=True
+            _cuttable(str(wanted["source"]))
+            try:
+                _patiently(lambda: video.unlink(missing_ok=True))
+            except PermissionError as e:
+                msg = (
+                    "Couldn't replace the clip, as another program has it open. "
+                    "Close it and try again."
                 )
+                raise LineupError(msg) from e
+            later = wanted
         lineup["clip"] = wanted
     elif isinstance(clip, dict):
         # A clip with no source is one taken off, its file with it.
@@ -802,6 +826,10 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
     if not write_atomic(str(path), lineup, prefix=".lineup-"):
         msg = f"Couldn't write {path}."
         raise LineupError(msg)
+    if isinstance(clip, dict):
+        path.with_suffix(".failed").unlink(missing_ok=True)
+    if later:
+        _cut_later(path, later, small=small)
     return _shown(lineup, path)
 
 
@@ -818,9 +846,25 @@ def delete(map_name: Any, lineup_id: Any) -> dict[str, Any]:
         msg = "Couldn't delete the clip, as another program has it open. Close it and try again."
         raise LineupError(msg) from e
     (folder / f"{name}.json").unlink(missing_ok=True)
+    (folder / f"{name}.failed").unlink(missing_ok=True)
     for picture in folder.glob(f"{name}-pic-*.png"):
         picture.unlink(missing_ok=True)
     return {"deleted": name}
+
+
+def confirm(map_name: Any, lineup_id: Any) -> dict[str, Any]:
+    """Mark a lineup as checked since its map last changed.
+
+    Its file's time is when it was last saved, which is what the window holds
+    against when the map changed, so touching it is enough.
+    """
+    path = _folder(map_name) / f"{lineup_id}.json"
+    lineup = read_json(str(path), None) if _SLUG.match(str(lineup_id or "")) else None
+    if not isinstance(lineup, dict):
+        msg = "That lineup doesn't exist."
+        raise LineupError(msg)
+    os.utime(path)
+    return _shown(lineup, path)
 
 
 # A code is OVL1, the lineups as zlib'd JSON in base32, then a 9. Base32 is
@@ -862,9 +906,9 @@ _CLIP_SITES = (
 )
 
 
-# Clips for pasted lineups are cut one at a time on a thread of their own,
-# so a code answers at once and its downloads never hold up the window's
-# other requests. A real map's worth is under ten.
+# Clips are cut one at a time on a thread of their own, so a save or a code
+# answers at once and the downloads never hold up the window's other
+# requests. A real map's worth is under ten.
 _CUTTER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lineup-cuts")
 _MOST_CUT = 20
 
@@ -996,21 +1040,39 @@ def _arrival(
 
 
 def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
-    """Cut a pasted lineup's clip on the cutter's thread.
+    """Cut a lineup's clip on the cutter's thread.
 
-    The lineup already keeps the clip's link and times, so one that fails is
-    left for Edit then Save to try again, and one deleted meanwhile is skipped.
+    The lineup already keeps the clip's link and times. One that fails leaves
+    why in a file beside it, for Edit then Save to try again. A lineup deleted
+    meanwhile, or saved with another clip, is skipped.
     """
+    video, failed = path.with_suffix(".mp4"), path.with_suffix(".failed")
+
+    def wanted_still() -> bool:
+        kept = read_json(str(path), None) if path.exists() else None
+        return isinstance(kept, dict) and kept.get("clip") == wanted
 
     def run() -> None:
-        if not path.exists():
+        if video.exists() or not wanted_still():
             return
         try:
-            cut(wanted, path.with_suffix(".mp4"), small=small)
+            cut(wanted, video, small=small)
         except (LineupError, OSError) as e:
-            LOG.warning("couldn't cut the pasted clip for %s: %s", path.stem, e)
-        if not path.exists():
-            path.with_suffix(".mp4").unlink(missing_ok=True)
+            LOG.warning("couldn't cut the clip for %s: %s", path.stem, e)
+            if wanted_still():
+                with contextlib.suppress(OSError):
+                    failed.write_text(str(e), encoding="utf-8")
+            return
+        if not wanted_still():
+            with contextlib.suppress(OSError):
+                video.unlink(missing_ok=True)
+            return
+        # The whole video was only for trimming. A cut from it still running
+        # keeps it, and a day's pruning takes it.
+        with contextlib.suppress(OSError):
+            (ROOT / ".cache" / f"{_key(str(wanted['source']))}-watch-hd.mp4").unlink(
+                missing_ok=True
+            )
 
     _CUTTER.submit(run)
 
@@ -1133,6 +1195,12 @@ def overview() -> dict[str, Any]:
     }
 
 
+def _settled(shown: dict[str, Any]) -> dict[str, Any]:
+    """Return a saved lineup as the list has it once its clip is cut, for the self-check."""
+    _CUTTER.submit(lambda: None).result()
+    return next(item for item in listing() if item["id"] == shown["id"])
+
+
 def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     from unittest import mock
 
@@ -1155,19 +1223,21 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         mock.patch(f"{__name__}._CLIP_SITES", ("localhost",)),
     ):
         linked = {"source": "https://localhost/watch?v=abc", "from": "5", "to": "9"}
-        first = save(
-            {
-                "map": "Ascent",
-                "agent": "Brimstone",
-                "ability": "Incendiary",
-                "title": "B Short",
-                "stand": [0.1, 0.2],
-                "land": [0.3, 0.4],
-            },
-            linked,
+        first = _settled(
+            save(
+                {
+                    "map": "Ascent",
+                    "agent": "Brimstone",
+                    "ability": "Incendiary",
+                    "title": "B Short",
+                    "stand": [0.1, 0.2],
+                    "land": [0.3, 0.4],
+                },
+                linked,
+            )
         )
         recorded = {"map": "Ascent", "agent": "Brimstone", "title": "Mine", "stand": [0.5, 0.5]}
-        mine = save(recorded, {"source": str(recording), "from": "1", "to": "3"})
+        mine = _settled(save(recorded, {"source": str(recording), "from": "1", "to": "3"}))
         # A drawing sits beside the lineups and must not go out as one.
         save_drawing(
             "Ascent", [{"kind": "circle", "colour": "#ff4655", "a": [0.5, 0.5], "b": [0.6, 0.5]}]
@@ -1299,12 +1369,47 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
             {"map": "Ascent", "agent": "Brimstone", "title": "Takes Off", "stand": [0.7, 0.7]},
             {"source": "https://localhost/v?id=9", "from": "1", "to": "2"},
         )
+        # It answers before the clip is cut, and the list has it once it is.
+        check("file" not in clipped["clip"], clipped)
+        clipped = _settled(clipped)
     video = Path(clipped["clip"]["file"])
     check(save(clipped)["clip"]["file"] == str(video) and video.exists())
     gone = save(clipped, {"source": ""})
     check("clip" not in gone and not video.exists(), gone)
+
+    # A cut that fails says why, and saving it again tries again.
+    def failing(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        if Path(command[0]).stem == "ffmpeg":
+            return subprocess.CompletedProcess(command, 1, "", "Invalid data found")
+        return fake_run(command, timeout)
+
+    tried = {"map": "Ascent", "agent": "Brimstone", "title": "Tried", "stand": [0.8, 0.8]}
+    retry = {"source": "https://localhost/v?id=7", "from": "1", "to": "2"}
+    with (
+        mock.patch(f"{__name__}._run", side_effect=failing),
+        mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
+    ):
+        broke = _settled(save(tried, retry))
+    check("Invalid data found" in broke["clip"].get("failed", ""), broke)
+    with (
+        mock.patch(f"{__name__}._run", side_effect=fake_run),
+        mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
+    ):
+        mended = _settled(save(broke, retry))
+        # A cut the lineup has moved on from is dropped, the newer one kept.
+        save(mended, {**retry, "from": "1.5"})
+        moved = _settled(save(mended, {**retry, "from": "1.2"}))
+    check("failed" not in mended["clip"] and Path(mended["clip"]["file"]).exists(), mended)
+    for bad in ("../ascent/x", "nobody"):
+        try:
+            confirm("Ascent", bad)
+        except LineupError:
+            continue
+        raise AssertionError(bad)
+    check(moved["clip"]["from"] == 1.2 and Path(moved["clip"]["file"]).exists(), moved)
     for lineup in listing():
         delete(lineup["map"], lineup["id"])
+    check(not list(ROOT.glob("*/*.failed")), "a deleted lineup left its failure behind")
 
 
 def _self_check() -> None:
@@ -1405,6 +1510,7 @@ def _self_check() -> None:
                     "volume": 60,
                 },
             )
+            saved = _settled(saved)
             download, trim = runs
             # The link goes after "--", so it can never be read as an option,
             # and only the clip with five seconds either side comes down.
@@ -1421,7 +1527,7 @@ def _self_check() -> None:
                 {**saved, "title": "A Main Molly"}, {**saved["clip"], "from": "1:10", "to": "1:17"}
             )
             check(again["id"] == saved["id"] and runs == [], runs)
-            save(saved, {**saved["clip"], "from": "1:11", "to": "1:17"})
+            _settled(save(saved, {**saved["clip"], "from": "1:11", "to": "1:17"}))
             check([Path(r[0]).stem for r in runs] == ["ffmpeg"], runs)
 
             for bad in ("file:///C:/Windows/win.ini", "-o evil", "javascript:alert(1)"):

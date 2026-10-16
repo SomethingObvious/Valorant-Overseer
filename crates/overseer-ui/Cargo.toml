@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 egui.workspace = true
 png.workspace = true
+image.workspace = true
 
 [lints]
 workspace = true

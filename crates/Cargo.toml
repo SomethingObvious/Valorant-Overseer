@@ -29,6 +29,10 @@ egui = "0.36.2"
 # formats this app will never see; this is the one that `image` itself uses
 # for PNG.
 png = "0.18.0"
+# Only its resize, with every format switched off, to cut art for an agent
+# or map newer than the build the way the bound art was cut. eframe already
+# builds it in for the clipboard, so this adds no code to the binary.
+image = { version = "0.25.10", default-features = false }
 # Default features on, deliberately. They are the wgpu renderer, the bundled
 # fonts, accesskit for screen readers, and winit's own defaults, which is where
 # raw-window-handle lives: turning them off to "keep it lean" removes the

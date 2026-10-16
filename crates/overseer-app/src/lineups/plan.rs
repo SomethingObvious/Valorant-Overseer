@@ -153,7 +153,7 @@ fn redrawn(ui: &mut Ui, atlas: &Atlas, view: &mut View, plan: &Plan) {
 fn redrawn_notice(atlas: &Atlas, view: &View, plan: &Plan) -> Option<(String, String)> {
     let at = plan.changed?;
     let key = format!("{} {at:.0}", plan.name);
-    if view.redraws_seen.contains(&key) || view.redraw_seen.as_ref() == Some(&key) {
+    if view.redraws.redraws_seen.contains(&key) || view.redraw_seen.as_ref() == Some(&key) {
         return None;
     }
     let old: Vec<&str> = atlas
@@ -1089,10 +1089,33 @@ fn pins(
             );
         }
     }
+    for lineup in rest.iter().chain(&picked) {
+        if let Some(at) = lineup
+            .stand
+            .or(lineup.land)
+            .filter(|_| view.marked(atlas, lineup))
+        {
+            badge(painter, point(square, at) + vec2(FACE, -FACE));
+        }
+    }
     if let Some(lineup) = writing {
         pin(painter, square, atlas, lineup, (colour::TEXT_STRONG, main));
         handles(painter, square, lineup, scale);
     }
+}
+
+/// The mark on a lineup saved before its map changed: an amber dot with an
+/// exclamation mark, centred on `at`.
+pub(super) fn badge(painter: &egui::Painter, at: Pos2) {
+    painter.circle_filled(at, 7.0, colour::WARN);
+    painter.circle_stroke(at, 7.0, Stroke::new(1.5, colour::VOID));
+    painter.text(
+        at,
+        Align2::CENTER_CENTER,
+        "!",
+        Face::Heavy.at(11.0),
+        colour::VOID,
+    );
 }
 
 /// What only shows while a lineup is being written: how far a smoke put

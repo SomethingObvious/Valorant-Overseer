@@ -444,8 +444,13 @@ fn clips(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     let sizes: Vec<(f32, String)> = SIZES.iter().map(|&(s, n)| (s, n.to_owned())).collect();
     changed |= choice(ui, "Size", &sizes, &mut settings.lineups.clip_size);
     clip_tools(ui);
+    changed | lineup_maps(ui, settings, still)
+}
 
+/// How each lineup map is drawn. True when something changed.
+fn lineup_maps(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     section(ui, "Lineup Maps", "How each map is drawn.");
+    let mut changed = false;
     changed |= area_colour(ui, settings);
     if switch(
         ui,
@@ -456,6 +461,17 @@ fn clips(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
         still,
     ) {
         settings.lineups.lineup_names = !settings.lineups.lineup_names;
+        changed = true;
+    }
+    if switch(
+        ui,
+        "Mark After Map Updates",
+        "Mark a lineup saved before a game update changed its map, until you check it and press Confirm",
+        settings.lineups.redraws.mark_redrawn,
+        false,
+        still,
+    ) {
+        settings.lineups.redraws.mark_redrawn = !settings.lineups.redraws.mark_redrawn;
         changed = true;
     }
     for turn in MapTurn::ALL {

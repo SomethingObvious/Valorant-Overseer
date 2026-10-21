@@ -178,3 +178,9 @@ cast_precision_loss = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 
+[profile.dev.package."*"]
+# Dependencies keep only line tables in debug builds. A backtrace still names
+# the file and line inside egui or wgpu, but full debug info for every one of
+# them is a large share of what piles up in target/, and nobody steps through
+# them. The workspace's own crates keep full debug info for the debugger.
+debug = "line-tables-only"

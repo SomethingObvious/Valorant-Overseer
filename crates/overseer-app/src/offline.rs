@@ -30,6 +30,11 @@ pub(crate) struct Offline {
     pub(crate) wanted: Option<bool>,
     /// A press on its way to the backend.
     sent: Option<bool>,
+    /// Agent select or a match is on, when a restart would cost the match.
+    pub(crate) playing: bool,
+    /// A first press of the switch that restarts the game, waiting for the
+    /// second.
+    pub(crate) armed: bool,
     /// The question out, and when the last one went.
     waiting: Option<u64>,
     asked_at: Option<f64>,

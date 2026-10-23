@@ -93,6 +93,7 @@ impl Overseer {
             tray: no_tray.as_deref(),
         };
         let mut changed = false;
+        self.offline.playing = matches!(self.board.state.as_deref(), Some("PREGAME" | "INGAME"));
         CentralPanel::default().frame(chrome).show(ui, |ui| {
             ui.multiply_opacity(0.90f32.mul_add(turning, 0.10));
             changed = view::settings(
@@ -274,6 +275,22 @@ impl Overseer {
             return board::Touched::default();
         }
         let now = ui.input(|i| i.time);
+        // A board that stopped updating says so, and fades, so nobody reads
+        // it as the round in front of them.
+        if let Some(lost) = self.lost_at {
+            if place == Place::Window {
+                let gone = super::waiting::clock((now - lost).max(0.0) as u64);
+                view::warning(
+                    ui,
+                    &format!(
+                        "Lost the backend {gone} ago. Reconnecting, and this board is from then."
+                    ),
+                );
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            ui.multiply_opacity(0.45);
+        }
         let scene = Scene {
             board: &self.board,
             sort: &self.sort,

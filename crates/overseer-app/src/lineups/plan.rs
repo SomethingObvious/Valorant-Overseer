@@ -1842,11 +1842,11 @@ fn notes(response: &Response, atlas: &Atlas, found: &[&Lineup]) {
         }
         if found.len() > 1 {
             ui.add_space(space::SM);
-            ui.label(overseer_ui::caps(
-                "Click again for the next one",
-                Face::Display.at(size::MICRO),
-                colour::TEXT_DIM,
-            ));
+            ui.label(
+                egui::RichText::new("Click again for the next one.")
+                    .font(Face::Body.at(size::MICRO + 1.0))
+                    .color(colour::TEXT_DIM),
+            );
         }
     });
 }
@@ -1875,7 +1875,11 @@ fn note(ui: &mut Ui, atlas: &Atlas, lineup: &Lineup) {
         .filter(|n| !n.is_empty())
     {
         ui.add_space(space::SM);
-        ui.label(egui::RichText::new(notes.to_uppercase()).color(colour::TEXT));
+        ui.label(
+            egui::RichText::new(notes)
+                .font(Face::Body.at(size::MICRO + 1.0))
+                .color(colour::TEXT),
+        );
     }
 }
 

@@ -227,7 +227,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
 fn stats(inside: &egui::Painter, player: &Player, (rect, grid): (Rect, &Grid), look: &Look<'_>) {
     if known(player) {
         for placed in &grid.placed {
-            cell(inside, player, rect, (*placed, grid.peak_under_rank), look);
+            cell(inside, player, rect, (*placed, grid), look);
         }
     } else if let Some(first) = grid.placed.first() {
         let why = if player.name.as_deref().is_none_or(str::is_empty) && !player.hidden.name {
@@ -592,9 +592,10 @@ fn cell(
     painter: &egui::Painter,
     player: &Player,
     line: Rect,
-    (placed, peak_under_rank): (Placed, bool),
+    (placed, grid): (Placed, &Grid),
     look: &Look<'_>,
 ) {
+    let peak_under_rank = grid.peak_under_rank;
     let m = look.metrics;
     let left = line.left() + placed.left;
     let right = line.left() + placed.right;
@@ -617,7 +618,11 @@ fn cell(
         "rank" => rank_cell(painter, player, pos2(left, y), look, peak_under_rank),
         "peak" => peak_cell(painter, player, pos2(left, y), look),
         "k/d" => match player.kd {
-            Some(kd) => kd_cell(painter, kd, pos2(right, y), look, few_games(player)),
+            Some(kd) => {
+                let few = few_games(player);
+                let say = (few && !grid.games_shown).then_some(player.form.len());
+                kd_cell(painter, kd, pos2(right, y), look, (few, say));
+            }
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
         "games" => {
@@ -729,13 +734,21 @@ pub(crate) fn few_games(player: &Player) -> bool {
 
 /// The K/D as the row's largest numeral, counting up while a lobby lands,
 /// sat on its cap height rather than its line box. Off one or two games it
-/// is drawn faint, the way a win rate off a few games is.
-fn kd_cell(painter: &egui::Painter, kd: f64, right: egui::Pos2, look: &Look<'_>, few: bool) {
+/// is drawn faint, the way a win rate off a few games is, and when the Games
+/// column has gone for room, `games` says how many under it.
+fn kd_cell(
+    painter: &egui::Painter,
+    kd: f64,
+    right: egui::Pos2,
+    look: &Look<'_>,
+    (few, games): (bool, Option<usize>),
+) {
     let shown = kd * f64::from(look.counted);
-    let _landed = paint::numeral(
+    let lift = if games.is_some() { 5.0 } else { 0.0 };
+    let landed = paint::numeral(
         painter,
         &format!("{shown:.2}"),
-        pos2(right.x, right.y - 1.5),
+        pos2(right.x, right.y - 1.5 - lift),
         &Face::Heavy.at(look.metrics.kd),
         if few {
             colour::TEXT_FAINT
@@ -743,6 +756,16 @@ fn kd_cell(painter: &egui::Painter, kd: f64, right: egui::Pos2, look: &Look<'_>,
             paint::kd_heat(look.side, Some(kd))
         },
     );
+    if let Some(n) = games {
+        let _said = caps_text(
+            painter,
+            pos2(right.x, landed.bottom() + 2.0),
+            Align2::RIGHT_TOP,
+            &format!("{n} {}", if n == 1 { "Game" } else { "Games" }),
+            Face::Display.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+    }
 }
 
 /// The peak: a smaller emblem, the rank said the short way players say it,

@@ -165,12 +165,11 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
         colour::BG,
     );
     let label = crate::board::paint::label();
-    let _waiting = caps_text(
-        painter,
+    let _waiting = painter.text(
         pos2(said.right() + space::LG, middle),
         Align2::LEFT_CENTER,
-        "The enemy team shows here once a match loads",
-        label.clone(),
+        "The enemy team shows here once a match loads.",
+        Face::Body.at(label.size + 1.0),
         colour::BG,
     );
     let _hide = caps_text(

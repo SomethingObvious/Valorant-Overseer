@@ -481,29 +481,62 @@ pub fn choice(
             colour::TEXT_DIM
         },
     );
-    // Cut to what is left of the row rather than run off the end of it: two
-    // of these side by side leave half the width each, and the longest
-    // explanation is wider than half.
     let named = widest_name(ui, drawn.right() - pip.right());
     let at = (pip.right() + named).max(slab.left() + 190.0) + space::LG;
+    // A switch says whether it is on in words at its end, which a dozen
+    // pips down a long page don't say at a glance. A choice is lit instead.
+    let end = if one_of {
+        slab.right() - space::LG
+    } else {
+        state(
+            &painter,
+            on,
+            egui::pos2(slab.right() - space::LG, slab.center().y),
+        ) - space::LG
+    };
+    explanation(&painter, about, (at, end, slab.center().y));
+    response.clicked()
+}
+
+/// ON or OFF ending at `right`, for a switch, and where it starts.
+fn state(painter: &egui::Painter, on: bool, right: egui::Pos2) -> f32 {
+    let (word, ink) = if on {
+        ("On", colour::TEXT_STRONG)
+    } else {
+        ("Off", colour::TEXT_FAINT)
+    };
+    caps_text(
+        painter,
+        right,
+        egui::Align2::RIGHT_CENTER,
+        word,
+        Face::Display.at(size::LABEL),
+        ink,
+    )
+    .left()
+}
+
+/// What a switch does, from `at` to `end` and centred on `middle`, cut to
+/// one line rather than run off the end of the row, as two switches side by
+/// side leave half the width each and the longest explanation is wider.
+fn explanation(painter: &egui::Painter, about: &str, (at, end, middle): (f32, f32, f32)) {
     let mut job = egui::text::LayoutJob::simple_singleline(
         about.to_owned(),
         Face::Body.at(size::LABEL + 1.0),
         colour::TEXT_FAINT,
     );
     job.wrap = egui::text::TextWrapping {
-        max_width: slab.right() - space::LG - at,
+        max_width: end - at,
         max_rows: 1,
         break_anywhere: true,
         overflow_character: Some('\u{2026}'),
     };
     let galley = painter.layout_job(job);
     painter.galley(
-        egui::pos2(at, slab.center().y - galley.size().y / 2.0),
+        egui::pos2(at, middle - galley.size().y / 2.0),
         galley,
         colour::TEXT_FAINT,
     );
-    response.clicked()
 }
 
 /// The widest name among the switches drawn in `ui`, counting one `named`
@@ -520,6 +553,12 @@ fn widest_name(ui: &egui::Ui, named: f32) -> f32 {
         ui.ctx().request_repaint();
     }
     named.max(before)
+}
+
+/// The slanted pip that says a switch is on, `on`, or off, for anything
+/// else that is on or done, so the app says it one way.
+pub fn pip(painter: &egui::Painter, rect: egui::Rect, on: bool) {
+    mark(painter, rect, on, false);
 }
 
 /// The slanted pip: solid for a switch, and an outline that fills for a

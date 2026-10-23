@@ -25,8 +25,8 @@ pub(super) const KINDS: [(&str, &str); 9] = [
 /// The colours a shape can be, as kept, bright enough to read on the
 /// darkened minimap.
 pub(crate) const COLOURS: [&str; 12] = [
-    "#FF4655", "#FF8A3D", "#FFC845", "#B5E853", "#18E5A7", "#3FD0FF", "#4A7BFF", "#A86CFF",
-    "#FF6FCF", "#F2EFE8", "#8B929C", "#7A4A2A",
+    "#FF4655", "#FF8A3D", "#FFC845", "#18E5A7", "#9ADEFF", "#5CE1E6", "#7AA2FF", "#C58BFF",
+    "#F28DD5", "#FF8088", "#F2EFE8", "#8B929C",
 ];
 
 /// A kept colour as one to paint with.
@@ -144,10 +144,12 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
                 egui::StrokeKind::Inside,
             );
             let pad = letters(square) * 0.4;
+            // The colour is the box's edge, and the words are in the app's
+            // cream, which reads on any of them.
             let galley = painter.layout(
                 drawing.text.clone(),
                 Face::Body.at((letters(square) * 0.75).max(11.0)),
-                tint,
+                colour::TEXT_STRONG,
                 (bounds.width() - pad * 2.0).max(1.0),
             );
             // Words past the bottom are cut off, and dragging a corner shows
@@ -155,7 +157,7 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
             painter.with_clip_rect(bounds.shrink(1.0)).galley(
                 bounds.min + vec2(pad, pad),
                 galley,
-                tint,
+                colour::TEXT_STRONG,
             );
         }
         "text" => {

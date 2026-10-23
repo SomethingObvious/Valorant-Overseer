@@ -48,6 +48,7 @@ pub(crate) fn settings(
         .show(ui, |ui| {
             ui.add_space(space::LG);
             title(ui, "Settings", "Press Esc or the gear to go back.");
+            jumps(ui);
 
             offline_chat(ui, offline, still);
             changed |= columns(ui, settings, still);
@@ -209,7 +210,7 @@ fn keys(ui: &mut Ui) {
         "Keyboard Shortcuts",
         "These work while the Overseer window is in front.",
     );
-    for (key, what) in [
+    let keys = [
         ("/", "Search for a player or an agent"),
         (",", "Open or close settings"),
         ("h", "Open or close your match history"),
@@ -234,23 +235,30 @@ fn keys(ui: &mut Ui) {
             "Show a lineup's clip full screen, or leave full screen",
         ),
         ("left, right", "Skip a lineup's clip back or on 5 seconds"),
-    ] {
+    ];
+    let widest = keys
+        .iter()
+        .map(|(key, _)| overseer_ui::keycap_width(ui.painter(), key))
+        .fold(0.0, f32::max);
+    for (key, what) in keys {
         let (rect, _response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
         if !ui.is_rect_visible(rect) {
             continue;
         }
         let painter = ui.painter();
-        let plate =
+        let _plate =
             overseer_ui::keycap(painter, pos2(rect.left() + space::XL, rect.center().y), key);
+        // Every description starts just past the widest key, rather than far
+        // across the page from a short one.
         painter.text(
             pos2(
-                plate.right().max(rect.left() + 190.0) + space::LG,
+                rect.left() + space::XL + widest + space::LG,
                 rect.center().y,
             ),
             Align2::LEFT_CENTER,
             what,
-            Face::Body.at(size::MICRO),
+            Face::Body.at(size::LABEL + 1.0),
             colour::TEXT_FAINT,
         );
     }
@@ -654,12 +662,59 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
     }
 }
 
+/// The sections of Settings, in the order the page has them, for the chips
+/// at its top to jump to.
+const SECTIONS: [&str; 12] = [
+    "Offline Chat",
+    "Columns",
+    "Layout",
+    "Overlay",
+    "System Tray",
+    "Lineup Clips",
+    "Lineup Maps",
+    "Your PC",
+    "Graphics",
+    "Updates",
+    "Your Data",
+    "Keyboard Shortcuts",
+];
+
+/// Where a chip at the top of Settings asked to go, until the section is
+/// drawn and scrolls there.
+const JUMP: &str = "settings-jump";
+
+/// A chip for every section, which scrolls the page to it, since the page is
+/// long and every group on it looks alike.
+fn jumps(ui: &mut Ui) {
+    ui.add_space(space::SM);
+    // Inset as a whole, so a second line of chips lines up with the first.
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(space::XL as i8, 0))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
+                for name in SECTIONS {
+                    if controls::chip(ui, name, false).clicked() {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
+                    }
+                }
+            })
+        });
+}
+
 /// A section heading: the name, a sentence about it, and a hairline to the
-/// edge.
+/// edge, with more room above it than below, so each group reads as one.
 fn section(ui: &mut Ui, text: &str, about: &str) {
-    ui.add_space(space::XL);
+    ui.add_space(space::XXL);
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+    let asked = ui.ctx().data(|d| d.get_temp::<String>(egui::Id::new(JUMP)));
+    if asked.as_deref() == Some(text) {
+        ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+        ui.ctx()
+            .data_mut(|d| d.remove::<String>(egui::Id::new(JUMP)));
+    }
     if !ui.is_rect_visible(rect) {
         return;
     }

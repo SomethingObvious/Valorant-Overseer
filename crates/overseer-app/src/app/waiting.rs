@@ -41,10 +41,14 @@ struct Stage<'a> {
 
 /// Where things have got, from the bridge's status and what the empty board
 /// says it waits on.
-fn stage<'a>(status: &'a Status, board: &'a Board, trouble: Option<&'a str>) -> Stage<'a> {
+fn stage<'a>(
+    status: &'a Status,
+    board: &'a Board,
+    trouble: Option<(&'a str, &'a str)>,
+) -> Stage<'a> {
     let said = board.notice.as_ref().and_then(|n| n.message.as_deref());
     let (title, detail, step, failed) = match (trouble, status, board.waiting.as_deref()) {
-        (Some(why), ..) => ("This Build Can't Read the Bridge", why, 0, true),
+        (Some((title, why)), ..) => (title, why, 0, true),
         (None, Status::Connecting(_), _) => (
             "Starting Up",
             "Overseer's backend is starting, which takes a few seconds.",
@@ -96,7 +100,7 @@ fn stage<'a>(status: &'a Status, board: &'a Board, trouble: Option<&'a str>) -> 
 pub(super) fn empty(
     ui: &mut Ui,
     (status, board): (&Status, &Board),
-    trouble: Option<&str>,
+    trouble: Option<(&str, &str)>,
     fade: f32,
 ) {
     let stage = stage(status, board, trouble);
@@ -352,8 +356,21 @@ fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
 /// The same words with no furniture, for a window too short to hold any.
 fn plain(ui: &mut Ui, title: &str, detail: &str) {
     ui.add_space(space::XXL);
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XXL * 2.0), Sense::hover());
+    let wide = ui.available_width();
+    // Centred and wrapped, as a reason can be longer than the window is wide.
+    let mut job = egui::text::LayoutJob::simple(
+        detail.to_owned(),
+        Face::Body.at(size::BODY),
+        colour::TEXT_DIM,
+        space::XL.mul_add(-2.0, wide),
+    );
+    job.halign = egui::Align::Center;
+    let sentence = ui.painter().layout_job(job);
+    let below = space::XXL + space::SM;
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(wide, below + sentence.size().y + space::SM),
+        Sense::hover(),
+    );
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -366,11 +383,9 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
         Face::Heavy.at(22.0),
         colour::TEXT_STRONG,
     );
-    painter.text(
-        pos2(rect.center().x, rect.bottom() - space::LG),
-        Align2::CENTER_CENTER,
-        detail,
-        Face::Body.at(size::BODY),
+    painter.galley(
+        pos2(rect.center().x, rect.top() + below),
+        sentence,
         colour::TEXT_DIM,
     );
 }

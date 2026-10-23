@@ -105,6 +105,8 @@ pub(crate) struct Overseer {
     /// Why the bridge gave up, if it has. Unlike a disconnect, a bad token
     /// never fixes itself, so the window says so.
     stopped: Option<String>,
+    /// Why the backend couldn't be started at all, found before it was tried.
+    broken: Option<String>,
     /// Who the panel is about. Kept by account id rather than by position,
     /// because the backend reorders the board between frames.
     selected: Option<String>,
@@ -445,7 +447,7 @@ impl Overseer {
     pub(crate) fn new(
         cc: &CreationContext<'_>,
         root: &Path,
-        (listener, maximize): (Option<std::net::TcpListener>, bool),
+        (listener, maximize, broken): (Option<std::net::TcpListener>, bool, Option<String>),
     ) -> Self {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
@@ -480,7 +482,9 @@ impl Overseer {
             settings: settings::load(root),
             board: Board::default(),
             status: Status::Connecting(String::new()),
-            stopped: None,
+            // It never fixes itself, so the light shows it from the start.
+            stopped: broken.clone(),
+            broken,
             selected: None,
             screen: Screen::Board,
             screen_showing: Screen::Board,
@@ -921,14 +925,21 @@ impl Overseer {
         })
     }
 
-    /// Why there is no board, when "nothing in progress" would be wrong: the
-    /// bridge stopped, or nothing it sent could be read.
-    fn reason(&self) -> Option<&str> {
-        self.stopped.as_deref().or_else(|| {
-            (self.boards == 0)
-                .then_some(self.unreadable.1.as_deref())
-                .flatten()
-        })
+    /// Why there is no board, when "nothing in progress" would be wrong, with
+    /// a title: the backend couldn't start, the bridge stopped, or nothing it
+    /// sent could be read.
+    fn reason(&self) -> Option<(&'static str, &str)> {
+        if let Some(why) = &self.broken {
+            return Some(("Overseer Can't Start", why));
+        }
+        self.stopped
+            .as_deref()
+            .or_else(|| {
+                (self.boards == 0)
+                    .then_some(self.unreadable.1.as_deref())
+                    .flatten()
+            })
+            .map(|why| ("This Build Can't Read the Bridge", why))
     }
 
     /// What the tray and a second launch asked of the window.
@@ -1311,6 +1322,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
         board: board.clone(),
         status: Status::Live,
         stopped: None,
+        broken: None,
         selected: None,
         screen: Screen::Board,
         screen_showing: Screen::Board,

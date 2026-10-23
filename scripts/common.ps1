@@ -414,6 +414,14 @@ function Test-Venv([switch]$Quick) {
                     }
                 }
             }
+            # Updating or removing Python takes the venv's base interpreter
+            # with it, and the venv's own python.exe then exits at once.
+            if ($cfg -match '(?im)^home\s*=\s*(.+)$') {
+                $baseDir = $Matches[1].Trim()
+                if (-not (Test-Path (Join-Path $baseDir "python.exe"))) {
+                    $reasons += "the Python the venv was made from is gone ($baseDir)"
+                }
+            }
         }
         catch {
             $reasons += "pyvenv.cfg is unreadable"

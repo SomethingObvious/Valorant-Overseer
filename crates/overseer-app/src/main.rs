@@ -63,7 +63,7 @@ fn main() -> eframe::Result {
         instance::Start::First(listener) => Some(listener),
         instance::Start::Unguarded => None,
     };
-    serve(&root);
+    let broken = serve(&root);
 
     let mut viewport = ViewportBuilder::default()
         .with_title("Valorant Overseer")
@@ -101,7 +101,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(app::Overseer::new(
                 cc,
                 &root,
-                (listener, maximize.get()),
+                (listener, maximize.get(), broken.clone()),
             )))
         }),
     )
@@ -115,13 +115,16 @@ pub(crate) const NO_WINDOW: u32 = 0x0800_0000;
 /// starts inherits it.
 pub(crate) const BELOW_NORMAL: u32 = 0x0000_4000;
 
-/// Starts the backend under `run.py`. With no install to run, the window just
-/// waits for a backend.
-fn serve(root: &Path) {
+/// Starts the backend under `run.py`, or says why it can't. With no install
+/// to run, the window just waits for a backend.
+fn serve(root: &Path) -> Option<String> {
     let python = root.join(".venv").join("Scripts").join("python.exe");
     let launcher = root.join("backend").join("run.py");
     if !python.is_file() || !launcher.is_file() {
-        return;
+        return None;
+    }
+    if let Some(why) = broken(root) {
+        return Some(why);
     }
     // `--parent` ends the backend when this process ends. Everything it
     // starts shares its hidden console, so nothing flashes on screen and it
@@ -136,9 +139,27 @@ fn serve(root: &Path) {
         .stderr(std::process::Stdio::null())
         .creation_flags(NO_WINDOW | BELOW_NORMAL)
         .spawn();
-    if let Err(why) = started {
-        println!("backend not started: {why}");
-    }
+    started
+        .err()
+        .map(|why| format!("Overseer's backend didn't start: {why}."))
+}
+
+/// Why the install in `root` can't run, when the Python its environment was
+/// made from is gone. Updating or removing Python does that, and the
+/// environment's own python.exe then exits as soon as it starts.
+fn broken(root: &Path) -> Option<String> {
+    let settings = std::fs::read_to_string(root.join(".venv").join("pyvenv.cfg")).ok()?;
+    let home = settings.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "home").then(|| value.trim().to_owned())
+    })?;
+    let home = Path::new(&home);
+    (!home.join("python.exe").is_file()).then(|| {
+        let name = home.file_name().map_or_else(|| home.display().to_string(), |n| n.to_string_lossy().into_owned());
+        format!(
+            "Its Python ({name}) is gone, which happens when Python is updated or removed. Run              install.bat in Overseer's folder to repair it. Your settings and lineups are kept."
+        )
+    })
 }
 
 /// The directory holding `.overseer`, which is the directory holding the app.
@@ -157,4 +178,41 @@ fn install_root() -> PathBuf {
                 .map(PathBuf::from)
         })
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::broken;
+
+    /// An environment whose Python is gone is caught before it is started,
+    /// and one whose Python is there, or no environment at all, is let be.
+    #[test]
+    fn a_venv_whose_python_is_gone_is_caught() {
+        let root = std::env::temp_dir().join("overseer-broken-test");
+        let venv = root.join(".venv");
+        let python = root.join("python");
+        std::fs::create_dir_all(&venv).expect("a test folder");
+        std::fs::create_dir_all(&python).expect("a test folder");
+        drop(std::fs::remove_file(venv.join("pyvenv.cfg")));
+        assert_eq!(broken(&root), None, "no environment, nothing to say");
+        let gone = root.join("Python312");
+        let made = |home: &std::path::Path| {
+            std::fs::write(
+                venv.join("pyvenv.cfg"),
+                format!(
+                    "home = {}
+version = 3.12.10
+",
+                    home.display()
+                ),
+            )
+            .expect("a test file");
+        };
+        made(&gone);
+        assert!(broken(&root).is_some_and(|why| why.contains("(Python312)")));
+        std::fs::write(python.join("python.exe"), b"").expect("a test file");
+        made(&python);
+        assert_eq!(broken(&root), None);
+        drop(std::fs::remove_dir_all(&root));
+    }
 }

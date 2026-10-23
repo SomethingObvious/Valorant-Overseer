@@ -156,14 +156,21 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
     // Turning it on restarts the game, so it waits out a match, and takes a
     // second press otherwise, the way Delete does.
     let restarts = offline.state.is_some_and(|s| !s.running) && !on;
-    if offline.playing {
-        offline.armed = false;
+    let now = ui.input(|i| i.time);
+    if offline.playing || offline.armed.is_some_and(|at| now - at > ARMED) {
+        offline.armed = None;
+    }
+    if offline.armed.is_some() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(ARMED));
     }
     let about = match offline.state {
         _ if restarts && offline.playing => {
             "Finish this match first. Turning it on restarts the Riot Client and VALORANT"
         }
-        _ if restarts && offline.armed => "Press again to restart the Riot Client and VALORANT",
+        _ if restarts && offline.armed.is_some() => {
+            "Press again to restart the Riot Client and VALORANT"
+        }
         None => "Asking the backend whether the chat proxy is running",
         Some(s) if !s.running => "Restarts the Riot Client and VALORANT through Overseer",
         Some(s) if s.enabled && s.connected => "Your friends see you as offline",
@@ -172,12 +179,17 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
     };
     let pressed = ui
         .add_enabled_ui(!(restarts && offline.playing), |ui| {
-            switch(ui, "Appear Offline", about, on, false, still)
+            let name = if offline.armed.is_some() {
+                "Press Again to Restart"
+            } else {
+                "Appear Offline"
+            };
+            switch(ui, name, about, on, false, still)
         })
         .inner;
     if pressed && offline.state.is_some() {
-        offline.armed = restarts && !offline.armed;
-        if !offline.armed {
+        offline.armed = (restarts && offline.armed.is_none()).then_some(now);
+        if offline.armed.is_none() {
             offline.wanted = Some(!on);
         }
     }
@@ -185,6 +197,9 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
         note(ui, said);
     }
 }
+
+/// How many seconds a first press of Appear Offline waits for the second.
+const ARMED: f64 = 5.0;
 
 /// Where everything Overseer keeps lives, with a button to open each folder.
 /// It is all plain files, to look at, back up, copy to another PC or change.

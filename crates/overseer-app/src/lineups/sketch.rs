@@ -163,7 +163,7 @@ fn lettering(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     // A label is a line of a few words. A box holds a paragraph or two.
     let (typed, longest) = if boxed {
         let hint = "Type what the box says";
-        (controls::notes(ui, &mut sketch.words, hint, false), 400)
+        (controls::notes(ui, &mut sketch.words, hint), 400)
     } else {
         let wide = ui.available_width();
         (

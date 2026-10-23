@@ -67,12 +67,10 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     let hint = draft.named();
     let _title = controls::field(ui, &mut draft.lineup.title, &hint, wide);
     if draft.notes_open || !draft.notes.is_empty() {
-        // Notes are kept in capitals, read at a glance like a callout.
         let _notes = controls::notes(
             ui,
             &mut draft.notes,
             "How to throw it, like jump and left click",
-            true,
         );
     } else if controls::button(ui, "Add Notes", Tone::Plain, true).clicked() {
         draft.notes_open = true;
@@ -334,7 +332,6 @@ fn extras(ui: &mut Ui, draft: &mut Draft) {
         ui,
         &mut draft.description,
         "Anything else worth knowing about it, as long as it needs",
-        false,
     );
     let (_, removed) = pictures::thumbnails(ui, &draft.lineup.images, true);
     if let Some(at) = removed {

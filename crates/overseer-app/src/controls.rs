@@ -256,23 +256,12 @@ fn hinted(ui: &mut Ui, text: &mut String, hint: RichText, width: f32) -> Respons
 
 /// A text box a few lines tall, for notes. With `caps`, whatever is typed or
 /// pasted goes in as capitals.
-pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str, caps: bool) -> Response {
+pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT * 3.0), Sense::hover());
     ui.painter()
         .add(paint::slant(rect, false, true, colour::BG_INSET));
     let id = ui.make_persistent_id(("notes", hint));
-    // Changed before the box reads them, so a lowercase letter never shows,
-    // not even for the frame before the text is fixed up.
-    if caps && ui.memory(|m| m.has_focus(id)) {
-        ui.input_mut(|i| {
-            for event in &mut i.events {
-                if let egui::Event::Text(typed) | egui::Event::Paste(typed) = event {
-                    *typed = typed.to_uppercase();
-                }
-            }
-        });
-    }
     let response = ui.put(
         rect.shrink2(vec2(space::MD, space::SM)),
         egui::TextEdit::multiline(text)
@@ -281,11 +270,6 @@ pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str, caps: bool) -> R
             .font(Face::Body.at(size::BODY))
             .hint_text(hint_text(hint, colour::HINT)),
     );
-    // Anything that got past the events, like an input method's composed text.
-    if caps && response.changed() && text.chars().any(char::is_lowercase) {
-        *text = text.to_uppercase();
-        ui.ctx().request_repaint();
-    }
     underline(ui, rect, &response);
     response
 }

@@ -469,7 +469,7 @@ fn lineup_maps(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     if switch(
         ui,
         "Lineup Names",
-        "Start with every lineup's name on the map. Names above the map, or T, switches it until you leave Lineups",
+        "Start with every lineup's name on the map. T switches it until you leave Lineups",
         settings.lineups.lineup_names,
         false,
         still,

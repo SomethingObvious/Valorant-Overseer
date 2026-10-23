@@ -1262,7 +1262,7 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
                         &mut state.1,
                         (
                             Quality::Rich,
-                            false,
+                            None,
                             &crate::machine::Machine {
                                 memory: Some(16 << 30),
                                 threads: 8,
@@ -1300,4 +1300,94 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
     // Two harnesses means two sets of results, and kittest checks that every
     // set was looked at. The caller merges them into one report.
     shot.take_snapshot_results()
+}
+
+/// A screen reader hears each switch in Settings by name and whether it's
+/// on, Tab reaches them, and Space flips the one the keyboard is on.
+#[test]
+fn a_setting_is_named_and_works_from_the_keyboard() {
+    use egui::accesskit::{Role, Toggled};
+    use egui_kittest::kittest::{NodeT as _, Queryable as _};
+    let mut shot = Harness::builder()
+        .with_size(vec2(880.0, 2300.0))
+        .build_ui_state(
+            |ui, state: &mut (bool, Settings)| {
+                if state.0 {
+                    view::settings(
+                        ui,
+                        &mut state.1,
+                        (
+                            Quality::Rich,
+                            None,
+                            &crate::machine::Machine {
+                                memory: Some(16 << 30),
+                                threads: 8,
+                                card: true,
+                            },
+                        ),
+                        (
+                            view::Trouble {
+                                hotkey: None,
+                                tray: None,
+                            },
+                            std::path::Path::new("."),
+                            &mut crate::offline::Offline::default(),
+                        ),
+                    );
+                }
+            },
+            (false, Settings::default()),
+        );
+    design::install_fonts(&shot.ctx);
+    shot.run();
+    shot.state_mut().0 = true;
+    shot.run();
+    let first = shot.get_by_label("Enemies First").accesskit_node();
+    assert_eq!(first.role(), Role::CheckBox);
+    assert_eq!(first.toggled(), Some(Toggled::True));
+    let corner = shot.get_by_label("Top Right").accesskit_node();
+    assert_eq!(corner.role(), Role::RadioButton);
+
+    shot.key_press(egui::Key::Tab);
+    shot.run();
+    assert!(
+        shot.ctx.memory(egui::Memory::focused).is_some(),
+        "Tab put the keyboard on nothing"
+    );
+    shot.get_by_label("Enemies First").focus();
+    shot.run();
+    shot.key_press(egui::Key::Space);
+    shot.run();
+    assert!(
+        !shot.state().1.enemies_first,
+        "Space didn't flip the switch"
+    );
+}
+
+/// A screen reader hears a player's row as who they are, on what, their
+/// rank and K/D, and whether they're worth a look.
+#[test]
+fn a_row_says_who_it_is() {
+    use egui_kittest::kittest::Queryable as _;
+    let mut shot = Harness::builder()
+        .with_size(vec2(860.0, 480.0))
+        .build_ui_state(
+            |ui, state: &mut Scene| {
+                if state.ready {
+                    draw(ui, state);
+                }
+            },
+            Scene {
+                ready: false,
+                ..Scene::of(None)
+            },
+        );
+    design::install_fonts(&shot.ctx);
+    shot.run();
+    shot.state_mut().ready = true;
+    shot.run();
+    assert!(
+        shot.query_by_label("NeonLock#VAL, Clove, Immortal 1, K/D 1.79, worth a look")
+            .is_some()
+    );
 }

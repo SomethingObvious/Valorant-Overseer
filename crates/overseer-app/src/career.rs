@@ -343,8 +343,8 @@ fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32
                 pos2(inner.left() - space::SM, y + nudge),
                 Align2::RIGHT_CENTER,
                 rr,
-                Face::Number.at(size::MICRO - 2.0),
-                colour::TEXT_FAINT.gamma_multiply(0.55),
+                Face::Number.at(size::MICRO),
+                colour::TEXT_FAINT,
             );
         }
         if k < tiers && k % every == 0 {

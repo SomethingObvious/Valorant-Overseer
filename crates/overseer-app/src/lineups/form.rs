@@ -103,6 +103,13 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
     match (busy, missing) {
         (Some(Job::Save), _) => words(ui, "Saving.", colour::TEXT_DIM),
         (_, Some(why)) => notice(ui, why, colour::WARN),
+        // With no name typed, the one it gets is said here, since in its
+        // box it is only a faint placeholder.
+        _ if draft.lineup.title.trim().is_empty() => notice(
+            ui,
+            &format!("Ready to save as {}.", draft.named()),
+            colour::ALLY,
+        ),
         _ => notice(ui, "Ready to save.", colour::ALLY),
     }
     if cancelled {

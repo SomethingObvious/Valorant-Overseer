@@ -81,6 +81,9 @@ struct Budget {
     dropped: bool,
     /// Set by `OVERSEER_TRACE_FRAMES`, to print what each frame cost.
     trace: bool,
+    /// Set when Windows' animation effects are off, which auto takes as a
+    /// wish for no motion.
+    calm: bool,
 }
 
 /// The search row.
@@ -459,6 +462,9 @@ impl Overseer {
             overseer_native::set_window(window.hwnd.get());
         }
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+        // Windows' "Text size" setting, as a zoom of the whole window, since
+        // every row and column here is measured from its type.
+        cc.egui_ctx.set_zoom_factor(overseer_native::text_scale());
         cc.egui_ctx
             .set_style_of(egui::Theme::Dark, overseer_ui::style());
         // The adapter the request really got decides whether the game keeps
@@ -491,6 +497,7 @@ impl Overseer {
             boards: 0,
             budget: Budget {
                 trace: std::env::var_os("OVERSEER_TRACE_FRAMES").is_some(),
+                calm: !overseer_native::animations(),
                 ..Budget::default()
             },
             opened_at: None,
@@ -1047,7 +1054,7 @@ impl Overseer {
     /// The tier in force, once auto has made up its mind.
     const fn quality(&self) -> Quality {
         match self.settings.quality {
-            Quality::Auto if self.budget.dropped => Quality::Efficient,
+            Quality::Auto if self.budget.dropped || self.budget.calm => Quality::Efficient,
             Quality::Auto => Quality::Rich,
             other => other,
         }
@@ -1271,6 +1278,7 @@ impl App for Overseer {
             ui.ctx().set_cursor_icon(resize_cursor(to));
         }
         overseer_ui::chrome::outline(ui.ctx());
+        overseer_ui::chrome::focus(ui.ctx());
     }
 }
 

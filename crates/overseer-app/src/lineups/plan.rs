@@ -67,7 +67,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     let response = ui.allocate_rect(*square, Sense::click_and_drag());
     let mut painter = ui.painter_at(square.expand(space::XL));
     painter.multiply_opacity(shown);
-    backdrop(&painter, square, plan);
+    let mapped = backdrop(&painter, square, plan);
     if side >= NAMED {
         callouts(&painter, square, plan);
     }
@@ -75,6 +75,9 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         shapes::paint(&painter, square, drawing);
     }
     pins(&painter, (square, ui.clip_rect()), atlas, view, plan);
+    if !mapped {
+        missing(&painter, square, &plan.name);
+    }
     if view.export.is_some() {
         // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
@@ -268,9 +271,9 @@ fn turned_image(painter: &egui::Painter, square: Square, texture: egui::TextureI
     painter.add(mesh);
 }
 
-/// The minimap on black with its plantable ground lit, or a line saying it
-/// isn't here yet.
-fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) {
+/// The minimap on black with its plantable ground lit. False when it isn't
+/// here yet, for the window to say so over everything else.
+fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) -> bool {
     painter.rect_filled(*square, 0, colour::VOID);
     match plan
         .minimap
@@ -296,19 +299,38 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) {
                 );
             }
         }
-        None => {
-            painter.text(
-                square.center(),
-                Align2::CENTER_CENTER,
-                format!(
-                    "The {} minimap hasn't downloaded. Open Lineups again to retry.",
-                    plan.name
-                ),
-                Face::Body.at(size::BODY),
-                colour::TEXT_DIM,
-            );
-        }
+        None => return false,
     }
+    true
+}
+
+/// Says the map's minimap hasn't downloaded, in the middle of where it goes.
+fn missing(painter: &egui::Painter, square: Square, name: &str) {
+    // Over everything else, since the callouts and drawings go on the map
+    // either way, on a raised plate, since the map under it is black.
+    let mut job = egui::text::LayoutJob::simple(
+        format!("The {name} minimap hasn't downloaded. Open Lineups again to retry."),
+        Face::Body.at(size::BODY),
+        colour::TEXT,
+        square.width() * 0.7,
+    );
+    job.halign = egui::Align::Center;
+    let words = painter.layout_job(job);
+    let plate = Rect::from_center_size(
+        square.center(),
+        words.size() + vec2(space::XXL * 2.0, space::XL),
+    );
+    painter.add(crate::board::paint::slant(
+        plate,
+        true,
+        true,
+        colour::BG_RAISED,
+    ));
+    painter.galley(
+        pos2(plate.center().x, plate.center().y - words.size().y / 2.0),
+        words,
+        colour::TEXT,
+    );
 }
 
 /// How near plantable ground the Spike has to be put to move onto it, in game

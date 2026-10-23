@@ -38,7 +38,7 @@ pub(crate) struct Trouble<'a> {
 pub(crate) fn settings(
     ui: &mut Ui,
     settings: &mut Settings,
-    (quality, dropped, machine): (Quality, bool, &crate::machine::Machine),
+    (quality, why, machine): (Quality, Option<&str>, &crate::machine::Machine),
     (trouble, root, offline): (Trouble<'_>, &std::path::Path, &mut Offline),
 ) -> bool {
     let mut changed = false;
@@ -92,7 +92,7 @@ pub(crate) fn settings(
             changed |= clips(ui, settings, still);
 
             changed |= your_pc(ui, settings, machine, still);
-            changed |= effort(ui, settings, quality, dropped);
+            changed |= effort(ui, settings, quality, why);
             changed |= updates(ui, settings, still);
             keys(ui);
             data(ui, root);
@@ -332,20 +332,26 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
             changed = true;
         }
     }
-    note(
-        ui,
-        &match trouble.hotkey {
-            None => format!(
+    match trouble.hotkey {
+        None => note(
+            ui,
+            &format!(
                 "Press {LABEL} in game to turn the overlay on or off. It only shows when VALORANT runs in windowed fullscreen, not fullscreen."
             ),
-            Some(Failure::Taken) => format!(
+        ),
+        Some(Failure::Taken) => warning(
+            ui,
+            &format!(
                 "Another program is using {LABEL}, so the overlay can only be turned on or off here. Close that program and restart Overseer to use the shortcut."
             ),
-            Some(Failure::Refused(_)) => format!(
+        ),
+        Some(Failure::Refused(_)) => warning(
+            ui,
+            &format!(
                 "Windows couldn't set up {LABEL}, so the overlay can only be turned on or off here. Restart Overseer to try again."
             ),
-        },
-    );
+        ),
+    }
 
     section(ui, "System Tray", "The Overseer icon near the clock.");
     match trouble.tray {
@@ -353,7 +359,7 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
             ui,
             "Closing the window quits Overseer. While it runs, click the icon to bring the window back, or right-click it and choose Quit.",
         ),
-        Some(_) => note(
+        Some(_) => warning(
             ui,
             "Overseer couldn't add its tray icon. Reinstalling Overseer puts it back.",
         ),
@@ -554,13 +560,15 @@ fn choice(ui: &mut Ui, name: &str, options: &[(f32, String)], value: &mut f32) -
 }
 
 /// How much the window may spend on looking good. True when it changed.
-fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, dropped: bool) -> bool {
+fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, why: Option<&str>) -> bool {
     let mut changed = false;
     let still = quality == Quality::Efficient;
     section(ui, "Graphics", "Animations and visual effects.");
     for option in [Quality::Auto, Quality::Efficient, Quality::Rich] {
         let about = match option {
-            Quality::Auto => "Full effects, switching to Efficient if the window starts to lag",
+            Quality::Auto => {
+                "Full effects, or Efficient when the window lags or Windows' animation effects are off"
+            }
             Quality::Efficient => "No animations or glow, which uses the least of your PC",
             Quality::Rich => "Every animation and effect",
         };
@@ -576,10 +584,12 @@ fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, dropped: bool)
             changed = true;
         }
     }
-    if dropped && settings.quality == Quality::Auto {
+    if let Some(why) = why {
         note(
             ui,
-            "Switched to Efficient because the window was lagging. Pick Full or Efficient to choose yourself.",
+            &format!(
+                "Switched to Efficient because {why}. Pick Full or Efficient to choose yourself."
+            ),
         );
     } else {
         note(ui, &format!("Currently using {}.", quality.label()));
@@ -702,6 +712,54 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
     let top = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .galley(pos2(rect.left() + space::XL, top), galley, colour::TEXT_DIM);
+}
+
+/// Something that has gone wrong, under a group: a warning sign and the
+/// words in the warning colour at the size of an explanation, so it doesn't
+/// read as one more footnote.
+pub(crate) fn warning(ui: &mut Ui, text: &str) {
+    let sign = space::LG;
+    let galley = ui.painter().layout(
+        text.to_owned(),
+        Face::Body.at(size::LABEL + 1.0),
+        colour::WARN,
+        (space::XL.mul_add(-2.0, ui.available_width()) - sign - space::MD).max(120.0),
+    );
+    let tall = galley.size().y.max(space::ROW - space::MD) + space::MD;
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), tall), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let top = rect.center().y - galley.size().y / 2.0;
+    // The sign sits on the first line, however many the words wrap to.
+    let line = Face::Body.at(size::LABEL + 1.0).size;
+    let middle = pos2(rect.left() + space::XL + sign / 2.0, top + line * 0.6);
+    let corners = vec![
+        middle + vec2(0.0, -sign * 0.5),
+        middle + vec2(sign * 0.55, sign * 0.45),
+        middle + vec2(-sign * 0.55, sign * 0.45),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(
+        corners,
+        colour::WARN,
+        egui::Stroke::NONE,
+    ));
+    // The mark inside it, a bar and a dot, drawn rather than typed.
+    ui.painter().line_segment(
+        [
+            middle + vec2(0.0, -sign * 0.22),
+            middle + vec2(0.0, sign * 0.12),
+        ],
+        egui::Stroke::new(1.5, colour::VOID),
+    );
+    ui.painter()
+        .circle_filled(middle + vec2(0.0, sign * 0.27), 1.0, colour::VOID);
+    ui.painter().galley(
+        pos2(rect.left() + space::XL + sign + space::MD, top),
+        galley,
+        colour::WARN,
+    );
 }
 
 /// One frame of the app, for the snapshot and budget tests to draw.

@@ -117,6 +117,7 @@ impl App for Wizard {
             _ => {}
         }
         chrome::outline(ui.ctx());
+        chrome::focus(ui.ctx());
         Panel::bottom("foot")
             .exact_size(space::XXL + space::MD)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))

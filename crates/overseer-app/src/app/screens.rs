@@ -76,7 +76,16 @@ impl Overseer {
         // Read out before the screen borrows the settings. The screen shows
         // why the hotkey or tray failed, or a dead key would give no clue.
         let quality = self.quality();
-        let dropped = self.budget.dropped;
+        // Why auto went to Efficient, when it did.
+        let why = if self.settings.quality != Quality::Auto {
+            None
+        } else if self.budget.calm {
+            Some("animation effects are off in Windows")
+        } else if self.budget.dropped {
+            Some("the window was lagging")
+        } else {
+            None
+        };
         let no_hotkey = self.hotkey.as_ref().err().cloned();
         let no_tray = self.tray.as_ref().err().cloned();
         let trouble = view::Trouble {
@@ -89,7 +98,7 @@ impl Overseer {
             changed = view::settings(
                 ui,
                 &mut self.settings,
-                (quality, dropped, &self.machine),
+                (quality, why, &self.machine),
                 (trouble, &self.root, &mut self.offline),
             );
         });

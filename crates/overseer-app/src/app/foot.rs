@@ -160,6 +160,7 @@ impl Overseer {
                 .interact(area, ui.id().with(("newer-release", text)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(about);
+            hit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
             if hit.hovered() {
                 painter.rect_filled(area, 0, colour::BG_HOVER);
             }
@@ -293,6 +294,9 @@ impl Overseer {
             let hit = ui
                 .interact(area, ui.id().with(("hint", key)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
+            hit.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{what}, {key}"))
+            });
             if hit.hovered() {
                 painter.rect_filled(area, 0, colour::BG_HOVER);
             }

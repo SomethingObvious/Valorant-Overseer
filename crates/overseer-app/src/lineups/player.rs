@@ -891,6 +891,9 @@ impl Player {
                 let x = ui
                     .interact(spot, ui.id().with("lineup-video-close"), Sense::click())
                     .on_hover_cursor(CursorIcon::PointingHand);
+                x.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close the clip")
+                });
                 cross(ui.painter(), spot, x.hovered());
                 close = x.clicked();
             });
@@ -909,6 +912,9 @@ impl Player {
         let video = ui
             .interact(rect, id, Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
+        video.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play or pause the clip")
+        });
         let near = ui.rect_contains_pointer(rect)
             || !self.playing()
             || self.scrub.is_some()
@@ -960,7 +966,8 @@ impl Player {
         };
 
         let spot = Rect::from_center_size(pos2(strip.left() + 22.0, y), vec2(28.0, 28.0));
-        let play = button(ui, spot, id.with("play"));
+        let said = if self.playing() { "Pause" } else { "Play" };
+        let play = button(ui, spot, id.with("play"), said);
         if self.playing() {
             for dx in [-4.0, 4.0] {
                 let bar = Rect::from_center_size(spot.center() + vec2(dx, 0.0), vec2(4.0, 13.0));
@@ -981,7 +988,8 @@ impl Player {
         // The rest from the right edge in.
         let mut x = strip.right() - 8.0;
         let spot = Rect::from_min_max(pos2(x - 28.0, y - 14.0), pos2(x, y + 14.0));
-        let full = button(ui, spot, id.with("big"));
+        let said = if self.big { "Smaller" } else { "Bigger" };
+        let full = button(ui, spot, id.with("big"), said);
         corners(&painter, spot, self.big, ink(full.hovered()));
         if full.clicked() {
             self.big = !self.big;
@@ -999,7 +1007,13 @@ impl Player {
             pos2(bar.left() - 30.0, y - 13.0),
             pos2(bar.left() - 4.0, y + 13.0),
         );
-        let speaker = button(ui, spot, id.with("mute"));
+        let quiet = self.muted || self.prefs.volume <= 0.0;
+        let speaker = button(
+            ui,
+            spot,
+            id.with("mute"),
+            if quiet { "Unmute" } else { "Mute" },
+        );
         speaker_mark(
             &painter,
             spot,
@@ -1043,6 +1057,9 @@ impl Player {
         let response = ui
             .interact(rect, id.with("timeline"), Sense::click_and_drag())
             .on_hover_cursor(CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Where the clip is")
+        });
         let held = response.is_pointer_button_down_on();
         if held && let Some(pointer) = response.interact_pointer_pos() {
             let share = f64::from(((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
@@ -1092,6 +1109,8 @@ impl Player {
         let response = ui
             .interact(rect, id.with("volume"), Sense::click_and_drag())
             .on_hover_cursor(CursorIcon::PointingHand);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Volume"));
         if response.is_pointer_button_down_on()
             && let Some(pointer) = response.interact_pointer_pos()
         {
@@ -1142,11 +1161,17 @@ impl Player {
         (id, fade): (Id, f32),
     ) -> f32 {
         let spot = Rect::from_min_max(pos2(right - 28.0, y - 14.0), pos2(right, y + 14.0));
-        let again = button(ui, spot, id.with("loop")).on_hover_text(if self.prefs.looping {
-            "Plays it again from the start. Click to stop on the last frame instead."
+        let looped = if self.prefs.looping {
+            "Loop on"
         } else {
-            "Stops on the last frame. Click to play it again from the start."
-        });
+            "Loop off"
+        };
+        let again =
+            button(ui, spot, id.with("loop"), looped).on_hover_text(if self.prefs.looping {
+                "Plays it again from the start. Click to stop on the last frame instead."
+            } else {
+                "Stops on the last frame. Click to play it again from the start."
+            });
         let ink = if again.hovered() {
             colour::TEXT_STRONG
         } else {
@@ -1181,7 +1206,7 @@ impl Player {
             .size()
             .x;
         let spot = Rect::from_min_max(end - vec2(wide + 14.0, 11.0), end + vec2(0.0, 11.0));
-        let speed = button(ui, spot, id.with("speed-button"));
+        let speed = button(ui, spot, id.with("speed-button"), &format!("Speed {name}"));
         let ink = if speed.hovered() {
             painter.rect_filled(spot, 4.0, Color32::from_white_alpha(28));
             colour::TEXT_STRONG
@@ -1228,6 +1253,14 @@ impl Player {
                     let on = (speed - self.prefs.speed).abs() < f32::EPSILON;
                     let (rect, row) = ui.allocate_exact_size(vec2(120.0, 26.0), Sense::click());
                     let row = row.on_hover_cursor(CursorIcon::PointingHand);
+                    row.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Button,
+                            true,
+                            on,
+                            speed_name(speed),
+                        )
+                    });
                     let painter = ui.painter();
                     if row.hovered() {
                         painter.rect_filled(rect, 4.0, colour::BG_HOVER);
@@ -1312,10 +1345,12 @@ fn placed(
     Some((pixels(rect), pixels(seen)))
 }
 
-/// A click target in `rect` with a pointing hand over it.
-fn button(ui: &Ui, rect: Rect, id: Id) -> egui::Response {
-    ui.interact(rect, id, Sense::click())
-        .on_hover_cursor(CursorIcon::PointingHand)
+/// A click target in `rect` with a pointing hand over it, which a screen
+/// reader calls `label`.
+fn button(ui: &Ui, rect: Rect, id: Id, label: &str) -> egui::Response {
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 /// A dark wash up from the bottom of `rect`, so the controls read over any

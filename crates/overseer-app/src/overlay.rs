@@ -207,6 +207,9 @@ pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
             "Hide the overlay. {} brings it back.",
             crate::hotkey::LABEL
         ));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hide the overlay")
+    });
     if ui.is_rect_visible(spot) {
         let painter = ui.painter();
         let (fill, ink) = if response.hovered() {

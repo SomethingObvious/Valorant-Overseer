@@ -26,6 +26,11 @@ pub(crate) fn width(ui: &Ui, text: &str) -> f32 {
     space::XL.mul_add(2.0, caps_width(ui.painter(), text, paint::label()))
 }
 
+/// Gives a drawn control the name a screen reader says for it, as a button.
+pub(crate) fn named(response: &Response, label: &str) {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+}
+
 /// A button in the current layout. A disabled one is dim and ignores clicks.
 pub(crate) fn button(ui: &mut Ui, text: &str, tone: Tone, enabled: bool) -> Response {
     let wide = width(ui, text);

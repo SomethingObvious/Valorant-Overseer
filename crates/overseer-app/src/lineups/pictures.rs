@@ -47,6 +47,13 @@ pub(super) fn thumbnails(
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(tile, tile * 0.62), Sense::click());
                 let response = response.on_hover_cursor(CursorIcon::PointingHand);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("Open picture {}", index + 1),
+                    )
+                });
                 if ui.is_rect_visible(rect) {
                     tile_picture(ui, rect, path, response.hovered());
                 }
@@ -62,6 +69,13 @@ pub(super) fn thumbnails(
                             Sense::click(),
                         )
                         .on_hover_cursor(CursorIcon::PointingHand);
+                    x.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            true,
+                            format!("Remove picture {}", index + 1),
+                        )
+                    });
                     cross(ui.painter(), spot, x.hovered());
                     if x.clicked() {
                         removed = Some(index);
@@ -97,6 +111,9 @@ pub(super) fn column(ui: &mut Ui, pictures: &[String]) -> Option<usize> {
         let (row, response) = ui.allocate_exact_size(vec2(wide, high), Sense::click());
         let rect = Rect::from_center_size(row.center(), vec2(high * shape, high));
         let response = response.on_hover_cursor(CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Open the picture")
+        });
         if ui.is_rect_visible(rect) {
             tile_picture(ui, rect, path, response.hovered());
         }
@@ -206,6 +223,9 @@ pub(super) fn viewer(ctx: &egui::Context, pictures: &[String], at: usize) -> Opt
             let x = ui
                 .interact(spot, Id::new("lineup-picture-close"), Sense::click())
                 .on_hover_cursor(CursorIcon::PointingHand);
+            x.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close the picture")
+            });
             cross(ui.painter(), spot, x.hovered());
             close = x.clicked();
             if count > 1 {
@@ -229,6 +249,17 @@ fn arrows(ui: &Ui, rect: Rect, (at, count): (usize, usize)) -> usize {
         let arrow = ui
             .interact(spot, Id::new(("lineup-picture-step", left)), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
+        arrow.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                if left {
+                    "Previous picture"
+                } else {
+                    "Next picture"
+                },
+            )
+        });
         chevron(ui.painter(), spot, left, arrow.hovered());
         if arrow.clicked() {
             next = (at + step) % count;

@@ -37,6 +37,9 @@ const SIDE: f32 = 380.0;
 /// The most of the window the panel may take, dragged or widened for a
 /// clip or picture wider than it is tall.
 const SIDE_SHARE: f32 = 0.6;
+/// Below this wide, the panel gives the map half the window, since its own
+/// least and default widths would leave the map too small to use.
+const NARROW: f32 = 760.0;
 /// How often the list is asked for again while lineups' clips are cut, in
 /// seconds.
 const POLL: f64 = 2.0;
@@ -1359,17 +1362,22 @@ impl View {
     /// since the form reads better with room and the map with less. A clip
     /// or picture wider than it is tall widens it, once a pick.
     fn side_panel(&mut self, ui: &Ui) -> Panel {
-        let most = (ui.available_width() * SIDE_SHARE).max(640.0);
+        let room = ui.available_width();
+        let (least, default, most) = if room < NARROW {
+            (room * 0.45, room * 0.5, room * 0.55)
+        } else {
+            (320.0, SIDE, (room * SIDE_SHARE).max(640.0))
+        };
         let id = egui::Id::new("lineups-side");
         let side = Panel::right(id)
             .resizable(true)
-            .default_size(SIDE)
-            .size_range(320.0..=most)
+            .default_size(default)
+            .size_range(least..=most)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED));
         let Some(more) = self.widen.take() else {
             return side;
         };
-        let now = egui::PanelState::load(ui.ctx(), id).map_or(SIDE, |s| s.size().x);
+        let now = egui::PanelState::load(ui.ctx(), id).map_or(default, |s| s.size().x);
         let wanted = (now + more).min(most);
         if wanted <= now + 1.0 {
             return side;

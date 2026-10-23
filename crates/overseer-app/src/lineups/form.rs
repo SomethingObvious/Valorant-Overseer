@@ -188,6 +188,9 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
         let next = draft.placing == place;
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), PLACE_ROW), Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, next, name)
+        });
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             let fill = if next {

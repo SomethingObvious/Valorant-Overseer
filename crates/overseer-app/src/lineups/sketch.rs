@@ -20,7 +20,7 @@ pub(super) fn show(ui: &mut Ui, view: &mut View) {
     title(ui, "Draw on the Map", &map);
     words(
         ui,
-        "Pick a shape and a colour, then drag on the map to draw it, like a circle for a molly's range. Brush draws freehand, Text puts a few words wherever you click, Text Box is dragged out like a rectangle and holds as much as you type, and Eraser takes off any drawing you click or drag across. Drag a shape's dot to move it, drag the small squares on the picked shape to resize it, and Delete Shape or the Delete key takes the picked one off, as does a right-click on any. The colour, the opacity and the brush size change the shape with the lit dot too.",
+        "Pick a shape and a colour, then drag on the map. Right-click a drawing or press Delete to take it off.",
         colour::TEXT_DIM,
     );
     controls::heading(ui, "Shape");

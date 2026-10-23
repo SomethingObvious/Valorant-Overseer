@@ -253,81 +253,40 @@ fn ordering(ui: &mut Ui, view: &mut View) {
     });
 }
 
-/// The picked lineup as a row with an arrow, which drops the whole list
-/// down under it to pick another from, with the filter, the order and the
-/// agent chips at the top of it.
+/// Every lineup on the map as a row, under the agent chips, the filter and
+/// the order. The list has the panel until one is picked, then a share of
+/// it, so the picked one's details fit under it. Clicking the picked row
+/// again lights every lineup on the map.
 fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &mut View) {
     ui.add_space(space::SM);
+    filter(ui, here, view);
+    if here.len() > 1 {
+        ordering(ui, view);
+    }
+    if view.selected.is_none() {
+        words(ui, hint, colour::TEXT_DIM);
+    }
     let main = view.main.clone();
-    let id = ui.id().with("lineup-picker");
-    let open = egui::Popup::is_id_open(ui.ctx(), id);
-    let picked = atlas
-        .lineups
-        .iter()
-        .find(|l| l.id.is_some() && l.id == view.selected);
-    let response = if let Some(lineup) = picked {
-        row(
-            ui,
-            atlas,
-            lineup,
-            (open, main.as_deref(), view.marked(atlas, lineup)),
-        )
+    let room = if view.selected.is_some() {
+        ui.clip_rect().height() * 0.35
     } else {
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint));
-        ui.painter().rect_filled(rect, 0, colour::BG_INSET);
-        ui.painter().text(
-            rect.left_center() + vec2(space::LG, 0.0),
-            Align2::LEFT_CENTER,
-            hint,
-            Face::Body.at(size::BODY),
-            colour::TEXT_DIM,
-        );
-        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        f32::INFINITY
     };
-    arrow(ui.painter(), response.rect, open || response.hovered());
-    let wide = response.rect.width();
-    let _list = egui::Popup::menu(&response)
-        .id(id)
-        .width(wide)
-        .align(egui::RectAlign::BOTTOM_START)
-        .gap(2.0)
-        .frame(controls::menu_card())
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.set_width(wide - 8.0);
-            filter(ui, here, view);
-            if here.len() > 1 {
-                ordering(ui, view);
-            }
-            let tallest = ui.ctx().content_rect().height() * 0.6;
-            let list = view.shown(atlas);
-            ScrollArea::vertical().max_height(tallest).show(ui, |ui| {
-                for lineup in list {
-                    let on = lineup.id.is_some() && lineup.id == view.selected;
-                    let marked = view.marked(atlas, lineup);
-                    if row(ui, atlas, lineup, (on, main.as_deref(), marked)).clicked() {
-                        view.selected.clone_from(&lineup.id);
-                        view.confirm = false;
-                        ui.close();
-                    }
+    let list = view.shown(atlas);
+    ScrollArea::vertical()
+        .id_salt("lineup-list")
+        .max_height(room)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for lineup in list {
+                let on = lineup.id.is_some() && lineup.id == view.selected;
+                let marked = view.marked(atlas, lineup);
+                if row(ui, atlas, lineup, (on, main.as_deref(), marked)).clicked() {
+                    view.selected = if on { None } else { lineup.id.clone() };
+                    view.confirm = false;
                 }
-            });
+            }
         });
-}
-
-/// The arrow at the right of the picker, pointing down to say it opens.
-fn arrow(painter: &egui::Painter, rect: Rect, hot: bool) {
-    let c = pos2(rect.right() - space::XL, rect.center().y);
-    let ink = if hot {
-        colour::TEXT_STRONG
-    } else {
-        colour::TEXT_DIM
-    };
-    let stroke = egui::Stroke::new(2.0, ink);
-    painter.line_segment([c + vec2(-6.0, -3.0), c + vec2(0.0, 3.0)], stroke);
-    painter.line_segment([c + vec2(0.0, 3.0), c + vec2(6.0, -3.0)], stroke);
 }
 
 /// A chip per agent with lineups here, when there is more than one.
@@ -524,7 +483,7 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View, marked: bool) -> Optio
         view.viewing = Some((lineup.images.clone(), at));
     }
     if let Some(notes) = lineup.notes.as_deref() {
-        words(ui, &notes.to_uppercase(), colour::TEXT);
+        words(ui, notes, colour::TEXT);
     }
     if let Some(description) = lineup.description.as_deref() {
         words(ui, description, colour::TEXT_DIM);

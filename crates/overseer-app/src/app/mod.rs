@@ -130,6 +130,9 @@ pub(crate) struct Overseer {
     settling: Option<((egui::Vec2, f32), f64, f64)>,
     /// Whether the bridge has ever been live since the window opened.
     ever_live: bool,
+    /// When the backend went after the board was live, so the board can say
+    /// how old it is.
+    lost_at: Option<f64>,
     /// How the board is ordered, if a heading has been clicked.
     sort: Sort,
     /// The search row and what is typed in it.
@@ -503,6 +506,7 @@ impl Overseer {
             opened_at: None,
             settling: None,
             ever_live: false,
+            lost_at: None,
             sort: Sort::default(),
             search: Search::default(),
             notes: notes::load(root),
@@ -659,6 +663,10 @@ impl Overseer {
                 }
             }
         }
+        self.lost_at = match self.status {
+            Status::Lost(_) => self.lost_at.or_else(|| Some(ctx.input(|i| i.time))),
+            _ => None,
+        };
     }
 
     /// Moves the selection to you, or else the first player, when the
@@ -1339,6 +1347,7 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
         opened_at: None,
         settling: None,
         ever_live: true,
+        lost_at: None,
         sort: Sort::default(),
         search: Search::default(),
         notes: Notes::default(),

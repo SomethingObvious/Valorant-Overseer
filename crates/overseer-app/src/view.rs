@@ -152,18 +152,34 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
         "Offline Chat",
         "Appear offline to your friends in Riot chat. Nothing changes in the game.",
     );
+    let on = offline.on();
+    // Turning it on restarts the game, so it waits out a match, and takes a
+    // second press otherwise, the way Delete does.
+    let restarts = offline.state.is_some_and(|s| !s.running) && !on;
+    if offline.playing {
+        offline.armed = false;
+    }
     let about = match offline.state {
-        None => "Asking the backend whether the chat proxy is running",
-        Some(s) if !s.running => {
-            "Restarts the Riot Client and VALORANT through Overseer, so finish your match first"
+        _ if restarts && offline.playing => {
+            "Finish this match first. Turning it on restarts the Riot Client and VALORANT"
         }
+        _ if restarts && offline.armed => "Press again to restart the Riot Client and VALORANT",
+        None => "Asking the backend whether the chat proxy is running",
+        Some(s) if !s.running => "Restarts the Riot Client and VALORANT through Overseer",
         Some(s) if s.enabled && s.connected => "Your friends see you as offline",
         Some(s) if s.enabled => "On, from the moment the Riot Client signs in to chat",
         Some(_) => "Your friends see you online. Switch it back on without a restart",
     };
-    let on = offline.on();
-    if switch(ui, "Appear Offline", about, on, false, still) && offline.state.is_some() {
-        offline.wanted = Some(!on);
+    let pressed = ui
+        .add_enabled_ui(!(restarts && offline.playing), |ui| {
+            switch(ui, "Appear Offline", about, on, false, still)
+        })
+        .inner;
+    if pressed && offline.state.is_some() {
+        offline.armed = restarts && !offline.armed;
+        if !offline.armed {
+            offline.wanted = Some(!on);
+        }
     }
     if let Some(said) = offline.said.as_deref() {
         note(ui, said);

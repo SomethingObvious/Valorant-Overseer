@@ -14,10 +14,10 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::time::Duration;
 
 use egui::{
-    Align2, Color32, ColorImage, CursorIcon, FontId, Id, Key, Rect, Sense, Shape, Stroke,
-    TextureHandle, TextureOptions, Ui, pos2, vec2,
+    Align2, Color32, ColorImage, CursorIcon, Id, Key, Rect, Sense, Shape, Stroke, TextureHandle,
+    TextureOptions, Ui, pos2, vec2,
 };
-use overseer_ui::{colour, size, space};
+use overseer_ui::{Face, colour, size, space};
 
 /// The most pixels a frame has on its longest side, which is 1080p either
 /// way up. Each keeps the video's own shape, so a short is as tall as a wide
@@ -1038,7 +1038,7 @@ impl Player {
             super::clock((at - from).clamp(0.0, to - from)),
             super::clock(to - from)
         );
-        let font = FontId::proportional(size::LABEL);
+        let font = Face::Body.at(size::LABEL);
         let galley = painter.layout_no_wrap(time, font, colour::TEXT.gamma_multiply(fade));
         if room.0 + galley.size().x < room.1 {
             painter.galley(
@@ -1199,7 +1199,7 @@ impl Player {
         id: Id,
         fade: f32,
     ) -> f32 {
-        let font = FontId::proportional(size::LABEL);
+        let font = Face::Body.at(size::LABEL);
         let name = format!("{}x", self.prefs.speed);
         let wide = painter
             .layout_no_wrap(name.clone(), font.clone(), Color32::WHITE)
@@ -1246,7 +1246,7 @@ impl Player {
                     head.left_center() + vec2(10.0, 0.0),
                     Align2::LEFT_CENTER,
                     "Playback speed",
-                    FontId::proportional(size::MICRO),
+                    Face::Body.at(size::MICRO),
                     colour::TEXT_FAINT,
                 );
                 for speed in SPEEDS {
@@ -1278,7 +1278,7 @@ impl Player {
                         rect.left_center() + vec2(12.0, 0.0),
                         Align2::LEFT_CENTER,
                         speed_name(speed),
-                        FontId::proportional(size::BODY),
+                        Face::Body.at(size::BODY),
                         if on || row.hovered() {
                             colour::TEXT_STRONG
                         } else {

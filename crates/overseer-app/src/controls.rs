@@ -59,7 +59,7 @@ pub(crate) fn button_wide(
             colour::TEXT_STRONG,
         ),
         (Tone::Primary, true) => (colour::BG_INSET, colour::TEXT_STRONG),
-        (Tone::Danger, true) if hot => (colour::ENEMY, colour::TEXT_STRONG),
+        (Tone::Danger, true) if hot => (colour::ENEMY, colour::BG),
         (Tone::Danger, true) => (colour::BG_INSET, colour::BAD),
         (Tone::Plain, true) if hot => (colour::BG_HOVER, colour::TEXT_STRONG),
         (Tone::Plain, true) => (colour::BG_INSET, colour::TEXT),

@@ -55,7 +55,13 @@ fn stage<'a>(
             0,
             false,
         ),
-        (None, Status::Lost(why), _) => ("Not Connected", why.as_str(), 0, true),
+        // What went wrong exactly is on the connection light's hover.
+        (None, Status::Lost(_), _) => (
+            "Not Connected",
+            "Overseer lost touch with its backend and keeps trying. If nothing comes back in a minute, restart Overseer.",
+            0,
+            true,
+        ),
         (None, Status::Live, Some("riot")) => (
             "Waiting for the Riot Client",
             "Open VALORANT, or sign in to the Riot Client if it's open already.",
@@ -192,7 +198,7 @@ fn since(ui: &Ui, title: &str) -> f64 {
 
 /// The clock for a wait `seconds` long: to the second for its first
 /// minute, and in whole minutes after that.
-fn clock(seconds: u64) -> String {
+pub(super) fn clock(seconds: u64) -> String {
     if seconds < 60 {
         format!("0:{seconds:02}")
     } else {

@@ -159,6 +159,8 @@ pub(crate) struct Grid {
     /// Whether the rank says the peak under it: when the peak is wanted but
     /// has no column of its own at this width.
     pub(crate) peak_under_rank: bool,
+    /// The Games column made it onto the row.
+    pub(crate) games_shown: bool,
 }
 
 impl Grid {
@@ -192,9 +194,11 @@ impl Grid {
             .collect::<Vec<Placed>>();
         let peak_under_rank =
             !hidden.iter().any(|h| h == "peak") && !placed.iter().any(|p| p.column.head == "peak");
+        let games_shown = placed.iter().any(|p| p.column.head == "games");
         Self {
             placed,
             peak_under_rank,
+            games_shown,
         }
     }
 

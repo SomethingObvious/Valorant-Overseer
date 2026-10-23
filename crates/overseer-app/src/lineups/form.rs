@@ -3,7 +3,7 @@
 //! section with a tick once it is done, the optional ones say so, and Save
 //! stays at the bottom of the panel where it can't scroll away.
 
-use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Atlas, Plan, Tools};
 use overseer_ui::{Face, caps_text, colour, size, space};
 
@@ -163,16 +163,8 @@ fn section(ui: &mut Ui, name: &str, done: bool, optional: bool) {
 
 /// A green square with a tick in it, centred on `centre`. Returns where it went.
 fn tick(painter: &egui::Painter, centre: egui::Pos2) -> Rect {
-    let mark = Rect::from_center_size(centre, vec2(16.0, 16.0));
-    painter.rect_filled(mark, 0, colour::ALLY);
-    painter.add(egui::Shape::line(
-        vec![
-            mark.left_center() + vec2(3.5, 0.0),
-            mark.center_bottom() + vec2(-1.0, -4.0),
-            mark.right_top() + vec2(-3.5, 4.0),
-        ],
-        Stroke::new(2.0, colour::BG),
-    ));
+    let mark = Rect::from_center_size(centre, vec2(12.0, 16.0));
+    overseer_ui::pip(painter, mark, true);
     mark
 }
 
@@ -232,12 +224,12 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
                     colour::TEXT_DIM
                 },
             );
-            let _status = caps_text(
-                painter,
+            // A sentence, so in the face for reading rather than small caps.
+            painter.text(
                 pos2(text_at, rect.top() + 31.0),
                 Align2::LEFT_CENTER,
                 &status,
-                Face::Display.at(size::MICRO),
+                Face::Body.at(size::LABEL),
                 tint,
             );
             if set {

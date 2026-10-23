@@ -193,11 +193,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
             colour::WARN,
         );
     }
-    if known(player) {
-        for placed in &grid.placed {
-            cell(&inside, player, rect, (*placed, grid.peak_under_rank), look);
-        }
-    }
+    stats(&inside, player, (rect, grid), look);
     if look.noted {
         paint::dog_ear(&painter, rect);
     }
@@ -223,6 +219,30 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
             .on_hover_ui_at_pointer(|ui| explain(ui, what, player, look));
     }
     response
+}
+
+/// The row's numbers, one cell a column, or where nothing is known a line
+/// saying so where they would be, so an empty row reads as nothing to show
+/// rather than a row that broke.
+fn stats(inside: &egui::Painter, player: &Player, (rect, grid): (Rect, &Grid), look: &Look<'_>) {
+    if known(player) {
+        for placed in &grid.placed {
+            cell(inside, player, rect, (*placed, grid.peak_under_rank), look);
+        }
+    } else if let Some(first) = grid.placed.first() {
+        let why = if player.name.as_deref().is_none_or(str::is_empty) && !player.hidden.name {
+            "Riot didn't say who this is."
+        } else {
+            "Nothing on them yet."
+        };
+        inside.text(
+            pos2(rect.left() + first.left, rect.center().y),
+            Align2::LEFT_CENTER,
+            why,
+            Face::Body.at(size::LABEL + 1.0),
+            colour::TEXT_FAINT,
+        );
+    }
 }
 
 /// Whether anything is known about the player yet. Nothing is, in agent

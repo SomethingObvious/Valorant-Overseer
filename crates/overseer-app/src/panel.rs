@@ -288,9 +288,9 @@ fn invite(ui: &mut Ui) -> egui::Response {
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Write a note"));
     if ui.is_rect_visible(rect) {
         let tint = if response.hovered() {
-            colour::TEXT_DIM
+            colour::TEXT_STRONG
         } else {
-            colour::TEXT_FAINT
+            colour::TEXT_DIM
         };
         ui.painter().text(
             pos2(rect.left() + space::LG, rect.center().y),

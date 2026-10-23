@@ -71,9 +71,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     if side >= NAMED {
         callouts(&painter, square, plan);
     }
-    for drawing in view.shapes(atlas) {
-        shapes::paint(&painter, square, drawing);
-    }
     pins(&painter, (square, ui.clip_rect()), atlas, view, plan);
     if !mapped {
         missing(&painter, square, &plan.name);
@@ -1101,16 +1098,28 @@ fn pins(
     // as its pin.
     let shade = |l: &Lineup| view.area.unwrap_or_else(|| tint(l.side.as_deref()));
     let dimmed = if dim { 0.45 } else { 0.9 };
-    let all = rest
-        .iter()
-        .map(|l| (*l, shade(l).gamma_multiply(dimmed)))
-        .chain(picked.iter().map(|l| (*l, shade(l))))
-        .chain(writing.map(|l| (l, view.area.unwrap_or(colour::TEXT_STRONG))));
-    for (lineup, ink) in all {
-        areas(lineup, ink);
+    // From the bottom: the other lineups' areas, your drawings, then the
+    // picked or written lineup's area, so a faded area never covers a
+    // drawing and the one you're looking at is never under one. Every
+    // other lineup's line goes down before any ring or face, so no line
+    // crosses a pin.
+    for lineup in &rest {
+        areas(lineup, shade(lineup).gamma_multiply(dimmed));
+    }
+    for drawing in view.shapes(atlas) {
+        shapes::paint(painter, square, drawing);
+    }
+    for lineup in &picked {
+        areas(lineup, shade(lineup));
+    }
+    if let Some(lineup) = writing {
+        areas(lineup, view.area.unwrap_or(colour::TEXT_STRONG));
     }
     for lineup in &rest {
-        pin(painter, square, atlas, lineup, (faint(lineup), main));
+        throw(painter, square, lineup, faint(lineup));
+    }
+    for lineup in &rest {
+        marks(painter, square, atlas, lineup, (faint(lineup), main));
     }
     // Names keep off every face and ring, and may run off the map as
     // far as the screen goes. The picked one's name goes first, so the rest
@@ -1145,15 +1154,7 @@ fn pins(
             );
         }
     }
-    for lineup in rest.iter().chain(&picked) {
-        if let Some(at) = lineup
-            .stand
-            .or(lineup.land)
-            .filter(|_| view.marked(atlas, lineup))
-        {
-            badge(painter, point(square, at) + vec2(FACE, -FACE));
-        }
-    }
+    badges(painter, square, (atlas, view), rest.iter().chain(&picked));
     if let Some(lineup) = writing {
         pin(painter, square, atlas, lineup, (colour::TEXT_STRONG, main));
         handles(painter, square, lineup, scale);
@@ -1268,6 +1269,24 @@ fn more_lands(lineup: &Lineup) -> &[[f32; 2]] {
     }
 }
 
+/// A badge on each lineup saved before the game changed its map.
+fn badges<'a>(
+    painter: &egui::Painter,
+    square: Square,
+    (atlas, view): (&Atlas, &View),
+    lineups: impl Iterator<Item = &'a &'a Lineup>,
+) {
+    for lineup in lineups {
+        if let Some(at) = lineup
+            .stand
+            .or(lineup.land)
+            .filter(|_| view.marked(atlas, lineup))
+        {
+            badge(painter, point(square, at) + vec2(FACE, -FACE));
+        }
+    }
+}
+
 /// Where a lineup is thrown from and where it lands, joined by a dashed line.
 fn pin(
     painter: &egui::Painter,
@@ -1276,6 +1295,12 @@ fn pin(
     lineup: &Lineup,
     (ink, main): (Color32, Option<&str>),
 ) {
+    throw(painter, square, lineup, ink);
+    marks(painter, square, atlas, lineup, (ink, main));
+}
+
+/// The dashed line from where a lineup is thrown to where it lands.
+fn throw(painter: &egui::Painter, square: Square, lineup: &Lineup, ink: Color32) {
     let stand = lineup.stand.map(|p| point(square, p));
     let land = lineup.land.map(|p| point(square, p));
     if let (Some(from), Some(to)) = (stand, land)
@@ -1289,6 +1314,18 @@ fn pin(
             4.0,
         ));
     }
+}
+
+/// A lineup's rings where it lands and its face where it's thrown from.
+fn marks(
+    painter: &egui::Painter,
+    square: Square,
+    atlas: &Atlas,
+    lineup: &Lineup,
+    (ink, main): (Color32, Option<&str>),
+) {
+    let stand = lineup.stand.map(|p| point(square, p));
+    let land = lineup.land.map(|p| point(square, p));
     if let Some(to) = land {
         land_mark(painter, to, RING, atlas, lineup, ink);
     }

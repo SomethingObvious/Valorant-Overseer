@@ -243,6 +243,9 @@ fn suggestion(
     let label = format!("+ {tag}");
     let wide = 2.0f32.mul_add(space::MD, caps_width(ui.painter(), &label, font.clone()));
     let (rect, response) = ui.allocate_exact_size(vec2(wide, 18.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Add the tag {tag}"))
+    });
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         if response.hovered() {
@@ -281,6 +284,8 @@ pub(crate) fn write_note(ctx: &egui::Context, id: &str) {
 fn invite(ui: &mut Ui) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::click());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Write a note"));
     if ui.is_rect_visible(rect) {
         let tint = if response.hovered() {
             colour::TEXT_DIM
@@ -308,19 +313,25 @@ fn hint(text: &str) -> RichText {
 /// How tall the player card is.
 const CARD: f32 = 120.0;
 
+/// A click on the card copies the Riot ID, the same as Ctrl+C.
+fn copies(ui: &Ui, response: egui::Response, player: &Player) {
+    let Some(name) = player.name.as_deref() else {
+        return;
+    };
+    crate::controls::named(&response, &format!("Copy {name}"));
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Copy their Riot ID");
+    if response.clicked() {
+        copy(ui.ctx(), name.to_owned());
+    }
+}
+
 /// The player as a broadcast card: their agent's art across the panel, fading
 /// dark at the foot so the name set there reads on any agent.
 fn card(ui: &mut Ui, player: &Player) {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), CARD), Sense::click());
-    // A click copies the Riot ID, the same as Ctrl+C.
-    if let Some(name) = player.name.as_deref() {
-        let response = response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text("Copy their Riot ID");
-        if response.clicked() {
-            copy(ui.ctx(), name.to_owned());
-        }
-    }
+    copies(ui, response, player);
     if !ui.is_rect_visible(rect) {
         return;
     }

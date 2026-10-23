@@ -194,39 +194,62 @@ fn redrawn_words(map: &str, old: &[&str]) -> Option<String> {
 /// A chip for every map. The map stays put while a lineup is being written
 /// or shapes drawn on it.
 fn maps(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
-    let browsing = matches!(view.mode, Mode::Browse);
     let (names, turn) = ("Names (T)", "Turn (R)");
     let tools = controls::chip_width(ui, names) + controls::chip_width(ui, turn) + space::SM;
     let room = space::XL.mul_add(-2.0, ui.available_width() - tools);
+    // Too narrow for both on one line, beside the panel in a small window,
+    // the maps get the whole width and the tools a line of their own.
+    if room < TOOLS_BESIDE {
+        let wide = ui.available_width();
+        ui.allocate_ui(vec2(wide, 0.0), |ui| map_chips(ui, atlas, view));
+        ui.add_space(space::SM);
+        ui.allocate_ui_with_layout(
+            vec2(wide, space::ROW),
+            egui::Layout::right_to_left(egui::Align::Min),
+            |ui| map_tools(ui, view, (names, turn)),
+        );
+        return;
+    }
     ui.horizontal_top(|ui| {
-        ui.allocate_ui(vec2(room, 0.0), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(space::XL);
-                ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
-                for plan in &atlas.maps {
-                    let on = view.map.as_ref() == Some(&plan.name);
-                    if controls::chip(ui, &plan.name, on).clicked() && browsing && !on {
-                        view.map = Some(plan.name.clone());
-                        view.selected = None;
-                        view.confirm = false;
-                    }
-                }
-            });
-        });
-        // Every lineup's name on the map, lit while they show, and a quarter
-        // turn of the map. T and R do the same.
+        ui.allocate_ui(vec2(room, 0.0), |ui| map_chips(ui, atlas, view));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            ui.add_space(space::XL);
-            ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
-            let shown = view.naming();
-            if controls::chip(ui, names, shown).clicked() {
-                view.names = Some(!shown);
-            }
-            if controls::chip(ui, turn, view.turned != 0).clicked() {
-                view.turned = (view.turned + 1) % 4;
-            }
+            map_tools(ui, view, (names, turn));
         });
     });
+}
+
+/// The least room the map chips need for the tools to sit on their line.
+const TOOLS_BESIDE: f32 = 160.0;
+
+/// A chip for every map, wrapped to the width they're given.
+fn map_chips(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
+    let browsing = matches!(view.mode, Mode::Browse);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(space::XL);
+        ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
+        for plan in &atlas.maps {
+            let on = view.map.as_ref() == Some(&plan.name);
+            if controls::chip(ui, &plan.name, on).clicked() && browsing && !on {
+                view.map = Some(plan.name.clone());
+                view.selected = None;
+                view.confirm = false;
+            }
+        }
+    });
+}
+
+/// Every lineup's name on the map, lit while they show, and a quarter turn of
+/// the map, from the right. T and R do the same.
+fn map_tools(ui: &mut Ui, view: &mut View, (names, turn): (&str, &str)) {
+    ui.add_space(space::XL);
+    ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
+    let shown = view.naming();
+    if controls::chip(ui, names, shown).clicked() {
+        view.names = Some(!shown);
+    }
+    if controls::chip(ui, turn, view.turned != 0).clicked() {
+        view.turned = (view.turned + 1) % 4;
+    }
 }
 
 /// Where a point on the minimap is on screen.
@@ -716,8 +739,19 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
             &drawing
         }
     };
-    let font = Face::Display.at(size::TITLE);
-    let wide = space::XL.mul_add(2.0, caps_width(painter, words, font.clone()));
+    // Smaller on a small map, and left out when even that runs past its
+    // edges, as the panel beside it says the same.
+    let Some((font, wide)) = [size::TITLE, size::LABEL]
+        .into_iter()
+        .map(|at| {
+            let font = Face::Display.at(at);
+            let wide = space::XL.mul_add(2.0, caps_width(painter, words, font.clone()));
+            (font, wide)
+        })
+        .find(|(_, wide)| *wide <= square.width())
+    else {
+        return;
+    };
     let plate = Rect::from_center_size(
         pos2(square.center().x, square.bottom() - 28.0),
         vec2(wide, 30.0),

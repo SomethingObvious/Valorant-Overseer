@@ -830,56 +830,59 @@ fn still_clips() -> crate::lineups::Prefs {
 /// from a harness of its own.
 fn lineups_shot() -> egui_kittest::SnapshotResults {
     let mut results = egui_kittest::SnapshotResults::default();
-    for (name, mode) in [
-        ("lineups", "browse"),
-        ("lineup-edit", "write"),
-        ("lineup-draw", "draw"),
-        ("lineup-text", "text"),
-        ("lineup-any", "any"),
-        ("lineup-note", "note"),
-        ("lineup-redrawn", "redrawn"),
+    // The small ones are what Lineups gets in the smallest window, 520 by
+    // 360, once the masthead and the footer have theirs.
+    let (full, small) = (vec2(1200.0, 820.0), vec2(520.0, 280.0));
+    for (name, mode, size) in [
+        ("lineups", "browse", full),
+        ("lineup-edit", "write", full),
+        ("lineup-draw", "draw", full),
+        ("lineup-text", "text", full),
+        ("lineup-any", "any", full),
+        ("lineup-note", "note", full),
+        ("lineup-redrawn", "redrawn", full),
+        ("lineups-small", "browse", small),
+        ("lineup-edit-small", "write", small),
     ] {
-        let mut shot = Harness::builder()
-            .with_size(vec2(1200.0, 820.0))
-            .build_ui_state(
-                |ui, state: &mut (bool, Lineups, Bridge)| {
-                    if state.0 {
-                        state.1.show(
-                            ui,
-                            (&state.2, std::path::Path::new(".")),
-                            true,
-                            (
-                                1.0,
-                                still_clips(),
-                                crate::lineups::Look {
-                                    turn: crate::settings::MapTurn::Drawn,
-                                    names: false,
-                                    area: None,
-                                    agent: "Brimstone",
-                                    slow: false,
-                                    redraws: &crate::settings::RedrawSettings::default(),
-                                },
-                            ),
-                        );
-                    }
-                },
-                (
-                    false,
-                    Lineups::showing(
-                        if mode == "redrawn" {
-                            redrawn_atlas()
-                        } else {
-                            an_atlas()
-                        },
-                        (mode == "browse").then_some("brim-a"),
-                        match mode {
-                            "note" | "redrawn" => "browse",
-                            other => other,
-                        },
-                    ),
-                    Bridge::start(std::path::Path::new("."), || {}),
+        let mut shot = Harness::builder().with_size(size).build_ui_state(
+            |ui, state: &mut (bool, Lineups, Bridge)| {
+                if state.0 {
+                    state.1.show(
+                        ui,
+                        (&state.2, std::path::Path::new(".")),
+                        true,
+                        (
+                            1.0,
+                            still_clips(),
+                            crate::lineups::Look {
+                                turn: crate::settings::MapTurn::Drawn,
+                                names: false,
+                                area: None,
+                                agent: "Brimstone",
+                                slow: false,
+                                redraws: &crate::settings::RedrawSettings::default(),
+                            },
+                        ),
+                    );
+                }
+            },
+            (
+                false,
+                Lineups::showing(
+                    if mode == "redrawn" {
+                        redrawn_atlas()
+                    } else {
+                        an_atlas()
+                    },
+                    (mode == "browse").then_some("brim-a"),
+                    match mode {
+                        "note" | "redrawn" => "browse",
+                        other => other,
+                    },
                 ),
-            );
+                Bridge::start(std::path::Path::new("."), || {}),
+            ),
+        );
         design::install_fonts(&shot.ctx);
         shot.ctx.set_style_of(egui::Theme::Dark, design::style());
         shot.run();

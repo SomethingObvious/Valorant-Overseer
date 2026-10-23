@@ -275,6 +275,7 @@ fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &m
     } else {
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint));
         ui.painter().rect_filled(rect, 0, colour::BG_INSET);
         ui.painter().text(
             rect.left_center() + vec2(space::LG, 0.0),
@@ -361,6 +362,14 @@ pub(super) fn row(
     (picked, main, marked): (bool, Option<&str>, bool),
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            picked,
+            &lineup.title,
+        )
+    });
     if !ui.is_rect_visible(rect) {
         return response;
     }

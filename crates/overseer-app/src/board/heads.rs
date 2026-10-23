@@ -67,6 +67,13 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         );
         taken = chip.right();
         let hit = ui.interact(chip, ui.id().with(("worth", team)), Sense::click());
+        hit.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{flagged} worth a look, show the next"),
+            )
+        });
         if hit.hovered() {
             painter.add(paint::slant(
                 chip,
@@ -289,6 +296,13 @@ pub(crate) fn columns(ui: &mut Ui, grid: &Grid, sort: &Sort) -> Option<&'static 
             pos2(rect.left() + placed.right, rect.bottom()),
         );
         let hit = ui.interact(area, ui.id().with(("head", column.head)), Sense::click());
+        hit.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("Sort by {}", column.label),
+            )
+        });
         let arrow = sort.arrow(column.head);
         let tint = if arrow.is_some() || hit.hovered() {
             colour::TEXT_STRONG

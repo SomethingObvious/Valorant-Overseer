@@ -175,6 +175,37 @@ pub fn drag(ui: &Ui, bar: &Response) -> bool {
     false
 }
 
+/// A ring round the widget the keyboard is on, so Tab shows where it went.
+///
+/// It shows once Tab has been pressed and goes at the next click, so moving
+/// the pointer never leaves a ring behind on what was clicked.
+pub fn focus(ctx: &egui::Context) {
+    let id = egui::Id::new("keyboard-focus");
+    let (tabbed, pointed) = ctx.input(|i| (i.key_pressed(egui::Key::Tab), i.pointer.any_pressed()));
+    let keyboard = ctx.data_mut(|store| {
+        let on = store.get_temp_mut_or(id, false);
+        if tabbed {
+            *on = true;
+        } else if pointed {
+            *on = false;
+        }
+        *on
+    });
+    let Some(focused) = ctx.memory(egui::Memory::focused).filter(|_| keyboard) else {
+        return;
+    };
+    let Some(widget) = ctx.read_response(focused) else {
+        return;
+    };
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id))
+        .rect_stroke(
+            widget.interact_rect.expand(2.0),
+            0,
+            Stroke::new(1.5, colour::TEXT_STRONG),
+            egui::StrokeKind::Outside,
+        );
+}
+
 /// A hairline round the window, which has no frame from Windows, unless it
 /// fills the screen.
 pub fn outline(ctx: &egui::Context) {

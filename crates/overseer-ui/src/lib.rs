@@ -424,6 +424,12 @@ pub fn choice(
         egui::vec2(ui.available_width(), ROW_CHOICE),
         egui::Sense::click(),
     );
+    let kind = if one_of {
+        egui::WidgetType::RadioButton
+    } else {
+        egui::WidgetType::Checkbox
+    };
+    response.widget_info(|| egui::WidgetInfo::selected(kind, true, on, name));
     ui.add_space(space::SM);
     if !ui.is_rect_visible(rect) {
         return response.clicked();
@@ -478,7 +484,8 @@ pub fn choice(
     // Cut to what is left of the row rather than run off the end of it: two
     // of these side by side leave half the width each, and the longest
     // explanation is wider than half.
-    let at = drawn.right().max(slab.left() + 190.0) + space::LG;
+    let named = widest_name(ui, drawn.right() - pip.right());
+    let at = (pip.right() + named).max(slab.left() + 190.0) + space::LG;
     let mut job = egui::text::LayoutJob::simple_singleline(
         about.to_owned(),
         Face::Body.at(size::LABEL + 1.0),
@@ -497,6 +504,22 @@ pub fn choice(
         colour::TEXT_FAINT,
     );
     response.clicked()
+}
+
+/// The widest name among the switches drawn in `ui`, counting one `named`
+/// points wide, so every switch in a group starts its explanation at one
+/// edge. It is kept from the frames that drew them.
+fn widest_name(ui: &egui::Ui, named: f32) -> f32 {
+    let key = egui::Id::new(("choice-names", ui.id()));
+    let before = ui
+        .ctx()
+        .data(|store| store.get_temp::<f32>(key))
+        .unwrap_or(0.0);
+    if named > before {
+        ui.ctx().data_mut(|store| store.insert_temp(key, named));
+        ui.ctx().request_repaint();
+    }
+    named.max(before)
 }
 
 /// The slanted pip: solid for a switch, and an outline that fills for a

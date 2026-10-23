@@ -107,6 +107,27 @@ pub(crate) struct Look<'a> {
     pub(crate) still: bool,
 }
 
+/// A row as a screen reader says it: who, on what, their rank and K/D, and
+/// whether they're worth a look.
+fn spoken(player: &Player) -> String {
+    let mut said: Vec<String> = [&player.name, &player.agent, &player.rank]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    if let Some(kd) = player.kd {
+        said.push(format!("K/D {kd:.2}"));
+    }
+    if player.smurf {
+        said.push("worth a look".to_owned());
+    }
+    if said.is_empty() {
+        "Unknown player".to_owned()
+    } else {
+        said.join(", ")
+    }
+}
+
 /// Draws one row, and hands back what the pointer did to it.
 ///
 /// Every row is the same height, flagged or not, so a flag's reasons go on
@@ -118,6 +139,14 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
         vec2(ui.available_width(), look.metrics.height),
         Sense::click(),
     );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            look.selected,
+            spoken(player),
+        )
+    });
     ui.add_space(GAP);
     if !ui.is_rect_visible(rect) {
         return response;

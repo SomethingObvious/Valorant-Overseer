@@ -368,7 +368,7 @@ fn card(ui: &mut Ui, player: &Player) {
         painter.add(egui::Shape::mesh(mesh));
     }
     let mut fade = egui::Mesh::default();
-    let dark = Color32::from_rgba_unmultiplied(10, 11, 14, 235);
+    let dark = colour::BG.gamma_multiply_u8(235);
     for (x, y, colour) in [
         (
             card.left(),

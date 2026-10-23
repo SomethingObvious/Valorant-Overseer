@@ -109,7 +109,7 @@ pub(crate) fn backdrop(painter: &egui::Painter, rect: Rect, map: Option<&str>) {
         ramp.vertices.push(Vertex {
             pos: pos2(x, y),
             uv: egui::epaint::WHITE_UV,
-            color: Color32::from_rgba_unmultiplied(10, 11, 14, alpha),
+            color: colour::BG.gamma_multiply_u8(alpha),
         });
     }
     ramp.add_triangle(0, 1, 2);

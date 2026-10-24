@@ -75,7 +75,10 @@ impl Overseer {
         }
 
         let width = ui.available_width();
-        self.panel_visible = width >= COMPACT && self.settings.panel;
+        // With nobody on the board the panel would only say so, so the
+        // waiting plate has the window.
+        self.panel_visible =
+            width >= COMPACT && self.settings.panel && !self.board.players.is_empty();
         let panel = self.panel_visible.then(|| self.detail(ui, width));
         CentralPanel::default()
             .frame(egui::Frame::NONE)

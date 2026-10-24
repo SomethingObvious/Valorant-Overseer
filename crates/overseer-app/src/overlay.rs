@@ -153,7 +153,7 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
             rect.bottom() - space::MD,
         ),
     );
-    let paint = crate::board::paint::slant(plate, false, true, colour::ENEMY);
+    let paint = crate::board::paint::slant(plate, false, true, colour::TEXT_STRONG);
     painter.add(paint);
     let middle = plate.center().y;
     let said = caps_text(
@@ -161,7 +161,7 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
         pos2(plate.left() + space::LG, middle),
         Align2::LEFT_CENTER,
         "Overlay On",
-        Face::Heavy.at(20.0),
+        Face::Heavy.at(overseer_ui::size::DISPLAY),
         colour::BG,
     );
     let label = crate::board::paint::label();

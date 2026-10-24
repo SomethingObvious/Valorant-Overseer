@@ -67,6 +67,12 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> Option<Chrome> {
         &head.light,
         head.still,
     );
+    let spoken = ui.interact(
+        Rect::from_x_y_ranges(right..=buttons_at, rect.y_range()),
+        ui.id().with("connection"),
+        Sense::hover(),
+    );
+    spoken.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &head.light.2));
     let left = title(
         &painter,
         head.board,

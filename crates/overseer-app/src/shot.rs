@@ -781,15 +781,19 @@ fn an_atlas() -> serde_json::Value {
         ("Mid Link", 0.5143, 0.6175),
     ]
     .map(|(name, x, y)| serde_json::json!({ "name": name, "at": [x, y] }));
-    let kit = |name: &str, q: &str| {
+    let kit = |name: &str, [c, q, e, x]: [&str; 4]| {
         serde_json::json!({ "name": name, "abilities": [
-            { "key": "C", "name": "Stim Beacon" }, { "key": "Q", "name": q },
-            { "key": "E", "name": "Sky Smoke" }, { "key": "X", "name": "Orbital Strike" },
+            { "key": "C", "name": c }, { "key": "Q", "name": q },
+            { "key": "E", "name": e }, { "key": "X", "name": x },
         ]})
     };
     serde_json::json!({
         "maps": [{ "name": "Ascent", "sites": ["A", "B"], "callouts": callouts }],
-        "agents": [kit("Brimstone", "Incendiary"), kit("Viper", "Snake Bite"), kit("Killjoy", "Nanoswarm")],
+        "agents": [
+            kit("Brimstone", ["Stim Beacon", "Incendiary", "Sky Smoke", "Orbital Strike"]),
+            kit("Viper", ["Snake Bite", "Poison Cloud", "Toxic Screen", "Viper's Pit"]),
+            kit("Killjoy", ["Nanoswarm", "Alarmbot", "Turret", "Lockdown"]),
+        ],
         "lineups": [
             { "id": "brim-a", "map": "Ascent", "agent": "Brimstone", "ability": "Incendiary",
               "side": "attack", "site": "A", "title": "A Main to Default",
@@ -1256,7 +1260,7 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
     // Same first frame rule as the board: fonts land on the frame after they
     // are installed, so the first one draws nothing.
     let mut shot = Harness::builder()
-        .with_size(vec2(880.0, 2300.0))
+        .with_size(vec2(880.0, 2900.0))
         .build_ui_state(
             |ui, state: &mut (bool, Settings)| {
                 if state.0 {
@@ -1390,7 +1394,9 @@ fn a_row_says_who_it_is() {
     shot.state_mut().ready = true;
     shot.run();
     assert!(
-        shot.query_by_label("NeonLock#VAL, Clove, Immortal 1, K/D 1.79, worth a look")
-            .is_some()
+        shot.query_by_label(
+            "NeonLock#VAL, Clove, Immortal 1, K/D 1.79, maybe in a party of 3, worth a look, Level 43, peak Immortal 1"
+        )
+        .is_some()
     );
 }

@@ -236,6 +236,30 @@ impl Overseer {
         right
     }
 
+    /// The keys the footer offers, leaving out the ones that act on players
+    /// while there are none.
+    fn hints(&self) -> impl Iterator<Item = (&'static str, &'static str, Hint)> + use<'_> {
+        [
+            ("w", "Worth a Look", Hint::Worth),
+            ("arrows", "Pick", Hint::Pick),
+            ("/", "Find", Hint::Find),
+            ("n", "Note", Hint::Note),
+            ("ctrl c", "Copy Name", Hint::Copy),
+            ("o", "Overlay", Hint::Overlay),
+            ("h", "History", Hint::History),
+            ("l", "Lineups", Hint::Lineups),
+            (",", "Settings", Hint::Settings),
+        ]
+        .into_iter()
+        .filter(|(_, _, hint)| {
+            !self.board.players.is_empty()
+                || !matches!(
+                    hint,
+                    Hint::Worth | Hint::Pick | Hint::Find | Hint::Note | Hint::Copy
+                )
+        })
+    }
+
     /// The footer: the keys as keycaps, which are quicker to recognise than
     /// prose, and what the window is spending. Each hint is also a button
     /// for its key, and this says which was clicked.
@@ -269,17 +293,7 @@ impl Overseer {
         let right = self.status(ui, &painter, rect, right);
 
         let mut x = rect.left() + GUTTER;
-        for (key, what, hint) in [
-            ("w", "Worth a Look", Hint::Worth),
-            ("arrows", "Pick", Hint::Pick),
-            ("/", "Find", Hint::Find),
-            ("n", "Note", Hint::Note),
-            ("ctrl c", "Copy Name", Hint::Copy),
-            ("o", "Overlay", Hint::Overlay),
-            ("h", "History", Hint::History),
-            ("l", "Lineups", Hint::Lineups),
-            (",", "Settings", Hint::Settings),
-        ] {
+        for (key, what, hint) in self.hints() {
             let font = Face::Display.at(size::MICRO);
             let wide = overseer_ui::keycap_width(&painter, key)
                 + space::SM

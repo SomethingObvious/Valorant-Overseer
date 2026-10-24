@@ -6,7 +6,7 @@
 use egui::{Sense, Stroke, Ui, vec2};
 use overseer_ui::colour;
 
-use super::shapes::{COLOURS, KINDS, ink};
+use super::shapes::{COLOURS, KINDS, colour_name, ink};
 use super::side::{title, words};
 use super::{Mode, Sketch, View};
 use crate::controls::{self, Tone};
@@ -74,11 +74,20 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     let (mut changed, mut done) = (false, false);
     // The Delete key too, unless a label's words have the keyboard.
     let typing = ui.memory(|m| m.focused().is_some());
-    let pressed = !typing
-        && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
+    let pressed = !typing && ui.input(|i| i.key_pressed(egui::Key::Delete));
+    // A change is kept for Undo once it's finished, so a drag or a slider
+    // is one step rather than one a frame.
+    if !typing && !ui.input(|i| i.pointer.any_down()) && sketch.shapes != sketch.settled {
+        let before = std::mem::replace(&mut sketch.settled, sketch.shapes.clone());
+        sketch.history.push(before);
+    }
     ui.horizontal_wrapped(|ui| {
-        if controls::button(ui, "Undo", Tone::Plain, count > 0).clicked() {
-            sketch.shapes.pop();
+        let back = !sketch.history.is_empty();
+        if controls::button(ui, "Undo", Tone::Plain, back).clicked()
+            && let Some(before) = sketch.history.pop()
+        {
+            sketch.shapes.clone_from(&before);
+            sketch.settled = before;
             sketch.picked = None;
             sketch.confirm = false;
             changed = true;
@@ -247,6 +256,8 @@ pub(crate) fn swatch(ui: &mut Ui, hex: &str, on: bool) -> egui::Response {
             egui::StrokeKind::Inside,
         );
     }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, hex));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, colour_name(hex))
+    });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

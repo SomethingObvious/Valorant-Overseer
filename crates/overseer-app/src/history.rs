@@ -426,7 +426,7 @@ fn figure(
         pos2(x, rect.top() + 24.0),
         Align2::RIGHT_CENTER,
         value,
-        Face::Heavy.at(20.0),
+        Face::Heavy.at(size::DISPLAY),
         tint,
     );
     let _label = caps_text(

@@ -183,7 +183,7 @@ fn strip(ui: &mut Ui, board: &Board) {
     let y = rect.center().y;
     let mut right = rect.right() - HIDE_ROOM;
     if let Some(score) = board.score.as_ref() {
-        let font = Face::Heavy.at(20.0);
+        let font = Face::Heavy.at(size::DISPLAY);
         for (text, tint) in [
             (score.enemy.map(|n| n.to_string()), colour::ENEMY),
             (Some("-".to_owned()), colour::TEXT_FAINT),

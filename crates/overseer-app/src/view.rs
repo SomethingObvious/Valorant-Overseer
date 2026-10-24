@@ -22,7 +22,7 @@ use crate::{app, panel};
 use egui::{CentralPanel, Panel};
 #[cfg(test)]
 use overseer_core::Board;
-use overseer_ui::{Face, caps_at, caps_text, colour, size, space};
+use overseer_ui::{Face, caps_at, caps_text, caps_width, colour, size, space};
 
 /// What failed to start and why, since each one changes what the screen can
 /// promise.
@@ -95,6 +95,7 @@ pub(crate) fn settings(
             changed |= your_pc(ui, settings, machine, still);
             changed |= effort(ui, settings, quality, why);
             changed |= updates(ui, settings, still);
+            legend(ui);
             keys(ui);
             data(ui, root);
             ui.add_space(space::XXL);
@@ -232,6 +233,72 @@ fn data(ui: &mut Ui, root: &std::path::Path) {
          Match History has your past games and who you met in them. Close Overseer before \
          changing a file, or it may write over the change when it saves.",
     );
+}
+
+/// What the marks on a player's row mean, for what a glance doesn't say.
+fn legend(ui: &mut Ui) {
+    section(
+        ui,
+        "Reading the Board",
+        "What the marks on a player's row mean.",
+    );
+    let marks = [
+        (
+            "Worth a Look",
+            "An amber row and label. Rest on the label for the reasons.",
+        ),
+        (
+            "Party Tab",
+            "A tab down the left joins players who queued together. Dashed with a question mark is a guess.",
+        ),
+        (
+            "Last 5 Games",
+            "Newest at the left. A solid pip is a win, an outlined one a loss, and a grey one a draw.",
+        ),
+        (
+            "Faint Numbers",
+            "Too few games behind them to trust, like a K/D off one or two.",
+        ),
+        ("Peak", "Their highest rank, and the act it was in."),
+        (
+            "Tags",
+            "Rest on a tag, like FORCES, for what it's based on.",
+        ),
+    ];
+    let font = Face::Display.at(size::LABEL);
+    let widest = marks
+        .iter()
+        .map(|(mark, _)| caps_width(ui.painter(), mark, font.clone()))
+        .fold(0.0, f32::max);
+    for (mark, what) in marks {
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{mark}. {what}"))
+        });
+        if !ui.is_rect_visible(rect) {
+            continue;
+        }
+        let painter = ui.painter();
+        let _mark = caps_text(
+            painter,
+            pos2(rect.left() + space::XL, rect.center().y),
+            Align2::LEFT_CENTER,
+            mark,
+            font.clone(),
+            colour::TEXT,
+        );
+        painter.text(
+            pos2(
+                rect.left() + space::XL + widest + space::LG,
+                rect.center().y,
+            ),
+            Align2::LEFT_CENTER,
+            what,
+            Face::Body.at(size::LABEL + 1.0),
+            colour::TEXT_FAINT,
+        );
+    }
 }
 
 /// Every key the window listens for, including the ones the footer leaves out.
@@ -695,7 +762,7 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
 
 /// The sections of Settings, in the order the page has them, for the chips
 /// at its top to jump to.
-const SECTIONS: [&str; 12] = [
+const SECTIONS: [&str; 13] = [
     "Offline Chat",
     "Columns",
     "Layout",
@@ -707,6 +774,7 @@ const SECTIONS: [&str; 12] = [
     "Graphics",
     "Updates",
     "Your Data",
+    "Reading the Board",
     "Keyboard Shortcuts",
 ];
 
@@ -812,8 +880,8 @@ pub(crate) fn warning(ui: &mut Ui, text: &str) {
         (space::XL.mul_add(-2.0, ui.available_width()) - sign - space::MD).max(120.0),
     );
     let tall = galley.size().y.max(space::ROW - space::MD) + space::MD;
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), tall), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), tall), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -918,7 +986,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
     } = shown;
     let width = ui.available_width();
     app::snapshot_chrome(ui, board, 12, settings);
-    if width >= app::COMPACT && settings.panel {
+    if width >= app::COMPACT && settings.panel && !board.players.is_empty() {
         beside(ui, width, board, selected, notes, career);
     }
     CentralPanel::default()

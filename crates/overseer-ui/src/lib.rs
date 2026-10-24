@@ -393,11 +393,6 @@ pub fn say(ui: &mut egui::Ui, gutter: f32, tint: Color32, message: &str) {
         egui::pos2(rect.right() - gutter, rect.bottom() - space::SM),
     );
     painter.add(shape::cut_filled(band, 4.0, tint.gamma_multiply(0.10)));
-    painter.rect_filled(
-        egui::Rect::from_min_size(band.min, egui::vec2(2.0, band.height())),
-        0,
-        tint,
-    );
     painter.text(
         egui::pos2(band.left() + space::LG, band.center().y),
         egui::Align2::LEFT_CENTER,
@@ -478,7 +473,7 @@ pub fn choice(
         if on || lift > 0.0 {
             colour::TEXT_STRONG
         } else {
-            colour::TEXT_DIM
+            colour::TEXT
         },
     );
     let named = widest_name(ui, drawn.right() - pip.right());
@@ -593,15 +588,16 @@ fn mark(painter: &egui::Painter, pip: egui::Rect, on: bool, one_of: bool) {
                 Stroke::NONE,
             ));
         }
-    } else {
+    } else if on {
         painter.add(egui::Shape::convex_polygon(
             slanted(pip),
-            if on {
-                colour::TEXT_STRONG
-            } else {
-                colour::LINE
-            },
+            colour::TEXT_STRONG,
             Stroke::NONE,
+        ));
+    } else {
+        painter.add(egui::Shape::closed_line(
+            slanted(pip.shrink(0.75)),
+            Stroke::new(1.5, colour::TEXT_FAINT),
         ));
     }
 }

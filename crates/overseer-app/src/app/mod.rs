@@ -652,7 +652,7 @@ impl Overseer {
                         self.histories.clear();
                         // A new lobby opens on the account most worth
                         // reading, so the common case costs no input at all.
-                        if let Some(first) = self.first_flagged_enemy() {
+                        if let Some(first) = self.opening_pick() {
                             self.selected = Some(first);
                         }
                     }
@@ -663,10 +663,8 @@ impl Overseer {
                 }
             }
         }
-        self.lost_at = match self.status {
-            Status::Lost(_) => self.lost_at.or_else(|| Some(ctx.input(|i| i.time))),
-            _ => None,
-        };
+        self.lost_at = matches!(self.status, Status::Lost(_))
+            .then(|| self.lost_at.unwrap_or_else(|| ctx.input(|i| i.time)));
     }
 
     /// Moves the selection to you, or else the first player, when the
@@ -930,14 +928,23 @@ impl Overseer {
         )
     }
 
-    /// The first enemy worth a look, in screen order.
-    fn first_flagged_enemy(&self) -> Option<String> {
+    /// The enemy a new lobby opens on: the first worth a look, or else the
+    /// first enemy, in the order the board shows them.
+    fn opening_pick(&self) -> Option<String> {
         let ours = self.board.self_team.as_deref();
-        self.visible_order().into_iter().find(|id| {
+        let enemy = |id: &&String, flagged: bool| {
             self.board.players.iter().any(|p| {
-                p.puuid.as_deref() == Some(id.as_str()) && p.smurf && p.team.as_deref() != ours
+                p.puuid.as_deref() == Some(id.as_str())
+                    && p.team.as_deref() != ours
+                    && (p.smurf || !flagged)
             })
-        })
+        };
+        let order = self.visible_order();
+        order
+            .iter()
+            .find(|id| enemy(id, true))
+            .or_else(|| order.iter().find(|id| enemy(id, false)))
+            .cloned()
     }
 
     /// Why there is no board, when "nothing in progress" would be wrong, with
@@ -954,7 +961,12 @@ impl Overseer {
                     .then_some(self.unreadable.1.as_deref())
                     .flatten()
             })
-            .map(|why| ("This Build Can't Read the Bridge", why))
+            .map(|_| {
+                (
+                    "Overseer Needs a Repair",
+                    "Its window and the part that talks to Riot don't match, which happens after an update stops partway. Run install.bat in Overseer's folder to repair it. Your settings and lineups are kept.",
+                )
+            })
     }
 
     /// What the tray and a second launch asked of the window.

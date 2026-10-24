@@ -414,7 +414,7 @@ fn card(ui: &mut Ui, player: &Player) {
 fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
     let (name, tag, _standing_in) = board::shown_name(player);
     let room = 2.0f32.mul_add(-space::LG, card.width());
-    let font = Face::Heavy.at(30.0);
+    let font = Face::Heavy.at(size::HERO);
     let drawn = caps_text(
         painter,
         pos2(card.left() + space::LG, card.bottom() - 34.0),
@@ -524,7 +524,7 @@ fn verdict(ui: &mut Ui, player: &Player) {
             } else {
                 "One Signal Only"
             },
-            Face::Heavy.at(15.0),
+            Face::Heavy.at(size::TITLE),
             if solid { colour::BG } else { colour::WARN },
         );
     }
@@ -935,7 +935,7 @@ fn figures_of(owned: &[(String, Color32, String)]) -> Vec<(&str, Color32, &str)>
 /// widest of them will not fit side by side they go onto more rows, evenly,
 /// so a label never runs into the figure beside it.
 pub(crate) fn figures(ui: &mut Ui, row: &[(&str, Color32, &str)]) {
-    let value_font = Face::Heavy.at(20.0);
+    let value_font = Face::Heavy.at(size::DISPLAY);
     let under_font = Face::Display.at(size::MICRO);
     let widest = row
         .iter()
@@ -1174,7 +1174,7 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         text,
-        Face::Heavy.at(15.0),
+        Face::Heavy.at(size::TITLE),
         tint,
     );
     let from = drawn.right() + space::MD;

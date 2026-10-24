@@ -11,7 +11,7 @@ use crate::board;
 use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 
 /// The steps to a board, in order.
-const STEPS: [&str; 4] = ["Backend", "Riot Client", "VALORANT", "Match"];
+const STEPS: [&str; 4] = ["Overseer", "Riot Client", "VALORANT", "Match"];
 
 /// How often the step being waited on is redrawn as it moves, in seconds.
 const TICK: f64 = 1.0 / 30.0;
@@ -51,14 +51,14 @@ fn stage<'a>(
         (Some((title, why)), ..) => (title, why, 0, true),
         (None, Status::Connecting(_), _) => (
             "Starting Up",
-            "Overseer's backend is starting, which takes a few seconds.",
+            "Overseer is starting up, which takes a few seconds.",
             0,
             false,
         ),
         // What went wrong exactly is on the connection light's hover.
         (None, Status::Lost(_), _) => (
             "Not Connected",
-            "Overseer lost touch with its backend and keeps trying. If nothing comes back in a minute, restart Overseer.",
+            "Overseer lost its connection and keeps trying by itself. If nothing comes back in a minute, close Overseer and open it again.",
             0,
             true,
         ),
@@ -111,6 +111,15 @@ pub(super) fn empty(
 ) {
     let stage = stage(status, board, trouble);
     let room = ui.available_rect_before_wrap();
+    // Painted, so a screen reader gets the same words from a node of their own.
+    let said = ui.interact(room, ui.id().with("waiting-said"), Sense::hover());
+    said.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            true,
+            format!("{}. {}", stage.title, stage.detail),
+        )
+    });
     if room.height() < 210.0 {
         plain(ui, stage.title, stage.detail);
         return;

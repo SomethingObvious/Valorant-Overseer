@@ -30,6 +30,21 @@ pub(crate) const COLOURS: [&str; 12] = [
 ];
 
 /// A kept colour as one to paint with.
+/// What each of [`COLOURS`] is called, for a screen reader.
+const NAMES: [&str; 12] = [
+    "Red", "Orange", "Yellow", "Green", "Sky", "Cyan", "Blue", "Purple", "Pink", "Coral", "Cream",
+    "Grey",
+];
+
+/// The name of the colour `hex`, or the code itself for one not on the list.
+pub(crate) fn colour_name(hex: &str) -> &str {
+    COLOURS
+        .iter()
+        .position(|c| c.eq_ignore_ascii_case(hex))
+        .and_then(|i| NAMES.get(i).copied())
+        .unwrap_or(hex)
+}
+
 pub(crate) fn ink(hex: &str) -> Color32 {
     overseer_ui::hex(Some(hex)).unwrap_or(colour::WARN)
 }

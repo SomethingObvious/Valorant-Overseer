@@ -276,7 +276,7 @@ fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &m
                 let marked = view.marked(atlas, lineup);
                 if row(ui, atlas, lineup, (on, main.as_deref(), marked)).clicked() {
                     view.selected = if on { None } else { lineup.id.clone() };
-                    view.confirm = false;
+                    view.confirm = None;
                 }
             }
         });
@@ -408,6 +408,25 @@ pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
     parts.join("  \u{b7}  ")
 }
 
+/// Delete, which asks Click Again to Delete for a few seconds after the
+/// first press. Says whether the second press came.
+fn delete(ui: &mut Ui, view: &mut View, busy: bool) -> bool {
+    let now = ui.input(|i| i.time);
+    let armed = view.confirm.is_some_and(|at| now - at < super::ARMED);
+    let label = if armed {
+        "Click Again to Delete"
+    } else {
+        "Delete"
+    };
+    if !controls::button(ui, label, Tone::Danger, !busy).clicked() {
+        return false;
+    }
+    view.confirm = (!armed).then_some(now);
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs_f64(super::ARMED));
+    armed
+}
+
 /// The picked lineup: what can be done with it, then its clip, its pictures
 /// and its words, in that order, so the clip is always on screen whole.
 fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View, marked: bool) -> Option<Request> {
@@ -422,16 +441,8 @@ fn details(ui: &mut Ui, lineup: &Lineup, view: &mut View, marked: bool) -> Optio
         if controls::button(ui, "Copy Code", Tone::Plain, !busy).clicked() {
             asked = Some(Request::Share);
         }
-        let delete = if view.confirm {
-            "Click Again to Delete"
-        } else {
-            "Delete"
-        };
-        if controls::button(ui, delete, Tone::Danger, !busy).clicked() {
-            if view.confirm {
-                asked = Some(Request::Delete);
-            }
-            view.confirm = !view.confirm;
+        if delete(ui, view, busy) {
+            asked = Some(Request::Delete);
         }
     });
     ui.add_space(space::SM);

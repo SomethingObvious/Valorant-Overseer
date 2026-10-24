@@ -237,7 +237,7 @@ fn map_chips(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
             if controls::chip(ui, &plan.name, on).clicked() && browsing && !on {
                 view.map = Some(plan.name.clone());
                 view.selected = None;
-                view.confirm = false;
+                view.confirm = None;
             }
         }
     });
@@ -860,7 +860,7 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
         response.hovered().then_some(hover).flatten(),
     );
     if changed {
-        sketch.confirm = false;
+        sketch.confirm = None;
         view.unsaved = Some((map, sketch.shapes.clone()));
     }
 }
@@ -882,7 +882,7 @@ fn erase(sketch: &mut super::Sketch, square: Square, response: &Response) -> boo
     };
     sketch.shapes.remove(index);
     sketch.picked = None;
-    sketch.confirm = false;
+    sketch.confirm = None;
     true
 }
 
@@ -1931,7 +1931,7 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         }
         return;
     }
-    view.confirm = false;
+    view.confirm = None;
     // The nearest lineup there is picked, and a click on one of several
     // stacked on one spot goes to the next of them, round and round in an
     // order that doesn't depend on where the click was.

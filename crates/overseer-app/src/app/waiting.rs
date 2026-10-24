@@ -83,7 +83,7 @@ fn stage<'a>(
         (None, Status::Live, _) if board.state.as_deref() == Some("OFFLINE") => (
             "Couldn't Read VALORANT",
             said.unwrap_or("Close VALORANT completely and open it again."),
-            1,
+            2,
             true,
         ),
         (None, Status::Live, _) => (

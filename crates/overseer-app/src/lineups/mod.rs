@@ -433,6 +433,13 @@ impl Draft {
     }
 }
 
+/// How many seconds the first press of Delete, Clear All or Cancel waits for
+/// the second.
+const ARMED: f64 = 5.0;
+
+/// How many changes back Draw's Undo goes.
+const UNDO_STEPS: usize = 100;
+
 /// Shapes being drawn on a map, and what the next drag draws.
 #[derive(Debug, Clone)]
 struct Sketch {
@@ -463,8 +470,9 @@ struct Sketch {
     /// The picked shape being resized by a grip: which shape, which grip,
     /// and the shape as it was when the drag started.
     resizing: Option<(usize, usize, Drawing)>,
-    /// Set by the first press of Clear All, which the second one confirms.
-    confirm: bool,
+    /// When Clear All was first pressed, for the few seconds a second press
+    /// clears the map.
+    confirm: Option<f64>,
     /// The shapes as they were before each change, the latest last, for Undo.
     history: Vec<Vec<Drawing>>,
     /// The shapes as of the last change that finished, which the next one
@@ -628,8 +636,9 @@ struct View {
     turned: u8,
     /// What the last request came to, and whether it failed.
     said: Option<(String, bool)>,
-    /// Set by the first press of Delete, which the second one confirms.
-    confirm: bool,
+    /// When Delete was first pressed, for the few seconds a second press
+    /// deletes the lineup.
+    confirm: Option<f64>,
     /// The agent a new lineup starts with, from the settings.
     default_agent: String,
     /// An agent Make Default was pressed on, for the settings to keep.
@@ -787,7 +796,7 @@ impl Lineups {
             && let Some(next) = plan::stepped(atlas, &self.view, way)
         {
             self.view.selected = Some(next);
-            self.view.confirm = false;
+            self.view.confirm = None;
         }
     }
 
@@ -1347,7 +1356,7 @@ impl Lineups {
         }
         view.pending = Some((bridge.ask(name, params), job));
         view.said = (job == Job::Import).then(|| ("Bringing in the lineups.".to_owned(), false));
-        view.confirm = false;
+        view.confirm = None;
         // Back to the list straight away rather than sitting in the editor
         // while the clip is cut, which can take a while.
         if job == Job::Save
@@ -1522,7 +1531,7 @@ impl View {
             words: String::new(),
             moving: None,
             resizing: None,
-            confirm: false,
+            confirm: None,
         }
     }
 

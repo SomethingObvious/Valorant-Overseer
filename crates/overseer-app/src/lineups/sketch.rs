@@ -80,6 +80,9 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     if !typing && !ui.input(|i| i.pointer.any_down()) && sketch.shapes != sketch.settled {
         let before = std::mem::replace(&mut sketch.settled, sketch.shapes.clone());
         sketch.history.push(before);
+        if sketch.history.len() > super::UNDO_STEPS {
+            sketch.history.remove(0);
+        }
     }
     ui.horizontal_wrapped(|ui| {
         let back = !sketch.history.is_empty();
@@ -89,7 +92,7 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
             sketch.shapes.clone_from(&before);
             sketch.settled = before;
             sketch.picked = None;
-            sketch.confirm = false;
+            sketch.confirm = None;
             changed = true;
         }
         let picked = sketch.picked.filter(|&i| i < count);
@@ -99,21 +102,25 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
         {
             sketch.shapes.remove(index);
             sketch.picked = None;
-            sketch.confirm = false;
+            sketch.confirm = None;
             changed = true;
         }
-        let clear = if sketch.confirm {
+        let now = ui.input(|i| i.time);
+        let armed = sketch.confirm.is_some_and(|at| now - at < super::ARMED);
+        let clear = if armed {
             "Click Again to Clear"
         } else {
             "Clear All"
         };
         if controls::button(ui, clear, Tone::Danger, count > 0).clicked() {
-            if sketch.confirm {
+            if armed {
                 sketch.shapes.clear();
                 sketch.picked = None;
                 changed = true;
             }
-            sketch.confirm = !sketch.confirm;
+            sketch.confirm = (!armed).then_some(now);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(super::ARMED));
         }
         done = controls::button(ui, "Done", Tone::Primary, true).clicked();
     });

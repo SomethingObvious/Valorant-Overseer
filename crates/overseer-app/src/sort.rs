@@ -98,6 +98,7 @@ fn key_of(column: &str, player: &Player) -> Key {
         "rank" => number(player.rank_tier.map(f64::from)),
         "rr" => number(player.rr.map(|r| r as f64)),
         "peak" => number(player.peak_rank_tier.map(f64::from)),
+        "k/d" if crate::board::few_games(player) => Key::Missing,
         "k/d" => number(player.kd),
         "games" => number(player.kd.map(|_| player.form.len() as f64)),
         "hs" => number(player.hs_pct),

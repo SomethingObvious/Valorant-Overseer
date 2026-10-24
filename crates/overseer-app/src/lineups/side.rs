@@ -102,24 +102,17 @@ pub(super) fn words(ui: &mut Ui, text: &str, tint: Color32) {
 /// A status line: a short rail in `tint`, whose colour says what kind it
 /// is, beside the words in the panel's own colour so they stay easy to read.
 pub(super) fn notice(ui: &mut Ui, text: &str, tint: Color32) {
-    let indent = space::MD + 3.0;
     let galley = ui.painter().layout(
         text.to_owned(),
         Face::Body.at(size::MICRO + 1.0),
-        colour::TEXT,
-        ui.available_width() - indent,
+        tint,
+        ui.available_width(),
     );
     let (rect, _response) = ui.allocate_exact_size(
         vec2(ui.available_width(), galley.size().y + 4.0),
         Sense::hover(),
     );
-    let painter = ui.painter();
-    painter.rect_filled(
-        Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
-        0,
-        tint,
-    );
-    painter.galley(rect.min + vec2(indent, 2.0), galley, colour::TEXT);
+    ui.painter().galley(rect.min + vec2(0.0, 2.0), galley, tint);
 }
 
 /// What the last request came to.
@@ -217,11 +210,11 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
                 view.said = None;
                 ui.close();
             }
-            if controls::menu_row(ui, "Copy Code", false, 150.0).clicked() {
+            if controls::menu_row(ui, "Copy Map Code", false, 150.0).clicked() {
                 asked = Some(Request::ShareMap);
                 ui.close();
             }
-            if controls::menu_row(ui, "Paste Code", false, 150.0).clicked() {
+            if controls::menu_row(ui, "Paste a Code", false, 150.0).clicked() {
                 // The clipboard's text comes back as a paste a frame later.
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::RequestPaste);

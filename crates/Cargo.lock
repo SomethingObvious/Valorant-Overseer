@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-app"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "eframe",
  "egui",
@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-core"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-native"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "windows",
  "windows-core",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-setup"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "eframe",
  "egui",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-ui"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "egui",
  "image",

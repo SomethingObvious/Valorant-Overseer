@@ -34,7 +34,7 @@ const DOT: f32 = 5.0;
 const GRIP: f32 = 4.0;
 
 /// Draws the map row and the map, and takes clicks and drags on the map.
-pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
+pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
     ui.add_space(space::LG);
     maps(ui, atlas, view);
     let Some(plan) = view
@@ -42,7 +42,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         .as_ref()
         .and_then(|m| atlas.maps.iter().find(|p| &p.name == m))
     else {
-        return;
+        return false;
     };
     redrawn(ui, atlas, view, plan);
     let room = ui
@@ -50,7 +50,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         .shrink2(vec2(space::XL, space::LG));
     let side = room.width().min(room.height());
     if side < 120.0 {
-        return;
+        return false;
     }
     // Each map comes in as it loads or is picked, a little below its place.
     let shown = motion::enter(ui.ctx(), egui::Id::new(("lineups-map", &plan.name)), 0.0);
@@ -72,9 +72,16 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
         callouts(&painter, square, plan);
     }
     pins(&painter, (square, ui.clip_rect()), atlas, view, plan);
-    if !mapped {
-        missing(&painter, square, &plan.name);
-    }
+    let retry = !mapped && {
+        let plate = missing(&painter, square, &plan.name);
+        let asked = ui.interact(plate, ui.id().with("minimap-retry"), Sense::click());
+        asked.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Try the Minimap Again")
+        });
+        asked
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+    };
     if view.export.is_some() {
         // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
@@ -108,6 +115,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
             notes(&response, atlas, &found);
         }
     }
+    retry
 }
 
 /// Over the map once a game update has redrawn it, when lineups were saved
@@ -131,7 +139,7 @@ fn redrawn(ui: &mut Ui, atlas: &Atlas, view: &mut View, plan: &Plan) {
                 pos2(band.left() + space::LG, band.center().y),
                 Align2::LEFT_CENTER,
                 &format!("{} Changed in a Game Update", plan.name),
-                Face::Heavy.at(15.0),
+                Face::Heavy.at(size::TITLE),
                 colour::BG,
             );
             ui.add_space(space::SM);
@@ -324,12 +332,13 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) -> bool {
     true
 }
 
-/// Says the map's minimap hasn't downloaded, in the middle of where it goes.
-fn missing(painter: &egui::Painter, square: Square, name: &str) {
+/// Says the map's minimap hasn't downloaded, in the middle of where it goes,
+/// on a plate that asks again when clicked.
+fn missing(painter: &egui::Painter, square: Square, name: &str) -> Rect {
     // Over everything else, since the callouts and drawings go on the map
     // either way, on a raised plate, since the map under it is black.
     let mut job = egui::text::LayoutJob::simple(
-        format!("The {name} minimap hasn't downloaded. Open Lineups again to retry."),
+        format!("The {name} minimap hasn't downloaded. Click here to try again."),
         Face::Body.at(size::BODY),
         colour::TEXT,
         square.width() * 0.7,
@@ -351,6 +360,7 @@ fn missing(painter: &egui::Painter, square: Square, name: &str) {
         words,
         colour::TEXT,
     );
+    plate
 }
 
 /// How near plantable ground the Spike has to be put to move onto it, in game
@@ -738,12 +748,15 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
     };
     // Smaller on a small map, and left out when even that runs past its
     // edges, as the panel beside it says the same.
-    let Some((font, wide)) = [size::TITLE, size::LABEL]
+    let Some((font, wide)) = [size::BODY + 2.0, size::LABEL]
         .into_iter()
         .map(|at| {
-            let font = Face::Display.at(at);
-            let wide = space::XL.mul_add(2.0, caps_width(painter, words, font.clone()));
-            (font, wide)
+            let font = Face::Body.at(at);
+            let shown = painter
+                .layout_no_wrap(words.to_owned(), font.clone(), colour::TEXT_STRONG)
+                .size()
+                .x;
+            (font, space::XL.mul_add(2.0, shown))
         })
         .find(|(_, wide)| *wide <= square.width())
     else {
@@ -759,8 +772,7 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
         true,
         colour::VOID.gamma_multiply(0.9),
     ));
-    let _words = caps_text(
-        painter,
+    let _words = painter.text(
         plate.center(),
         Align2::CENTER_CENTER,
         words,
@@ -1170,7 +1182,7 @@ pub(super) fn badge(painter: &egui::Painter, at: Pos2) {
         at,
         Align2::CENTER_CENTER,
         "!",
-        Face::Heavy.at(11.0),
+        Face::Heavy.at(size::LABEL),
         colour::VOID,
     );
 }

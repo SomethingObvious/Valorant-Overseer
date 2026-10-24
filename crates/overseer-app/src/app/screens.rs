@@ -278,17 +278,15 @@ impl Overseer {
         // A board that stopped updating says so, and fades, so nobody reads
         // it as the round in front of them.
         if let Some(lost) = self.lost_at {
-            if place == Place::Window {
-                let gone = super::waiting::clock((now - lost).max(0.0) as u64);
-                view::warning(
-                    ui,
-                    &format!(
-                        "Lost the backend {gone} ago. Reconnecting, and this board is from then."
-                    ),
-                );
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_secs(1));
-            }
+            let gone = super::waiting::clock((now - lost).max(0.0) as u64);
+            view::warning(
+                ui,
+                &format!(
+                    "Lost the connection {gone} ago. This board is from then, and Overseer is reconnecting."
+                ),
+            );
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
             ui.multiply_opacity(0.45);
         }
         let scene = Scene {

@@ -47,7 +47,7 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
         pos2(rect.left(), y),
         Align2::LEFT_CENTER,
         "Session",
-        Face::Heavy.at(15.0),
+        Face::Heavy.at(overseer_ui::size::TITLE),
         colour::TEXT,
     );
     let net = session
@@ -63,7 +63,7 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
         pos2(after.right() + space::LG, y),
         Align2::LEFT_CENTER,
         &format!("{net:+}"),
-        Face::Heavy.at(20.0),
+        Face::Heavy.at(overseer_ui::size::DISPLAY),
         tint,
     );
     let rr = caps_text(

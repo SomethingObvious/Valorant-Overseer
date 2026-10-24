@@ -95,7 +95,7 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
         pos2(rect.left(), head),
         Align2::LEFT_CENTER,
         "Ladder",
-        Face::Heavy.at(15.0),
+        Face::Heavy.at(size::TITLE),
         colour::TEXT,
     );
     caps_at(
@@ -252,13 +252,20 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
         if overseer_ui::caps_width(painter, name, font.clone()) + space::XL > right - left {
             continue;
         }
+        let centre = pos2(f32::midpoint(left, right), strip.center().y + 0.5);
+        let wide = overseer_ui::caps_width(painter, name, font.clone());
+        painter.rect_filled(
+            Rect::from_center_size(centre, vec2(wide + space::SM, strip.height() - 2.0)),
+            0,
+            colour::BG.gamma_multiply(0.85),
+        );
         caps_at(
             painter,
-            pos2(f32::midpoint(left, right), strip.center().y + 0.5),
+            centre,
             Align2::CENTER_CENTER,
             name,
             font,
-            shape::ink_on(rank(Some(from)).gamma_multiply(0.65)),
+            colour::TEXT_STRONG,
         );
     }
 }

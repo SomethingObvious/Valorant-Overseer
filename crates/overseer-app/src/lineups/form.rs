@@ -87,6 +87,9 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
         return None;
     };
     let missing = draft.missing();
+    let now = ui.input(|i| i.time);
+    let armed = draft.discard.is_some_and(|at| now - at < 5.0);
+    let ask = draft.started() && !armed;
     let (mut saved, mut cancelled) = (false, false);
     ui.horizontal(|ui| {
         saved = controls::button(
@@ -96,7 +99,12 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
             missing.is_none() && busy.is_none(),
         )
         .clicked();
-        cancelled = controls::button(ui, "Cancel", Tone::Plain, busy.is_none()).clicked();
+        let cancel = if armed {
+            "Click Again to Discard"
+        } else {
+            "Cancel"
+        };
+        cancelled = controls::button(ui, cancel, Tone::Plain, busy.is_none()).clicked();
     });
     match (busy, missing) {
         (Some(Job::Save), _) => words(ui, "Saving.", colour::TEXT_DIM),
@@ -110,7 +118,15 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
         ),
         _ => notice(ui, "Ready to save.", colour::ALLY),
     }
-    if cancelled {
+    // A draft with anything in it takes a second press to throw away, the
+    // way Delete and Clear All do.
+    if cancelled && ask {
+        if let Mode::Edit(draft) = &mut view.mode {
+            draft.discard = Some(now);
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(5));
+    } else if cancelled {
         view.mode = Mode::Browse;
         view.said = None;
         return None;

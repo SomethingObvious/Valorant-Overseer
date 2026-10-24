@@ -331,13 +331,15 @@ pub(crate) fn numeral(
 pub(crate) fn pips(painter: &egui::Painter, form: &[String], left: Pos2, pip: f32, win: Color32) {
     let mut x = left.x;
     for result in form.iter().take(5) {
-        let tint = match result.chars().next() {
-            Some('W' | 'w') => win,
-            Some('D' | 'd') => colour::TEXT_FAINT,
-            _ => colour::TEXT_FAINT.gamma_multiply(0.45),
-        };
         let rect = Rect::from_min_size(pos2(x, pip.mul_add(-0.7, left.y)), vec2(pip, pip * 1.4));
-        painter.add(slant(rect, true, true, tint));
+        match result.chars().next() {
+            Some('W' | 'w') => painter.add(slant(rect, true, true, win)),
+            Some('D' | 'd') => painter.add(slant(rect, true, true, colour::TEXT_FAINT)),
+            _ => painter.add(Shape::closed_line(
+                slanted(rect.shrink(0.5), true, true),
+                egui::Stroke::new(1.0, colour::TEXT_FAINT),
+            )),
+        };
         x += pip + 2.0;
     }
 }

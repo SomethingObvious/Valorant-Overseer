@@ -222,6 +222,9 @@ struct Draft {
     /// rather than cutting it again, and takes one with its source cleared
     /// off.
     opened: serde_json::Value,
+    /// When Cancel was first pressed on a draft with something in it, for
+    /// the few seconds a second press throws it away.
+    discard: Option<f64>,
 }
 
 /// What is known about how long a clip's source runs.
@@ -277,7 +280,23 @@ impl Draft {
             measure: Measure::default(),
             cut: None,
             opened: serde_json::Value::Null,
+            discard: None,
         }
+    }
+
+    /// Whether there's anything in it that Cancel would throw away.
+    fn started(&self) -> bool {
+        self.lineup.id.is_some()
+            || self.lineup.stand.is_some()
+            || self.lineup.land.is_some()
+            || [
+                &self.lineup.title,
+                &self.notes,
+                &self.source,
+                &self.description,
+            ]
+            .iter()
+            .any(|t| !t.trim().is_empty())
     }
 
     /// A saved lineup, opened to change it.
@@ -316,6 +335,7 @@ impl Draft {
             measure: Measure::default(),
             cut,
             opened: serde_json::Value::Null,
+            discard: None,
         };
         draft.opened = draft.clip();
         draft
@@ -445,6 +465,11 @@ struct Sketch {
     resizing: Option<(usize, usize, Drawing)>,
     /// Set by the first press of Clear All, which the second one confirms.
     confirm: bool,
+    /// The shapes as they were before each change, the latest last, for Undo.
+    history: Vec<Vec<Drawing>>,
+    /// The shapes as of the last change that finished, which the next one
+    /// is measured against.
+    settled: Vec<Drawing>,
 }
 
 impl Sketch {
@@ -1134,11 +1159,12 @@ impl Lineups {
             ui.multiply_opacity(opacity);
             asked = side::show(ui, atlas, &mut self.view);
         });
+        let mut retry = false;
         CentralPanel::default()
             .frame(egui::Frame::NONE.fill(colour::BG))
             .show(ui, |ui| {
                 ui.multiply_opacity(opacity);
-                plan::show(ui, atlas, &mut self.view);
+                retry = plan::show(ui, atlas, &mut self.view);
             });
         // Loop pressed on the bar holds for every clip after, too.
         if let Some(on) = self.view.player.as_mut().and_then(|p| p.looped.take()) {
@@ -1155,6 +1181,9 @@ impl Lineups {
             .is_some_and(|p| p.shown_in != pass)
         {
             self.view.player = None;
+        }
+        if retry && live {
+            self.ask(bridge);
         }
         if let Some(request) = asked {
             self.send(bridge, live, request);
@@ -1477,8 +1506,11 @@ impl View {
 
     /// Starts drawing on the map on screen, with its shapes as they are.
     fn sketch(&self, atlas: &Atlas) -> Sketch {
+        let shapes = self.shapes(atlas).to_vec();
         Sketch {
-            shapes: self.shapes(atlas).to_vec(),
+            settled: shapes.clone(),
+            history: Vec::new(),
+            shapes,
             kind: 1,
             colour: 0,
             spread: 60.0,

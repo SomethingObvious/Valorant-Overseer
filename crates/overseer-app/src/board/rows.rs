@@ -107,8 +107,8 @@ pub(crate) struct Look<'a> {
     pub(crate) still: bool,
 }
 
-/// A row as a screen reader says it: who, on what, their rank and K/D, and
-/// whether they're worth a look.
+/// A row as a screen reader says it: who, on what, their rank and K/D, the
+/// party they queued in, and whether they're worth a look and why.
 fn spoken(player: &Player) -> String {
     let mut said: Vec<String> = [&player.name, &player.agent, &player.rank]
         .into_iter()
@@ -118,8 +118,24 @@ fn spoken(player: &Player) -> String {
     if let Some(kd) = player.kd {
         said.push(format!("K/D {kd:.2}"));
     }
+    if let Some(size) = player
+        .party
+        .as_ref()
+        .and_then(|p| p.size)
+        .filter(|&n| n > 1)
+    {
+        said.push(format!("in a party of {size}"));
+    } else if let Some(size) = player
+        .stack_guess
+        .as_ref()
+        .and_then(|g| g.size)
+        .filter(|&n| n > 1)
+    {
+        said.push(format!("maybe in a party of {size}"));
+    }
     if player.smurf {
         said.push("worth a look".to_owned());
+        said.extend(player.smurf_reasons.iter().take(3).cloned());
     }
     if said.is_empty() {
         "Unknown player".to_owned()

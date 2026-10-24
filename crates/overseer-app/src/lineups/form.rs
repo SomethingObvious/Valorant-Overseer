@@ -88,7 +88,7 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
     };
     let missing = draft.missing();
     let now = ui.input(|i| i.time);
-    let armed = draft.discard.is_some_and(|at| now - at < 5.0);
+    let armed = draft.discard.is_some_and(|at| now - at < super::ARMED);
     let ask = draft.started() && !armed;
     let (mut saved, mut cancelled) = (false, false);
     ui.horizontal(|ui| {
@@ -125,7 +125,7 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
             draft.discard = Some(now);
         }
         ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs(5));
+            .request_repaint_after(std::time::Duration::from_secs_f64(super::ARMED));
     } else if cancelled {
         view.mode = Mode::Browse;
         view.said = None;

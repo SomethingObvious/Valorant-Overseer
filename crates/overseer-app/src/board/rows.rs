@@ -116,7 +116,13 @@ fn spoken(player: &Player) -> String {
         .cloned()
         .collect();
     if let Some(kd) = player.kd {
-        said.push(format!("K/D {kd:.2}"));
+        // Faint on the row, so said with what it's from.
+        let n = player.form.len();
+        said.push(if few_games(player) {
+            format!("K/D {kd:.2} from {n} game{}", if n == 1 { "" } else { "s" })
+        } else {
+            format!("K/D {kd:.2}")
+        });
     }
     if let Some(size) = player
         .party

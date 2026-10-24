@@ -773,9 +773,9 @@ const SECTIONS: [&str; 13] = [
     "Your PC",
     "Graphics",
     "Updates",
-    "Your Data",
     "Reading the Board",
     "Keyboard Shortcuts",
+    "Your Data",
 ];
 
 /// Where a chip at the top of Settings asked to go, until the section is

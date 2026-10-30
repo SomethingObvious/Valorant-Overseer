@@ -358,9 +358,9 @@ fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32
                 painter,
                 pos2(rect.left() + space::LG, y - band / 2.0),
                 Align2::LEFT_CENTER,
-                &tier_name(tier),
+                &band_name(tier),
                 Face::Display.at(size::MICRO),
-                tier_ink(tier),
+                tier_ink(tier.min(IMMORTAL)),
             );
         }
     }
@@ -460,6 +460,16 @@ fn readout(painter: &egui::Painter, inner: Rect, spot: egui::Pos2, m: &CareerMat
 }
 
 /// A tier's name the way the game writes it: "Gold 2", "Radiant".
+/// A band on the rating chart. Past Immortal 1 a band is another 100 RR, not
+/// another tier.
+fn band_name(band: u32) -> String {
+    match band.checked_sub(IMMORTAL) {
+        Some(0) => "Immortal".to_owned(),
+        Some(above) => format!("Immortal +{} RR", above * 100),
+        None => tier_name(band),
+    }
+}
+
 fn tier_name(tier: u32) -> String {
     if tier < 3 {
         return "Unranked".to_owned();
@@ -484,10 +494,15 @@ fn tier_ink(tier: u32) -> egui::Color32 {
 
 /// A ladder position that does not restart every tier.
 fn ladder(m: &CareerMatch) -> f32 {
-    let tier = f64::from(m.tier_after.unwrap_or(0)) * 100.0;
+    // From Immortal 1 up, Riot's RR keeps counting past 100 instead of
+    // starting again at each tier, so it climbs from Immortal 1's floor.
+    let tier = f64::from(m.tier_after.unwrap_or(0).min(IMMORTAL)) * 100.0;
     let rr = f64::from(m.rr_after.unwrap_or(0));
     (tier + rr) as f32
 }
+
+/// Immortal 1's tier, where the RR stops starting again at each tier.
+const IMMORTAL: u32 = 24;
 
 /// How often they were the problem, as bars against an even ratio.
 fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
@@ -801,7 +816,7 @@ fn bounds(values: &[f32], baseline: Option<f32>) -> (f32, f32) {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Career, ladder};
+    use super::{Career, band_name, ladder};
     use overseer_core::CareerMatch;
 
     /// Rating restarts at zero on promotion, so a raw plot draws a rank up as
@@ -822,6 +837,24 @@ mod tests {
             ladder(&after) > ladder(&before),
             "ranking up drew as a fall"
         );
+    }
+
+    /// Immortal 1 at 85 RR to Immortal 2 at 120 is a 35 RR climb, since
+    /// Immortal RR doesn't start again at each tier.
+    #[test]
+    fn immortal_rr_is_one_climb() {
+        let at = |tier, rr| {
+            ladder(&CareerMatch {
+                tier_after: Some(tier),
+                rr_after: Some(rr),
+                ..CareerMatch::default()
+            })
+        };
+        assert!((at(25, 120) - at(24, 85) - 35.0).abs() < f32::EPSILON);
+        assert!((at(27, 600) - 3000.0).abs() < f32::EPSILON);
+        assert_eq!(band_name(24), "Immortal");
+        assert_eq!(band_name(26), "Immortal +200 RR");
+        assert_eq!(band_name(21), "Ascendant 1");
     }
 
     /// Ids are never reused, so a late answer belongs to a selection that has

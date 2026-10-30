@@ -7,7 +7,8 @@
 //! process is read.
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, TryIter, channel};
+use std::sync::mpsc::{Receiver, Sender, TryIter, channel};
+use std::sync::{Mutex, Once, PoisonError};
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -122,6 +123,17 @@ impl From<global_hotkey::Error> for Failure {
     }
 }
 
+/// What a press is sent to and who is woken for it.
+type Sink = (Sender<()>, Box<dyn Fn() + Send + Sync>);
+
+/// Where presses go. global-hotkey keeps the first handler it is given for
+/// the whole run and ignores any after it, so that one handler stays and a
+/// new key only swaps what it feeds.
+static SINK: Mutex<Option<Sink>> = Mutex::new(None);
+
+/// Guards the one call to `set_event_handler`.
+static HANDLER: Once = Once::new();
+
 /// Registers the hotkey and calls `wake` on each press, or says why it could
 /// not. Call it on the message loop's thread, because Windows posts
 /// `WM_HOTKEY` to the thread that registered it.
@@ -132,16 +144,21 @@ pub(crate) fn start(key: Key, wake: impl Fn() + Send + Sync + 'static) -> Result
     manager.register(HotKey::new(Some(held), code))?;
 
     let (tx, presses) = channel();
-    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-        // The release arrives too, and acting on it would toggle straight
-        // back.
-        if event.state != HotKeyState::Pressed {
-            return;
-        }
-        if tx.send(()).is_ok() {
-            wake();
-        }
-    }));
+    *SINK.lock().unwrap_or_else(PoisonError::into_inner) = Some((tx, Box::new(wake)));
+    HANDLER.call_once(|| {
+        GlobalHotKeyEvent::set_event_handler(Some(|event: GlobalHotKeyEvent| {
+            // The release arrives too, and acting on it would toggle straight
+            // back.
+            if event.state != HotKeyState::Pressed {
+                return;
+            }
+            if let Some((tx, wake)) = SINK.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+                && tx.send(()).is_ok()
+            {
+                wake();
+            }
+        }));
+    });
     Ok(Hotkey {
         _registration: manager,
         presses,

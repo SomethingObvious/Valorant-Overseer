@@ -145,6 +145,9 @@ def _self_handshake(ws_port: int, timeout: float = 6.0) -> None:
 # How long the board loop waits after an early wake for the rest of a burst.
 _SETTLE = 0.4
 
+# Board fields the window never reads. Two of them count up on every build.
+_UNREAD = frozenset({"riotRequests", "queue", "agents", "teams"})
+
 
 def start(
     *,
@@ -248,6 +251,28 @@ def start(
                 # The client still gets the next broadcast.
                 LOG.exception("first board for a new client failed")
 
+            answering: set[asyncio.Task[None]] = set()
+
+            async def _answer(
+                websocket: Any, m: dict[str, Any], handler: Callable[[str, dict[str, Any]], Any]
+            ) -> None:
+                rtype = str(m.get("request") or "")
+                params = m.get("params") or {}
+                rid = m.get("id")
+                try:
+                    data = await loop.run_in_executor(
+                        None, functools.partial(handler, rtype, params)
+                    )
+                    await _safe_send(
+                        websocket, {"type": "response", "id": rid, "ok": True, "data": data}
+                    )
+                except Exception as e:
+                    LOG.exception("request %r failed", rtype)
+                    await _safe_send(
+                        websocket,
+                        {"type": "response", "id": rid, "ok": False, "error": str(e)},
+                    )
+
             try:
                 async for raw in websocket:
                     m = _parse(raw)
@@ -258,22 +283,13 @@ def start(
                         await _safe_send(websocket, {"type": "pong"})
                         continue
                     if mtype == "request" and request_handler is not None:
-                        rtype = str(m.get("request") or "")
-                        params = m.get("params") or {}
-                        rid = m.get("id")
-                        try:
-                            data = await loop.run_in_executor(
-                                None, functools.partial(request_handler, rtype, params)
-                            )
-                            await _safe_send(
-                                websocket, {"type": "response", "id": rid, "ok": True, "data": data}
-                            )
-                        except Exception as e:
-                            LOG.exception("request %r failed", rtype)
-                            await _safe_send(
-                                websocket,
-                                {"type": "response", "id": rid, "ok": False, "error": str(e)},
-                            )
+                        # Each on its own task, so a clip download that takes
+                        # minutes doesn't hold History or a profile behind it.
+                        # Every answer carries its id, so the order they land
+                        # in doesn't matter.
+                        task = asyncio.create_task(_answer(websocket, m, request_handler))
+                        answering.add(task)
+                        task.add_done_callback(answering.discard)
                         continue
             except ConnectionClosed:
                 pass
@@ -286,7 +302,10 @@ def start(
             while True:
                 try:
                     board = await loop.run_in_executor(None, board_provider)
-                    data_json = json.dumps(board, sort_keys=True, default=str)
+                    # Fields the window never reads but that change on every
+                    # build would otherwise send the whole board each time.
+                    shown = {k: v for k, v in board.items() if k not in _UNREAD}
+                    data_json = json.dumps(shown, sort_keys=True, default=str)
                     if data_json != last:
                         last = data_json
                         await _broadcast({"type": "state", "data": board})

@@ -126,10 +126,13 @@ pub(crate) fn apply(players: &mut [&Player], sort: &Sort) {
     let (Some(column), Some(direction)) = (sort.column.as_deref(), sort.direction) else {
         return;
     };
-    players.sort_by(|left, right| {
-        let (a, b) = (key_of(column, left), key_of(column, right));
-        order(&a, &b, direction)
-    });
+    // Each key made once, not twice a comparison, since a name's key is a
+    // new lowercase string and this runs every frame.
+    let mut keyed: Vec<(Key, &Player)> = players.iter().map(|p| (key_of(column, p), *p)).collect();
+    keyed.sort_by(|(a, _), (b, _)| order(a, b, direction));
+    for (slot, (_, player)) in players.iter_mut().zip(keyed) {
+        *slot = player;
+    }
 }
 
 /// Compares two keys, with missing always last.

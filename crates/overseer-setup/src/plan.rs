@@ -115,10 +115,20 @@ pub(crate) fn survey(root: &Path, carried: bool) -> Survey {
     });
 
     if let Some(version) = installed(root, "version") {
-        findings.push(Finding::ok(
-            "Already installed",
-            format!("Version {version}. Updating keeps your lineups, notes, settings and region"),
-        ));
+        let ours = env!("CARGO_PKG_VERSION");
+        // Unpacked over a newer install, an old setup quietly puts the old
+        // version back. A repair unpacks nothing, so it can't.
+        findings.push(if carried && newer(&version, ours) {
+            Finding::stop(
+                "Already installed",
+                format!("Version {version} is newer than this setup, which is {ours}. Download the latest setup from the releases page instead"),
+            )
+        } else {
+            Finding::ok(
+                "Already installed",
+                format!("Version {version}. Updating keeps your lineups, notes, settings and region"),
+            )
+        });
     }
     let region = installed(root, "region")
         .and_then(|saved| REGIONS.iter().position(|(key, _)| *key == saved));
@@ -172,13 +182,32 @@ fn installed(root: &Path, field: &str) -> Option<String> {
     let raw = std::fs::read_to_string(root.join(".overseer").join("installed.json")).ok()?;
     // One field out of a file the installer owns, so a string search does,
     // and a marker that gains a field cannot stop the wizard starting.
-    let at = raw.find(&format!("\"{field}\""))?;
+    // Only at the top, since the marker also has a Python version nested in it.
+    let key = format!("\"{field}\"");
+    let at = raw.match_indices(&key).map(|(i, _)| i).find(|&i| {
+        let before = raw.get(..i).unwrap_or_default();
+        before.matches('{').count() == before.matches('}').count() + 1
+    })?;
     let rest = raw.get(at..)?;
     let open = rest.find(':')?;
     let tail = rest.get(open + 1..)?.trim_start();
     let quoted = tail.strip_prefix('"')?;
     let end = quoted.find('"')?;
     quoted.get(..end).map(str::to_owned)
+}
+
+/// Whether version `a` is newer than `b`, both like 2.3.0. One that doesn't
+/// read as three numbers is never newer.
+fn newer(a: &str, b: &str) -> bool {
+    let parts = |v: &str| -> Option<Vec<u32>> {
+        let parts: Vec<u32> = v
+            .split('.')
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .ok()?;
+        (parts.len() == 3).then_some(parts)
+    };
+    matches!((parts(a), parts(b)), (Some(a), Some(b)) if a > b)
 }
 
 /// The regions the backend knows, and what they are called.
@@ -208,7 +237,7 @@ pub(crate) fn install_args(script: &Path, region: &str) -> Vec<String> {
 mod tests {
     use std::path::Path;
 
-    use super::{installed, survey};
+    use super::{installed, newer, survey};
 
     /// A folder that is not an install must say so rather than offering to
     /// install into it.
@@ -233,6 +262,14 @@ mod tests {
         assert!(!survey(&root, false).blocked(), "a repair of it is fine");
     }
 
+    #[test]
+    fn only_a_higher_version_is_newer() {
+        assert!(newer("2.10.0", "2.3.0"));
+        assert!(!newer("2.3.0", "2.3.0"));
+        assert!(!newer("2.2.9", "2.3.0"));
+        assert!(!newer("2.4.0-rc.1", "2.3.0"));
+    }
+
     /// The marker is read with a string search, so these are the cases a
     /// search could get wrong.
     #[test]
@@ -245,6 +282,12 @@ mod tests {
         std::fs::write(&file, r#"{"pip": "1", "version": "2.34.0", "x": 1}"#).unwrap();
         assert_eq!(installed(&dir, "version").as_deref(), Some("2.34.0"));
 
+        std::fs::write(
+            &file,
+            r#"{"python": {"version": "3.12.10"}, "version": "2.3.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(installed(&dir, "version").as_deref(), Some("2.3.0"));
         std::fs::write(&file, r#"{"version":"9.9.9"}"#).unwrap();
         assert_eq!(installed(&dir, "version").as_deref(), Some("9.9.9"));
 

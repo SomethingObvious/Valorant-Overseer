@@ -114,10 +114,14 @@ _MMR_RPS = 0.4
 _MMR_BUCKET = {"tokens": _MMR_BURST, "at": 0.0}
 
 # A 429's Retry-After holds back every endpoint in its family until then.
-_HOLD_UNTIL = {"mmr": 0.0, "other": 0.0}
+_HOLD_UNTIL = {"mmr": 0.0, "other": 0.0, "glz": 0.0}
 
 
 def _family(endpoint: str) -> str:
+    # The glz server runs the match itself, so a 429 on match history must
+    # not hold agent select or the in-game board.
+    if endpoint.startswith("glz:"):
+        return "glz"
     return "mmr" if endpoint.startswith("/mmr/") else "other"
 
 
@@ -301,6 +305,10 @@ def _riot_throttle(endpoint: str = "", *, budget: bool = False) -> None:
             finally:
                 with _RIOT_RATE_LOCK:
                     _BUDGET_SEEN["waiting"] -= 1
+        # Riot can ask for a pause while this waited on the budget, and a
+        # call sent into it only makes the pause longer.
+        while (wait := held_secs(endpoint)) > 0:
+            time.sleep(wait)
     if _family(endpoint) == "mmr":
         _take_token(_MMR_BUCKET, _MMR_BURST, _MMR_RPS)
     _take_token(_RIOT_BUCKET, _RIOT_BURST, _RIOT_MAX_RPS)
@@ -478,7 +486,7 @@ class LocalAuth:
 
     def glz_get(self, endpoint: str) -> dict[str, Any]:
         """Return a GET from the glz server, the one that runs matches and parties."""
-        _riot_throttle()
+        _riot_throttle(f"glz:{endpoint}")
         self.req_count += 1
         resp = _session().get(self.glz_url + endpoint, headers=self.headers(), timeout=8)
         return self._json(resp)

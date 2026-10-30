@@ -17,6 +17,8 @@ use crate::controls;
 use crate::settings::MapTurn;
 
 /// Below this the minimap is too small for the callouts' names.
+/// The most points the backend keeps in one stroke, `_MOST_POINTS` in lineups.py.
+const MOST_POINTS: usize = 4000;
 const NAMED: f32 = 440.0;
 /// How near a click has to be to a pin to pick its lineup, in points.
 const REACH: f32 = 16.0;
@@ -791,7 +793,7 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     };
     if sketch.tool() == "erase" {
         if erase(sketch, square, response) {
-            view.unsaved = Some((map, sketch.shapes.clone()));
+            view.unsaved.insert(map, sketch.shapes.clone());
         }
         return;
     }
@@ -861,7 +863,7 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     );
     if changed {
         sketch.confirm = None;
-        view.unsaved = Some((map, sketch.shapes.clone()));
+        view.unsaved.insert(map, sketch.shapes.clone());
     }
 }
 
@@ -969,7 +971,10 @@ fn brush(
     };
     // A point every couple of pixels is smooth enough, and keeps a long
     // stroke to a few hundred points.
+    // The backend refuses a stroke over MOST_POINTS, and with it every later
+    // save of the map, so a longer one just stops growing.
     if let Some(to) = now
+        && sketch.stroke.len() < MOST_POINTS
         && shapes::at(square, last).distance(shapes::at(square, to)) >= 2.0
     {
         sketch.stroke.push(to);
@@ -1241,7 +1246,29 @@ fn area(
     // A turret's view is worked out on the traced walls once there are any.
     if let (Reach::Aim(degrees), Some(walls), Some(aim)) = (reach, walls, points.first()) {
         let at = point(square, land);
-        let (stands, rim) = sight::cone(walls, square, (at, *aim), degrees);
+        // Casting the rays walks the wall grid for every corner in view, and
+        // the answer only moves with the pins, the map or the walls, so it is
+        // kept between frames.
+        // One slot per lineup, so dragging its pins replaces the answer
+        // rather than piling up one for every frame of the drag.
+        let bits = |v: f32| v.to_bits();
+        let slot = egui::Id::new(("turret-sight", &lineup.id));
+        let asked = egui::Id::new((
+            [at.x, at.y, aim.x, aim.y, degrees].map(bits),
+            [square.rect.min.x, square.rect.min.y, square.rect.width()].map(bits),
+            square.turn,
+            std::ptr::from_ref(walls) as usize,
+        ));
+        let ctx = painter.ctx();
+        let kept = ctx.data(|d| d.get_temp::<(egui::Id, (Pos2, Vec<Pos2>))>(slot));
+        let (stands, rim) = match kept {
+            Some((was, cast)) if was == asked => cast,
+            _ => {
+                let cast = sight::cone(walls, square, (at, *aim), degrees);
+                ctx.data_mut(|d| d.insert_temp(slot, (asked, cast.clone())));
+                cast
+            }
+        };
         painter.extend(areas::seen(stands, rim, ink));
         return;
     }
@@ -1578,6 +1605,7 @@ fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
         .iter()
         .position(|p| point(square, *p).distance(origin) <= REACH);
     let scale = scale_of(atlas, &draft.lineup.map);
+    draft.thrown_from = None;
     draft.grab = Some(if let Some(index) = own {
         Place::Point(index)
     } else if on(draft.lineup.land) {
@@ -1595,6 +1623,7 @@ fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
     } else {
         let spot = shapes::spot(square, origin);
         draft.lineup.stand = Some(snapped(atlas, &draft.lineup, spot, Place::Stand));
+        draft.thrown_from = draft.lineup.stand;
         Place::Land
     });
 }
@@ -1627,7 +1656,10 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
     if done {
         draft.grab = None;
         draft.placing = Place::Land;
-        if let (Some(from), Some(to)) = (draft.lineup.stand, draft.lineup.land)
+        // Only a new throw. Moving a pin or turning a turret can leave the
+        // two close together on purpose.
+        if draft.thrown_from.take().is_some()
+            && let (Some(from), Some(to)) = (draft.lineup.stand, draft.lineup.land)
             && point(square, from).distance(point(square, to)) < FACE
         {
             draft.lineup.land = None;

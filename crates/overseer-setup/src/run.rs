@@ -3,6 +3,7 @@
 //! that long gets force quit.
 
 use std::io::{BufRead, BufReader, Read};
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -84,9 +85,12 @@ fn watch<W>(args: &[String], root: &Path, tx: &Sender<Line>, wake: &W)
 where
     W: Fn() + Clone + Send,
 {
+    // Setup has no console of its own, so without this Windows opens one,
+    // and closing it would stop the install halfway.
     let child = Command::new("powershell.exe")
         .args(args)
         .current_dir(root)
+        .creation_flags(payload::NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -152,6 +156,7 @@ pub(crate) fn silent(root: &Path, region: &str, carried: Option<&Path>) -> i32 {
     Command::new("powershell.exe")
         .args(&args)
         .current_dir(root)
+        .creation_flags(payload::NO_WINDOW)
         .status()
         .map_or(1, |status| status.code().unwrap_or(1))
 }

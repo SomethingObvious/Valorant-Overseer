@@ -150,7 +150,9 @@ def record_board(board: dict[str, Any] | None) -> None:
             legacy_match_id = entry.get("lastMatchId")
             if legacy_match_id and legacy_match_id not in match_ids:
                 match_ids.append(legacy_match_id)
-            if match_id not in match_ids:
+            # The party lobby's board is no match, so it counts nobody as
+            # played with.
+            if match_id != "lobby" and match_id not in match_ids:
                 same_team = self_team is not None and player.get("team") == self_team
                 key = "withCount" if same_team else "againstCount"
                 entry[key] = int(entry.get(key) or 0) + 1
@@ -218,7 +220,7 @@ def record_result(board: dict[str, Any] | None, result: str | None) -> None:
                     "agent": player.get("agent"),
                 }
             )
-            entry["timeline"] = timeline[-20:]
+            entry["timeline"] = timeline[-40:]
             changed = True
         if changed:
             _save()

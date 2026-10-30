@@ -456,7 +456,10 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                         "history: Riot didn't answer, sending the kept games", exc_info=True
                     )
                     return kept
-                past_games.keep_last(owner, games)
+                # Only a whole answer replaces the games kept for when Riot
+                # can't be asked.
+                if not games.get("partial"):
+                    past_games.keep_last(owner, games)
                 return games
             if client.source_pref != "demo":
                 return past_games.last_kept(None) or {

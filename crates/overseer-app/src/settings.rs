@@ -339,6 +339,19 @@ pub(crate) fn load(root: &Path) -> Settings {
     read_or_set_aside(&path(root))
 }
 
+/// Files that were there but couldn't be read at all this run.
+static UNREAD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether `file` may be written: not when it couldn't be read, since that
+/// would replace what's in it with the defaults.
+pub(crate) fn may_write(file: &Path) -> bool {
+    !UNREAD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|unread| unread == file)
+}
+
 /// Reads one of the window's JSON files, or the default when it is missing.
 /// A file that is there but will not read is renamed to
 /// `<file>.unreadable-<unix seconds>` first, because the next save writes the
@@ -351,7 +364,19 @@ pub(crate) fn read_or_set_aside<T: DeserializeOwned + Default>(file: &Path) -> T
             }
         }
         Err(why) if why.kind() == std::io::ErrorKind::NotFound => return T::default(),
-        Err(_) => {}
+        // Antivirus or a sync tool holding the file is not a broken file.
+        // What's in it was never seen, so it is never written over.
+        Err(why) => {
+            println!(
+                "{} couldn't be read, so it won't be saved over: {why}",
+                file.display()
+            );
+            UNREAD
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(file.to_path_buf());
+            return T::default();
+        }
     }
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -373,6 +398,9 @@ pub(crate) fn read_or_set_aside<T: DeserializeOwned + Default>(file: &Path) -> T
 /// already happened on screen, and a failed write is not worth interrupting.
 pub(crate) fn save(root: &Path, settings: &Settings) {
     let file = path(root);
+    if !may_write(&file) {
+        return;
+    }
     if let Some(dir) = file.parent()
         && std::fs::create_dir_all(dir).is_err()
     {

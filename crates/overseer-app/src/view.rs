@@ -414,17 +414,19 @@ fn columns(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     );
     // One long list is a thin ribbon down a wide window, so they go two
     // abreast wherever two fit.
-    if ui.available_width() < TWO_ABREAST {
-        return switches(ui, &COLUMNS, settings, still);
-    }
-    let (first, second) = COLUMNS.split_at(COLUMNS.len().div_ceil(2));
-    let mut changed = false;
-    ui.columns(2, |side| {
-        if let [left, right] = side {
-            changed |= switches(left, first, settings, still);
-            changed |= switches(right, second, settings, still);
-        }
-    });
+    let changed = if ui.available_width() < TWO_ABREAST {
+        switches(ui, &COLUMNS, settings, still)
+    } else {
+        let (first, second) = COLUMNS.split_at(COLUMNS.len().div_ceil(2));
+        let mut changed = false;
+        ui.columns(2, |side| {
+            if let [left, right] = side {
+                changed |= switches(left, first, settings, still);
+                changed |= switches(right, second, settings, still);
+            }
+        });
+        changed
+    };
     changed | games_read(ui, settings) | party_kept(ui, settings)
 }
 

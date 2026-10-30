@@ -128,7 +128,7 @@ impl Overseer {
         self.offline.ask(&self.bridge, now);
         // Asked again every few seconds, so the switch follows the proxy.
         ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs(1));
+            .request_repaint_after(std::time::Duration::from_secs_f64(crate::offline::POLL));
     }
 
     /// Draws whichever screen is showing in place of the board. True when

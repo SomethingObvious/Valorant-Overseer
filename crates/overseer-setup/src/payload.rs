@@ -17,7 +17,7 @@ const MAGIC: &[u8; 8] = b"OVSETUP1";
 const TAIL: u64 = 16;
 
 /// Windows' `CREATE_NO_WINDOW`.
-const NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const NO_WINDOW: u32 = 0x0800_0000;
 
 /// Where the zip sits inside `exe`, as its offset and length, when it carries
 /// one.

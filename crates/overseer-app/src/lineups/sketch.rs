@@ -63,7 +63,7 @@ pub(super) fn show(ui: &mut Ui, view: &mut View) {
     let (more, done) = buttons(ui, sketch, count);
     changed |= more;
     if changed {
-        view.unsaved = Some((map, sketch.shapes.clone()));
+        view.unsaved.insert(map, sketch.shapes.clone());
     }
     if done {
         view.mode = Mode::Browse;

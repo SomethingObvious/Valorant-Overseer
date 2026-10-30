@@ -81,7 +81,8 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
             entry["spent"] += int(econ.get("spent") or 0)
 
             for kill in ps.get("kills") or []:
-                when = int(kill.get("timeSinceRoundStartMillis") or 0)
+                # Riot's match details name the kill time roundTime.
+                when = int(kill.get("roundTime") or 0)
                 victim = kill.get("victim")
                 kills.append({"killer": sub, "victim": victim, "at": when})
                 per_player_kills[sub] = per_player_kills.get(sub, 0) + 1
@@ -298,6 +299,7 @@ def _self_check() -> None:
     #     C  assist                       KAST
     #     D  survived                     KAST
     #   round 2: B kills A at 2.0s, C kills B at 3.0s, C kills D at 4.0s.
+    #     (C is listed before B, so only the times put B's kill first)
     #     A  traded, B died 1.0s later    KAST
     #     B  kill                         KAST, first blood
     #     C  two kills                    KAST, one 2k
@@ -313,7 +315,7 @@ def _self_check() -> None:
                         "kills": [
                             {
                                 "victim": "B",
-                                "timeSinceRoundStartMillis": 5000,
+                                "roundTime": 5000,
                                 "assistants": ["C"],
                                 "finishingDamage": {"damageItem": "vandal-id"},
                             },
@@ -334,30 +336,30 @@ def _self_check() -> None:
                         "economy": {"spent": 2900},
                     },
                     {
-                        "subject": "B",
-                        "damage": [{"damage": 120}],
-                        "economy": {"spent": 3900},
-                        "kills": [
-                            {
-                                "victim": "A",
-                                "timeSinceRoundStartMillis": 2000,
-                                "finishingDamage": {"damageItem": "vandal-id"},
-                            },
-                        ],
-                    },
-                    {
                         "subject": "C",
                         "damage": [{"damage": 260}],
                         "economy": {"spent": 3900},
                         "kills": [
                             {
                                 "victim": "B",
-                                "timeSinceRoundStartMillis": 3000,
+                                "roundTime": 3000,
                                 "finishingDamage": {"damageItem": "vandal-id"},
                             },
                             {
                                 "victim": "D",
-                                "timeSinceRoundStartMillis": 4000,
+                                "roundTime": 4000,
+                                "finishingDamage": {"damageItem": "vandal-id"},
+                            },
+                        ],
+                    },
+                    {
+                        "subject": "B",
+                        "damage": [{"damage": 120}],
+                        "economy": {"spent": 3900},
+                        "kills": [
+                            {
+                                "victim": "A",
+                                "roundTime": 2000,
                                 "finishingDamage": {"damageItem": "vandal-id"},
                             },
                         ],

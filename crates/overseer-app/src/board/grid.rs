@@ -69,7 +69,8 @@ pub(crate) const COLUMNS: [Column; 11] = [
         head: "games",
         label: "Games",
         width: 48.0,
-        priority: Priority::Mid,
+        // Behind Win, as the K/D says its games under itself when they're few.
+        priority: Priority::Low,
         numeric: true,
         about: "Games the K/D is based on",
     },
@@ -161,6 +162,13 @@ pub(crate) struct Grid {
     pub(crate) peak_under_rank: bool,
     /// The Games column made it onto the row.
     pub(crate) games_shown: bool,
+    /// Whether the K/D says the win rate under it: when Win is wanted but
+    /// has no column of its own at this width, which is most windows with
+    /// the panel open.
+    pub(crate) win_under_kd: bool,
+    /// What a column switched on but without the room is called, so the
+    /// heads can say it is missing rather than leave it to be remembered.
+    pub(crate) dropped: Vec<&'static str>,
 }
 
 impl Grid {
@@ -195,10 +203,23 @@ impl Grid {
         let peak_under_rank =
             !hidden.iter().any(|h| h == "peak") && !placed.iter().any(|p| p.column.head == "peak");
         let games_shown = placed.iter().any(|p| p.column.head == "games");
+        let win_under_kd = !hidden.iter().any(|h| h == "win")
+            && !placed.iter().any(|p| p.column.head == "win")
+            && placed.iter().any(|p| p.column.head == "k/d");
+        let dropped = COLUMNS
+            .iter()
+            .filter(|c| !hidden.iter().any(|h| h == c.head))
+            .filter(|c| !placed.iter().any(|p| p.column.head == c.head))
+            .filter(|c| !(c.head == "peak" && peak_under_rank))
+            .filter(|c| !(c.head == "win" && win_under_kd))
+            .map(|c| c.label)
+            .collect();
         Self {
             placed,
             peak_under_rank,
             games_shown,
+            win_under_kd,
+            dropped,
         }
     }
 

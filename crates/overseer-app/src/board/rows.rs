@@ -105,11 +105,23 @@ pub(crate) struct Look<'a> {
     pub(crate) counted: f32,
     /// The efficient tier: no motion, no blur.
     pub(crate) still: bool,
+    /// What a row with nothing on it yet says: that its games are still
+    /// being read, or that there is nothing.
+    pub(crate) nothing: &'static str,
+}
+
+/// What a row with nothing on it yet says on `board`.
+pub(crate) const fn nothing_yet(board: &overseer_core::Board) -> &'static str {
+    if board.reading.is_some() {
+        "Reading their games."
+    } else {
+        "Nothing on them yet."
+    }
 }
 
 /// A row as a screen reader says it: who, on what, their rank and K/D, the
 /// party they queued in, and whether they're worth a look and why.
-fn spoken(player: &Player) -> String {
+pub(crate) fn spoken(player: &Player) -> String {
     let mut said: Vec<String> = [&player.name, &player.agent, &player.rank]
         .into_iter()
         .flatten()
@@ -206,6 +218,15 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
         paint::card_behind(&inside, player, rect, (fill, look.metrics.crop()));
     }
     let mut hovers = identity(&inside, player, (rect, limit), look, flagged && !at_end);
+    // The fill alone is too close to a plain row's to say which one is picked.
+    if look.selected {
+        painter.rect_stroke(
+            rect,
+            0,
+            egui::Stroke::new(1.5, colour::TEXT_STRONG),
+            egui::StrokeKind::Inside,
+        );
+    }
     // The rail goes over the crop's left edge rather than pushing the crop
     // right, so a flagged row's face and name line up with every other row.
     if flagged && enemy {
@@ -230,17 +251,34 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
         );
         hovers.push((drawn.expand(space::SM), Hover::Flag));
     }
-    // What a tag means, on the row's own hover rather than on widgets of
-    // their own: a second widget over the row would take its hover, and
-    // the row's hover is what brings the panel to that player.
-    if let Some(pointer) = response.hover_pos()
-        && let Some((_, what)) = hovers.iter().find(|(rect, _)| rect.contains(pointer))
-    {
-        let _shown = response
-            .clone()
-            .on_hover_ui_at_pointer(|ui| explain(ui, what, player, look));
-    }
+    explain_at(&response, &hovers, player, look);
     response
+}
+
+/// Opens the card for whichever of `hovers` the pointer is on. It goes on
+/// the row's own hover rather than on widgets of their own: a second widget
+/// over the row would take its hover, and the row's hover is what brings
+/// the panel to that player.
+pub(super) fn explain_at(
+    response: &Response,
+    hovers: &[(Rect, Hover<'_>)],
+    player: &Player,
+    look: &Look<'_>,
+) {
+    let on = response
+        .hover_pos()
+        .and_then(|pointer| hovers.iter().position(|(rect, _)| rect.contains(pointer)));
+    if let Some((rect, _)) = on.and_then(|i| hovers.get(i)) {
+        super::tip::mark_hovered(&response.ctx, response.layer_id, *rect);
+    }
+    let group = response.id.with("card");
+    if let Some((rect, what)) =
+        super::tip::lingering(&response.ctx, group, on).and_then(|i| hovers.get(i))
+    {
+        super::tip::under(&response.ctx, group, *rect, |ui| {
+            explain(ui, what, player, look);
+        });
+    }
 }
 
 /// The row's numbers, one cell a column, or where nothing is known a line
@@ -255,7 +293,7 @@ fn stats(inside: &egui::Painter, player: &Player, (rect, grid): (Rect, &Grid), l
         let why = if player.name.as_deref().is_none_or(str::is_empty) && !player.hidden.name {
             "Riot didn't say who this is."
         } else {
-            "Nothing on them yet."
+            look.nothing
         };
         inside.text(
             pos2(rect.left() + first.left, rect.center().y),
@@ -310,7 +348,7 @@ fn explain(ui: &mut Ui, what: &Hover<'_>, player: &Player, look: &Look<'_>) {
                 &super::tip::Card {
                     kind: "Flag",
                     word: FLAG,
-                    means: "The signals say this account plays above its rank.",
+                    means: "Numbers that are high for this rank and level.",
                     evidence: &reasons,
                     accent: colour::WARN,
                 },
@@ -528,7 +566,10 @@ fn mark_width(painter: &egui::Painter, mark: &Mark<'_>, m: Metrics) -> f32 {
     match mark {
         Mark::Flag => caps_width(painter, FLAG, paint::label()),
         Mark::Hidden => caps_width(painter, "Hidden", paint::label()),
-        Mark::Yours(tag) => 2.0f32.mul_add(space::MD, caps_width(painter, tag, paint::label())),
+        Mark::Yours(tag) => 2.0f32.mul_add(
+            space::MD,
+            overseer_ui::typed_width(painter, tag, paint::label()),
+        ),
         Mark::Riot(tag) => {
             painter
                 .layout_no_wrap(
@@ -553,10 +594,13 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metric
         // Your word goes on a cream chip, the same cream as the side plate
         // in the masthead.
         Mark::Yours(tag) => {
-            let wide = 2.0f32.mul_add(space::MD, caps_width(painter, tag, paint::label()));
+            let wide = 2.0f32.mul_add(
+                space::MD,
+                overseer_ui::typed_width(painter, tag, paint::label()),
+            );
             let chip = Rect::from_min_size(pos2(at.x, at.y - 8.0), vec2(wide, 16.0));
             painter.add(paint::slant(chip, false, true, colour::TEXT_STRONG));
-            let _drawn = caps_text(
+            let _drawn = overseer_ui::typed_text(
                 painter,
                 pos2(chip.left() + space::MD - 1.0, chip.center().y),
                 Align2::LEFT_CENTER,
@@ -602,7 +646,9 @@ pub(super) fn level_of(player: &Player) -> (String, Color32) {
             if l > 0 { l.to_string() } else { "-".to_owned() },
             colour::TEXT_FAINT,
         ),
-        Some(l) if l < 60 && player.rank_tier.unwrap_or(0) >= 3 => (l.to_string(), colour::WARN),
+        Some(l) if l < 60 && player.rank_tier.unwrap_or(0) >= 3 => {
+            (l.to_string(), colour::TEXT_STRONG)
+        }
         Some(l) => (l.to_string(), colour::TEXT_DIM),
         None => ("-".to_owned(), colour::TEXT_FAINT),
     }
@@ -642,8 +688,8 @@ fn cell(
         "k/d" => match player.kd {
             Some(kd) => {
                 let few = few_games(player);
-                let say = (few && !grid.games_shown).then_some(player.form.len());
-                kd_cell(painter, kd, pos2(right, y), look, (few, say));
+                let under = under_kd(player, grid, side, few);
+                kd_cell(painter, kd, pos2(right, y), look, (few, under));
             }
             None => stat("-".to_owned(), colour::TEXT_FAINT),
         },
@@ -754,19 +800,36 @@ pub(crate) fn few_games(player: &Player) -> bool {
     (1..FEW_KD_GAMES).contains(&player.form.len())
 }
 
+/// What the K/D says under itself for a column gone for room. Thin games
+/// say so first, as they change how the K/D reads.
+fn under_kd(player: &Player, grid: &Grid, side: Side, few: bool) -> Option<(String, Color32)> {
+    if few && !grid.games_shown {
+        let n = player.form.len();
+        return Some((
+            format!("{n} {}", if n == 1 { "Game" } else { "Games" }),
+            colour::TEXT_FAINT,
+        ));
+    }
+    if grid.win_under_kd && player.win_rate.is_some() {
+        let (text, tint) = rate(side, player.win_rate, player.games, FEW_GAMES);
+        return Some((format!("Win {text}"), tint));
+    }
+    None
+}
+
 /// The K/D as the row's largest numeral, counting up while a lobby lands,
 /// sat on its cap height rather than its line box. Off one or two games it
-/// is drawn faint, the way a win rate off a few games is, and when the Games
-/// column has gone for room, `games` says how many under it.
+/// is drawn faint, the way a win rate off a few games is. `under` is what a
+/// column gone for room says beneath it, how many games or the win rate.
 fn kd_cell(
     painter: &egui::Painter,
     kd: f64,
     right: egui::Pos2,
     look: &Look<'_>,
-    (few, games): (bool, Option<usize>),
+    (few, under): (bool, Option<(String, Color32)>),
 ) {
     let shown = kd * f64::from(look.counted);
-    let lift = if games.is_some() { 5.0 } else { 0.0 };
+    let lift = if under.is_some() { 5.0 } else { 0.0 };
     let landed = paint::numeral(
         painter,
         &format!("{shown:.2}"),
@@ -778,14 +841,14 @@ fn kd_cell(
             paint::kd_heat(look.side, Some(kd))
         },
     );
-    if let Some(n) = games {
+    if let Some((said, tint)) = under {
         let _said = caps_text(
             painter,
             pos2(right.x, landed.bottom() + 2.0),
             Align2::RIGHT_TOP,
-            &format!("{n} {}", if n == 1 { "Game" } else { "Games" }),
+            &said,
             Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT,
+            tint,
         );
     }
 }

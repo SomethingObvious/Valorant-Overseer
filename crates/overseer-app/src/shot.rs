@@ -8,17 +8,19 @@
 
 use egui::{Ui, vec2};
 use egui_kittest::Harness;
-use overseer_core::{Board, Bridge, Lineup, Player};
+use overseer_core::{Board, Bridge, Lineup, Player, Saved};
 
+use crate::app;
 use crate::career::Career;
 use crate::history::History;
 use crate::lineups::Lineups;
 use crate::notes::{Note, Notes};
-use crate::settings::{Quality, Settings};
+use crate::settings::{Quality, Settings, Welcome};
 use crate::sort::{Direction, Sort};
 use crate::view;
 use overseer_ui as design;
 
+mod site;
 mod stress;
 
 /// One frame to render: a board, and who is selected.
@@ -48,9 +50,18 @@ impl Scene {
             sort: Sort::default(),
             notes: Notes::default(),
             career: Career::default(),
-            settings: Settings::default(),
+            settings: Settings {
+                welcome: Welcome::Seen,
+                ..Settings::default()
+            },
             ready: true,
         }
+    }
+
+    /// As somebody sees it the first time, with the strip over the board.
+    fn first(mut self) -> Self {
+        self.settings.welcome = Welcome::Due;
+        self
     }
 
     /// No board at all, which is what the app opens on.
@@ -318,6 +329,7 @@ fn smurf_ally() -> Player {
         top_agents: vec![overseer_core::TopAgent {
             agent: Some("KAY/O".to_owned()),
             games: Some(42),
+            role: Some("Initiator".to_owned()),
         }],
         map_win_rate: Some(overseer_core::MapWinRate {
             win_rate: Some(71.0),
@@ -552,8 +564,8 @@ fn a_history() -> Career {
         "averages": {"games":8,"wins":5,"winRate":63,"kills":17.9,"deaths":15.9,
                      "assists":4.5,"kd":1.13,"hsPct":26},
         "coPlayers": [
-          {"puuid":"a","name":"SilentEnt#GG","sharedMatches":5,"agents":["KAY/O"],"isParty":true},
-          {"puuid":"d","name":"NeonLock#VAL","sharedMatches":2,"agents":["Clove"],"isParty":false}
+          {"puuid":"a","name":"SilentEnt#GG","sharedMatches":5,"winRate":60,"agents":["KAY/O"],"isParty":true},
+          {"puuid":"d","name":"NeonLock#VAL","sharedMatches":2,"winRate":50,"agents":["Clove"],"isParty":false}
         ],
         "topGuns": [
           {"name":"Vandal","kills":92,"share":58},
@@ -586,9 +598,22 @@ fn remembered() -> Notes {
     notes
 }
 
+/// Your own row as the backend keeps it, from the sample board.
+fn kept() -> Saved {
+    let player = sample()
+        .players
+        .into_iter()
+        .find(|p| p.name.as_deref() == Some("Day#9932"))
+        .expect("the sample board has Day#9932");
+    Saved {
+        player,
+        at: Some(0.0),
+    }
+}
+
 /// Every frame the snapshot test pins, by name and window size.
-fn scenes() -> [(&'static str, egui::Vec2, Scene); 9] {
-    [
+fn scenes() -> Vec<(&'static str, egui::Vec2, Scene)> {
+    vec![
         ("wide", vec2(1200.0, 480.0), Scene::of(Some("SilentEnt#GG"))),
         // Sorted by K/D, best first, so the heading's arrow is in a picture.
         (
@@ -607,6 +632,12 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 9] {
             Scene::of(Some("Day#9932")).noted(remembered()),
         ),
         ("normal", vec2(860.0, 480.0), Scene::of(Some("Day#9932"))),
+        // The strip over the board until Got It is pressed.
+        (
+            "welcome",
+            vec2(860.0, 480.0),
+            Scene::of(Some("Day#9932")).first(),
+        ),
         ("compact", vec2(460.0, 460.0), Scene::of(Some("Day#9932"))),
         // A full history, for the charts no number alone can check.
         (
@@ -620,6 +651,21 @@ fn scenes() -> [(&'static str, egui::Vec2, Scene); 9] {
         // The same screen in a window too short for the plate, which shows
         // its fallback.
         ("waiting", vec2(860.0, 240.0), Scene::empty()),
+        // With your stats kept from an earlier board, the plate offers them.
+        (
+            "waiting-kept",
+            vec2(860.0, 420.0),
+            Scene::empty().with(Board {
+                you: Some(kept()),
+                ..Board::default()
+            }),
+        ),
+        // What Show My Last Stats shows: your row alone, as your side.
+        (
+            "last-stats",
+            vec2(860.0, 300.0),
+            Scene::empty().with(app::snapshot_kept(&kept())),
+        ),
         // A newer release out, said at the footer's far right.
         (
             "update",
@@ -665,6 +711,7 @@ fn every_layout_is_unchanged() {
     }
 
     let mut results = settings_shot();
+    results.extend(help_shot());
     results.extend(overlay_shot());
     results.extend(history_shot());
     results.extend(lineups_shot());
@@ -1204,7 +1251,6 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
                         &crate::board::Scene {
                             board: &board,
                             sort: &Sort::default(),
-                            filter: "",
                             selected: None,
                             notes: &Notes::default(),
                             hidden: &[],
@@ -1255,12 +1301,34 @@ fn greeting_frame() -> egui_kittest::SnapshotResults {
     greeting.take_snapshot_results()
 }
 
+/// The help screen's snapshot, from a harness of its own.
+fn help_shot() -> egui_kittest::SnapshotResults {
+    let mut shot = Harness::builder()
+        .with_size(vec2(880.0, 1300.0))
+        .build_ui_state(
+            |ui, ready: &mut bool| {
+                if *ready {
+                    view::help(ui);
+                }
+            },
+            false,
+        );
+    design::install_fonts(&shot.ctx);
+    shot.ctx.set_style_of(egui::Theme::Dark, design::style());
+    shot.run();
+    *shot.state_mut() = true;
+    shot.run();
+    shot.run();
+    shot.snapshot("help");
+    shot.take_snapshot_results()
+}
+
 /// The settings screen's snapshot, from a harness of its own.
 fn settings_shot() -> egui_kittest::SnapshotResults {
     // Same first frame rule as the board: fonts land on the frame after they
     // are installed, so the first one draws nothing.
     let mut shot = Harness::builder()
-        .with_size(vec2(880.0, 2900.0))
+        .with_size(vec2(880.0, 2700.0))
         .build_ui_state(
             |ui, state: &mut (bool, Settings)| {
                 if state.0 {
@@ -1399,4 +1467,53 @@ fn a_row_says_who_it_is() {
         )
         .is_some()
     );
+}
+
+/// Resting on a tag in the overlay opens the card that says what it means,
+/// as it does on the board.
+#[test]
+fn a_tag_in_the_overlay_explains_itself() {
+    let board = sample();
+    let mut shot = Harness::builder()
+        .with_size(vec2(crate::overlay::WIDTH, crate::overlay::CEILING))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            move |ui, ready: &mut bool| {
+                if *ready {
+                    crate::overlay::contents(ui, &mut |ui: &mut Ui| {
+                        let _drew = crate::board::draw(
+                            ui,
+                            &crate::board::Scene {
+                                board: &board,
+                                sort: &Sort::default(),
+                                selected: None,
+                                notes: &Notes::default(),
+                                hidden: &[],
+                                enemies_first: true,
+                                place: crate::board::Place::Overlay,
+                                still: true,
+                                since: 10.0,
+                            },
+                        );
+                    });
+                }
+            },
+            false,
+        );
+    design::install_fonts(&shot.ctx);
+    shot.ctx.set_style_of(egui::Theme::Dark, design::style());
+    shot.run();
+    *shot.state_mut() = true;
+    shot.run();
+    shot.hover_at(egui::pos2(150.0, 152.0));
+    for _frame in 0..60 {
+        shot.step();
+    }
+    let tooltip = shot.ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .iter()
+            .any(|l| l.order == egui::Order::Tooltip)
+    });
+    assert!(tooltip, "resting on the tag opened nothing");
 }

@@ -36,11 +36,13 @@ pub(super) fn show(ui: &mut Ui, view: &mut View) {
         .is_some_and(|(kind, _)| *kind == "cone")
     {
         controls::heading(ui, "Cone Width");
-        ui.add(
+        let slid = ui.add(
             egui::Slider::new(&mut sketch.spread, 10.0..=180.0)
                 .suffix("\u{b0}")
                 .step_by(5.0),
         );
+        let spread = f64::from(sketch.spread);
+        slid.widget_info(|| egui::WidgetInfo::slider(true, spread, "Cone Width"));
     }
     let sized = brush_size(ui, sketch);
     let retyped = lettering(ui, sketch);
@@ -75,6 +77,13 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     // The Delete key too, unless a label's words have the keyboard.
     let typing = ui.memory(|m| m.focused().is_some());
     let pressed = !typing && ui.input(|i| i.key_pressed(egui::Key::Delete));
+    let undo = !typing
+        && ui.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::Z,
+            ))
+        });
     // A change is kept for Undo once it's finished, so a drag or a slider
     // is one step rather than one a frame.
     if !typing && !ui.input(|i| i.pointer.any_down()) && sketch.shapes != sketch.settled {
@@ -86,7 +95,7 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     }
     ui.horizontal_wrapped(|ui| {
         let back = !sketch.history.is_empty();
-        if controls::button(ui, "Undo", Tone::Plain, back).clicked()
+        if (controls::button(ui, "Undo", Tone::Plain, back).clicked() || undo)
             && let Some(before) = sketch.history.pop()
         {
             sketch.shapes.clone_from(&before);
@@ -151,6 +160,7 @@ fn brush_size(ui: &mut Ui, sketch: &mut Sketch) -> bool {
             .step_by(1.0)
             .fixed_decimals(0),
     );
+    slid.widget_info(|| egui::WidgetInfo::slider(true, f64::from(size), "Brush Size"));
     if !slid.changed() {
         return false;
     }
@@ -233,6 +243,7 @@ fn look(ui: &mut Ui, sketch: &mut Sketch) -> bool {
             .step_by(5.0)
             .fixed_decimals(0),
     );
+    slid.widget_info(|| egui::WidgetInfo::slider(true, f64::from(percent), "Opacity"));
     if slid.changed() {
         sketch.opacity = percent / 100.0;
         if let Some(shape) = sketch.picked.and_then(|i| sketch.shapes.get_mut(i)) {

@@ -9,7 +9,7 @@ use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Bridge, CareerMatch, Profile};
 
 use crate::board::{self, Side};
-use crate::panel::{heading, line, stat};
+use crate::panel::{self, heading, line, stat};
 use overseer_ui::{Face, caps_text, colour, size, space};
 
 /// How tall a chart is: enough for a shape to read as one, and short enough
@@ -133,7 +133,7 @@ impl Career {
                 // line of field names.
                 Err(_) => Self::Refused {
                     puuid,
-                    why: "Their history came back in a shape this build cannot read.".to_owned(),
+                    why: "Their history came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned(),
                 },
             },
         };
@@ -191,12 +191,17 @@ fn averages(ui: &mut Ui, profile: &Profile) {
     heading(ui, &format!("Career, Last {games}"));
     let [kills, deaths, assists] =
         [a.kills, a.deaths, a.assists].map(|v| format!("{:.1}", v.unwrap_or(0.0)));
-    crate::panel::figures(
+    let over = format!(
+        "a game, averaged over their last {games} games of competitive, unrated, swiftplay and premier."
+    );
+    let [kills_are, deaths_are, assists_are] =
+        ["Kills", "Deaths", "Assists"].map(|what| format!("{what} {over}"));
+    panel::figures(
         ui,
         &[
-            (&kills, colour::TEXT, "Kills a game"),
-            (&deaths, colour::TEXT, "Deaths"),
-            (&assists, colour::TEXT, "Assists"),
+            (&kills, colour::TEXT, "Kills a game", &kills_are),
+            (&deaths, colour::TEXT, "Deaths", &deaths_are),
+            (&assists, colour::TEXT, "Assists", &assists_are),
         ],
     );
 }
@@ -208,7 +213,7 @@ fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
     if run.len() < 2 {
         return;
     }
-    heading(ui, "Rating");
+    panel::subheading(ui, "Rating", colour::TEXT_DIM);
     let points: Vec<f32> = run.iter().map(|m| ladder(m)).collect();
     // A rating that never moved gets a sentence instead of a flat line with a
     // dot at each end.
@@ -472,7 +477,9 @@ fn tier_name(tier: u32) -> String {
 /// A tier's own colour for its name, dimmed so the line stays the brightest
 /// thing on the chart.
 fn tier_ink(tier: u32) -> egui::Color32 {
-    overseer_ui::shape::blend(overseer_ui::rank(Some(tier)), colour::TEXT_FAINT, 0.35)
+    // Toward the text colour rather than a label's, so Immortal's dark red
+    // still reads at 5:1.
+    overseer_ui::shape::blend(overseer_ui::rank(Some(tier)), colour::TEXT, 0.35)
 }
 
 /// A ladder position that does not restart every tier.
@@ -494,9 +501,9 @@ fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
         return;
     }
     values.reverse();
-    heading(ui, "K/D per Match");
+    panel::subheading(ui, "K/D per Match", colour::TEXT_DIM);
     let _read = plot(ui, &values, Some(1.0), board::paint::win(side))
-        .on_hover_text("Oldest first. The line is a K/D of one.");
+        .on_hover_text("Oldest first. The line marks a K/D of 1.");
 }
 
 /// Which guns did the killing, with a bar for the share.
@@ -504,7 +511,7 @@ fn guns(ui: &mut Ui, profile: &Profile) {
     if profile.top_guns.is_empty() {
         return;
     }
-    heading(ui, "Guns");
+    panel::subheading(ui, "Guns", colour::TEXT_DIM);
     for gun in profile.top_guns.iter().take(3) {
         let Some(name) = gun.name.as_deref() else {
             continue;
@@ -558,7 +565,7 @@ fn guns(ui: &mut Ui, profile: &Profile) {
 
 /// The last few matches, one line each.
 fn matches(ui: &mut Ui, profile: &Profile, side: Side) {
-    heading(ui, "Last Matches");
+    panel::subheading(ui, "Last Matches", colour::TEXT_DIM);
     for m in profile.matches.iter().take(LISTED) {
         let (rect, _response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::ROW_TIGHT), Sense::hover());
@@ -641,9 +648,13 @@ fn together(ui: &mut Ui, profile: &Profile) {
     }
     // Your own career counts every lobby on record, and says so.
     if profile.co_players_from.as_deref() == Some("log") {
-        heading(ui, "Played With Most");
+        panel::subheading(ui, "Played With Most", colour::TEXT_DIM);
     } else {
-        heading(ui, &format!("Played With, Last {}", profile.matches.len()));
+        panel::subheading(
+            ui,
+            &format!("Played With, Last {}", profile.matches.len()),
+            colour::TEXT_DIM,
+        );
     }
     for mate in named {
         stat(
@@ -651,7 +662,9 @@ fn together(ui: &mut Ui, profile: &Profile) {
             &format!("{} games", mate.shared_matches.unwrap_or(0)),
             mate.name.as_deref().unwrap_or("-"),
             colour::TEXT,
-            "",
+            &mate
+                .win_rate
+                .map_or_else(String::new, |rate| format!("Won {rate}%")),
         );
     }
 }
@@ -663,7 +676,7 @@ fn habits(ui: &mut Ui, profile: &Profile) {
     if force.pct.is_none() && bonus.is_none() {
         return;
     }
-    heading(ui, "Habits");
+    panel::subheading(ui, "Habits", colour::TEXT_DIM);
     if let (Some(pct), Some(chances)) = (force.pct, force.chances) {
         stat(
             ui,

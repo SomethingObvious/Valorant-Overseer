@@ -290,12 +290,20 @@ def teammates(owner: str | None, limit: int = 5) -> list[dict[str, Any]]:
     """
     if not owner:
         return []
+
+    def rate(entry: dict[str, Any]) -> int | None:
+        # Out of the games that finished, as a lobby logged live may not have.
+        wins = int(entry.get("winsWith") or 0)
+        done = wins + int(entry.get("lossesWith") or 0) + int(entry.get("drawsWith") or 0)
+        return round(100 * wins / done) if done else None
+
     with _LOCK:
         rows = [
             {
                 "puuid": entry.get("puuid"),
                 "name": entry.get("name"),
                 "sharedMatches": int(entry.get("withCount") or 0),
+                "winRate": rate(entry),
                 "agents": [],
             }
             for entry in _players(owner).values()

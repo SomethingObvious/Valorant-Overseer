@@ -7,7 +7,8 @@ on your PC. It shows everyone in your lobby and your match with their rank,
 peak rank, K/D and win rate, who queued together, and whether an account looks
 like a smurf. It also keeps your match history, has a lineup planner with clips
 for every map, puts an overlay over the game, and can hide you from your
-friends in Riot chat.
+friends in Riot chat. Press `?` in the app for a Help screen that says what
+each colour and mark on the board means, along with every key.
 
 **[Download Valorant Overseer for Windows](https://github.com/SomethingObvious/Valorant-Overseer/releases/latest)**
 

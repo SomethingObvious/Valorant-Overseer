@@ -34,6 +34,17 @@ impl Quality {
     }
 }
 
+/// Whether the board still opens with the strip for a first look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Welcome {
+    /// Not dismissed yet.
+    #[default]
+    Due,
+    /// Got It was pressed.
+    Seen,
+}
+
 /// How much Overseer holds back to leave the game room.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -103,6 +114,14 @@ impl MapTurn {
     }
 }
 
+/// The choices for how many games each row reads, the backend's own.
+pub(crate) const GAMES_READ: [u16; 3] = [5, 10, 20];
+/// The choices for how many days back those games may go, 0 for any age.
+pub(crate) const GAMES_WITHIN: [u16; 5] = [7, 14, 30, 90, 0];
+
+/// How many days your party's games stay on disk, 0 for not at all.
+pub(crate) const PARTY_KEPT: [u16; 4] = [0, 7, 14, 30];
+
 /// Everything the window remembers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -129,12 +148,21 @@ pub(crate) struct Settings {
     pub(crate) enemies_first: bool,
     /// How many past games the History screen shows.
     pub(crate) history_games: u32,
+    /// How many games each row's K/D and reads come from, one of
+    /// [`GAMES_READ`].
+    pub(crate) games_read: u16,
+    /// How many days back those games may go, one of [`GAMES_WITHIN`].
+    pub(crate) games_within: u16,
+    /// How many days your party's games stay on disk, one of [`PARTY_KEPT`].
+    pub(crate) party_kept: u16,
     /// How the Lineups screen plays clips and draws its maps.
     #[serde(flatten)]
     pub(crate) lineups: LineupSettings,
     /// Whether to look for a newer release, and what was last found.
     #[serde(flatten)]
     pub(crate) updates: UpdateSettings,
+    /// Whether the board still opens with the strip for a first look.
+    pub(crate) welcome: Welcome,
 }
 
 /// The daily look for a newer release, kept in the same file.
@@ -169,6 +197,9 @@ pub(crate) struct OverlaySettings {
     pub(crate) auto: bool,
     /// Which corner it parks in.
     pub(crate) corner: Corner,
+    /// The key that shows and hides it in game.
+    #[serde(rename = "overlay_key")]
+    pub(crate) key: crate::hotkey::Key,
 }
 
 impl Default for OverlaySettings {
@@ -178,6 +209,7 @@ impl Default for OverlaySettings {
         Self {
             auto: true,
             corner: Corner::default(),
+            key: crate::hotkey::Key::default(),
         }
     }
 }
@@ -268,8 +300,17 @@ impl Default for Settings {
             enemies_first: true,
             // Two sessions' worth, and one page of Riot's history.
             history_games: 10,
+            // Every row reads five first and works back to this.
+            games_read: 20,
+            // A month, so an account picked up again after a break reads as
+            // it plays now.
+            games_within: 30,
+            // Two weeks covers a few sessions without the folder growing for
+            // games nobody looks at again.
+            party_kept: 14,
             lineups: LineupSettings::default(),
             updates: UpdateSettings::default(),
+            welcome: Welcome::Due,
         }
     }
 }

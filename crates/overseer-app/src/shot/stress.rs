@@ -4,7 +4,9 @@
 
 use egui::{Vec2, vec2};
 use egui_kittest::Harness;
-use overseer_core::{Board, Encounter, LockProgress, Party, Player, Score, StackGuess, Streak};
+use overseer_core::{
+    Board, Encounter, LockProgress, Party, Player, Reading, Score, StackGuess, Streak,
+};
 
 use super::{Scene, a_history, draw, form, sample};
 use crate::notes::Notes;
@@ -304,6 +306,48 @@ fn deathmatch() -> Board {
     }
 }
 
+/// The usual match, still reading back: a third of the games in, and the
+/// rest about a minute and a half off.
+fn reading() -> Board {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    Board {
+        reading: Some(Reading {
+            progress: 0.34,
+            done_at: now + 92.0,
+            games: Some(20),
+        }),
+        ..sample()
+    }
+}
+
+/// A mode with more than five a side: two teams of seven.
+fn crowd() -> Board {
+    let agents = [
+        "Jett", "Reyna", "Neon", "Raze", "Yoru", "Phoenix", "Iso", "Sova", "Omen", "Sage", "Fade",
+        "Skye", "Viper", "Chamber",
+    ];
+    let players = agents
+        .iter()
+        .enumerate()
+        .map(|(i, agent)| {
+            let team = if i < 7 { "Red" } else { "Blue" };
+            let tier = 6 + u32::try_from(i).unwrap_or(0);
+            let mut p = player(
+                &format!("c{i}"),
+                &format!("Crowd{i}#SEV"),
+                team,
+                agent,
+                tier,
+            );
+            p.is_self = i == 7;
+            p
+        })
+        .collect();
+    board(players)
+}
+
 /// Somebody Riot said nothing about, somebody hidden, and three you wrote
 /// about, one of them hidden.
 fn strangers() -> (Board, Notes) {
@@ -344,14 +388,18 @@ fn wordy() -> Board {
     long.peak_rank_tier = Some(26);
     long.peak_act = Some("V25 Act 6".to_owned());
     long.previous_rank = Some("Ascendant 3".to_owned());
-    long.top_agents = ["Brimstone", "Deadlock", "Harbor"]
-        .iter()
-        .zip([12, 9, 7])
-        .map(|(agent, games)| overseer_core::TopAgent {
-            agent: Some((*agent).to_owned()),
-            games: Some(games),
-        })
-        .collect();
+    long.top_agents = [
+        ("Brimstone", 12, "Controller"),
+        ("Deadlock", 9, "Sentinel"),
+        ("Harbor", 7, "Controller"),
+    ]
+    .iter()
+    .map(|(agent, games, role)| overseer_core::TopAgent {
+        agent: Some((*agent).to_owned()),
+        games: Some(*games),
+        role: Some((*role).to_owned()),
+    })
+    .collect();
     long.map_win_rate = Some(overseer_core::MapWinRate {
         win_rate: Some(58.0),
         games: Some(1234),
@@ -415,6 +463,8 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
             vec2(1200.0, 900.0),
             window(deathmatch(), None),
         ),
+        ("crowd", vec2(1200.0, 1100.0), window(crowd(), None)),
+        ("reading", vec2(1200.0, 300.0), window(reading(), None)),
         (
             "narrow",
             vec2(480.0, 900.0),
@@ -497,6 +547,12 @@ fn wordy_shots() -> Vec<(&'static str, Vec2, Shot)> {
 /// The overlay's scenes, at its own width.
 fn overlays() -> Vec<(&'static str, Vec2, Shot)> {
     vec![
+        ("crowd-overlay", vec2(660.0, 640.0), Shot::Overlay(crowd())),
+        (
+            "dm-overlay",
+            vec2(660.0, 760.0),
+            Shot::Overlay(deathmatch()),
+        ),
         (
             "overlay-sparse",
             vec2(548.0, 200.0),
@@ -548,7 +604,6 @@ fn every_stress_lobby_renders_to_the_folder() {
                                 &crate::board::Scene {
                                     board,
                                     sort: &sort,
-                                    filter: "",
                                     selected: None,
                                     notes: &notes,
                                     hidden: &[],

@@ -152,8 +152,13 @@ def start(
     ws_port: int,
     request_handler: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     poll_interval: float | None = None,
+    pace: Callable[[float], float] | None = None,
 ) -> str:
-    """Start the WebSocket bridge on a thread and return once it answers."""
+    """Start the WebSocket bridge on a thread and return once it answers.
+
+    `pace` may stretch the wait between boards from the base interval, so the
+    loop can poll slower in states where little changes, like a match in play.
+    """
     _STATE.session_token = secrets.token_urlsafe(32)
     interval = float(
         poll_interval if poll_interval is not None else os.getenv("WS_STATE_POLL", "4.0")
@@ -295,7 +300,10 @@ def start(
                 # Sooner when something on the board changed. A moment's wait
                 # after the first ask lets the rest of a burst ride along, so
                 # ten players' K/D landing together is one board, not ten.
-                if await loop.run_in_executor(None, refresh.wait, interval):
+                # `pace` may stretch the wait when little changes, like a match
+                # in play, where _watch_state still wakes it the moment it ends.
+                wait_for = pace(interval) if pace is not None else interval
+                if await loop.run_in_executor(None, refresh.wait, wait_for):
                     await asyncio.sleep(_SETTLE)
                 refresh.clear()
 

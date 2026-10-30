@@ -152,7 +152,6 @@ fn the_overlay_is_as_tall_as_it_was_placed_for() {
                 &crate::board::Scene {
                     board: &board,
                     sort: &Sort::default(),
-                    filter: "",
                     selected: None,
                     notes: &notes,
                     hidden: &[],

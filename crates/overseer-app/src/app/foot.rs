@@ -1,125 +1,15 @@
-//! The search row along the top of the board and the status line and
-//! hints along the bottom of the window.
+//! The status line and hints along the bottom of the window.
 
-use egui::{Align2, Rect, RichText, Sense, Ui, pos2, vec2};
+use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 
-use crate::board::{self, GUTTER};
+use crate::board::GUTTER;
 use crate::panel;
 use crate::settings::Quality;
 use overseer_ui::{self, Face, caps_text, colour, size, space};
 
-use super::{Hint, Overseer, SAID, VERSION};
+use super::{Hint, Overseer, SAID, Screen, VERSION};
 
 impl Overseer {
-    /// The search row, and what the board is sorted by. The box is a real
-    /// text field, because a painted one gets the caret and selection wrong.
-    pub(super) fn search(&mut self, ui: &mut Ui) {
-        let bar = ui.max_rect();
-        let middle = bar.center().y;
-        let painter = ui.painter().clone();
-        let label = caps_text(
-            &painter,
-            pos2(bar.left() + GUTTER, middle),
-            Align2::LEFT_CENTER,
-            "Find",
-            Face::Display.at(size::LABEL),
-            colour::TEXT_DIM,
-        );
-        // A slot in the board's own slant, not egui's outlined field, which
-        // looks like a web form.
-        let width = (bar.width() * 0.3).clamp(160.0, 320.0);
-        let field = Rect::from_min_size(
-            pos2(label.right() + space::MD, middle - 12.0),
-            vec2(width, 24.0),
-        );
-        let focused = ui.memory(|m| m.has_focus(egui::Id::new("search-field")));
-        painter.add(board::paint::slant(field, false, true, colour::BG_INSET));
-        if focused {
-            painter.rect_filled(
-                Rect::from_min_size(
-                    pos2(field.left(), field.bottom() - 2.0),
-                    vec2(width - 6.0, 2.0),
-                ),
-                0,
-                colour::TEXT_STRONG,
-            );
-        }
-        let response = ui.put(
-            field.shrink2(vec2(space::MD, 2.0)),
-            egui::TextEdit::singleline(&mut self.search.filter)
-                .id(egui::Id::new("search-field"))
-                .frame(egui::Frame::NONE)
-                .vertical_align(egui::Align::Center)
-                .font(Face::Body.at(size::BODY))
-                .hint_text(
-                    RichText::new("A name or an agent")
-                        .color(colour::HINT)
-                        .font(Face::Body.at(size::BODY)),
-                ),
-        );
-        if self.search.focus {
-            response.request_focus();
-            self.search.focus = false;
-        }
-        self.found(
-            &painter,
-            pos2(field.right() + space::LG, middle),
-            response.changed(),
-        );
-        if let Some(column) = self.sort.column.as_deref() {
-            let _sorted = caps_text(
-                &painter,
-                pos2(bar.right() - GUTTER, middle),
-                Align2::RIGHT_CENTER,
-                &format!("Sorted by {column}"),
-                Face::Display.at(size::MICRO),
-                colour::TEXT_FAINT,
-            );
-        }
-    }
-
-    /// How many the search found. A change to the text selects the first
-    /// match, unless the selection is already one of them.
-    fn found(&mut self, painter: &egui::Painter, at: egui::Pos2, changed: bool) {
-        if self.search.filter.trim().is_empty() {
-            return;
-        }
-        let found = self.visible_order();
-        if changed
-            && let Some(first) = found.first()
-            && !found.iter().any(|id| Some(id) == self.selected.as_ref())
-        {
-            self.selected = Some(first.clone());
-            self.keyboard_owns = true;
-        }
-        let count = match found.len() {
-            0 => "Nobody".to_owned(),
-            1 => "1 match".to_owned(),
-            n => format!("{n} matches"),
-        };
-        let drawn = caps_text(
-            painter,
-            at,
-            Align2::LEFT_CENTER,
-            &count,
-            Face::Display.at(size::LABEL),
-            if found.is_empty() {
-                colour::WARN
-            } else {
-                colour::TEXT
-            },
-        );
-        let cap = overseer_ui::keycap(painter, pos2(drawn.right() + space::XL, at.y), "esc");
-        let _clear = caps_text(
-            painter,
-            pos2(cap.right() + space::SM, at.y),
-            Align2::LEFT_CENTER,
-            "Clear",
-            Face::Display.at(size::MICRO),
-            colour::TEXT_FAINT,
-        );
-    }
-
     /// A newer release, at the footer's far right, when there is one: quiet,
     /// since it waits for whenever suits. A click opens its page, and
     /// Never Show Again beside it stops the daily look. Returns where the
@@ -132,13 +22,30 @@ impl Overseer {
         clicked: &mut Option<Hint>,
     ) -> f32 {
         let mut right = rect.right() - GUTTER;
-        let Some(newest) = crate::update::newer(&self.settings.updates, VERSION) else {
-            return right;
-        };
-        let notice = format!("Version {newest} Is Out");
-        for (text, hint, tint, about) in [
+        let newest = crate::update::newer(&self.settings.updates, VERSION);
+        let notice = newest
+            .as_ref()
+            .map(|n| format!("Version {n} Is Out"))
+            .unwrap_or_default();
+        let now = ui.input(|i| i.time);
+        let armed = self
+            .quieting
+            .is_some_and(|at| now - at < crate::lineups::ARMED);
+        // Said here as well as in Settings, since without the key the overlay
+        // can't be brought up in game at all.
+        let clash = matches!(self.hotkey, Some(Err(_))).then_some((
+            "Overlay Key Unavailable",
+            Hint::OverlayKey,
+            colour::WARN,
+            "Windows wouldn't give Overseer the overlay's key, often because another program has it. Click to pick another.",
+        ));
+        let release = newest.is_some().then_some([
             (
-                "Never Show Again",
+                if armed {
+                    "Click Again to Stop Checking"
+                } else {
+                    "Never Show Again"
+                },
                 Hint::Quiet,
                 colour::TEXT_FAINT,
                 "Stops the daily look for updates. Settings turns it back on.",
@@ -149,7 +56,9 @@ impl Overseer {
                 colour::INFO,
                 "Opens its page. Its setup updates this install and keeps your lineups, notes and settings.",
             ),
-        ] {
+        ]);
+        let items = clash.into_iter().chain(release.into_iter().flatten());
+        for (text, hint, tint, about) in items {
             let font = Face::Display.at(size::MICRO);
             let wide = overseer_ui::caps_width(painter, text, font.clone());
             let area = Rect::from_min_max(
@@ -215,7 +124,7 @@ impl Overseer {
                 if *bad == 0 {
                     String::new()
                 } else {
-                    format!("{bad} unreadable")
+                    "May Need a Repair".to_owned()
                 },
                 colour::WARN,
             ),
@@ -231,18 +140,28 @@ impl Overseer {
                 Face::Display.at(size::MICRO),
                 tint,
             );
+            if tint == colour::WARN {
+                let why = format!(
+                    "{bad} updates from the backend couldn't be read. If the board stops changing, run install.bat in Overseer's folder to repair it. {}",
+                    self.unreadable.1.as_deref().unwrap_or_default()
+                );
+                let _why = ui
+                    .interact(drawn, ui.id().with("unreadable"), Sense::hover())
+                    .on_hover_text(why);
+            }
             right = drawn.left() - space::XL;
         }
         right
     }
 
-    /// The keys the footer offers, leaving out the ones that act on players
-    /// while there are none.
+    /// The keys the footer offers. The ones that act on players only show
+    /// on the board with somebody on it, and Help is always there, since it
+    /// lists the rest.
     fn hints(&self) -> impl Iterator<Item = (&'static str, &'static str, Hint)> + use<'_> {
         [
+            ("?", "Help", Hint::Help),
             ("w", "Worth a Look", Hint::Worth),
             ("arrows", "Pick", Hint::Pick),
-            ("/", "Find", Hint::Find),
             ("n", "Note", Hint::Note),
             ("ctrl c", "Copy Name", Hint::Copy),
             ("o", "Overlay", Hint::Overlay),
@@ -252,11 +171,8 @@ impl Overseer {
         ]
         .into_iter()
         .filter(|(_, _, hint)| {
-            !self.board.players.is_empty()
-                || !matches!(
-                    hint,
-                    Hint::Worth | Hint::Pick | Hint::Find | Hint::Note | Hint::Copy
-                )
+            (self.screen == Screen::Board && !self.board.players.is_empty())
+                || !matches!(hint, Hint::Worth | Hint::Pick | Hint::Note | Hint::Copy)
         })
     }
 
@@ -264,10 +180,8 @@ impl Overseer {
     /// prose, and what the window is spending. Each hint is also a button
     /// for its key, and this says which was clicked.
     pub(super) fn footer(&self, ui: &mut Ui) -> Option<Hint> {
-        let (rect, _response) = ui.allocate_exact_size(
-            vec2(ui.available_width(), space::XL + space::SM),
-            Sense::hover(),
-        );
+        let (rect, _response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());
         if !ui.is_rect_visible(rect) {
             return None;
         }

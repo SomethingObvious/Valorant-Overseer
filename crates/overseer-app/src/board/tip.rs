@@ -35,6 +35,72 @@ pub(crate) fn auto(ui: &mut Ui, tag: &overseer_core::AutoTag, accent: Color32) {
     );
 }
 
+/// Opens a card under `rect` as soon as the pointer is on it, over
+/// everything. egui's own tooltip waits for a still pointer and stands down
+/// for any other popup or tooltip on the layer, so a card for a word on a
+/// busy board could fail to come up at all. It stays put while the pointer
+/// moves, since one chasing the pointer across a small word jitters.
+pub(crate) fn under(
+    ctx: &egui::Context,
+    id: egui::Id,
+    rect: egui::Rect,
+    add: impl FnOnce(&mut Ui),
+) {
+    let _card = egui::Area::new(id)
+        .order(egui::Order::Tooltip)
+        .fixed_pos(rect.left_bottom() + vec2(0.0, space::SM))
+        .constrain(true)
+        .interactable(false)
+        .fade_in(false)
+        .show(ctx, |ui| egui::Frame::popup(ui.style()).show(ui, add));
+}
+
+/// How long a card stays up once the pointer is off what opened it, so
+/// crossing the gap between two reads does not drop it for a frame.
+const LINGER: f64 = 0.12;
+
+/// Which of a group's spots has its card up: the one the pointer is `on`,
+/// or the last one it was on, for a moment after. A group shares one card,
+/// so moving to the next spot reuses it rather than opening a new one,
+/// which egui spends a frame measuring out of sight.
+pub(crate) fn lingering(ctx: &egui::Context, group: egui::Id, on: Option<usize>) -> Option<usize> {
+    let now = ctx.input(|i| i.time);
+    if let Some(spot) = on {
+        ctx.data_mut(|d| d.insert_temp(group, (spot, now)));
+        return Some(spot);
+    }
+    let (spot, at) = ctx.data(|d| d.get_temp::<(usize, f64)>(group))?;
+    let left = LINGER - (now - at);
+    if left <= 0.0 {
+        return None;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+    Some(spot)
+}
+
+/// A sentence under `rect`, the way [`under`] opens a card.
+pub(crate) fn say_under(ctx: &egui::Context, id: egui::Id, rect: egui::Rect, said: &str) {
+    under(ctx, id, rect, |ui| {
+        ui.set_max_width(2.0f32.mul_add(space::LG, WIDE));
+        ui.label(
+            egui::RichText::new(said)
+                .font(Face::Body.at(size::BODY))
+                .color(colour::TEXT),
+        );
+    });
+}
+
+/// Marks something that opens a card under the pointer, with a line under
+/// `rect` and the help pointer, so it reads as something to rest on.
+pub(crate) fn mark_hovered(ctx: &egui::Context, layer: egui::LayerId, rect: egui::Rect) {
+    ctx.layer_painter(layer).hline(
+        rect.x_range(),
+        rect.bottom() + 1.0,
+        (1.5, colour::TEXT_STRONG),
+    );
+    ctx.set_cursor_icon(egui::CursorIcon::Help);
+}
+
 /// How wide a card's words run before they wrap.
 const WIDE: f32 = 250.0;
 
@@ -83,6 +149,12 @@ pub(crate) fn show(ui: &mut Ui, card: &Card<'_>) {
         evidence(ui, card);
     }
     ui.add_space(space::MD);
+    // The first frame only measures the card, out of sight, before it is
+    // moved to fit the screen, and an edge drawn then would flash where
+    // the card never shows.
+    if ui.is_sizing_pass() {
+        return;
+    }
     // The edge runs flush with the tooltip's frame, its full height. The
     // tooltip's margin sits outside this ui, so the edge is drawn on the
     // layer rather than clipped to the content.

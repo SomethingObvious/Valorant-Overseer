@@ -84,9 +84,15 @@ pub(crate) fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
 /// is built for before it has measured what it draws.
 pub(crate) const DESIGNED: f32 = crate::board::OVERLAY_HEIGHT;
 
-/// A little more than a full match needs, so a board that grows without
-/// bound can never cover the game.
+/// A little more than a match of five a side needs. A bigger lobby, like a
+/// deathmatch's thirteen, may take up to four fifths of the screen, and no
+/// more, so a board that grows without bound can never cover the game.
 pub(crate) const CEILING: f32 = 700.0;
+
+/// The tallest the overlay may be on a screen `monitor` tall.
+pub(crate) fn tallest(monitor: f32) -> f32 {
+    (monitor * 0.8).max(CEILING)
+}
 
 /// The greeting's plate, the height of the team plates on the board.
 const PLATE: f32 = 32.0;
@@ -110,7 +116,7 @@ pub(crate) fn show(
     // As tall as the board, not a fixed size: this adapter presents opaque,
     // and the transparent part of a taller window would be a black slab over
     // the game.
-    let size = vec2(WIDTH, height.clamp(GREETING, CEILING));
+    let size = vec2(WIDTH, height.clamp(GREETING, tallest(monitor.y)));
     let at = place(corner, monitor, size);
     ctx.show_viewport_immediate(
         id_for(corner, size.y),
@@ -182,7 +188,7 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
             middle,
         ),
         Align2::RIGHT_CENTER,
-        &format!("{} Hides It", crate::hotkey::LABEL),
+        &format!("{} Hides It", crate::hotkey::label()),
         label,
         colour::BG,
     );
@@ -197,14 +203,14 @@ pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
             rect.right() - crate::board::GUTTER - 11.0,
             rect.top() + crate::board::GUTTER + crate::board::STRIP_MIDDLE,
         ),
-        vec2(22.0, 20.0),
+        vec2(24.0, 24.0),
     );
     let response = ui
         .interact(spot, ui.id().with("overlay-hide"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(format!(
             "Hide the overlay. {} brings it back.",
-            crate::hotkey::LABEL
+            crate::hotkey::label()
         ));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hide the overlay")

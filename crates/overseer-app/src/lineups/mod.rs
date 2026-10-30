@@ -201,8 +201,6 @@ struct Draft {
     notes: String,
     /// Everything else about it, as long as it needs.
     description: String,
-    /// The path of a picture being typed in, to add.
-    picture: String,
     /// What the agent search has in it.
     find: String,
     /// What the ability search has in it, for any agent.
@@ -271,7 +269,6 @@ impl Draft {
             volume: 100.0,
             notes: String::new(),
             description: String::new(),
-            picture: String::new(),
             find: String::new(),
             find_ability: String::new(),
             choosing: agent.is_none(),
@@ -324,7 +321,6 @@ impl Draft {
             volume: clip.volume.map_or(100.0, |v| v as f32),
             notes: lineup.notes.clone().unwrap_or_default(),
             description: lineup.description.clone().unwrap_or_default(),
-            picture: String::new(),
             find: String::new(),
             find_ability: String::new(),
             choosing: false,
@@ -435,7 +431,7 @@ impl Draft {
 
 /// How many seconds the first press of Delete, Clear All or Cancel waits for
 /// the second.
-const ARMED: f64 = 5.0;
+pub(crate) const ARMED: f64 = 5.0;
 
 /// How many changes back Draw's Undo goes.
 const UNDO_STEPS: usize = 100;
@@ -846,9 +842,20 @@ impl Lineups {
         {
             let read = result.and_then(|value| {
                 serde_json::from_value::<Atlas>(value).map_err(|_| {
-                    "The lineups came back in a shape this build can't read.".to_owned()
+                    "The lineups came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned()
                 })
             });
+            // A refresh that fails keeps what was on screen, and says so.
+            if let (Err(why), Load::Asking { kept: Some(_), .. }) = (&read, &self.load) {
+                self.view.said = Some((format!("Couldn't refresh the lineups. {why}"), true));
+                if let Load::Asking {
+                    kept: Some(atlas), ..
+                } = std::mem::take(&mut self.load)
+                {
+                    self.load = Load::Have(atlas);
+                }
+                return;
+            }
             self.load = match read {
                 Ok(mut atlas) => {
                     if let Some(saved) = self.view.late.take() {
@@ -984,14 +991,21 @@ impl Lineups {
         }
     }
 
-    /// Adds pictures dropped onto the window to the lineup being written,
-    /// up to the most one can carry.
+    /// Adds pictures dropped onto the window, or chosen in the Open dialog,
+    /// to the lineup being written, up to the most one can carry.
     fn dropped(&mut self, ui: &Ui) {
         let Mode::Edit(draft) = &mut self.view.mode else {
             return;
         };
-        let files = ui.input(|i| i.raw.dropped_files.clone());
-        for path in files.iter().map(|f| f.path()) {
+        let mut files: Vec<PathBuf> = ui.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
+        files.extend(overseer_native::take_pictures());
+        for path in &files {
             if pictures::is_picture(path) && draft.lineup.images.len() < pictures::MOST {
                 draft
                     .lineup
@@ -1904,6 +1918,32 @@ mod tests {
         screen.view.pending = Some((9, super::Job::Save));
         screen.answered(9, Err("yt-dlp couldn't download that video.".to_owned()));
         assert!(matches!(screen.view.mode, Mode::Edit(_)));
+    }
+
+    /// A refresh that fails keeps the lineups that were on screen.
+    #[test]
+    fn a_failed_refresh_keeps_the_lineups_on_screen() {
+        let mut screen = Lineups {
+            load: Load::Asking {
+                id: 30,
+                kept: Some(Box::default()),
+            },
+            ..Lineups::default()
+        };
+        screen.answered(30, Err("The backend went away.".to_owned()));
+        assert!(
+            matches!(screen.load, Load::Have(_)),
+            "the lineups went away"
+        );
+        assert!(
+            screen.view.said.as_ref().is_some_and(|s| s.1),
+            "it didn't say so"
+        );
+
+        // With nothing to keep, the screen says why there is nothing.
+        screen.load = Load::Asking { id: 31, kept: None };
+        screen.answered(31, Err("The backend went away.".to_owned()));
+        assert!(matches!(screen.load, Load::Refused(_)));
     }
 
     /// A save that lands while the list is being asked for again still says

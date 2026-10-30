@@ -86,18 +86,6 @@ struct Budget {
     calm: bool,
 }
 
-/// The search row.
-#[derive(Debug, Default)]
-struct Search {
-    /// What has been typed into it.
-    filter: String,
-    /// Set when a key asked for the box, so the next frame can hand it the
-    /// keyboard.
-    focus: bool,
-    /// Whether the row is open. It only shows while somebody searches.
-    open: bool,
-}
-
 /// The window's state.
 pub(crate) struct Overseer {
     bridge: Bridge,
@@ -133,14 +121,15 @@ pub(crate) struct Overseer {
     /// When the backend went after the board was live, so the board can say
     /// how old it is.
     lost_at: Option<f64>,
+    /// What an empty board shows, until a board with players on it comes.
+    empty: Empty,
     /// How the board is ordered, if a heading has been clicked.
     sort: Sort,
-    /// The search row and what is typed in it.
-    search: Search,
     /// What you have written about the accounts you have met.
     notes: Notes,
     /// The one key combination the whole machine listens for, or why not.
-    hotkey: Result<Hotkey, Failure>,
+    /// None where it was never asked for, as in the tests.
+    hotkey: Option<Result<Hotkey, Failure>>,
     /// The icon beside the clock, or why there isn't one.
     tray: Result<Tray, String>,
     /// The selected player's history, or where the request for it has got to.
@@ -195,6 +184,9 @@ pub(crate) struct Overseer {
     /// A few words for the footer and when they were said, for an action
     /// that would otherwise look like it did nothing.
     said: Option<(String, f64)>,
+    /// When Never Show Again was first pressed, for the few seconds a second
+    /// press stops the daily look.
+    quieting: Option<f64>,
     /// Where the window last was on screen, for a save made minimized.
     place: Place,
     /// What this PC has, which decides whether it counts as slow.
@@ -286,8 +278,6 @@ enum Hint {
     Worth,
     /// Move the selection down a row.
     Pick,
-    /// Open the search.
-    Find,
     /// Write about whoever is selected.
     Note,
     /// Copy their Riot ID.
@@ -304,6 +294,10 @@ enum Hint {
     Release,
     /// Stop saying when a newer release is out.
     Quiet,
+    /// Open Settings at what the marks on the board mean.
+    Help,
+    /// Open Settings at the overlay, to pick another key.
+    OverlayKey,
 }
 
 /// How wide the detail panel is in a window this wide. Dragged to a width,
@@ -403,6 +397,17 @@ pub(crate) enum Screen {
     History,
     /// Your lineups, map by map.
     Lineups,
+    /// What the board's marks mean, and every key.
+    Help,
+}
+
+/// What the board shows while nobody is on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Empty {
+    /// How far the backend, the Riot client and VALORANT have got.
+    Plate,
+    /// Your row off the last board that had it, after Show My Last Stats.
+    LastStats,
 }
 
 /// How far the mouse wheel goes, notch by notch.
@@ -449,12 +454,9 @@ impl std::fmt::Debug for Overseer {
 }
 
 impl Overseer {
-    /// Starts the bridge, installs the fonts and takes the style.
-    pub(crate) fn new(
-        cc: &CreationContext<'_>,
-        root: &Path,
-        (listener, maximize, broken): (Option<std::net::TcpListener>, bool, Option<String>),
-    ) -> Self {
+    /// Fonts, art, style and zoom for the window, and its handle for the
+    /// clips that play inside it.
+    fn dress(cc: &CreationContext<'_>, root: &Path) {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
         overseer_ui::art::set_fetched_dir(root.join("backend").join("data").join("art"));
@@ -475,6 +477,15 @@ impl Overseer {
         if let Some(state) = cc.wgpu_render_state.as_ref() {
             println!("{}", crate::probe::adapter_line(&state.adapter.get_info()));
         }
+    }
+
+    /// Starts the bridge, installs the fonts and takes the style.
+    pub(crate) fn new(
+        cc: &CreationContext<'_>,
+        root: &Path,
+        (listener, maximize, broken): (Option<std::net::TcpListener>, bool, Option<String>),
+    ) -> Self {
+        Self::dress(cc, root);
         let ctx = cc.egui_ctx.clone();
         let bridge = Bridge::start(root, move || ctx.request_repaint());
         let knocked = std::sync::Arc::<std::sync::atomic::AtomicBool>::default();
@@ -485,10 +496,12 @@ impl Overseer {
                 waker(&cc.egui_ctx),
             );
         }
+        let settings = settings::load(root);
+        let key = settings.overlay.key;
         Self {
             bridge,
             root: root.to_path_buf(),
-            settings: settings::load(root),
+            settings,
             board: Board::default(),
             status: Status::Connecting(String::new()),
             // It never fixes itself, so the light shows it from the start.
@@ -507,12 +520,12 @@ impl Overseer {
             settling: None,
             ever_live: false,
             lost_at: None,
+            empty: Empty::Plate,
             sort: Sort::default(),
-            search: Search::default(),
             notes: notes::load(root),
             // Both own a hidden window whose messages go to the thread that
             // made it, and this is the message loop's thread.
-            hotkey: report("hotkey", hotkey::start(waker(&cc.egui_ctx))),
+            hotkey: Some(report("hotkey", hotkey::start(key, waker(&cc.egui_ctx)))),
             tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
             career: Career::default(),
             history: History::default(),
@@ -534,6 +547,7 @@ impl Overseer {
             panel_visible: false,
             histories: HashMap::new(),
             said: None,
+            quieting: None,
             machine: crate::machine::Machine::detect(),
             place: Place {
                 minimized: false,
@@ -570,7 +584,7 @@ impl Overseer {
         // Pressed mid-round, so it only switches the overlay. Showing or
         // focusing the window would take the focus from the game, and the
         // tray is how the window comes back.
-        let pressed = self.hotkey.as_ref().map_or(0, |k| k.presses().count());
+        let pressed = self.presses();
         if pressed % 2 == 1 {
             self.flip_overlay(ctx.input(|i| i.time));
         }
@@ -586,6 +600,7 @@ impl Overseer {
                         self.lineups.reconnected(&self.bridge);
                         self.offline.reconnected();
                         self.update.reconnected();
+                        self.tell_games_read();
                         self.ever_live = true;
                     }
                     // Before the first connection, a refused socket is the
@@ -722,6 +737,29 @@ impl Overseer {
         self.keyboard_owns = true;
     }
 
+    /// Picks the first player on the other team from the one selected, so a
+    /// long board is crossed in one key.
+    fn other_team(&mut self) {
+        let team_of = |id: &str| {
+            self.board
+                .players
+                .iter()
+                .find(|p| p.puuid.as_deref() == Some(id))
+                .and_then(|p| p.team.clone())
+        };
+        let mine = self.selected.as_deref().and_then(team_of);
+        let Some(next) = self
+            .visible_order()
+            .into_iter()
+            .find(|id| team_of(id) != mine)
+        else {
+            return;
+        };
+        self.selected = Some(next);
+        self.hovered = None;
+        self.keyboard_owns = true;
+    }
+
     /// Whose history to ask for: the hovered account once the pointer has
     /// rested there, or else the selection. Passing over rows asks nothing.
     fn career_subject(&self, now: f64) -> Option<&str> {
@@ -738,36 +776,32 @@ impl Overseer {
         // name never changes screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
         let note = ui.input(|i| i.key_pressed(Key::N));
-        let (up, down, settings, history, lineups, escape, find, overlay, worth, copy) =
-            ui.input(|i| {
-                (
-                    i.key_pressed(Key::ArrowUp),
-                    i.key_pressed(Key::ArrowDown),
-                    i.key_pressed(Key::Comma),
-                    i.key_pressed(Key::H),
-                    i.key_pressed(Key::L),
-                    i.key_pressed(Key::Escape),
-                    i.key_pressed(Key::Slash) || (i.modifiers.command && i.key_pressed(Key::F)),
-                    i.key_pressed(Key::O),
-                    i.key_pressed(Key::W),
-                    // egui turns Ctrl C into a Copy event and does not report
-                    // the key.
-                    i.events.iter().any(|e| matches!(e, egui::Event::Copy))
-                        || (i.modifiers.command && i.key_pressed(Key::C)),
-                )
-            });
+        let (up, down, settings, history, lineups, escape, overlay, worth, copy) = ui.input(|i| {
+            (
+                i.key_pressed(Key::ArrowUp),
+                i.key_pressed(Key::ArrowDown),
+                i.key_pressed(Key::Comma),
+                i.key_pressed(Key::H),
+                i.key_pressed(Key::L),
+                i.key_pressed(Key::Escape),
+                i.key_pressed(Key::O),
+                i.key_pressed(Key::W),
+                // egui turns Ctrl C into a Copy event and does not report
+                // the key.
+                i.events.iter().any(|e| matches!(e, egui::Event::Copy))
+                    || (i.modifiers.command && i.key_pressed(Key::C)),
+            )
+        });
         // A clip shown full screen takes Escape for itself.
         if escape && self.screen == Screen::Lineups && self.lineups.fullscreen() {
             return;
         }
         if escape {
-            // Clears the search first, then leaves the screen.
-            if self.search.filter.is_empty() {
-                self.search.open = false;
-                self.screen = Screen::Board;
-            } else {
-                self.search.filter.clear();
+            // Leaves the screen, or your last stats for what Overseer waits on.
+            if self.screen == Screen::Board {
+                self.empty = Empty::Plate;
             }
+            self.screen = Screen::Board;
             ui.memory_mut(egui::Memory::stop_text_input);
             return;
         }
@@ -775,10 +809,6 @@ impl Overseer {
             return;
         }
         let ctx = ui.ctx();
-        if find {
-            self.perform(ctx, Hint::Find);
-            return;
-        }
         if overlay {
             self.perform(ctx, Hint::Overlay);
         }
@@ -805,7 +835,35 @@ impl Overseer {
         }
         // On Lineups the arrows step through the lineups on the map instead.
         if (up || down) && self.screen != Screen::Lineups {
+            self.screen = Screen::Board;
             self.step(down);
+        }
+        self.ends(ui);
+    }
+
+    /// Help, and Home and End, which go to the first and last row on the
+    /// board. Only once nothing is being typed, like the rest.
+    fn ends(&mut self, ui: &Ui) {
+        let (top, bottom, help, cross) = ui.input(|i| {
+            (
+                i.key_pressed(Key::Home),
+                i.key_pressed(Key::End),
+                i.key_pressed(Key::F1) || i.key_pressed(Key::Questionmark),
+                i.key_pressed(Key::T),
+            )
+        });
+        if cross && self.screen == Screen::Board {
+            self.other_team();
+        }
+        if help {
+            self.perform(ui.ctx(), Hint::Help);
+        }
+        if (top || bottom) && self.screen == Screen::Board {
+            let order = self.visible_order();
+            if let Some(id) = if top { order.first() } else { order.last() } {
+                self.selected = Some(id.clone());
+                self.keyboard_owns = true;
+            }
         }
     }
 
@@ -813,25 +871,21 @@ impl Overseer {
     /// on the hint does exactly what its key does.
     fn perform(&mut self, ctx: &egui::Context, hint: Hint) {
         match hint {
+            // These act on the board, so they bring it back first rather than
+            // change a selection nobody can see.
             Hint::Worth => {
+                self.screen = Screen::Board;
                 if !self.board.players.iter().any(|p| p.smurf) {
                     self.say(ctx, "Nobody Worth a Look in This Lobby");
                 }
                 self.next_flagged(None);
             }
             Hint::Pick if self.screen == Screen::Lineups => self.lineups.step_down(),
-            Hint::Pick => self.step(true),
-            Hint::Find => {
-                self.search.focus = true;
-                self.search.open = true;
+            Hint::Pick => {
                 self.screen = Screen::Board;
+                self.step(true);
             }
-            Hint::Note => {
-                if let Some(id) = self.selected.clone() {
-                    self.screen = Screen::Board;
-                    panel::write_note(ctx, &id);
-                }
-            }
+            Hint::Note => self.note(ctx),
             // For looking the name up somewhere else.
             Hint::Copy => {
                 if let Some(name) = self.current().and_then(|p| p.name.clone()) {
@@ -860,29 +914,7 @@ impl Overseer {
                     );
                 }
             }
-            Hint::Lineups => {
-                if self.screen == Screen::Lineups {
-                    self.screen = Screen::Board;
-                } else {
-                    // Opens on the map being played, when there is one.
-                    self.screen = Screen::Lineups;
-                    // The blacked-out figure is cut from the agent you've
-                    // played most lately.
-                    let main = self
-                        .board
-                        .players
-                        .iter()
-                        .find(|p| p.is_self)
-                        .and_then(|p| p.top_agents.first())
-                        .and_then(|t| t.agent.as_deref());
-                    self.lineups.open(
-                        &self.bridge,
-                        self.status == Status::Live,
-                        self.board.map.as_deref(),
-                        main,
-                    );
-                }
-            }
+            Hint::Lineups => self.flip_lineups(),
             // Only ever the release's page, built from its version's
             // numbers, in the browser.
             Hint::Release => {
@@ -892,21 +924,101 @@ impl Overseer {
                     drop(std::process::Command::new("explorer").arg(page).spawn());
                 }
             }
-            Hint::Quiet => {
-                self.settings.updates.check_updates = false;
-                settings::save(&self.root, &self.settings);
-                self.say(ctx, "Update notices off. Settings turns them back on");
+            Hint::Quiet => self.quiet(ctx),
+            Hint::OverlayKey => {
+                self.screen = Screen::Settings;
+                crate::view::open_at(ctx, "Overlay");
+            }
+            Hint::Help => {
+                if self.screen == Screen::Help {
+                    self.screen = Screen::Board;
+                } else {
+                    // Help on Lineups starts at its keys, since the board's
+                    // marks aren't there.
+                    if self.screen == Screen::Lineups {
+                        crate::view::open_at(ctx, "Keyboard Shortcuts");
+                    }
+                    self.screen = Screen::Help;
+                }
             }
         }
     }
 
     /// Moves the selection a row down, or up.
     fn step(&mut self, down: bool) {
-        // The backend's order would step through rows the search has hidden.
+        // The board's own order, which a sort changes from the backend's.
         let order = self.visible_order();
         if let Some(next) = board::step(&order, self.selected.as_deref(), down) {
             self.selected = Some(next);
             self.keyboard_owns = true;
+        }
+    }
+
+    /// Opens Lineups on the map being played, when there is one, or goes back
+    /// to the board from it.
+    fn flip_lineups(&mut self) {
+        if self.screen == Screen::Lineups {
+            self.screen = Screen::Board;
+            return;
+        }
+        self.screen = Screen::Lineups;
+        // The blacked-out figure is cut from the agent you've played most
+        // lately.
+        let main = self
+            .board
+            .players
+            .iter()
+            .find(|p| p.is_self)
+            .and_then(|p| p.top_agents.first())
+            .and_then(|t| t.agent.as_deref());
+        self.lineups.open(
+            &self.bridge,
+            self.status == Status::Live,
+            self.board.map.as_deref(),
+            main,
+        );
+    }
+
+    /// How many times the overlay's key was pressed since the last look.
+    fn presses(&self) -> usize {
+        self.hotkey
+            .as_ref()
+            .and_then(|k| k.as_ref().ok())
+            .map_or(0, |k| k.presses().count())
+    }
+
+    /// Opens the note box on the selected player, which lives in the detail
+    /// panel, or says how to get the panel when it is hidden.
+    fn note(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        self.screen = Screen::Board;
+        if self.panel_visible {
+            panel::write_note(ctx, &id);
+        } else {
+            self.say(
+                ctx,
+                "Notes are written in the detail panel. Widen the window, or turn the panel on in Settings",
+            );
+        }
+    }
+
+    /// Never Show Again: the first press arms it for a few seconds, and the
+    /// second stops the daily look for updates.
+    fn quiet(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if self
+            .quieting
+            .is_some_and(|at| now - at < crate::lineups::ARMED)
+        {
+            self.quieting = None;
+            self.settings.updates.check_updates = false;
+            settings::save(&self.root, &self.settings);
+            self.say(ctx, "Update notices off. Settings turns them back on");
+        } else {
+            self.quieting = Some(now);
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(crate::lineups::ARMED));
         }
     }
 
@@ -920,12 +1032,7 @@ impl Overseer {
     /// Every account on screen, in the order they are drawn. The keys use it
     /// too, so they always agree with the board.
     fn visible_order(&self) -> Vec<String> {
-        board::order(
-            &self.board,
-            &self.sort,
-            &self.search.filter,
-            self.settings.enemies_first,
-        )
+        board::order(&self.board, &self.sort, self.settings.enemies_first)
     }
 
     /// The enemy a new lobby opens on: the first worth a look, or else the
@@ -954,6 +1061,18 @@ impl Overseer {
         if let Some(why) = &self.broken {
             return Some(("Overseer Can't Start", why));
         }
+        // The bridge's own thread never started, which a fresh try often
+        // gets past. Anything else it stopped on is a build it won't talk to.
+        if self
+            .stopped
+            .as_deref()
+            .is_some_and(|why| why.starts_with("no bridge thread"))
+        {
+            return Some((
+                "Overseer Couldn't Connect",
+                "Windows didn't let Overseer start its connection. Press Reconnect Now, and if that doesn't help, restart your PC.",
+            ));
+        }
         self.stopped
             .as_deref()
             .or_else(|| {
@@ -967,6 +1086,15 @@ impl Overseer {
                     "Its window and the part that talks to Riot don't match, which happens after an update stops partway. Run install.bat in Overseer's folder to repair it. Your settings and lineups are kept.",
                 )
             })
+    }
+
+    /// Starts a fresh connection straight away, rather than after the old
+    /// one's wait. Dropping the old one stops its thread.
+    pub(super) fn reconnect(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
+        self.bridge = Bridge::start(&self.root, move || ctx.request_repaint());
+        self.stopped = None;
+        self.status = Status::Connecting(String::new());
     }
 
     /// What the tray and a second launch asked of the window.
@@ -1032,8 +1160,8 @@ impl Overseer {
     /// Shows the overlay for `PEEK` seconds.
     fn peek_overlay(&mut self, now: f64) {
         self.shown.peek_until = Some(now + PEEK);
-        // The overlay draws the window's board, and a half finished search
-        // or a settings screen behind it would be a trap.
+        // The overlay draws the window's board, and a settings screen behind
+        // it would be a trap.
         self.screen = Screen::Board;
     }
 
@@ -1163,23 +1291,14 @@ impl Overseer {
             ui,
             &header::Masthead {
                 board: &self.board,
-                // Just the dot while all is well. The words come back when
-                // there is something to say.
-                light: match self.connection() {
-                    (radius, tint, _fine)
-                        if matches!((&self.stopped, &self.status), (None, Status::Live)) =>
-                    {
-                        (radius, tint, String::new())
-                    }
-                    light => light,
-                },
+                light: self.connection(),
                 still: self.quality() == Quality::Efficient,
                 maximized: maximized(ui.ctx()),
                 open: match self.screen {
                     Screen::Settings => Some(header::Chrome::Settings),
                     Screen::History => Some(header::Chrome::History),
                     Screen::Lineups => Some(header::Chrome::Lineups),
-                    Screen::Board => None,
+                    Screen::Board | Screen::Help => None,
                 },
                 edge,
             },
@@ -1201,12 +1320,25 @@ impl Overseer {
         }
     }
 
-    /// The connection light: a radius, a colour, and the reason behind it.
-    fn connection(&self) -> (f32, egui::Color32, String) {
-        match (&self.stopped, &self.status) {
-            (Some(why), _) | (None, Status::Lost(why)) => (3.0, colour::ENEMY, why.clone()),
-            (None, Status::Live) => (3.0, colour::ALLY, "Connected".to_owned()),
-            (None, Status::Connecting(detail)) => (2.0, colour::WARN, connecting_text(detail)),
+    /// The connection light. The masthead says it in a word, or nothing
+    /// while all is well, and the exact reason is on its hover.
+    fn connection(&self) -> header::Light {
+        let (radius, tint, word, why) = match (&self.stopped, &self.status) {
+            (Some(why), _) => (3.0, colour::ENEMY, "Stopped", why.clone()),
+            (None, Status::Lost(why)) => (3.0, colour::ENEMY, "Reconnecting", why.clone()),
+            (None, Status::Live) => (
+                3.0,
+                colour::ALLY,
+                "",
+                "Connected to VALORANT. The board follows the game as it changes.".to_owned(),
+            ),
+            (None, Status::Connecting(detail)) => (2.0, colour::WARN, "Connecting", detail.clone()),
+        };
+        header::Light {
+            radius,
+            tint,
+            word,
+            why,
         }
     }
 }
@@ -1320,30 +1452,34 @@ fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<> {
 }
 
 /// The header's connection text, which has no detail on the first attempt.
-fn connecting_text(detail: &str) -> String {
-    if detail.is_empty() {
-        "Connecting".to_owned()
-    } else {
-        format!("Connecting, {detail}")
-    }
-}
-
 /// The empty state, drawn for the snapshot test.
 #[cfg(test)]
-pub(crate) fn snapshot_empty(ui: &mut Ui) {
+pub(crate) fn snapshot_empty(ui: &mut Ui, shown: &Board) {
     let board = Board {
         waiting: Some("game".to_owned()),
+        you: shown.you.clone(),
         ..Board::default()
     };
     // Still, the way the efficient tier draws it, so the picture holds.
-    waiting::empty(ui, (&Status::Live, &board), None, motion::EFFICIENT);
+    let _pressed = waiting::empty(
+        ui,
+        (&Status::Live, &board),
+        None,
+        motion::EFFICIENT,
+        Some(false),
+    );
 }
 
-/// The header and the footer, drawn for the snapshot test without a window
-/// behind them.
+/// A board of just your kept row, for the snapshot test.
 #[cfg(test)]
-pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings: &Settings) {
-    let shown = Overseer {
+pub(crate) fn snapshot_kept(you: &overseer_core::Saved) -> Board {
+    waiting::kept_board(you)
+}
+
+/// The window as a test drives it, on `board`, with no backend behind it.
+#[cfg(test)]
+pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overseer {
+    Overseer {
         bridge: Bridge::start(Path::new("."), || {}),
         root: PathBuf::new(),
         settings: settings.clone(),
@@ -1360,12 +1496,12 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
         settling: None,
         ever_live: true,
         lost_at: None,
+        empty: Empty::Plate,
         sort: Sort::default(),
-        search: Search::default(),
         notes: Notes::default(),
         // Neither in a test: one would take a key combination off the
         // machine and the other would put an icon beside the clock.
-        hotkey: Err(Failure::Taken),
+        hotkey: None,
         tray: Err(String::new()),
         career: Career::default(),
         history: History::default(),
@@ -1387,19 +1523,27 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
         panel_visible: false,
         histories: HashMap::new(),
         said: None,
+        quieting: None,
         place: Place::default(),
         machine: crate::machine::Machine {
             memory: None,
             threads: 8,
             card: true,
         },
-    };
+    }
+}
+
+/// The header and the footer, drawn for the snapshot test without a window
+/// behind them.
+#[cfg(test)]
+pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings: &Settings) {
+    let shown = testing(board, boards, settings);
     let _pressed = egui::Panel::top("header")
         .exact_size(header::HEIGHT)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.header(ui, false));
     let _clicked = egui::Panel::bottom("footer")
-        .exact_size(overseer_ui::space::XL + overseer_ui::space::SM)
+        .exact_size(overseer_ui::space::XXL)
         .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
         .show(ui, |ui| shown.footer(ui));
 }
@@ -1407,6 +1551,119 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
 #[cfg(test)]
 mod tests {
     use super::{Place, Shown, panel_grip};
+
+    /// The real window on the sample lobby, you carrying the Odin and
+    /// `name` picked, with the pointer resting at `at`. Says whether a card
+    /// opened. `TAG_OUT` saves what it looked like.
+    fn rests_on(name: &str, at: egui::Pos2) -> bool {
+        moves_off(name, at, None)
+    }
+
+    /// [`rests_on`], then the pointer moving `off` to a spot and staying
+    /// there for some frames.
+    fn moves_off(name: &str, at: egui::Pos2, off: Option<(egui::Pos2, usize)>) -> bool {
+        let mut board = crate::shot::sample();
+        for player in &mut board.players {
+            if player.is_self {
+                player.auto_tags.push(overseer_core::AutoTag {
+                    tag: Some("odin".to_owned()),
+                    why: Some("Carried the Odin in 9 of 60 rounds".to_owned()),
+                    means: Some("Carried the Odin in at least 15% of their rounds.".to_owned()),
+                    kind: Some("Weapon".to_owned()),
+                });
+            }
+        }
+        let settings = crate::settings::Settings {
+            welcome: crate::settings::Welcome::Seen,
+            ..crate::settings::Settings::default()
+        };
+        let mut app = super::testing(&board, 12, &settings);
+        app.selected = board
+            .players
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .and_then(|p| p.puuid.clone());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1200.0, 900.0))
+            .with_step_dt(1.0 / 60.0)
+            // Nothing on the first frame, before the fonts are bound.
+            .build_ui_state(
+                |ui, app: &mut Option<super::Overseer>| {
+                    if let Some(app) = app {
+                        app.window(ui, false);
+                    }
+                },
+                None,
+            );
+        overseer_ui::install_fonts(&harness.ctx);
+        harness
+            .ctx
+            .set_style_of(egui::Theme::Dark, overseer_ui::style());
+        harness.run();
+        *harness.state_mut() = Some(app);
+        // It keeps asking for frames while the bridge has nothing behind it.
+        for _frame in 0..30 {
+            harness.step();
+        }
+        // Straight away, not after egui's half second of stillness.
+        harness.hover_at(at);
+        harness.step();
+        harness.step();
+        if let Some((spot, frames)) = off {
+            harness.hover_at(spot);
+            for _frame in 0..frames {
+                harness.step();
+            }
+        }
+        if let Ok(out) = std::env::var("TAG_OUT") {
+            drop(harness.render().map(|i| i.save(out)));
+        }
+        harness.ctx.memory(|m| {
+            m.areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|l| l.order == egui::Order::Tooltip)
+        })
+    }
+
+    /// Resting on a tag opens the card that says what it means: on an
+    /// enemy's row, on your own, and in the panel.
+    #[test]
+    fn a_tag_explains_itself_wherever_it_is() {
+        let spots = std::env::var("TAG_AT").ok().and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some(egui::pos2(x.parse().ok()?, y.parse().ok()?))
+        });
+        if let Some(at) = spots {
+            assert!(rests_on("Day#9932", at), "resting at {at:?} opened nothing");
+            return;
+        }
+        let spots = [
+            ("NeonLock#VAL", (200.0, 186.0), "an enemy's row"),
+            ("Day#9932", (191.0, 601.0), "your own row"),
+            ("Day#9932", (882.0, 257.0), "the panel's reads"),
+            ("Day#9932", (880.0, 505.0), "a stat"),
+        ];
+        for (name, (x, y), what) in spots {
+            assert!(rests_on(name, egui::pos2(x, y)), "{what} opened nothing");
+        }
+        assert!(
+            !rests_on("Day#9932", egui::pos2(700.0, 860.0)),
+            "a card opened over nothing"
+        );
+        // Off the Odin into the row beside it, the card holds for a frame
+        // or two, long enough to reach the next read, and then goes.
+        let odin = egui::pos2(191.0, 601.0);
+        let beside = egui::pos2(260.0, 601.0);
+        assert!(
+            moves_off("Day#9932", odin, Some((beside, 1))),
+            "it dropped at once"
+        );
+        assert!(
+            !moves_off("Day#9932", odin, Some((beside, 20))),
+            "it never went"
+        );
+    }
 
     /// Up by itself through agent select, once a match and gone when it
     /// loads, never with nobody to show, and for 15 seconds after the

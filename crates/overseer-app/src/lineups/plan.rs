@@ -951,7 +951,7 @@ fn grip_on(square: Square, sketch: &super::Sketch, at: Pos2) -> Option<(usize, u
     let shape = sketch.shapes.get(index)?;
     shapes::grips(shape)
         .iter()
-        .position(|&g| shapes::grip_at(square, g).distance(at) <= GRIP + 4.0)
+        .position(|&g| shapes::grip_at(square, g).distance(at) <= GRIP + 8.0)
         .map(|grip| (index, grip))
 }
 
@@ -1061,11 +1061,7 @@ fn grip_cursor(shape: Option<&overseer_core::Drawing>, grip: usize) -> egui::Cur
 
 /// The colour of a lineup's side: the attackers' red or the defenders' blue.
 fn tint(side: Option<&str>) -> Color32 {
-    match side {
-        Some("attack") => colour::ENEMY,
-        Some("defense") => colour::INFO,
-        _ => colour::TEXT_DIM,
-    }
+    crate::board::paint::side_tint(side, colour::TEXT_DIM)
 }
 
 /// Every lineup on the map, the picked one last so it is on top, and the one
@@ -1415,7 +1411,10 @@ fn label(
         return;
     };
     let font = Face::Display.at(size::LABEL);
-    let wide = space::MD.mul_add(2.0, caps_width(painter, &lineup.title, font.clone())) + BAR;
+    let wide = space::MD.mul_add(
+        2.0,
+        overseer_ui::typed_width(painter, &lineup.title, font.clone()),
+    ) + BAR;
     let plate = clear_of(
         taken,
         Rect::from_center_size(at - vec2(0.0, RING + 14.0), vec2(wide, 20.0)),
@@ -1434,7 +1433,7 @@ fn label(
     );
     let bar = Rect::from_min_size(plate.min, vec2(BAR, plate.height()));
     painter.rect_filled(bar, 0, side);
-    let _title = caps_text(
+    let _title = overseer_ui::typed_text(
         painter,
         pos2(plate.center().x + BAR / 2.0, plate.center().y),
         Align2::CENTER_CENTER,

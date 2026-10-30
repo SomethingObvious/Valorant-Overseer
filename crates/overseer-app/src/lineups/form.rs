@@ -328,7 +328,7 @@ fn whereabouts(ui: &mut Ui, plan: Option<&Plan>, draft: &mut Draft) {
 }
 
 /// How far a trim handle reaches for the pointer, either side of it.
-const GRIP: f32 = 8.0;
+const GRIP: f32 = 11.0;
 /// The shortest clip the trim bar keeps, in seconds.
 const SHORTEST: f64 = 0.5;
 /// How tall the trim bar, the From and To boxes and the volume under the
@@ -340,7 +340,7 @@ pub(super) const LONGEST: f64 = 90.0;
 const ZOOM: f32 = 0.25;
 
 /// The long description and the pictures, both optional. A picture comes in
-/// by its path or by dropping it onto the window.
+/// from Windows' Open dialog or by dropping it onto the window.
 fn extras(ui: &mut Ui, draft: &mut Draft) {
     let filled = !draft.description.trim().is_empty() || !draft.lineup.images.is_empty();
     section(ui, "Description and Pictures", filled, true);
@@ -354,24 +354,9 @@ fn extras(ui: &mut Ui, draft: &mut Draft) {
         draft.lineup.images.remove(at);
     }
     let room = draft.lineup.images.len() < pictures::MOST;
-    let mut add = false;
-    ui.horizontal(|ui| {
-        let wide = ui.available_width() - controls::width(ui, "Add Picture") - space::SM;
-        let typed = controls::field(
-            ui,
-            &mut draft.picture,
-            "The path of a picture on this PC",
-            wide,
-        );
-        add = typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let can = room && !draft.picture.trim().is_empty();
-        add |= controls::button(ui, "Add Picture", Tone::Plain, can).clicked();
-    });
-    // Pasted from Explorer, a path comes in quotes.
-    let path = draft.picture.trim().trim_matches('"').to_owned();
-    if add && room && !path.is_empty() {
-        draft.lineup.images.push(path);
-        draft.picture.clear();
+    if controls::button(ui, "Choose Pictures", Tone::Plain, room).clicked() {
+        let ctx = ui.ctx().clone();
+        overseer_native::pick_pictures(move || ctx.request_repaint());
     }
     words(
         ui,
@@ -450,11 +435,13 @@ fn clip(
     }
     ui.horizontal(|ui| {
         caption(ui, "Volume");
-        ui.add(
+        let slid = ui.add(
             egui::Slider::new(&mut draft.volume, 0.0..=200.0)
                 .suffix("%")
                 .step_by(5.0),
         );
+        let volume = f64::from(draft.volume);
+        slid.widget_info(|| egui::WidgetInfo::slider(true, volume, "Volume"));
     });
     let link = draft.source.trim().starts_with("http");
     missing(ui, tools, link);
@@ -648,6 +635,18 @@ fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
         let response = ui
             .interact(grip, ui.id().with(("trim", left)), Sense::drag())
             .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        let value = if left { start } else { end };
+        response.widget_info(|| {
+            egui::WidgetInfo::slider(
+                true,
+                value,
+                if left {
+                    "Clip start, in seconds"
+                } else {
+                    "Clip end, in seconds"
+                },
+            )
+        });
         held |= response.dragged();
         if response.dragged()
             && let Some(pointer) = response.interact_pointer_pos()
@@ -684,10 +683,11 @@ fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
 fn around(ui: &Ui, start: f64, end: f64, total: f64) -> (f64, f64) {
     let margin = (end - start).max(5.0);
     let ease = |name: &str, to: f64| {
-        f64::from(
-            ui.ctx()
-                .animate_value_with_time(ui.id().with(name), to as f32, ZOOM),
-        )
+        f64::from(ui.ctx().animate_value_with_time(
+            ui.id().with(name),
+            to as f32,
+            overseer_ui::motion::lasting(ui.ctx(), ZOOM),
+        ))
     };
     let lo = ease("trim-lo", (start - margin).max(0.0));
     let hi = ease("trim-hi", (end + margin).min(total));

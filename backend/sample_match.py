@@ -114,8 +114,10 @@ def _intel(
 ) -> dict[str, Any]:
     others = [a for a in rng.sample(sample_data.AGENT_NAMES, 4) if a != main_agent][:2]
     main = main_agent or others.pop(0)
-    top = [{"agent": main, "games": rng.randint(3, 6)}]
-    top += [{"agent": a, "games": rng.randint(1, 3)} for a in others]
+    played = [(main, rng.randint(3, 6))] + [(a, rng.randint(1, 3)) for a in others]
+    top = [
+        {"agent": a, "games": n, "role": (resolve_agent(a) or {}).get("role")} for a, n in played
+    ]
     if hot:
         form = ["W"] * rng.randint(3, 4)
         form += [rng.choice(["W", "L"]) for _ in range(5 - len(form))]
@@ -152,7 +154,7 @@ def _intel(
         "form": form,
         "streak": form_streak(form),
         "mapWins": map_wins,
-        "habits": habits,
+        "habits": {**habits, "asked": 20},
     }
 
 

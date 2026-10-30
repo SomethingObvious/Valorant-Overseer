@@ -146,8 +146,24 @@ fn writable(root: &Path) -> Result<(), String> {
             drop(std::fs::remove_file(&probe));
             Ok(())
         }
-        Err(e) => Err(format!("Can't write here: {e}")),
+        Err(e) => Err(cant_write(&e)),
     }
+}
+
+/// Why a folder can't be written to, in words, with Windows' own code kept
+/// at the end for anybody who searches it.
+fn cant_write(e: &std::io::Error) -> String {
+    let said = match e.raw_os_error() {
+        Some(5) => {
+            "Windows won't let setup write here. Pick a folder in your user folder, or run setup again from your Downloads"
+        }
+        Some(32 | 33) => {
+            "Another program has this folder open. Close Overseer if it's running, then press Check Again"
+        }
+        Some(112) => "The drive is full. Free up some space, then press Check Again",
+        _ => "Can't write here",
+    };
+    format!("{said}. ({e})")
 }
 
 /// The version already installed, from the marker the installer writes.

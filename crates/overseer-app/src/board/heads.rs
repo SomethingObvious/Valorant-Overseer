@@ -213,13 +213,19 @@ fn economy(
             paint::label(),
             colour::TEXT_STRONG,
         );
-        let _who = ui
-            .interact(chip, ui.id().with(("economy", team, tag)), Sense::hover())
-            .on_hover_text(format!(
-                "{} after a lost pistol round: {}",
-                if tag == "forces" { "Buys" } else { "Saves" },
-                who.join(", ")
-            ));
+        let id = ui.id().with(("economy", team, tag));
+        if ui.interact(chip, id, Sense::hover()).hovered() {
+            super::tip::say_under(
+                ui.ctx(),
+                id.with("card"),
+                chip,
+                &format!(
+                    "{} after a lost pistol round: {}",
+                    if tag == "forces" { "Buys" } else { "Saves" },
+                    who.join(", ")
+                ),
+            );
+        }
         end = chip.right() + space::SM;
     }
     end + space::SM
@@ -271,7 +277,7 @@ fn averages(
             Align2::RIGHT_CENTER,
             name,
             paint::label(),
-            ink.gamma_multiply(0.75),
+            ink,
         );
         x = drawn.left() - space::XL;
     }
@@ -339,13 +345,48 @@ pub(crate) fn columns(ui: &mut Ui, grid: &Grid, sort: &Sort) -> Option<&'static 
                 egui::Stroke::NONE,
             ));
         }
+        if hit.hovered() {
+            super::tip::say_under(ui.ctx(), hit.id.with("card"), hit.rect, column.about);
+        }
         if hit
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(column.about)
             .clicked()
         {
             clicked = Some(column.head);
         }
     }
+    missing(ui, &painter, rect, &grid.dropped);
     clicked
+}
+
+/// How many columns are on but don't fit, at the end of the heads, with
+/// their names on its hover.
+fn missing(ui: &Ui, painter: &egui::Painter, rect: Rect, dropped: &[&str]) {
+    let Some((last, others)) = dropped.split_last() else {
+        return;
+    };
+    let drawn = caps_text(
+        painter,
+        pos2(rect.right() - space::SM, rect.center().y),
+        Align2::RIGHT_CENTER,
+        &format!("+{}", dropped.len()),
+        paint::label(),
+        colour::TEXT_FAINT,
+    );
+    let hit = ui.interact(
+        drawn.expand(space::SM),
+        ui.id().with("missing"),
+        Sense::hover(),
+    );
+    let named = if others.is_empty() {
+        format!("{last} doesn't fit")
+    } else {
+        format!("{} and {last} don't fit", others.join(", "))
+    };
+    let said =
+        format!("{named} at this width. Widen the window or close the detail panel to see them.");
+    hit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &said));
+    if hit.hovered() {
+        super::tip::say_under(ui.ctx(), hit.id.with("card"), hit.rect, &said);
+    }
 }

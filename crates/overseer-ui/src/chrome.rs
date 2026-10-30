@@ -42,6 +42,9 @@ pub fn buttons(ui: &Ui, rect: Rect, order: &[Button], state: State) -> (f32, Opt
     let painter = ui.painter();
     let mut x = rect.right();
     let mut clicked = None;
+    // Placed right to left, then made left to right, so Tab goes across the
+    // bar the way it reads.
+    let mut placed = Vec::with_capacity(order.len());
     for &button in order {
         if button == Button::Settings {
             x -= space::MD;
@@ -53,7 +56,12 @@ pub fn buttons(ui: &Ui, rect: Rect, order: &[Button], state: State) -> (f32, Opt
             x -= space::MD;
         }
         x -= WIDTH;
-        let area = Rect::from_min_size(pos2(x, rect.top()), vec2(WIDTH, rect.height()));
+        placed.push((
+            button,
+            Rect::from_min_size(pos2(x, rect.top()), vec2(WIDTH, rect.height())),
+        ));
+    }
+    for &(button, area) in placed.iter().rev() {
         let hit = ui.interact(area, ui.id().with(("chrome", button as u8)), Sense::click());
         let hot = hit.hovered();
         let open = state.open == Some(button);
@@ -61,8 +69,10 @@ pub fn buttons(ui: &Ui, rect: Rect, order: &[Button], state: State) -> (f32, Opt
             painter.rect_filled(
                 area,
                 0,
+                // Darker than the enemy's red, so the cream cross on it
+                // passes 4.5 to 1.
                 if button == Button::Close {
-                    colour::ENEMY
+                    crate::shape::blend(colour::ENEMY, colour::VOID, 0.3)
                 } else {
                     colour::BG_HOVER
                 },

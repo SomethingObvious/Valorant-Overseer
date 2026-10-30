@@ -9,7 +9,7 @@ use crate::board;
 use crate::board::COLUMNS;
 use crate::board::grid::Column;
 use crate::controls;
-use crate::hotkey::{Failure, LABEL};
+use crate::hotkey::{self, Failure};
 use crate::lineups::{COLOURS, SIZES, SPEEDS, speed_name, swatch};
 use crate::offline::Offline;
 use crate::overlay::Corner;
@@ -95,12 +95,24 @@ pub(crate) fn settings(
             changed |= your_pc(ui, settings, machine, still);
             changed |= effort(ui, settings, quality, why);
             changed |= updates(ui, settings, still);
-            legend(ui);
-            keys(ui);
             data(ui, root);
             ui.add_space(space::XXL);
         });
     changed
+}
+
+/// Draws the help screen: what the board's marks mean, and every key. Kept
+/// out of Settings, which is only for what can be changed.
+pub(crate) fn help(ui: &mut Ui) {
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add_space(space::LG);
+            title(ui, "Help", "Press Esc or ? to go back.");
+            legend(ui);
+            keys(ui);
+            ui.add_space(space::XXL);
+        });
 }
 
 /// Whether the footer says when a newer version is out.
@@ -235,6 +247,52 @@ fn data(ui: &mut Ui, root: &std::path::Path) {
     );
 }
 
+/// Each mark on a row and what it means, for [`legend`].
+const MARKS: [(&str, &str); 12] = [
+    (
+        "Worth a Look",
+        "An amber row and label. Rest on the label for the reasons.",
+    ),
+    (
+        "Party Tab",
+        "A tab down the left joins players who queued together. Dashed with a question mark is a guess.",
+    ),
+    (
+        "Last 5 Games",
+        "Newest at the left. A solid pip is a win, an outlined one a loss, and a grey one a draw.",
+    ),
+    (
+        "Faint Numbers",
+        "Too few games behind them to trust, like a K/D off one or two.",
+    ),
+    (
+        "Under the K/D",
+        "How many games it's from when that's only a few, or the win rate when the Win column has no room.",
+    ),
+    ("Peak", "Their highest rank, and the act it was in."),
+    (
+        "Tags",
+        "Rest on a tag, like FORCES, for what it's based on.",
+    ),
+    (
+        "Number Colours",
+        "On the enemy's side a high K/D runs from amber to red, since it's bad news for you. On yours it runs to green.",
+    ),
+    (
+        "Bright Level",
+        "Under level 60 at a real rank, which is young for an account that has ranked.",
+    ),
+    (
+        "Met",
+        "How many times you've played with or against them before.",
+    ),
+    ("Folded Corner", "You wrote a note about them."),
+    (
+        "Side",
+        "Red for Attack and blue for Defense, beside the map's name.",
+    ),
+];
+
 /// What the marks on a player's row mean, for what a glance doesn't say.
 fn legend(ui: &mut Ui) {
     section(
@@ -242,35 +300,12 @@ fn legend(ui: &mut Ui) {
         "Reading the Board",
         "What the marks on a player's row mean.",
     );
-    let marks = [
-        (
-            "Worth a Look",
-            "An amber row and label. Rest on the label for the reasons.",
-        ),
-        (
-            "Party Tab",
-            "A tab down the left joins players who queued together. Dashed with a question mark is a guess.",
-        ),
-        (
-            "Last 5 Games",
-            "Newest at the left. A solid pip is a win, an outlined one a loss, and a grey one a draw.",
-        ),
-        (
-            "Faint Numbers",
-            "Too few games behind them to trust, like a K/D off one or two.",
-        ),
-        ("Peak", "Their highest rank, and the act it was in."),
-        (
-            "Tags",
-            "Rest on a tag, like FORCES, for what it's based on.",
-        ),
-    ];
     let font = Face::Display.at(size::LABEL);
-    let widest = marks
+    let widest = MARKS
         .iter()
         .map(|(mark, _)| caps_width(ui.painter(), mark, font.clone()))
         .fold(0.0, f32::max);
-    for (mark, what) in marks {
+    for (mark, what) in MARKS {
         let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
         response.widget_info(|| {
@@ -309,7 +344,6 @@ fn keys(ui: &mut Ui) {
         "These work while the Overseer window is in front.",
     );
     let keys = [
-        ("/", "Search for a player or an agent"),
         (",", "Open or close settings"),
         ("h", "Open or close your match history"),
         ("l", "Open or close your lineups"),
@@ -318,15 +352,21 @@ fn keys(ui: &mut Ui) {
             "o",
             "Show the overlay for 15 seconds, or hide it. Ctrl+Alt+O does the same in game",
         ),
-        ("up, down", "Select the previous or next player"),
+        ("arrows", "Select the previous or next player"),
+        ("home, end", "Select the first or last player"),
         ("n", "Write a note about the selected player"),
-        ("ctrl+c", "Copy the selected player's Riot ID"),
+        ("ctrl c", "Copy the selected player's Riot ID"),
         (
-            "escape",
-            "Clear the search, leave a full screen clip, or close this screen",
+            "?",
+            "Open this list and what the marks on the board mean. F1 does the same",
         ),
+        ("ctrl z", "Undo the last change in Draw"),
+        ("escape", "Leave a full screen clip, or close this screen"),
         ("space", "Play or pause a lineup's clip"),
-        ("t", "Show or hide every lineup's name on the map"),
+        (
+            "t",
+            "On the board, jump to the other team. On Lineups, show or hide every lineup's name",
+        ),
         ("r", "Turn the lineup map a quarter turn"),
         (
             "f",
@@ -339,8 +379,11 @@ fn keys(ui: &mut Ui) {
         .map(|(key, _)| overseer_ui::keycap_width(ui.painter(), key))
         .fold(0.0, f32::max);
     for (key, what) in keys {
-        let (rect, _response) =
+        let (rect, response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{key}. {what}"))
+        });
         if !ui.is_rect_visible(rect) {
             continue;
         }
@@ -382,7 +425,84 @@ fn columns(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
             changed |= switches(right, second, settings, still);
         }
     });
-    changed
+    changed | games_read(ui, settings) | party_kept(ui, settings)
+}
+
+/// How many games each row's K/D and reads come from. True when it changed.
+fn games_read(ui: &mut Ui, settings: &mut Settings) -> bool {
+    let options: Vec<(f32, String)> = crate::settings::GAMES_READ
+        .iter()
+        .map(|&g| (f32::from(g), g.to_string()))
+        .collect();
+    let mut picked = f32::from(settings.games_read);
+    let picked = choice(ui, "Games", &options, &mut picked)
+        .then(|| {
+            crate::settings::GAMES_READ
+                .into_iter()
+                .find(|&g| (f32::from(g) - picked).abs() < 0.5)
+        })
+        .flatten();
+    if let Some(games) = picked {
+        settings.games_read = games;
+    }
+    let windows: Vec<(f32, String)> = crate::settings::GAMES_WITHIN
+        .iter()
+        .map(|&d| {
+            let said = if d == 0 {
+                "Any Age".to_owned()
+            } else {
+                format!("{d} Days")
+            };
+            (f32::from(d), said)
+        })
+        .collect();
+    let mut within = f32::from(settings.games_within);
+    let within = choice(ui, "Within", &windows, &mut within)
+        .then(|| {
+            crate::settings::GAMES_WITHIN
+                .into_iter()
+                .find(|&d| (f32::from(d) - within).abs() < 0.5)
+        })
+        .flatten();
+    if let Some(days) = within {
+        settings.games_within = days;
+    }
+    note(
+        ui,
+        "Games each row's K/D and reads come from, and how old they can be. Every row gets 5 first, then works back to this. More is steadier but takes Riot longer.",
+    );
+    picked.is_some() || within.is_some()
+}
+
+/// How long your party's games stay on disk. True when it changed.
+fn party_kept(ui: &mut Ui, settings: &mut Settings) -> bool {
+    let options: Vec<(f32, String)> = crate::settings::PARTY_KEPT
+        .iter()
+        .map(|&d| {
+            let said = if d == 0 {
+                "Off".to_owned()
+            } else {
+                format!("{d} Days")
+            };
+            (f32::from(d), said)
+        })
+        .collect();
+    let mut kept = f32::from(settings.party_kept);
+    let picked = choice(ui, "Keep", &options, &mut kept)
+        .then(|| {
+            crate::settings::PARTY_KEPT
+                .into_iter()
+                .find(|&d| (f32::from(d) - kept).abs() < 0.5)
+        })
+        .flatten();
+    if let Some(days) = picked {
+        settings.party_kept = days;
+    }
+    note(
+        ui,
+        "How long your party's games stay on disk, so a restart reads them back instead of asking Riot again. Stats still only count your newest games.",
+    );
+    picked.is_some()
 }
 
 /// Below this width the column switches stay in one list.
@@ -438,40 +558,74 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
             changed = true;
         }
     }
+    let keys: Vec<(f32, String)> = hotkey::Key::ALL
+        .iter()
+        .enumerate()
+        .map(|(at, key)| (at as f32, key.label().to_owned()))
+        .collect();
+    let mut picked = hotkey::Key::ALL
+        .iter()
+        .position(|&k| k == settings.overlay.key)
+        .unwrap_or(0) as f32;
+    if choice(ui, "Key", &keys, &mut picked)
+        && let Some(&key) = hotkey::Key::ALL.get(picked as usize)
+    {
+        settings.overlay.key = key;
+        changed = true;
+    }
+    let label = settings.overlay.key.label();
     match trouble.hotkey {
         None => note(
             ui,
             &format!(
-                "Press {LABEL} in game to turn the overlay on or off. It only shows when VALORANT runs in windowed fullscreen, not fullscreen."
+                "Press {label} in game to turn the overlay on or off. It only shows when VALORANT runs in windowed fullscreen, not fullscreen."
             ),
         ),
         Some(Failure::Taken) => warning(
             ui,
             &format!(
-                "Another program is using {LABEL}, so the overlay can only be turned on or off here. Close that program and restart Overseer to use the shortcut."
+                "Another program is using {label}. Pick another key above and it works straight away."
             ),
         ),
         Some(Failure::Refused(_)) => warning(
             ui,
             &format!(
-                "Windows couldn't set up {LABEL}, so the overlay can only be turned on or off here. Restart Overseer to try again."
+                "Windows couldn't set up {label}. Pick another key above, or restart Overseer to try again."
             ),
         ),
     }
 
-    section(ui, "System Tray", "The Overseer icon near the clock.");
-    match trouble.tray {
-        None => note(
-            ui,
-            "Closing the window quits Overseer. While it runs, click the icon to bring the window back, or right-click it and choose Quit.",
-        ),
-        Some(_) => warning(
-            ui,
-            "Overseer couldn't add its tray icon. Reinstalling Overseer puts it back.",
-        ),
-    }
+    tray(ui, trouble.tray.is_some());
     changed
 }
+
+/// The tray's section: how the icon works, or that it failed, with a way
+/// to try again.
+fn tray(ui: &mut Ui, failed: bool) {
+    section(ui, "System Tray", "The Overseer icon near the clock.");
+    if !failed {
+        note(
+            ui,
+            "Closing the window quits Overseer. While it runs, click the icon to bring the window back, or right-click it and choose Quit.",
+        );
+        return;
+    }
+    warning(
+        ui,
+        "Overseer couldn't add its tray icon. Try Again asks Windows once more, and if it still fails, reinstalling Overseer puts it back.",
+    );
+    ui.horizontal(|ui| {
+        ui.add_space(space::XL);
+        if controls::button(ui, "Try Again", controls::Tone::Plain, true).clicked() {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new(TRAY_AGAIN), true));
+        }
+    });
+}
+
+/// Set when Try Again is pressed under a tray icon that failed, for the app
+/// to make it again on its own thread.
+pub(crate) const TRAY_AGAIN: &str = "tray-again";
 
 /// A button that installs yt-dlp and `FFmpeg`, or updates them, with winget in
 /// a console of its own so the progress shows. Nothing runs until it's
@@ -760,27 +914,29 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
     }
 }
 
-/// The sections of Settings, in the order the page has them, for the chips
-/// at its top to jump to.
-const SECTIONS: [&str; 13] = [
-    "Offline Chat",
-    "Columns",
-    "Layout",
-    "Overlay",
-    "System Tray",
-    "Lineup Clips",
-    "Lineup Maps",
-    "Your PC",
-    "Graphics",
-    "Updates",
-    "Reading the Board",
-    "Keyboard Shortcuts",
-    "Your Data",
+/// The sections of Settings for the chips at its top to jump to, in four
+/// groups, since thirteen chips in a row read as one wall.
+const SECTIONS: [(&str, &[&str]); 4] = [
+    ("Board", &["Columns", "Layout"]),
+    ("In Game", &["Offline Chat", "Overlay"]),
+    ("Lineups", &["Lineup Clips", "Lineup Maps"]),
+    (
+        "App",
+        &["System Tray", "Your PC", "Graphics", "Updates", "Your Data"],
+    ),
 ];
+
+/// Room for the longest group name, so every group's chips start together.
+const GROUP: f32 = 64.0;
 
 /// Where a chip at the top of Settings asked to go, until the section is
 /// drawn and scrolls there.
 const JUMP: &str = "settings-jump";
+
+/// Scrolls Settings to the section called `name` the next time it is drawn.
+pub(crate) fn open_at(ctx: &egui::Context, name: &str) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
+}
 
 /// A chip for every section, which scrolls the page to it, since the page is
 /// long and every group on it looks alike.
@@ -790,15 +946,27 @@ fn jumps(ui: &mut Ui) {
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(space::XL as i8, 0))
         .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
-                for name in SECTIONS {
-                    if controls::chip(ui, name, false).clicked() {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
+            for (group, names) in SECTIONS {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
+                    let (rect, _response) =
+                        ui.allocate_exact_size(vec2(GROUP, space::ROW - space::SM), Sense::hover());
+                    let _drawn = caps_text(
+                        ui.painter(),
+                        pos2(rect.left(), rect.center().y),
+                        Align2::LEFT_CENTER,
+                        group,
+                        Face::Display.at(size::MICRO),
+                        colour::TEXT_FAINT,
+                    );
+                    for &name in names {
+                        if controls::chip(ui, name, false).clicked() {
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
+                        }
                     }
-                }
-            })
+                });
+            }
         });
 }
 
@@ -866,6 +1034,35 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
     let top = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .galley(pos2(rect.left() + space::XL, top), galley, colour::TEXT_DIM);
+}
+
+/// The strip over the board on somebody's first look: where to start, and
+/// how to find the rest. True once Got It is pressed.
+pub(crate) fn welcome(ui: &mut Ui) -> bool {
+    let mut done = false;
+    egui::Frame::NONE
+        .fill(colour::BG_RAISED)
+        .inner_margin(egui::Margin::symmetric(space::XL as i8, space::MD as i8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let room = ui.available_width() - controls::width(ui, "Got It") - space::LG;
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "New here? Click a player for everything on them, rest on any mark or tag for what it means, and press ? for every key and mark.",
+                            )
+                            .font(Face::Body.at(size::LABEL + 1.0))
+                            .color(colour::TEXT),
+                        )
+                        .wrap(),
+                    );
+                });
+                done = controls::button(ui, "Got It", controls::Tone::Plain, true).clicked();
+            });
+        });
+    done
 }
 
 /// Something that has gone wrong, under a group: a warning sign and the
@@ -999,8 +1196,11 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 [colour::BG, colour::VOID],
             ));
             if board.players.is_empty() {
-                app::snapshot_empty(ui);
+                app::snapshot_empty(ui, board);
                 return;
+            }
+            if settings.welcome == crate::settings::Welcome::Due {
+                let _done = welcome(ui);
             }
             // Fixtures pick by name, and the board keys by account the way
             // the window does.
@@ -1019,7 +1219,6 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                 &board::Scene {
                     board,
                     sort,
-                    filter: "",
                     selected: chosen,
                     notes,
                     hidden: &settings.hidden_columns,

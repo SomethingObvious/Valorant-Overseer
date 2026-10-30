@@ -11,6 +11,7 @@ no tag costs a request.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from common.check import check
@@ -20,8 +21,8 @@ from common.check import check
 # rounds that can say so. A Spectre is bought on every half buy, so it
 # takes a lot more of them to mean anything.
 WEAPONS: tuple[tuple[str, str, float, int], ...] = (
-    ("Operator", "op", 0.10, 4),
-    ("Outlaw", "outlaw", 0.15, 3),
+    ("Operator", "op", 0.08, 4),
+    ("Outlaw", "outlaw", 0.05, 3),
     ("Marshal", "marshal", 0.15, 3),
     ("Judge", "judge", 0.15, 3),
     ("Bucky", "bucky", 0.15, 3),
@@ -40,34 +41,38 @@ ENTRY_SHARE = 0.30
 FORCE_SHARE = 0.5
 # The fewest rounds any rate is read from.
 ENOUGH_ROUNDS = 30
+# The share of their games on one agent that makes them a one-trick. Every
+# game asked too much of twenty, where one off game is a fill, not a habit.
+ONE_TRICK_SHARE = 0.75
+# Clutches won per game that stand out. Over twenty games nearly anybody wins
+# three, so the count has to grow with the games.
+CLUTCH_RATE = 0.4
 
-# What each tag means, for somebody who has not met it before. The "why"
-# beside it is about this player, and this is about the word.
+# What each tag means, for somebody who has not met it before: the rule it
+# was given by, with the same thresholds. The "why" beside it is about this
+# player, and this is about the word.
 MEANS: dict[str, str] = {
-    "op": "Plays the Operator a lot. Expect it on long angles.",
-    "outlaw": "Buys the Outlaw often: a cheap two-shot sniper, usually on a half buy.",
-    "marshal": "Buys the Marshal often: a light sniper that moves fast.",
-    "judge": "Buys the Judge often: a shotgun, deadly close up and around corners.",
-    "bucky": "Buys the Bucky often: a cheap shotgun for close angles.",
-    "odin": "Buys the Odin often: a machine gun that sprays through walls.",
-    "ares": "Buys the Ares often: a cheaper machine gun that sprays through walls.",
-    "spectre": "Buys the Spectre a lot: an SMG, strong close up and on the move.",
-    "sheriff": "Gets a lot of kills with the Sheriff: one-taps, even on an eco.",
-    "entry": "Takes the round's first fight often. Expect them first through the door.",
-    "forces": "Buys a gun after losing the pistol round rather than saving. "
-    "Round two will have guns.",
-    "saves": "Saves after losing the pistol round. Round two will be an eco.",
-    "one-trick": "Plays the same agent in every recent match, and is comfortable on it.",
-    "off main": "Not on the agent they usually play, and often weaker than their numbers.",
-    "hot": "On a winning streak.",
-    "cold": "On a losing streak.",
-    "rival": "You have played against them several times before.",
-    "deranked": "Was clearly higher last act, and probably better than this rank.",
-    "clutch": "Wins a lot of rounds as the last one alive. Do not leave them for last.",
-    "aced": "Killed all five in a round recently.",
-    "planter": "Carries and plants the spike a lot on attack.",
-    "strong map": "Wins a lot on this map.",
-    "teammate": "Has been on your team before.",
+    **{
+        tag: f"Carried the {weapon} in at least {round(share * 100)}% of their rounds."
+        for weapon, tag, share, _ in WEAPONS
+    },
+    "sheriff": "At least 15% of their kills were with the Sheriff.",
+    "entry": f"In the round's first fight in at least {round(ENTRY_SHARE * 100)}% of their "
+    "rounds, won or lost.",
+    "forces": "Bought a gun after at least half of their lost pistol rounds.",
+    "saves": "Saved after more than half of their lost pistol rounds.",
+    "one-trick": f"Played this agent in at least {round(ONE_TRICK_SHARE * 100)}% of their "
+    "recent games.",
+    "off main": "Not one of the 3 agents they played most in their recent games.",
+    "hot": "Won at least their last 3 games in a row.",
+    "cold": "Lost at least their last 3 games in a row.",
+    "rival": "Played against you at least 3 times before.",
+    "deranked": "At least 3 ranks higher last act than now.",
+    "clutch": "Won at least 3 rounds as the last one alive, and 2 for every 5 recent games.",
+    "aced": "Killed all 5 enemies in one round in their recent games.",
+    "planter": "Planted the spike in at least 30% of their attack rounds.",
+    "strong map": "Won at least 67% of at least 3 recent games on this map.",
+    "teammate": "On your team at least twice before.",
 }
 
 # What sort of thing each tag is, for the heading of its explanation.
@@ -91,12 +96,18 @@ KIND: dict[str, str] = {
 }
 
 # The leaderboard's tag is its place, so it has no key of its own.
-LEADERBOARD_MEANS = "On the leaderboard: one of the best players in the region."
+LEADERBOARD_MEANS = "Their place on the regional leaderboard."
 
 
 def tags_for(p: dict[str, Any], map_name: str | None) -> list[dict[str, str]]:
-    """Every tag this player has earned, most useful first."""
+    """Every tag this player has earned, most useful first.
+
+    None until their games have all loaded, so a tag never comes from a
+    thinner read than the one it ends up on.
+    """
     out: list[dict[str, str]] = []
+    if p.get("readsReady") is False:
+        return out
 
     def add(tag: str, why: str) -> None:
         ranked = tag.startswith("#")
@@ -138,10 +149,11 @@ def tags_for(p: dict[str, Any], map_name: str | None) -> list[dict[str, str]]:
     top = [a for a in p.get("topAgents") or [] if isinstance(a, dict) and a.get("agent")]
     if agent and matches >= 3 and top:
         played = {str(a["agent"]): int(a.get("games") or 0) for a in top}
-        if played.get(agent, 0) >= matches:
-            add("one-trick", f"{agent} in all of {last}")
+        on = min(played.get(agent, 0), matches)
+        if on / matches >= ONE_TRICK_SHARE:
+            add("one-trick", f"{agent} in {on} of {last}")
         elif agent not in played:
-            add("off main", f"No {agent} in {last}, mostly {top[0]['agent']}")
+            add("off main", f"{agent} isn't one they play most, mostly {top[0]['agent']}")
 
     streak = p.get("streak") or {}
     run = int(streak.get("count") or 0)
@@ -165,7 +177,7 @@ def tags_for(p: dict[str, Any], map_name: str | None) -> list[dict[str, str]]:
         add("deranked", f"Was {p.get('previousRank')} last act")
 
     clutches = int(h.get("clutches") or 0)
-    if clutches >= 3:
+    if clutches >= max(3, math.ceil(matches * CLUTCH_RATE)):
         add("clutch", f"Won {clutches} clutches in {last}")
 
     aces = int(h.get("aces") or 0)
@@ -194,6 +206,7 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
         if isinstance(p, dict):
             p["autoTags"] = tags_for(p, board.get("map"))
             p.pop("habits", None)
+            p.pop("readsReady", None)
     return board
 
 
@@ -259,6 +272,19 @@ def _self_check() -> None:
     check("off main" in [t["tag"] for t in tags_for(off, None)])
     thin = {**off, "habits": {**base["habits"], "matches": 2}}
     check("off main" not in [t["tag"] for t in tags_for(thin, None)])
+
+    # Over twenty games a fill game doesn't undo a one-trick, and three
+    # clutches are everybody's.
+    def deep(on: int, clutches: int) -> list[str]:
+        habits = {**base["habits"], "matches": 20, "clutches": clutches}
+        top = [{"agent": "Jett", "games": on}, {"agent": "Sova", "games": 20 - on}]
+        return [t["tag"] for t in tags_for({**base, "habits": habits, "topAgents": top}, None)]
+
+    check("one-trick" in deep(15, 3) and "one-trick" not in deep(14, 3))
+    check("clutch" not in deep(15, 3) and "clutch" in deep(15, 8))
+
+    # Nothing while their games are still loading.
+    check(tags_for({**base, "readsReady": False}, "Ascent") == [])
 
     # Nothing known, nothing said.
     check(tags_for({}, None) == [])

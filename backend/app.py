@@ -41,7 +41,7 @@ import sample_match
 import session_tracker
 import tags
 from agents import AGENTS
-from common import write_atomic
+from common import data_path, read_json, write_atomic
 from common.check import check
 from riot_client import (
     ClientNotReadyError,
@@ -136,9 +136,54 @@ _LAST_GOOD: dict[str, Any] = {"board": None, "at": 0.0, "notReady": False}
 _GAME_WAIT: dict[str, float] = {}
 _GAME_PATIENCE = 120.0
 _HOLD_SECS = 12
+# How long between live boards once a match is on. The round plays out in the
+# game, not here, so a board a tick slower costs nothing and spares the local
+# API. _watch_state still wakes the loop the moment the match ends.
+_INGAME_POLL = float(os.getenv("WS_STATE_POLL_INGAME", "15.0"))
 
 _BUILD_LOCK = threading.Lock()
 _BUILD_FRESH = 3.5
+
+
+# Your own row from the last board that had it, and when, kept on disk so the
+# window can still show your stats with no client to read them from.
+_YOU = data_path("you.json")
+_YOU_KEPT: dict[str, Any] = {}
+
+
+def _keep_you(board: dict[str, Any]) -> None:
+    """Keep your own row off a good board, writing it only when it changed."""
+    me = next(
+        (
+            p
+            for p in board.get("players") or []
+            if isinstance(p, dict) and p.get("puuid") and p.get("puuid") == board.get("selfPuuid")
+        ),
+        None,
+    )
+    if me is None or me == _YOU_KEPT.get("player"):
+        return
+    _YOU_KEPT.update(player=me, at=time.time())
+    write_atomic(_YOU, dict(_YOU_KEPT), prefix=".you-")
+
+
+def saved_you() -> dict[str, Any] | None:
+    """Return your last kept row and when it was kept, or None before there was one."""
+    if not _YOU_KEPT:
+        saved = read_json(_YOU, {})
+        if isinstance(saved, dict) and isinstance(saved.get("player"), dict):
+            _YOU_KEPT.update(player=saved["player"], at=saved.get("at"))
+    return dict(_YOU_KEPT) or None
+
+
+def _in_match() -> bool:
+    """Whether the last good board had you in a match."""
+    return (_LAST_GOOD["board"] or {}).get("state") == "INGAME"
+
+
+def board_pace(base: float) -> float:
+    """How long to wait before the next board: slower while a match is on."""
+    return max(base, _INGAME_POLL) if _in_match() else base
 
 
 def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
@@ -182,6 +227,10 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 tags.attach(board)
                 cards.attach(board)
                 board["appVersion"] = APP_VERSION
+                try:
+                    _keep_you(board)
+                except (OSError, TypeError, ValueError):
+                    LOG.exception("keeping your own row failed")
                 _LAST_GOOD["board"], _LAST_GOOD["at"] = board, time.time()
                 _LAST_GOOD["notReady"] = False
                 _GAME_WAIT.clear()
@@ -194,8 +243,18 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 else:
                     LOG.exception("live scoreboard failed")
 
-                if _LAST_GOOD["board"] and time.time() - _LAST_GOOD["at"] < _HOLD_SECS:
+                # Once a match is on, keep its board through a dropped or slow
+                # connection until a good build shows the match is over. The
+                # round only ends in the game, so bad Wi-Fi is no reason to
+                # clear the board you are reading. The client closing is: then
+                # the lockfile is gone and the usual hold runs out.
+                fresh = time.time() - _LAST_GOOD["at"] < _HOLD_SECS
+                if _LAST_GOOD["board"] and fresh:
                     return _LAST_GOOD["board"]
+                if _LAST_GOOD["board"] and _in_match() and LocalAuth.available():
+                    # Past the usual hold, the window says it isn't live.
+                    # Nothing is being read, so there is no reading to count down.
+                    return {**_LAST_GOOD["board"], "heldSince": _LAST_GOOD["at"], "reading": None}
                 notice = _client_notice()
                 # Under the default auto as much as local, so the window can
                 # say what it waits on.
@@ -209,6 +268,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                         "players": [],
                         "teams": {},
                         "notice": notice,
+                        "you": saved_you(),
                         "appVersion": APP_VERSION,
                     }
             else:
@@ -242,6 +302,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
         "waiting": "riot",
         "players": [],
         "teams": {},
+        "you": saved_you(),
         "notice": notice
         or {
             "level": "info",
@@ -380,13 +441,39 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                 count = 10
             owner = _current_puuid()
             if owner:
-                return past_games.recent(LocalAuth(), owner, count)
+                try:
+                    games = past_games.recent(LocalAuth(), owner, count)
+                except Exception:
+                    # Riot didn't answer, which offline is the usual case.
+                    # The last games kept stand in, and say how old they are.
+                    kept = past_games.last_kept(owner)
+                    if kept is None:
+                        raise
+                    LOG.warning(
+                        "history: Riot didn't answer, sending the kept games", exc_info=True
+                    )
+                    return kept
+                past_games.keep_last(owner, games)
+                return games
             if client.source_pref != "demo":
-                return {"error": "Open VALORANT and sign in to see your past games."}
+                return past_games.last_kept(None) or {
+                    "error": "Open VALORANT and sign in to see your past games."
+                }
             return sample_match.history(count)
 
         if req_type.startswith("lineup"):
             return _lineup_request(req_type, params)
+
+        if req_type == "games_read":
+            try:
+                live_match.set_depth(
+                    int(params.get("count") or 20),
+                    int(params.get("days") or 0),
+                    int(params.get("keep", 14)),
+                )
+            except (TypeError, ValueError):
+                return {"error": "games_read needs a count."}
+            return {"ok": True}
 
         if req_type == "offline":
             import offline_launch
@@ -429,6 +516,7 @@ def _start_ws_bridge() -> int:
             board_provider=ws_state_provider,
             ws_port=ws_port,
             request_handler=handle_data_request,
+            pace=board_pace,
         )
     except Exception as e:
         LOG.exception("VG-WS-001 WebSocket bridge failed to start")
@@ -465,7 +553,11 @@ def _watch_state() -> None:
             time.sleep(4.0)
             continue
         failing = None
-        if last is not None and state != last:
+        # After a dropped connection there is no last read, so the board on
+        # screen stands in. A match that ended while it was down then clears
+        # straight away, not at the slower in-match pace.
+        seen = last if last is not None else (_LAST_GOOD["board"] or {}).get("state")
+        if seen is not None and state != seen:
             refresh.soon()
         last = state
 
@@ -581,9 +673,54 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     check(_waited["state"] == "OFFLINE" and _waited["waiting"] == "game", _waited)
     _GAME_WAIT.clear()
 
+    # The loop waits longer between boards only while a match is on.
+    _LAST_GOOD["board"] = {"state": "MENUS"}
+    check(board_pace(4.0) == 4.0)
+    _LAST_GOOD["board"] = {"state": "INGAME"}
+    check(board_pace(4.0) == _INGAME_POLL)
+
+    # A match on screen holds through a dropped connection while the client is
+    # up, long past the usual hold, and lets go only once it is gone.
+    _LAST_GOOD["board"], _LAST_GOOD["at"] = {"state": "INGAME", "players": []}, 0.0
+    with (
+        mock.patch(f"{__name__}._live_enabled", return_value=True),
+        mock.patch(f"{__name__}.LocalAuth"),
+        mock.patch.object(client, "source_pref", "auto"),
+        mock.patch.object(live_match, "LiveMatch", side_effect=OSError("wifi")),
+        mock.patch(f"{__name__}.time.time", return_value=1e9),
+    ):
+        with mock.patch.object(LocalAuth, "available", return_value=True):
+            _held = build_live()
+            check(_held["state"] == "INGAME", "a match holds through a drop")
+            check(_held.get("heldSince") == 0.0, "and says it is held")
+        _LAST_GOOD["board"] = {"state": "INGAME", "players": []}
+        with mock.patch.object(LocalAuth, "available", return_value=False):
+            check(build_live()["state"] == "OFFLINE", "a closed client lets the match go")
+    _LAST_GOOD["board"] = None
+
+    # Your own row is kept off a good board, and read back from disk with no
+    # client, which is what the window shows as your last stats.
+    import tempfile
+    from pathlib import Path
+
+    with (
+        tempfile.TemporaryDirectory() as _tmp,
+        mock.patch(f"{__name__}._YOU", str(Path(_tmp) / "you.json")),
+    ):
+        _YOU_KEPT.clear()
+        check(saved_you() is None, "nothing kept yet")
+        _keep_you({"selfPuuid": "me", "players": [{"puuid": "them"}, {"puuid": "me", "kd": 1.2}]})
+        _YOU_KEPT.clear()
+        _kept = saved_you()
+        check(_kept is not None and _kept["player"] == {"puuid": "me", "kd": 1.2}, _kept)
+        _keep_you({"selfPuuid": None, "players": [{"puuid": None}]})
+        check(saved_you() == _kept, "a board without you keeps the last row")
+    _YOU_KEPT.clear()
+
     print(
         "app self-check OK (bridge requests answer in demo mode, cached boards keep their tags, "
-        "empty boards say what they wait on)"
+        "empty boards say what they wait on, a match holds through a dropped connection, "
+        "your last stats are kept)"
     )
     raise SystemExit(0)
 

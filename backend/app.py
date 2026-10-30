@@ -231,6 +231,9 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                     _keep_you(board)
                 except (OSError, TypeError, ValueError):
                     LOG.exception("keeping your own row failed")
+                # On every board, so an empty one between matches still offers
+                # your last stats, and they are never older than what is kept.
+                board["you"] = saved_you()
                 _LAST_GOOD["board"], _LAST_GOOD["at"] = board, time.time()
                 _LAST_GOOD["notReady"] = False
                 _GAME_WAIT.clear()
@@ -645,8 +648,10 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     ):
         for _tick in range(2):
             _LAST_GOOD["board"] = None
-            _read = [t["tag"] for t in build_live()["players"][0]["autoTags"]]
+            _built = build_live()
+            _read = [t["tag"] for t in _built["players"][0]["autoTags"]]
             check("op" in _read, (_tick, _read))
+            check("you" in _built, "a live board carries your kept row")
 
     # A board with no one on it says what it waits on, so the window can too.
     with mock.patch.object(LocalAuth, "available", return_value=False):

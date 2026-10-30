@@ -624,8 +624,7 @@ impl Overseer {
                 Event::Board(board) => {
                     let was = self.board.state.take();
                     let was_on = self.board.map.take();
-                    let you = std::mem::replace(&mut self.board, *board).you;
-                    self.board.you = self.board.you.take().or(you);
+                    self.board = *board;
                     // A match that starts with Lineups open moves it to the
                     // match's map. Only on a change, so a map picked by hand
                     // stays picked.

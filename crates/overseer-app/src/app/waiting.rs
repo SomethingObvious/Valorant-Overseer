@@ -468,6 +468,8 @@ mod tests {
     fn your_kept_row_is_read_from_the_backends_folder() {
         let root = std::env::temp_dir().join(format!("overseer-kept-{}", std::process::id()));
         let data = root.join("backend").join("data");
+        // A run that failed half way leaves its folder for the next one.
+        let _stale = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&data).expect("a temp folder");
         assert!(kept(&root).is_none(), "nothing kept yet");
         std::fs::write(data.join("you.json"), "not json").expect("a write");

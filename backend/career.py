@@ -32,14 +32,12 @@ STANDARD_QUEUES = frozenset({"competitive", "unrated", "swiftplay", "premier"})
 
 
 def career_mids(entries: list[dict[str, Any]], count: int) -> list[str]:
-    """Return the last few standard-mode matches, or of any mode when fewer than three are."""
-    every = [e["MatchID"] for e in entries if e.get("MatchID")]
-    standard = [
+    """Return the last `count` standard-mode matches, however few that is."""
+    return [
         e["MatchID"]
         for e in entries
         if e.get("MatchID") and str(e.get("QueueID") or "").lower() in STANDARD_QUEUES
-    ]
-    return (standard if len(standard) >= 3 else every)[:count]
+    ][:count]
 
 
 def rating_run(updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -96,9 +94,17 @@ def career_summary(matches: list[Any]) -> dict[str, Any]:
             if not pid:
                 continue
             e = seen.setdefault(
-                pid, {"puuid": pid, "name": mate.get("name"), "sharedMatches": 0, "agents": set()}
+                pid,
+                {
+                    "puuid": pid,
+                    "name": mate.get("name"),
+                    "sharedMatches": 0,
+                    "wins": 0,
+                    "agents": set(),
+                },
             )
             e["sharedMatches"] += 1
+            e["wins"] += m["result"] == "Victory"
             e["name"] = mate.get("name") or e["name"]
             if mate.get("agent"):
                 e["agents"].add(mate["agent"])
@@ -108,6 +114,7 @@ def career_summary(matches: list[Any]) -> dict[str, Any]:
                 "puuid": e["puuid"],
                 "name": e["name"],
                 "sharedMatches": e["sharedMatches"],
+                "winRate": round(100 * e["wins"] / e["sharedMatches"]),
                 "agents": sorted(e["agents"]),
             }
             for e in seen.values()
@@ -192,7 +199,7 @@ def _self_check() -> None:
         {"MatchID": "e", "QueueID": "swiftplay"},
     ]
     check(career_mids(mixed, 8) == ["b", "d", "e"])
-    check(career_mids(mixed[:3], 8) == ["a", "b", "c"])
+    check(career_mids(mixed[:3], 8) == ["b"])
 
     # The rating line leaves out placements and runs newest first.
     run = rating_run(
@@ -231,7 +238,12 @@ def _self_check() -> None:
     averages = career_summary(bought)["averages"]
     check((averages["games"], averages["kills"], averages["winRate"]) == (2, 15.0, 50), averages)
 
-    print("career self-check OK (5v5 first, rating line, bonus buys)")
+    # Somebody you keep queueing with comes with how those games went.
+    mate = {"puuid": "m", "name": "Mate#1"}
+    duo = [{**row, "teammates": [mate]} for row in bought + bought[:1]]
+    check(career_summary(duo)["coPlayers"][0]["winRate"] == 67, career_summary(duo)["coPlayers"])
+
+    print("career self-check OK (5v5 only, rating line, bonus buys, duo wins)")
 
 
 if __name__ == "__main__":

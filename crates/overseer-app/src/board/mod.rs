@@ -16,7 +16,7 @@ pub(crate) use rows::{few_games, fit, shown_name};
 
 use egui::{Margin, Rect, ScrollArea, Ui, pos2};
 use overseer_core::Board;
-use overseer_ui::{Face, colour, motion, size, space};
+use overseer_ui::{colour, motion, space};
 
 use crate::notes::Notes;
 use crate::sort::{self, Sort};
@@ -71,8 +71,6 @@ pub(crate) struct Scene<'a> {
     pub(crate) board: &'a Board,
     /// How the rows are ordered.
     pub(crate) sort: &'a Sort,
-    /// What the search is narrowing to.
-    pub(crate) filter: &'a str,
     /// Who is chosen, by account id.
     pub(crate) selected: Option<&'a str>,
     /// What has been written about whom.
@@ -102,6 +100,17 @@ pub(crate) struct Touched {
     pub(crate) heading: Option<&'static str>,
     /// The side whose worth-a-look chip was clicked.
     pub(crate) worth: Option<String>,
+    /// What a button under the waiting plate asked for.
+    pub(crate) waiting: Option<Asked>,
+}
+
+/// What a button under the waiting plate asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Asked {
+    /// Show My Last Stats.
+    LastStats,
+    /// Reconnect Now.
+    Reconnect,
 }
 
 /// The two sides, in reading order, as `(side, team id)`.
@@ -162,26 +171,24 @@ pub(crate) fn side_of(board: &Board, player: &overseer_core::Player) -> Side {
 }
 
 /// Who is on one side, in the order the board draws them: sorted by the
-/// clicked heading, minus anybody the search hides. The arrow keys walk this
-/// same list, so they only step through people on screen.
+/// clicked heading. The arrow keys walk this same list, so they always agree
+/// with the board.
 pub(crate) fn roster<'a>(
     board: &'a Board,
     team: &str,
     sort: &Sort,
-    filter: &str,
 ) -> Vec<&'a overseer_core::Player> {
     let mut players: Vec<&overseer_core::Player> =
         board.players.iter().filter(|p| on(p, team)).collect();
     sort::apply(&mut players, sort);
-    players.retain(|p| sort::matches(p, filter));
     players
 }
 
 /// Every account on screen, top to bottom, by id.
-pub(crate) fn order(board: &Board, sort: &Sort, filter: &str, enemies_first: bool) -> Vec<String> {
+pub(crate) fn order(board: &Board, sort: &Sort, enemies_first: bool) -> Vec<String> {
     teams(board, enemies_first)
         .iter()
-        .flat_map(|(_side, team)| roster(board, team, sort, filter))
+        .flat_map(|(_side, team)| roster(board, team, sort))
         .filter_map(|p| p.puuid.clone())
         .collect()
 }
@@ -283,7 +290,7 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
     // enemy block is empty, so that is your own five.
     let mut headed = false;
     for (side, team) in order {
-        let players = roster(scene.board, team, scene.sort, scene.filter);
+        let players = roster(scene.board, team, scene.sort);
         if players.is_empty() {
             continue;
         }
@@ -303,7 +310,6 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
         ui.add_space(space::XL);
     }
     if shown == 0 {
-        nobody(ui, scene.filter);
         return;
     }
     ladder::draw(ui, scene.board, order);
@@ -358,6 +364,7 @@ fn block(
             note: id.and_then(|id| scene.notes.text(id)),
             counted,
             still: scene.still,
+            nothing: rows::nothing_yet(scene.board),
         };
         let response = rows::row(ui, player, grid, &look);
         placed.push(response.rect);
@@ -392,24 +399,4 @@ fn block(
                 .add(paint::slant(cover, true, false, colour::ENEMY));
         }
     }
-}
-
-/// What to say when the search has hidden everybody. With no search it says
-/// nothing, since an empty board then means agent select.
-fn nobody(ui: &mut Ui, filter: &str) {
-    if filter.trim().is_empty() {
-        return;
-    }
-    ui.add_space(space::XXL);
-    ui.vertical_centered(|ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "Nobody matches \"{}\". Esc clears the search.",
-                filter.trim()
-            ))
-            .color(colour::TEXT_DIM)
-            .font(Face::Body.at(size::BODY)),
-        );
-    });
-    ui.add_space(space::XXL);
 }

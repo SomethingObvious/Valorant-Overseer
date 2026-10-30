@@ -33,7 +33,8 @@ struct Column {
     /// The figure for one player, or `None` when there isn't one.
     cell: fn(&Line) -> Option<String>,
     /// How good the figure is, from ordinary at 0 to as good as it gets at 1,
-    /// or `None` for a figure that isn't better for being bigger.
+    /// or `None` for one left plain. Only K/D and ACS are coloured, since a
+    /// whole row lit up hides the game that stood out.
     good: fn(&Line) -> Option<f32>,
 }
 
@@ -49,7 +50,7 @@ const COLUMNS: [Column; 9] = [
         head: "K",
         width: 34.0,
         cell: |l| l.kills.map(|n| n.to_string()),
-        good: |l| l.kills.map(|n| scale(f64::from(n), 12.0, 26.0)),
+        good: |_| None,
     },
     Column {
         head: "D",
@@ -61,7 +62,7 @@ const COLUMNS: [Column; 9] = [
         head: "A",
         width: 34.0,
         cell: |l| l.assists.map(|n| n.to_string()),
-        good: |l| l.assists.map(|n| scale(f64::from(n), 4.0, 12.0)),
+        good: |_| None,
     },
     Column {
         head: "K/D",
@@ -79,25 +80,25 @@ const COLUMNS: [Column; 9] = [
         head: "ADR",
         width: 50.0,
         cell: |l| l.adr.map(|n| n.to_string()),
-        good: |l| l.adr.map(|n| scale(f64::from(n), 120.0, 190.0)),
+        good: |_| None,
     },
     Column {
         head: "HS%",
         width: 50.0,
         cell: |l| l.hs_pct.map(|n| format!("{n}%")),
-        good: |l| l.hs_pct.map(|n| scale(f64::from(n), 16.0, 35.0)),
+        good: |_| None,
     },
     Column {
         head: "KAST",
         width: 56.0,
         cell: |l| l.kast.map(|n| format!("{n}%")),
-        good: |l| l.kast.map(|n| scale(f64::from(n), 65.0, 85.0)),
+        good: |_| None,
     },
     Column {
         head: "FB",
         width: 34.0,
         cell: |l| l.first_bloods.map(|n| n.to_string()),
-        good: |l| l.first_bloods.map(|n| scale(f64::from(n), 1.0, 5.0)),
+        good: |_| None,
     },
 ];
 
@@ -116,8 +117,14 @@ enum Past {
     },
     /// The answer.
     Have(Box<Recent>),
-    /// Why there are no games, in words for a player.
-    Refused(String),
+    /// Why no new games came, in words for a player, with the ones that were
+    /// showing kept on screen.
+    Refused {
+        /// What went wrong.
+        why: String,
+        /// The games from before, if there were any.
+        kept: Option<Box<Recent>>,
+    },
 }
 
 /// The screen's state: the games, and which of them are open.
@@ -140,8 +147,8 @@ impl History {
         }
         let kept = match std::mem::take(&mut self.past) {
             Past::Have(games) => Some(games),
-            Past::Asking { kept, .. } => kept,
-            Past::Idle | Past::Refused(_) => None,
+            Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept,
+            Past::Idle => None,
         };
         let id = bridge.ask("history", serde_json::json!({ "count": count }));
         self.past = Past::Asking { id, kept };
@@ -157,8 +164,13 @@ impl History {
     pub(crate) fn answered(&mut self, result: Result<serde_json::Value, String>) {
         let read = result.and_then(|value| {
             serde_json::from_value::<Recent>(value)
-                .map_err(|_| "Your games came back in a shape this build can't read.".to_owned())
+                .map_err(|_| "Your games came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned())
         });
+        let kept = match std::mem::take(&mut self.past) {
+            Past::Have(games) => Some(games),
+            Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept,
+            Past::Idle => None,
+        };
         self.past = match read {
             Ok(games) => {
                 if self.open.is_empty()
@@ -168,7 +180,7 @@ impl History {
                 }
                 Past::Have(Box::new(games))
             }
-            Err(why) => Past::Refused(why),
+            Err(why) => Past::Refused { why, kept },
         };
     }
 
@@ -201,13 +213,13 @@ impl History {
                     "Your most recent games. Click one for its scoreboard, or press Esc to go back.",
                 );
                 picked = counts(ui, count);
-                if let Some(words) = self.status(count, live) {
+                if let Some(words) = self.status(count, live, now_ms) {
                     view::note(ui, &words);
                 }
                 let games = match &self.past {
                     Past::Have(games) => Some(games),
-                    Past::Asking { kept, .. } => kept.as_ref(),
-                    Past::Idle | Past::Refused(_) => None,
+                    Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept.as_ref(),
+                    Past::Idle => None,
                 };
                 let all: Vec<&Game> = games.iter().flat_map(|g| g.games.iter()).collect();
                 for (at, game) in all.iter().enumerate() {
@@ -222,14 +234,21 @@ impl History {
     }
 
     /// A line on where things stand, when there is something to say.
-    fn status(&self, count: u32, live: bool) -> Option<String> {
+    fn status(&self, count: u32, live: bool, now_ms: i64) -> Option<String> {
         match &self.past {
             Past::Idle if !live => Some("Waiting for the backend to connect.".to_owned()),
             Past::Asking { .. } => Some(format!("Loading your last {count} games.")),
-            Past::Refused(why) => Some(why.clone()),
+            Past::Refused { why, kept: None } => Some(why.clone()),
+            Past::Refused { why, kept: Some(_) } => Some(format!(
+                "Couldn't load newer games, so these are the ones from before. {why}"
+            )),
             Past::Have(games) if games.games.is_empty() => {
                 Some("There are no games on this account yet.".to_owned())
             }
+            Past::Have(games) if games.saved_at.is_some() => Some(format!(
+                "Overseer can't reach Riot right now, so these are your games from {}.",
+                kept_ago(now_ms, games.saved_at)
+            )),
             Past::Have(games) if games.partial => Some(format!(
                 "Riot is limiting requests, so {} of {} came back. Open History again in a minute for the rest.",
                 games.games.len(),
@@ -698,6 +717,15 @@ fn outcome(game: &Game) -> Color32 {
     }
 }
 
+/// When something kept at `at`, in seconds since 1970, was, for the middle
+/// of a sentence: "3 hours ago", or "yesterday".
+pub(crate) fn kept_ago(now_ms: i64, at: Option<f64>) -> String {
+    at.map_or_else(
+        || "earlier".to_owned(),
+        |at| ago(now_ms, (at * 1000.0) as i64).to_lowercase(),
+    )
+}
+
 /// How long ago a match started, the way a person would say it.
 fn ago(now_ms: i64, then_ms: i64) -> String {
     let minutes = (now_ms - then_ms).max(0) as f64 / 60_000.0;
@@ -723,5 +751,30 @@ fn ago(now_ms: i64, then_ms: i64) -> String {
         count(days, "day")
     } else {
         count(days / 7.0, "week")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{History, Past};
+
+    /// A refresh that fails keeps the games that were on screen, and says so.
+    #[test]
+    fn a_failed_refresh_keeps_the_games_from_before() {
+        let mut history = History::showing(serde_json::json!({ "games": [] }));
+        let Past::Have(games) = std::mem::take(&mut history.past) else {
+            panic!("the games didn't land");
+        };
+        history.past = Past::Asking {
+            id: 1,
+            kept: Some(games),
+        };
+        history.answered(Err("Riot is down.".to_owned()));
+        assert!(matches!(history.past, Past::Refused { kept: Some(_), .. }));
+        assert!(
+            history
+                .status(5, true, 0)
+                .is_some_and(|said| said.contains("from before"))
+        );
     }
 }

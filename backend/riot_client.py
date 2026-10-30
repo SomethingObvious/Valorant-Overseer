@@ -7,10 +7,12 @@ Reads the lockfile, the tokens and the region, and throttles every call.
 from __future__ import annotations
 
 import base64
+import heapq
 import json
 import os
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +20,9 @@ from typing import Any
 
 import requests
 import urllib3
-from common import console_logger
+from common import console_logger, data_path, read_json, write_atomic
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from vconstants import GAMEMODES, map_name_from_path
 
 # The Riot client serves its local API on 127.0.0.1 with a self-signed
@@ -52,6 +56,11 @@ class _State:
 _STATE = _State()
 
 _SESSIONS = threading.local()
+# Windows drops a DNS answer for Riot's hosts now and then even on a steady
+# line, and every lookup that hit one failed outright. A resolve or connect
+# that fails is tried twice more, a second or so apart. A slow answer isn't,
+# as that would double an 8 second wait.
+_RETRY = Retry(total=2, connect=2, read=0, status=0, other=0, backoff_factor=0.5)
 # The client's token, by the lockfile it came through: the headers, whose
 # they are and when they were fetched. Every tick made a new LocalAuth and
 # fetched them again, and a token lasts about an hour.
@@ -68,6 +77,10 @@ def _session() -> requests.Session:
     session: requests.Session | None = getattr(_SESSIONS, "session", None)
     if session is None:
         session = requests.Session()
+        session.mount("https://", HTTPAdapter(max_retries=_RETRY))
+        # The client's own API refusing means the game is closed, which
+        # should show straight away.
+        session.mount("https://127.0.0.1", HTTPAdapter())
         _SESSIONS.session = session
     return session
 
@@ -135,7 +148,143 @@ def _take_token(bucket: dict[str, Any], burst: float, rps: float) -> None:
         time.sleep(wait)
 
 
-def _riot_throttle(endpoint: str = "") -> None:
+# Riot lets about 60 match and history lookups through in any minute, then
+# locks them all out for a minute (measured October 2026: 60 to 66 at any
+# speed, then Retry-After 60). Staying under that never costs the lockout.
+# The limit is learned. A lockout lowers it to what got through and saves it,
+# and ten minutes spent held at it raise it by one, so a change on Riot's side
+# costs one lockout rather than one a minute.
+_BUDGET_FILE = data_path("riot_budget.json")
+_BUDGET_MAX = 60
+_BUDGET_MIN = 10
+_BUDGET_CLEAN = 10
+_BUDGET: dict[str, Any] = {"limit": 55, "window": 60.0}
+_BUDGET_SEEN: dict[str, Any] = {
+    "loaded": False,
+    "clean": 0,
+    "counted_at": 0.0,
+    "waiting": 0,
+    "reserve": 5,
+    "locked_at": 0.0,
+}
+_SENT: deque[float] = deque()
+
+
+def _budget_load() -> None:
+    if _BUDGET_SEEN["loaded"]:
+        return
+    _BUDGET_SEEN["loaded"] = True
+    kept = read_json(_BUDGET_FILE, {})
+    try:
+        limit = int(kept.get("limit", _BUDGET["limit"]))
+        window = float(kept.get("window", _BUDGET["window"]))
+    except (AttributeError, TypeError, ValueError):
+        return
+    _BUDGET["limit"] = min(_BUDGET_MAX, max(_BUDGET_MIN, limit))
+    _BUDGET["window"] = min(300.0, max(60.0, window))
+
+
+# What one player's first five games cost: their history and five matches.
+_FIRST_READ = 6
+
+
+def keep_for_first_reads(players: int) -> None:
+    """Hold room in Riot's minute back from deeper reads, for `players` yet to turn up."""
+    with _RIOT_RATE_LOCK:
+        _BUDGET_SEEN["reserve"] = max(0, players)
+
+
+def _budget_room(now: float, *, background: bool) -> float:
+    # Seconds until a lookup can go out, under the lock. A deeper read leaves
+    # room for five players' first reads while more can still arrive, and
+    # stands aside for one that is waiting, so a new player's first five never
+    # queue behind it.
+    _budget_load()
+    window = float(_BUDGET["window"])
+    while _SENT and now - _SENT[0] >= window:
+        _SENT.popleft()
+    limit = int(_BUDGET["limit"])
+    if background and _BUDGET_SEEN["waiting"]:
+        return 1.0
+    held = min(_FIRST_READ * _BUDGET_SEEN["reserve"], limit // 2) if background else 0
+    cap = limit - held
+    over = len(_SENT) - cap
+    if over < 0:
+        return 0.0
+    if len(_SENT) >= limit and now - _BUDGET_SEEN["counted_at"] >= window:
+        # A minute held at the limit with no lockout says it may be low.
+        _BUDGET_SEEN["counted_at"] = now
+        _BUDGET_SEEN["clean"] += 1
+        if _BUDGET_SEEN["clean"] >= _BUDGET_CLEAN and limit < _BUDGET_MAX:
+            _BUDGET.update(limit=limit + 1)
+            _BUDGET_SEEN["clean"] = 0
+            write_atomic(_BUDGET_FILE, _BUDGET, prefix="riot_budget")
+    return max(0.05, _SENT[over] + window - now)
+
+
+def _budget_take(*, background: bool) -> float:
+    # Takes a lookup's place in the minute and returns 0, or says how long
+    # until there is one.
+    with _RIOT_RATE_LOCK:
+        now = time.time()
+        wait = _budget_room(now, background=background)
+        if wait <= 0:
+            _SENT.append(now)
+        return wait
+
+
+def budget_wait(*, background: bool = False) -> float:
+    """Return how many seconds until a lookup could go out, 0 if one can now."""
+    with _RIOT_RATE_LOCK:
+        room = _budget_room(time.time(), background=background)
+    return max(room, held_secs("/match-details/"))
+
+
+def budget_eta(lookups: int) -> float:
+    """Return about how many seconds `lookups` deeper reads take at the pace Riot allows."""
+    with _RIOT_RATE_LOCK:
+        _budget_load()
+        now = time.time()
+        window = float(_BUDGET["window"])
+        while _SENT and now - _SENT[0] >= window:
+            _SENT.popleft()
+        limit = int(_BUDGET["limit"])
+        cap = max(1, limit - min(_FIRST_READ * _BUDGET_SEEN["reserve"], limit // 2))
+        sent = list(_SENT)
+    # Played out a lookup at a time: each takes the first free place in the
+    # minute, and gives it back a minute later.
+    over = max(0, len(sent) - cap)
+    slots = [now] * max(0, cap - len(sent)) + [at + window for at in sent[over:]]
+    heapq.heapify(slots)
+    last = now
+    for _ in range(lookups):
+        last = heapq.heappop(slots)
+        heapq.heappush(slots, last + window)
+    # A second for the answers themselves, which take about a third of one.
+    return last - now + 1.0 + held_secs("/match-details/")
+
+
+def _budget_lockout(retry_after: float) -> None:
+    # Riot counted more than this side did, so the limit drops to what got
+    # through, by 5 at least and 15 at most, and is kept for next time. The
+    # lookups in flight all come back 429 together, and that is one lockout.
+    with _RIOT_RATE_LOCK:
+        _budget_load()
+        now = time.time()
+        if now - _BUDGET_SEEN["locked_at"] < _BUDGET["window"]:
+            return
+        _BUDGET_SEEN["locked_at"] = now
+        limit = int(_BUDGET["limit"])
+        got = len(_SENT)
+        new = max(_BUDGET_MIN, min(limit, max(got, limit - 10)) - 5)
+        window = min(300.0, max(float(_BUDGET["window"]), retry_after))
+        _BUDGET.update(limit=new, window=window)
+        _BUDGET_SEEN["clean"] = 0
+        write_atomic(_BUDGET_FILE, _BUDGET, prefix="riot_budget")
+    _log(f"locked out after {got} lookups in a minute, keeping to {new} from now on")
+
+
+def _riot_throttle(endpoint: str = "", *, budget: bool = False) -> None:
     if _RIOT_MAX_RPS <= 0:
         return
     while True:
@@ -143,6 +292,15 @@ def _riot_throttle(endpoint: str = "") -> None:
         if wait <= 0:
             break
         time.sleep(wait)
+    if budget:
+        while (wait := _budget_take(background=False)) > 0:
+            with _RIOT_RATE_LOCK:
+                _BUDGET_SEEN["waiting"] += 1
+            try:
+                time.sleep(wait)
+            finally:
+                with _RIOT_RATE_LOCK:
+                    _BUDGET_SEEN["waiting"] -= 1
     if _family(endpoint) == "mmr":
         _take_token(_MMR_BUCKET, _MMR_BURST, _MMR_RPS)
     _take_token(_RIOT_BUCKET, _RIOT_BURST, _RIOT_MAX_RPS)
@@ -325,11 +483,24 @@ class LocalAuth:
         resp = _session().get(self.glz_url + endpoint, headers=self.headers(), timeout=8)
         return self._json(resp)
 
-    def pd_get(self, endpoint: str, *, refresh: bool = False, retries: int = 0) -> dict[str, Any]:
-        """Return a GET from the pd server, retrying a 429 `retries` times with backoff."""
+    def pd_get(
+        self, endpoint: str, *, refresh: bool = False, retries: int = 0, background: bool = False
+    ) -> dict[str, Any]:
+        """Return a GET from the pd server, retrying a 429 `retries` times with backoff.
+
+        A `background` one never waits: with no room in the minute it comes
+        back throttled without being sent, so a deeper read cannot hold a
+        thread a first read needs.
+        """
         backoff = 3.0
+        budgeted = _family(endpoint) == "other"
         for attempt in range(retries + 1):
-            _riot_throttle(endpoint)
+            if background:
+                if held_secs(endpoint) > 0 or (budgeted and _budget_take(background=True) > 0):
+                    return {"errorCode": "RATE_LIMITED", "status": 429}
+                _riot_throttle(endpoint)
+            else:
+                _riot_throttle(endpoint, budget=budgeted)
             self.req_count += 1
             resp = _session().get(
                 self.pd_url + endpoint, headers=self.headers(refresh=refresh), timeout=8
@@ -340,6 +511,8 @@ class LocalAuth:
                 except (TypeError, ValueError):
                     ra = 0.0
                 _set_hold(endpoint, ra or backoff)
+                if budgeted:
+                    _budget_lockout(ra or backoff)
                 if attempt < retries:
                     backoff += 3.0
                     continue
@@ -524,3 +697,74 @@ class RiotClient:
         """Read RIOT_API_KEY and DATA_SOURCE from the environment."""
         self.api_key = os.getenv("RIOT_API_KEY", "").strip()
         self.source_pref = os.getenv("DATA_SOURCE", "auto").strip().lower()
+
+
+def _self_check() -> None:
+    import tempfile
+    from unittest import mock
+
+    from common.check import check
+
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        mock.patch(f"{__name__}._BUDGET_FILE", f"{tmp}/b.json"),
+    ):
+        _BUDGET.update(limit=20, window=60.0)
+        _BUDGET_SEEN.update(loaded=True, clean=0, counted_at=0.0, waiting=0, locked_at=0.0)
+        now = time.time()
+        # Ten in the last minute: a deeper read is held to half of the limit
+        # while players are still to come, and a first read still goes.
+        _SENT.clear()
+        _SENT.extend([now - 50] * 5 + [now - 1] * 5)
+        check(_budget_take(background=True) > 0)
+        check(_budget_take(background=False) == 0)
+        # It frees up as the oldest leave the minute, not all at once.
+        check(9 < budget_wait(background=True) < 11, budget_wait(background=True))
+        # With everybody here, a deeper read can use the whole minute.
+        keep_for_first_reads(0)
+        check(budget_wait(background=True) == 0)
+        keep_for_first_reads(5)
+        # A first read waiting puts every deeper one aside.
+        _SENT.clear()
+        _BUDGET_SEEN["waiting"] = 1
+        check(_budget_take(background=True) > 0)
+        _BUDGET_SEEN["waiting"] = 0
+        # A lockout after 18 lowers the limit to 13 and keeps it.
+        _SENT.extend([now] * 18)
+        _budget_lockout(60.0)
+        _budget_lockout(60.0)
+        check(_BUDGET["limit"] == 13, _BUDGET)
+        check(read_json(f"{tmp}/b.json", {}).get("limit") == 13)
+        _BUDGET_SEEN["loaded"] = False
+        _BUDGET.update(limit=50)
+        _budget_load()
+        check(_BUDGET["limit"] == 13, "a saved limit wasn't read back")
+        # Ten minutes held at it without a lockout raise it by one.
+        _SENT.clear()
+        _SENT.extend([now] * 13)
+        _BUDGET_SEEN.update(clean=_BUDGET_CLEAN - 1, counted_at=0.0)
+        check(_budget_take(background=False) > 0)
+        check(_BUDGET["limit"] == 14, _BUDGET)
+        # The finish is read off the minute: what fits now is done in a
+        # second, and the rest waits for places to free up, a minute apart.
+        _SENT.clear()
+        keep_for_first_reads(0)
+        check(budget_eta(10) < 2, budget_eta(10))
+        _SENT.extend([now - 30] * 14)
+        check(29 < budget_eta(5) < 32, budget_eta(5))
+        check(89 < budget_eta(20) < 92, budget_eta(20))
+        keep_for_first_reads(5)
+        _SENT.clear()
+    # A failed resolve is tried again on Riot's hosts, never on the client's own.
+    riot = _session().get_adapter("https://pd.na.a.pvp.net/")
+    local = _session().get_adapter("https://127.0.0.1:1234/")
+    check(isinstance(riot, HTTPAdapter) and riot.max_retries.connect == 2, riot)
+    check(isinstance(local, HTTPAdapter) and not local.max_retries.total, local)
+    print(
+        "riot_client self-check OK (a minute's budget, first reads ahead, learned limit, "
+        "lookups retried)"
+    )
+
+
+if __name__ == "__main__":
+    _self_check()

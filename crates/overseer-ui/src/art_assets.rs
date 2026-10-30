@@ -9,7 +9,7 @@
 //! a letter or a digit removed, so `KAY/O` and `kayo` are the same agent.
 
 /// Every playable agent's square portrait, for the panel and the ladder.
-pub(crate) const PORTRAITS: [(&str, &[u8]); 29] = [
+pub(crate) const PORTRAITS: [(&str, &[u8]); 30] = [
     ("astra", include_bytes!("../assets/agents/astra.png")),
     ("breach", include_bytes!("../assets/agents/breach.png")),
     (
@@ -23,6 +23,7 @@ pub(crate) const PORTRAITS: [(&str, &[u8]); 29] = [
     ("fade", include_bytes!("../assets/agents/fade.png")),
     ("gekko", include_bytes!("../assets/agents/gekko.png")),
     ("harbor", include_bytes!("../assets/agents/harbor.png")),
+    ("hush", include_bytes!("../assets/agents/hush.png")),
     ("iso", include_bytes!("../assets/agents/iso.png")),
     ("jett", include_bytes!("../assets/agents/jett.png")),
     ("kayo", include_bytes!("../assets/agents/kayo.png")),
@@ -45,7 +46,7 @@ pub(crate) const PORTRAITS: [(&str, &[u8]); 29] = [
 ];
 
 /// Every agent's killfeed crop: the wide, tight cut the broadcast rows use.
-pub(crate) const KILLFEED: [(&str, &[u8]); 29] = [
+pub(crate) const KILLFEED: [(&str, &[u8]); 30] = [
     ("astra", include_bytes!("../assets/killfeed/astra.png")),
     ("breach", include_bytes!("../assets/killfeed/breach.png")),
     (
@@ -62,6 +63,7 @@ pub(crate) const KILLFEED: [(&str, &[u8]); 29] = [
     ("fade", include_bytes!("../assets/killfeed/fade.png")),
     ("gekko", include_bytes!("../assets/killfeed/gekko.png")),
     ("harbor", include_bytes!("../assets/killfeed/harbor.png")),
+    ("hush", include_bytes!("../assets/killfeed/hush.png")),
     ("iso", include_bytes!("../assets/killfeed/iso.png")),
     ("jett", include_bytes!("../assets/killfeed/jett.png")),
     ("kayo", include_bytes!("../assets/killfeed/kayo.png")),
@@ -84,7 +86,7 @@ pub(crate) const KILLFEED: [(&str, &[u8]); 29] = [
 ];
 
 /// Every agent's player card: eyes to chin at 2.4:1, for the panel.
-pub(crate) const CARDS: [(&str, &[u8]); 29] = [
+pub(crate) const CARDS: [(&str, &[u8]); 30] = [
     ("astra", include_bytes!("../assets/cards/astra.png")),
     ("breach", include_bytes!("../assets/cards/breach.png")),
     ("brimstone", include_bytes!("../assets/cards/brimstone.png")),
@@ -95,6 +97,7 @@ pub(crate) const CARDS: [(&str, &[u8]); 29] = [
     ("fade", include_bytes!("../assets/cards/fade.png")),
     ("gekko", include_bytes!("../assets/cards/gekko.png")),
     ("harbor", include_bytes!("../assets/cards/harbor.png")),
+    ("hush", include_bytes!("../assets/cards/hush.png")),
     ("iso", include_bytes!("../assets/cards/iso.png")),
     ("jett", include_bytes!("../assets/cards/jett.png")),
     ("kayo", include_bytes!("../assets/cards/kayo.png")),

@@ -38,14 +38,23 @@ struct Shown {
     clip: Clip,
     /// Where the app wants it, or nothing for hidden.
     wanted: Option<(Area, Area)>,
-    /// Whether its size has been said.
-    sized: bool,
-    /// Whether its failure has been said.
-    failed: bool,
+    /// What has been said about it.
+    told: Told,
     /// When it last said where it had got to.
     reported: Option<Instant>,
     /// Whether its window is still clipped to nothing after being shown.
     settling: bool,
+}
+
+/// What the app has been told about a clip.
+#[derive(Default)]
+struct Told {
+    /// Its size.
+    size: bool,
+    /// Its failure.
+    failure: bool,
+    /// Whether its window is on screen, as last said.
+    on_screen: bool,
 }
 
 /// Plays clips in children of the app's window `parent` until the app closes
@@ -144,8 +153,7 @@ fn obey(
                 let shown = Shown {
                     clip,
                     wanted: None,
-                    sized: false,
-                    failed: false,
+                    told: Told::default(),
                     reported: None,
                     settling: false,
                 };
@@ -190,20 +198,21 @@ fn obey(
 }
 
 /// Says what is new about one clip: its size once it is known, its end, its
-/// failure, and where a playing one has got to. Places its window again too,
-/// since it waits for the engine's first frame and then settles.
+/// failure, where a playing one has got to, and when its window comes up on
+/// screen or goes. Places its window again too, since it waits for the
+/// engine's first frame and then settles.
 fn report(id: u32, shown: &mut Shown, out: &mut impl Write) {
-    if !shown.sized
+    if !shown.told.size
         && let Some([wide, tall]) = shown.clip.size()
     {
-        shown.sized = true;
+        shown.told.size = true;
         drop(writeln!(out, "size\t{id}\t{wide}\t{tall}"));
     }
     if shown.clip.take_ended() {
         drop(writeln!(out, "ended\t{id}"));
     }
-    if !shown.failed && shown.clip.failed() {
-        shown.failed = true;
+    if !shown.told.failure && shown.clip.failed() {
+        shown.told.failure = true;
         drop(writeln!(out, "failed\t{id}"));
     }
     if shown.clip.playing() && shown.reported.is_none_or(|at| at.elapsed() >= REPORT) {
@@ -211,6 +220,11 @@ fn report(id: u32, shown: &mut Shown, out: &mut impl Write) {
         shown.reported = Some(Instant::now());
     }
     shown.settling = shown.clip.place(shown.wanted);
+    let on_screen = shown.clip.on_screen();
+    if on_screen != shown.told.on_screen {
+        shown.told.on_screen = on_screen;
+        drop(writeln!(out, "shown	{id}	{}", u8::from(on_screen)));
+    }
 }
 
 /// Says where a clip is and whether it is playing.

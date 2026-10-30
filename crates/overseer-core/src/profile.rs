@@ -17,6 +17,9 @@ pub struct CoPlayer {
     /// How many of these matches you both appeared in.
     #[serde(deserialize_with = "number::whole")]
     pub shared_matches: Option<u32>,
+    /// How many of the finished ones you won together, as a percentage.
+    #[serde(deserialize_with = "number::whole")]
+    pub win_rate: Option<u32>,
     /// What they played across them.
     pub agents: Vec<String>,
 }

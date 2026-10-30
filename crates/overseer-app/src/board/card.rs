@@ -98,7 +98,7 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
         .iter()
         .any(|p| super::side_of(scene.board, p) == Side::Enemy);
     for (side, team) in order {
-        let players = super::roster(scene.board, team, scene.sort, "");
+        let players = super::roster(scene.board, team, scene.sort);
         // Your own team can be seen in the game, so once the other one is
         // known the overlay is just them, and half the height.
         if players.is_empty() || (enemies && *side != Side::Enemy) {
@@ -148,6 +148,7 @@ fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side) -> Look<'a> {
             motion::eased(scene.since / super::COUNT)
         },
         still: scene.still,
+        nothing: rows::nothing_yet(scene.board),
     }
 }
 
@@ -174,8 +175,8 @@ fn strip(ui: &mut Ui, board: &Board) {
         x = drawn.right() + space::LG;
     }
     if let Some(side) = board.side.as_deref() {
-        x = crate::header::plate(painter, x, bottom, side, colour::TEXT_STRONG, true).right()
-            + space::SM;
+        let tint = paint::side_tint(Some(side), colour::TEXT_STRONG);
+        x = crate::header::plate(painter, x, bottom, side, tint, true).right() + space::SM;
     }
     if let Some(mode) = board.mode.as_deref() {
         x = crate::header::plate(painter, x, bottom, mode, colour::TEXT_DIM, false).right();
@@ -219,7 +220,21 @@ fn strip(ui: &mut Ui, board: &Board) {
             tint,
         );
     }
-    let hint = format!("{} Hides This", crate::hotkey::LABEL);
+    hint(painter, board, (x, right), y);
+}
+
+/// The hint between the plates and the score. A board held through a
+/// dropped connection says so in its place, since in game nothing else
+/// would show it isn't live.
+fn hint(painter: &egui::Painter, board: &Board, (x, right): (f32, f32), y: f32) {
+    let (hint, tint) = if board.held_since.is_some() {
+        ("Can't Reach VALORANT Right Now".to_owned(), colour::WARN)
+    } else {
+        (
+            format!("{} Hides This", crate::hotkey::label()),
+            colour::TEXT_FAINT,
+        )
+    };
     let wide = overseer_ui::caps_width(painter, &hint, paint::label());
     if x + space::XL + wide + space::XL <= right {
         let _hint = caps_text(
@@ -228,7 +243,7 @@ fn strip(ui: &mut Ui, board: &Board) {
             Align2::LEFT_CENTER,
             &hint,
             paint::label(),
-            colour::TEXT_FAINT,
+            tint,
         );
     }
 }
@@ -236,8 +251,11 @@ fn strip(ui: &mut Ui, board: &Board) {
 /// One player: an enemy's card or one of your team's lines.
 fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
     let m = look.metrics;
-    let (rect, _response) =
+    let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), m.height), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, rows::spoken(player))
+    });
     ui.add_space(rows::GAP);
     if !ui.is_rect_visible(rect) {
         return rect;
@@ -256,7 +274,8 @@ fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
         paint::card_behind(&inside, player, rect, (fill, m.crop()));
     }
     let zones = Zones::of(rect);
-    let _hovers = rows::identity(&inside, player, (rect, zones.name), look, flagged);
+    let hovers = rows::identity(&inside, player, (rect, zones.name), look, flagged);
+    rows::explain_at(&response, &hovers, player, look);
     if flagged {
         painter.rect_filled(
             Rect::from_min_size(rect.min, vec2(4.0, rect.height())),

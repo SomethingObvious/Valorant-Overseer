@@ -41,7 +41,7 @@ impl Overseer {
             .show(ui, |ui| self.header(ui, edge))
             .inner;
         let clicked = Panel::bottom("footer")
-            .exact_size(space::XL + space::SM)
+            .exact_size(space::XXL)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.footer(ui))
             .inner;
@@ -50,13 +50,6 @@ impl Overseer {
         }
         if let Some(hint) = clicked {
             self.perform(ui.ctx(), hint);
-        }
-
-        if self.screen == Screen::Board && (self.search.open || !self.search.filter.is_empty()) {
-            Panel::top("search")
-                .exact_size(space::ROW + space::MD)
-                .frame(egui::Frame::NONE.fill(colour::BG))
-                .show(ui, |ui| self.search(ui));
         }
 
         let turning = ui.ctx().animate_value_with_time(

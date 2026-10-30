@@ -82,12 +82,25 @@ pub mod motion {
         ctx.data_mut(|store| store.insert_temp(still_key(), still));
     }
 
+    /// Whether this frame is in the efficient tier, where nothing moves.
+    #[must_use]
+    pub fn is_still(ctx: &egui::Context) -> bool {
+        ctx.data(|store| store.get_temp::<bool>(still_key()).unwrap_or(true))
+    }
+
+    /// How long a change `seconds` long takes this frame, which is no time
+    /// at all in the efficient tier.
+    #[must_use]
+    pub fn lasting(ctx: &egui::Context, seconds: f32) -> f32 {
+        if is_still(ctx) { 0.0 } else { seconds }
+    }
+
     /// How far `id` has come in, eased from 0 to 1, starting `delay` seconds
     /// after the first frame it was drawn. One that stops being drawn starts
     /// over when it comes back.
     #[must_use]
     pub fn enter(ctx: &egui::Context, id: egui::Id, delay: f32) -> f32 {
-        if ctx.data(|store| store.get_temp::<bool>(still_key()).unwrap_or(true)) {
+        if is_still(ctx) {
             return 1.0;
         }
         let now = ctx.input(|i| i.time);
@@ -166,9 +179,12 @@ pub mod colour {
     pub const TEXT_DIM: Color32 = Color32::from_rgb(0x9A, 0xA1, 0xAB);
     /// A label. 5.7:1 on a slab, past the 4.5:1 that small text needs.
     pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x8B, 0x92, 0x9C);
-    /// The words in an empty text box, about 2:1 on a slab, so they're only
-    /// there for anyone looking and never read as something typed.
-    pub const HINT: Color32 = Color32::from_rgb(0x47, 0x4C, 0x54);
+    /// The words in an empty text box. A step under a label, but still 4.6:1
+    /// in the box's well, since a hint nobody can read is no hint.
+    pub const HINT: Color32 = Color32::from_rgb(0x73, 0x7A, 0x85);
+    /// The edge of something you can click or type in, 3:1 on an inset slab,
+    /// so an empty box still shows where it is.
+    pub const EDGE: Color32 = Color32::from_rgb(0x64, 0x6B, 0x75);
     /// Your team.
     pub const ALLY: Color32 = Color32::from_rgb(0x18, 0xE5, 0xA7);
     /// The other team. The one colour that owns a whole slab.
@@ -478,37 +494,12 @@ pub fn choice(
     );
     let named = widest_name(ui, drawn.right() - pip.right());
     let at = (pip.right() + named).max(slab.left() + 190.0) + space::LG;
-    // A switch says whether it is on in words at its end, which a dozen
-    // pips down a long page don't say at a glance. A choice is lit instead.
-    let end = if one_of {
-        slab.right() - space::LG
-    } else {
-        state(
-            &painter,
-            on,
-            egui::pos2(slab.right() - space::LG, slab.center().y),
-        ) - space::LG
-    };
-    explanation(&painter, about, (at, end, slab.center().y));
+    explanation(
+        &painter,
+        about,
+        (at, slab.right() - space::LG, slab.center().y),
+    );
     response.clicked()
-}
-
-/// ON or OFF ending at `right`, for a switch, and where it starts.
-fn state(painter: &egui::Painter, on: bool, right: egui::Pos2) -> f32 {
-    let (word, ink) = if on {
-        ("On", colour::TEXT_STRONG)
-    } else {
-        ("Off", colour::TEXT_FAINT)
-    };
-    caps_text(
-        painter,
-        right,
-        egui::Align2::RIGHT_CENTER,
-        word,
-        Face::Display.at(size::LABEL),
-        ink,
-    )
-    .left()
 }
 
 /// What a switch does, from `at` to `end` and centred on `middle`, cut to
@@ -556,49 +547,39 @@ pub fn pip(painter: &egui::Painter, rect: egui::Rect, on: bool) {
     mark(painter, rect, on, false);
 }
 
-/// The slanted pip: solid for a switch, and an outline that fills for a
-/// choice, so a set of choices does not look like switches you can pick two of.
+/// A tick box for a switch and a round dot for one of several, the marks
+/// every app uses for them. The slanted pip is kept for a game's result, so
+/// it only ever means one thing.
 fn mark(painter: &egui::Painter, pip: egui::Rect, on: bool, one_of: bool) {
-    // The same lean at every size, so the fill sits parallel in its outline.
-    let slanted = |r: egui::Rect| {
-        let run = r.height() * 0.21;
-        vec![
-            egui::pos2(r.left() + run, r.top()),
-            egui::pos2(r.right(), r.top()),
-            egui::pos2(r.right() - run, r.bottom()),
-            egui::pos2(r.left(), r.bottom()),
-        ]
-    };
-    if one_of {
-        painter.add(egui::Shape::closed_line(
-            slanted(pip.shrink(0.75)),
-            Stroke::new(
-                1.5,
-                if on {
-                    colour::TEXT_STRONG
-                } else {
-                    colour::TEXT_FAINT
-                },
-            ),
-        ));
+    let centre = pip.center();
+    let edge = Stroke::new(
+        1.5,
         if on {
-            painter.add(egui::Shape::convex_polygon(
-                slanted(pip.shrink(3.0)),
-                colour::TEXT_STRONG,
-                Stroke::NONE,
-            ));
+            colour::TEXT_STRONG
+        } else {
+            colour::EDGE
+        },
+    );
+    if one_of {
+        painter.circle_stroke(centre, 7.0, edge);
+        if on {
+            painter.circle_filled(centre, 3.5, colour::TEXT_STRONG);
         }
-    } else if on {
-        painter.add(egui::Shape::convex_polygon(
-            slanted(pip),
-            colour::TEXT_STRONG,
-            Stroke::NONE,
+        return;
+    }
+    let square = egui::Rect::from_center_size(centre, egui::vec2(14.0, 14.0));
+    if on {
+        painter.rect_filled(square, 2.0, colour::TEXT_STRONG);
+        painter.add(egui::Shape::line(
+            vec![
+                centre + egui::vec2(-3.5, 0.0),
+                centre + egui::vec2(-1.0, 2.5),
+                centre + egui::vec2(3.5, -2.5),
+            ],
+            Stroke::new(1.75, colour::VOID),
         ));
     } else {
-        painter.add(egui::Shape::closed_line(
-            slanted(pip.shrink(0.75)),
-            Stroke::new(1.5, colour::TEXT_FAINT),
-        ));
+        painter.rect_stroke(square.shrink(0.75), 2.0, edge, egui::StrokeKind::Inside);
     }
 }
 
@@ -881,7 +862,7 @@ pub fn style() -> Style {
     visuals.window_stroke = Stroke::new(1.0, colour::LINE);
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, colour::LINE);
     visuals.widgets.inactive.bg_fill = colour::BG_INSET;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, colour::LINE);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, colour::EDGE);
     visuals.widgets.inactive.weak_bg_fill = colour::BG_INSET;
     visuals.widgets.hovered.bg_fill = colour::BG_HOVER;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, colour::TEXT_FAINT);
@@ -927,6 +908,19 @@ pub fn style() -> Style {
 /// and hit testing agree with what is drawn.
 #[must_use]
 pub fn caps(text: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
+    set(&text.to_uppercase(), font, tint)
+}
+
+/// Words somebody typed, tracked like a label but in the case they were
+/// typed in, since capitals would change what they wrote.
+#[must_use]
+pub fn typed(text: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
+    set(text, font, tint)
+}
+
+/// Lays `upper` out tracked for its size, with scripts that are set solid
+/// left untracked.
+fn set(upper: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
     let tracking = tracking_for(font.size);
     let base = egui::TextFormat {
         font_id: font,
@@ -934,7 +928,6 @@ pub fn caps(text: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
         color: tint,
         ..egui::TextFormat::default()
     };
-    let upper = text.to_uppercase();
     let mut job = egui::text::LayoutJob::default();
     // Runs of Hangul, kana, Han and Thai are set solid, because tracking
     // between syllable blocks pulls a name apart into letters.
@@ -1003,6 +996,32 @@ pub fn caps_width(painter: &egui::Painter, text: &str, font: FontId) -> f32 {
     let trailing = trailing(text, font.size);
     let galley = painter.layout_job(caps(text, font, colour::TEXT_DIM));
     (galley.size().x - trailing).max(0.0)
+}
+
+/// How wide [`typed_text`] will set some words.
+#[must_use]
+pub fn typed_width(painter: &egui::Painter, text: &str, font: FontId) -> f32 {
+    let trailing = trailing(text, font.size);
+    let galley = painter.layout_job(typed(text, font, colour::TEXT_DIM));
+    (galley.size().x - trailing).max(0.0)
+}
+
+/// Paints words somebody typed like [`caps_text`], in their own case.
+#[must_use]
+pub fn typed_text(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    anchor: egui::Align2,
+    text: &str,
+    font: FontId,
+    tint: Color32,
+) -> egui::Rect {
+    let trailing = trailing(text, font.size);
+    let galley = painter.layout_job(typed(text, font, tint));
+    let size = egui::vec2((galley.size().x - trailing).max(0.0), galley.size().y);
+    let rect = anchor.anchor_size(pos, size);
+    painter.galley(rect.min, galley, tint);
+    rect
 }
 
 /// Paints a caps label like [`egui::Painter::text`] and returns where it landed,

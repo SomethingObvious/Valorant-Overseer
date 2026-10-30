@@ -136,6 +136,13 @@ impl App for Wizard {
                         Action::Close => {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
+                        Action::Recheck => {
+                            self.survey = plan::survey(&self.root, self.carried.is_some());
+                        }
+                        Action::CopyLog => ui.ctx().copy_text(self.log.join(
+                            "
+",
+                        )),
                     }
                 }
             });
@@ -162,6 +169,10 @@ pub(crate) enum Action {
     Open,
     /// Finished, close the window.
     Close,
+    /// Look at the machine again, after fixing what blocked the install.
+    Recheck,
+    /// Put the installer's log on the clipboard.
+    CopyLog,
 }
 
 /// How tall the title bar is.
@@ -191,7 +202,11 @@ pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
     if let Some(mark) = art::mark(ui.ctx()) {
         // Centred on the capitals beside it and a little taller than them,
         // the way the window's own title sets it.
-        let galley = painter.layout_job(overseer_ui::caps("Valorant", font.clone(), colour::ENEMY));
+        let galley = painter.layout_job(overseer_ui::caps(
+            "Valorant",
+            font.clone(),
+            colour::TEXT_STRONG,
+        ));
         let caps = galley.mesh_bounds;
         let centre = middle - galley.size().y / 2.0 + caps.center().y;
         let tall = caps.height() * art::MARK_OVER_CAPS;
@@ -214,7 +229,7 @@ pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
         Align2::LEFT_CENTER,
         "Valorant",
         font,
-        colour::ENEMY,
+        colour::TEXT_STRONG,
     );
     let after = caps_text(
         &painter,
@@ -273,8 +288,8 @@ pub(crate) fn look(ui: &mut Ui, survey: &Survey) {
                 overseer_ui::say(
                     ui,
                     space::XL,
-                    colour::ENEMY,
-                    "The install can't go ahead until the red line above is fixed. Then run setup again.",
+                    colour::BAD,
+                    "The install can't go ahead until the red line above is fixed. Then press Check Again.",
                 );
             }
         });
@@ -301,7 +316,7 @@ fn row(ui: &mut Ui, finding: &Finding) {
     }
     let painter = ui.painter().clone();
     let tint = if finding.blocking {
-        colour::ENEMY
+        colour::BAD
     } else {
         colour::ALLY
     };
@@ -354,13 +369,10 @@ pub(crate) fn install(ui: &mut Ui, log: &[String], outcome: Option<bool>) {
         ),
         Some(false) => (
             "The Install Failed",
-            "The last few lines below say why. Fix that, then run setup again.",
+            "The last few lines below say why. Fix that, then press Try Again. Copy Log puts the whole log on the clipboard to share.",
         ),
     };
     title(ui, heading_text, detail);
-    if outcome == Some(true) {
-        note(ui, "The desktop shortcut opens the window.", colour::ALLY);
-    }
     let frame = egui::Frame::NONE
         .fill(colour::BG_RAISED)
         .stroke(egui::Stroke::new(1.0, colour::LINE))
@@ -377,23 +389,74 @@ pub(crate) fn install(ui: &mut Ui, log: &[String], outcome: Option<bool>) {
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }
-                    ui.painter().text(
-                        pos2(rect.left(), rect.center().y),
-                        Align2::LEFT_CENTER,
-                        line,
-                        Face::Number.at(size::MICRO),
-                        tint_for(line),
-                    );
+                    log_line(ui.painter(), rect, line);
                 }
             });
     });
+}
+
+/// One line of the installer's log. Its own marks become drawn ones: a
+/// step's heading in capitals, a tick for done, a cross for failed and a dot
+/// for a warning, with the words after them in Inter.
+fn log_line(painter: &egui::Painter, rect: Rect, line: &str) {
+    let trimmed = line.trim_start();
+    let middle = rect.center().y;
+    if let Some(step) = trimmed.strip_prefix("==> ") {
+        let _step = caps_text(
+            painter,
+            pos2(rect.left(), middle),
+            Align2::LEFT_CENTER,
+            step,
+            Face::Display.at(size::LABEL),
+            colour::TEXT_STRONG,
+        );
+        return;
+    }
+    let tint = tint_for(line);
+    let words = ["+ ", "x ", "! "]
+        .iter()
+        .find_map(|mark| trimmed.strip_prefix(mark));
+    let mark = pos2(rect.left() + space::SM, middle);
+    let ink = egui::Stroke::new(1.5, tint);
+    match trimmed.get(..2) {
+        Some("+ ") => {
+            let _tick = painter.add(egui::Shape::line(
+                vec![
+                    mark + vec2(-4.0, 0.0),
+                    mark + vec2(-1.0, 3.0),
+                    mark + vec2(4.0, -3.0),
+                ],
+                ink,
+            ));
+        }
+        Some("x ") => {
+            painter.line_segment([mark + vec2(-3.5, -3.5), mark + vec2(3.5, 3.5)], ink);
+            painter.line_segment([mark + vec2(-3.5, 3.5), mark + vec2(3.5, -3.5)], ink);
+        }
+        Some("! ") => {
+            let _dot = painter.circle_filled(mark, 3.0, tint);
+        }
+        _ => {}
+    }
+    let indent = if words.is_some() { space::XL } else { 0.0 };
+    painter.text(
+        pos2(rect.left() + indent, middle),
+        Align2::LEFT_CENTER,
+        words.unwrap_or(trimmed),
+        Face::Body.at(size::MICRO + 1.0),
+        if words.is_some() {
+            colour::TEXT
+        } else {
+            colour::TEXT_DIM
+        },
+    );
 }
 
 /// A log line's colour, from the mark the installer puts at its start.
 fn tint_for(line: &str) -> egui::Color32 {
     let trimmed = line.trim_start();
     if trimmed.starts_with("x ") {
-        colour::ENEMY
+        colour::BAD
     } else if trimmed.starts_with("+ ") {
         colour::ALLY
     } else if trimmed.starts_with("! ") {
@@ -465,22 +528,27 @@ pub(crate) fn footer(
     // An install already here updates with the region it has, so the
     // question is one click away rather than in the way.
     let (label, action, enabled) = match step {
-        Step::Look if updating => ("Update", Action::Install, !blocked),
-        Step::Look => ("Continue", Action::Choose, !blocked),
+        Step::Look if blocked => ("Check Again", Action::Recheck, true),
+        Step::Look if updating => ("Update", Action::Install, true),
+        Step::Look => ("Continue", Action::Choose, true),
         Step::Choose => ("Install", Action::Install, true),
         Step::Install => match outcome {
             None => ("Working", Action::Close, false),
             Some(true) => ("Open Valorant Overseer", Action::Open, true),
-            Some(false) => ("Close", Action::Close, true),
+            Some(false) => ("Try Again", Action::Install, true),
         },
     };
 
     let back = step == Step::Choose && button(ui, rect, "Back", 1, true);
+    let copy =
+        step == Step::Install && outcome == Some(false) && button(ui, rect, "Copy Log", 1, true);
     let region = step == Step::Look && updating && button(ui, rect, "Region", 1, !blocked);
     if button(ui, rect, label, 0, enabled) && enabled {
         Some(action)
     } else if region && !blocked {
         Some(Action::Choose)
+    } else if copy {
+        Some(Action::CopyLog)
     } else {
         back.then_some(Action::Back)
     }
@@ -505,7 +573,13 @@ fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) 
         pos2(x, footer.center().y - height / 2.0),
         vec2(width, height),
     );
-    let response = ui.interact(rect, ui.id().with(label), Sense::click());
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(rect, ui.id().with(label), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     let painter = ui.painter();
     // Under the pointer a button inverts outright rather than tinting, as
     // Riot's own buttons do. Otherwise only the one that moves you forward is
@@ -515,7 +589,8 @@ fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) 
     } else if response.hovered() {
         (colour::TEXT_STRONG, colour::VOID)
     } else if from_right == 0 {
-        (colour::ENEMY, colour::TEXT_STRONG)
+        // Cream, since red in this world means the enemy.
+        (colour::TEXT, colour::VOID)
     } else {
         (colour::BG_INSET, colour::TEXT)
     };
@@ -554,7 +629,7 @@ mod tests {
     fn the_log_reads_the_installers_own_marks() {
         assert_eq!(
             tint_for("  x Setup failed: This PC doesn't meet the requirements above."),
-            colour::ENEMY
+            colour::BAD
         );
         assert_eq!(tint_for("  + Python 3.12.10 x64 ready."), colour::ALLY);
         assert_eq!(

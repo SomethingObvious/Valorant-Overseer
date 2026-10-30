@@ -6,7 +6,7 @@
 
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 use overseer_core::Drawing;
-use overseer_ui::{Face, caps_text, colour};
+use overseer_ui::{Face, colour, typed_text};
 
 /// The shapes there are, as kept and as named, in the order the panel shows.
 pub(super) const KINDS: [(&str, &str); 9] = [
@@ -179,7 +179,7 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
             let back = plate(square, a, &drawing.text);
             let shade = drawing.opacity.clamp(0.1, 1.0) * 0.8;
             painter.rect_filled(back, 0, colour::VOID.gamma_multiply(shade));
-            let _label = caps_text(
+            let _label = typed_text(
                 painter,
                 pos2(back.left() + letters(square) / 2.0, back.center().y),
                 egui::Align2::LEFT_CENTER,

@@ -282,6 +282,12 @@ impl Clip {
         settling
     }
 
+    /// Whether the video can be seen: placed, and no longer clipped to
+    /// nothing while it settles.
+    pub(crate) const fn on_screen(&self) -> bool {
+        self.placed.is_some() && !self.blank
+    }
+
     /// Fits the picture to the window it is in, once the engine knows the
     /// video's size and whenever the window's size has changed.
     fn fit(&mut self) {

@@ -1,17 +1,76 @@
-//! Ctrl+Alt+O, registered for the whole machine.
+//! The overlay's key, Ctrl+Alt+O unless another is chosen, registered for
+//! the whole machine.
 //!
 //! This is how the overlay goes on and off while VALORANT has the
 //! foreground. It is plain `RegisterHotKey`, the API every
 //! screenshot tool uses: nothing is injected, no input is sent, and no other
 //! process is read.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, TryIter, channel};
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use serde::{Deserialize, Serialize};
 
-/// What the combination is called, for the settings screen to print.
-pub(crate) const LABEL: &str = "Ctrl+Alt+O";
+/// The combinations the overlay can go on. Each holds Ctrl, so none is a key
+/// VALORANT itself uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Key {
+    /// The one it starts on.
+    #[default]
+    CtrlAltO,
+    /// For when another program has Ctrl+Alt+O.
+    CtrlShiftO,
+    /// Under the left hand, beside the movement keys.
+    CtrlAltV,
+    /// Out of the way of anything typed.
+    CtrlAltF8,
+}
+
+impl Key {
+    /// Every combination, for the settings screen.
+    pub(crate) const ALL: [Self; 4] = [
+        Self::CtrlAltO,
+        Self::CtrlShiftO,
+        Self::CtrlAltV,
+        Self::CtrlAltF8,
+    ];
+
+    /// What it is called on screen.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::CtrlAltO => "Ctrl+Alt+O",
+            Self::CtrlShiftO => "Ctrl+Shift+O",
+            Self::CtrlAltV => "Ctrl+Alt+V",
+            Self::CtrlAltF8 => "Ctrl+Alt+F8",
+        }
+    }
+
+    /// What Windows is asked to register.
+    const fn hotkey(self) -> (Modifiers, Code) {
+        match self {
+            Self::CtrlAltO => (Modifiers::CONTROL.union(Modifiers::ALT), Code::KeyO),
+            Self::CtrlShiftO => (Modifiers::CONTROL.union(Modifiers::SHIFT), Code::KeyO),
+            Self::CtrlAltV => (Modifiers::CONTROL.union(Modifiers::ALT), Code::KeyV),
+            Self::CtrlAltF8 => (Modifiers::CONTROL.union(Modifiers::ALT), Code::F8),
+        }
+    }
+}
+
+/// Which of [`Key::ALL`] was registered last. There is one overlay key a
+/// process, so the hints that print it read it from here.
+static CHOSEN: AtomicU8 = AtomicU8::new(0);
+
+/// What the combination in use is called.
+pub(crate) fn label() -> &'static str {
+    Key::ALL
+        .get(usize::from(CHOSEN.load(Ordering::Relaxed)))
+        .copied()
+        .unwrap_or_default()
+        .label()
+}
 
 /// A registered hotkey. Dropping it gives the combination back to Windows.
 pub(crate) struct Hotkey {
@@ -23,7 +82,7 @@ pub(crate) struct Hotkey {
 
 impl std::fmt::Debug for Hotkey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Hotkey").field("label", &LABEL).finish()
+        f.debug_struct("Hotkey").field("label", &label()).finish()
     }
 }
 
@@ -48,7 +107,7 @@ pub(crate) enum Failure {
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Taken => write!(f, "{LABEL} is taken"),
+            Self::Taken => write!(f, "{} is taken", label()),
             Self::Refused(why) => f.write_str(why),
         }
     }
@@ -66,12 +125,11 @@ impl From<global_hotkey::Error> for Failure {
 /// Registers the hotkey and calls `wake` on each press, or says why it could
 /// not. Call it on the message loop's thread, because Windows posts
 /// `WM_HOTKEY` to the thread that registered it.
-pub(crate) fn start(wake: impl Fn() + Send + Sync + 'static) -> Result<Hotkey, Failure> {
+pub(crate) fn start(key: Key, wake: impl Fn() + Send + Sync + 'static) -> Result<Hotkey, Failure> {
+    CHOSEN.store(key as u8, Ordering::Relaxed);
     let manager = GlobalHotKeyManager::new()?;
-    manager.register(HotKey::new(
-        Some(Modifiers::CONTROL | Modifiers::ALT),
-        Code::KeyO,
-    ))?;
+    let (held, code) = key.hotkey();
+    manager.register(HotKey::new(Some(held), code))?;
 
     let (tx, presses) = channel();
     GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {

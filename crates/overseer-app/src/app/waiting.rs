@@ -5,9 +5,10 @@
 use std::time::Duration;
 
 use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
-use overseer_core::{Board, Status};
+use overseer_core::{Board, Saved, Status};
 
-use crate::board;
+use crate::board::{self, Asked};
+use crate::controls::{self, Tone};
 use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 
 /// The steps to a board, in order.
@@ -58,7 +59,7 @@ fn stage<'a>(
         // What went wrong exactly is on the connection light's hover.
         (None, Status::Lost(_), _) => (
             "Not Connected",
-            "Overseer lost its connection and keeps trying by itself. If nothing comes back in a minute, close Overseer and open it again.",
+            "Overseer lost its connection and keeps trying by itself. Reconnect Now tries again straight away.",
             0,
             true,
         ),
@@ -102,14 +103,25 @@ fn stage<'a>(
 }
 
 /// What to say while there is no board, on a plate with the steps along
-/// its foot and how long this one has taken.
+/// its foot and how long this one has taken. Under it, Reconnect Now while
+/// the connection is down or stopped, and Show My Last Stats with your stats
+/// kept from an earlier board. Says which was pressed. `stopped` is None
+/// where nothing can be pressed, like the overlay.
 pub(super) fn empty(
     ui: &mut Ui,
     (status, board): (&Status, &Board),
     trouble: Option<(&str, &str)>,
     fade: f32,
-) {
+    stopped: Option<bool>,
+) -> Option<Asked> {
     let stage = stage(status, board, trouble);
+    let mut offers = Vec::new();
+    if stopped.is_some_and(|s| s || matches!(status, Status::Lost(_))) {
+        offers.push((Asked::Reconnect, "Reconnect Now"));
+    }
+    if stopped.is_some() && board.you.is_some() {
+        offers.push((Asked::LastStats, "Show My Last Stats"));
+    }
     let room = ui.available_rect_before_wrap();
     // Painted, so a screen reader gets the same words from a node of their own.
     let said = ui.interact(room, ui.id().with("waiting-said"), Sense::hover());
@@ -122,11 +134,12 @@ pub(super) fn empty(
     });
     if room.height() < 210.0 {
         plain(ui, stage.title, stage.detail);
-        return;
+        let top = ui.cursor().top() + space::SM;
+        return offer(ui, room.center().x, top, &offers);
     }
     let (rect, _response) = ui.allocate_exact_size(room.size(), Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return;
+        return None;
     }
     let painter = ui.painter().clone();
     let width = 440.0_f32.min(space::XXL.mul_add(-2.0, rect.width()));
@@ -172,7 +185,7 @@ pub(super) fn empty(
     // The clock only needs its next second, or its next minute after the
     // first, unless something is moving.
     let fading = fade > 0.0 && since < f64::from(fade);
-    let step = if since < 60.0 { 1.0 } else { 60.0 };
+    let step = if since < 600.0 { 1.0 } else { 60.0 };
     let next = if moving || fading {
         TICK
     } else {
@@ -182,6 +195,29 @@ pub(super) fn empty(
     };
     ui.ctx()
         .request_repaint_after(Duration::from_secs_f64(next));
+    offer(ui, plate.center().x, plate.bottom() + space::LG, &offers)
+}
+
+/// The buttons under the plate, side by side and centred on `x` with their
+/// top at `top`. Says which was pressed.
+fn offer(ui: &mut Ui, x: f32, top: f32, offers: &[(Asked, &str)]) -> Option<Asked> {
+    let wide: f32 = 200.0;
+    let count = offers.len() as f32;
+    let all = wide.mul_add(count, space::MD * (count - 1.0).max(0.0));
+    let mut asked = None;
+    for (i, (what, label)) in offers.iter().enumerate() {
+        let left = (wide + space::MD).mul_add(i as f32, x - all / 2.0);
+        let spot = Rect::from_min_size(pos2(left, top), vec2(wide, space::XXL));
+        let pressed = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(spot), |ui| {
+                controls::button_wide(ui, label, (Tone::Plain, true), wide).clicked()
+            })
+            .inner;
+        if pressed {
+            asked = Some(*what);
+        }
+    }
+    asked
 }
 
 /// How long the screen has been saying `title`, in seconds. It starts
@@ -205,13 +241,27 @@ fn since(ui: &Ui, title: &str) -> f64 {
     })
 }
 
-/// The clock for a wait `seconds` long: to the second for its first
-/// minute, and in whole minutes after that.
+/// The clock for a wait `seconds` long: to the second for its first ten
+/// minutes, so it never looks stuck, and in whole minutes after that.
 pub(super) fn clock(seconds: u64) -> String {
-    if seconds < 60 {
-        format!("0:{seconds:02}")
+    if seconds < 600 {
+        format!("{}:{:02}", seconds.div_euclid(60), seconds.rem_euclid(60))
     } else {
         format!("{} min", seconds.div_euclid(60))
+    }
+}
+
+/// A board of just your kept row, drawn as your side of a lobby. Its party
+/// was the lobby it came from, which is long gone, so that is left off.
+pub(crate) fn kept_board(you: &Saved) -> Board {
+    let mut player = you.player.clone();
+    (player.party, player.stack_guess, player.encounter) = (None, None, None);
+    Board {
+        state: Some("MENUS".to_owned()),
+        state_label: Some("Last Stats".to_owned()),
+        self_team: player.team.clone(),
+        players: vec![player],
+        ..Board::default()
     }
 }
 
@@ -333,7 +383,8 @@ enum Pip {
 /// reads apart from the done ones even when nothing moves, and when it does
 /// move its fill fades and comes back once a beat as a ring goes out of it.
 fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
-    let size = vec2(12.0, 14.0);
+    // Round, since the slanted pip is a game's result everywhere else.
+    let radius = 6.5;
     let (fill, edge) = match look {
         Pip::Done(done) => (
             colour::TEXT_FAINT
@@ -344,13 +395,11 @@ fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
         Pip::Failed => (colour::ENEMY, egui::Stroke::NONE),
         Pip::Waiting(beat) => {
             if let Some(t) = beat {
-                let ring = Rect::from_center_size(centre, size * t.mul_add(1.2, 1.0));
-                painter.add(board::paint::slant(
-                    ring,
-                    true,
-                    true,
+                painter.circle_filled(
+                    centre,
+                    radius * t.mul_add(1.2, 1.0),
                     colour::ALLY.gamma_multiply(0.35 * (1.0 - t)),
-                ));
+                );
             }
             let solid = beat.map_or(0.5, |t| {
                 0.45_f32.mul_add((t * std::f32::consts::TAU).cos(), 0.55)
@@ -361,11 +410,7 @@ fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
             )
         }
     };
-    painter.add(egui::Shape::convex_polygon(
-        board::paint::slanted(Rect::from_center_size(centre, size), true, true),
-        fill,
-        edge,
-    ));
+    painter.circle(centre, radius, fill, edge);
 }
 
 /// The same words with no furniture, for a window too short to hold any.

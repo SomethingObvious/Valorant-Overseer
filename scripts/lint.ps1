@@ -566,7 +566,8 @@ $SelfChecks = @("backend\encounter_log.py", "backend\history.py",
     "backend\live_match.py", "backend\rounds.py", "backend\smurf.py", "backend\career.py",
     "backend\offline_launch.py", "backend\party_detector.py", "backend\past_games.py",
     "backend\overseerlog.py", "backend\tags.py", "backend\cards.py",
-    "backend\session_tracker.py", "backend\newest.py", "backend\agents.py", "backend\art.py")
+    "backend\session_tracker.py", "backend\newest.py", "backend\agents.py", "backend\art.py",
+    "backend\riot_client.py")
 
 # Run plainly, app.py starts the WebSocket bridge and run.py the backend, so
 # both take a flag. app.py's drives the bridge's request router in demo mode,

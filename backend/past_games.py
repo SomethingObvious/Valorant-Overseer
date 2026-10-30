@@ -8,6 +8,7 @@ first fetch and asking again costs one history call.
 from __future__ import annotations
 
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -167,6 +168,26 @@ def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
     return out
 
 
+# The last answer `recent` gave, for the History screen when Riot can't be
+# asked: no client signed in, or no connection.
+_LAST = data_path("history-last.json")
+
+
+def keep_last(puuid: str, answer: dict[str, Any]) -> None:
+    """Keep `answer` as the last good one for `puuid`."""
+    write_atomic(_LAST, {"puuid": puuid, "at": time.time(), "answer": answer}, prefix=".history-")
+
+
+def last_kept(puuid: str | None) -> dict[str, Any] | None:
+    """Return `puuid`'s last answer, or whoever's with None, and `savedAt` saying when."""
+    kept = read_json(_LAST, {})
+    if not isinstance(kept, dict) or not isinstance(kept.get("answer"), dict):
+        return None
+    if puuid and kept.get("puuid") != puuid:
+        return None
+    return {**kept["answer"], "savedAt": kept.get("at")}
+
+
 def _self_check() -> None:
     import tempfile
     from types import SimpleNamespace
@@ -237,7 +258,19 @@ def _self_check() -> None:
         details = [c for c in calls if c.startswith("/match-details")]
         check(details == [f"/match-details/v1/matches/{ids[1]}"], details)
         check(again["games"][0]["result"] == "Defeat")
-    print("past_games self-check OK (scoreboard, your side, disk cache, throttling)")
+
+    # The last answer comes back marked, for its own account only.
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        mock.patch(f"{__name__}._LAST", str(Path(tmp) / "last.json")),
+    ):
+        check(last_kept("me") is None, "nothing kept yet")
+        keep_last("me", {"games": [{"matchId": "m"}], "asked": 5})
+        kept = last_kept("me")
+        check(kept is not None and kept["games"] == [{"matchId": "m"}] and kept["savedAt"], kept)
+        check(last_kept(None) == kept, "whoever was signed in last")
+        check(last_kept("someone else") is None, "not another account's")
+    print("past_games self-check OK (scoreboard, your side, disk cache, throttling, last kept)")
 
 
 if __name__ == "__main__":

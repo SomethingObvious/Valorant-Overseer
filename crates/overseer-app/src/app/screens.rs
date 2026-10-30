@@ -7,12 +7,13 @@ use overseer_core::Status;
 use crate::board::{self, Place, Scene, Side};
 use crate::notes;
 use crate::overlay;
-use crate::settings::{self, Quality};
+use crate::settings::{self, Quality, Welcome};
 use crate::{panel, view};
 use overseer_ui::{self, colour, motion, space};
 
 use super::waiting::empty;
-use super::{DWELL, Overseer, RESTATE, Screen, panel_width};
+use super::{Empty, Overseer, RESTATE, Screen, panel_width};
+use crate::board::Asked;
 
 impl Overseer {
     /// The detail panel down the right: one surface, lifted off the board.
@@ -86,12 +87,13 @@ impl Overseer {
         } else {
             None
         };
-        let no_hotkey = self.hotkey.as_ref().err().cloned();
+        let no_hotkey = self.hotkey.as_ref().and_then(|k| k.as_ref().err()).cloned();
         let no_tray = self.tray.as_ref().err().cloned();
         let trouble = view::Trouble {
             hotkey: no_hotkey.as_ref(),
             tray: no_tray.as_deref(),
         };
+        let key = self.settings.overlay.key;
         let mut changed = false;
         self.offline.playing = matches!(self.board.state.as_deref(), Some("PREGAME" | "INGAME"));
         CentralPanel::default().frame(chrome).show(ui, |ui| {
@@ -103,8 +105,24 @@ impl Overseer {
                 (trouble, &self.root, &mut self.offline),
             );
         });
+        let again = egui::Id::new(view::TRAY_AGAIN);
+        if ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<bool>(again))
+            .is_some()
+        {
+            self.tray = crate::tray::start(&self.root, super::waker(ui.ctx()));
+        }
         if changed {
             settings::save(&self.root, &self.settings);
+            self.tell_games_read();
+            if self.settings.overlay.key != key {
+                // Gives the old combination back once the new one is held.
+                self.hotkey = Some(crate::hotkey::start(
+                    self.settings.overlay.key,
+                    super::waker(ui.ctx()),
+                ));
+            }
         }
         let now = ui.input(|i| i.time);
         self.offline.ask(&self.bridge, now);
@@ -121,6 +139,12 @@ impl Overseer {
             Screen::Board => return false,
             Screen::Settings => self.settings_screen(ui, chrome, turning),
             Screen::History => self.history_screen(ui, chrome, turning),
+            Screen::Help => {
+                CentralPanel::default().frame(chrome).show(ui, |ui| {
+                    ui.multiply_opacity(0.90f32.mul_add(turning, 0.10));
+                    view::help(ui);
+                });
+            }
             Screen::Lineups => {
                 self.lineups.show(
                     ui,
@@ -159,11 +183,7 @@ impl Overseer {
 
     /// Your past games, with the count to show at the top.
     fn history_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| {
-                i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-            });
+        let now_ms = now_ms();
         let live = self.status == Status::Live;
         let mut picked = None;
         CentralPanel::default().frame(chrome).show(ui, |ui| {
@@ -224,15 +244,38 @@ impl Overseer {
         }
         // Sized to what the board really drew, which cannot go stale the
         // way a height kept by hand can.
-        let drew = drew.min(overlay::CEILING);
+        let monitor = ctx
+            .input(|i| i.viewport().monitor_size)
+            .map_or(0.0, |m| m.y);
+        let drew = drew.min(overlay::tallest(monitor));
         if (drew - last).abs() > 0.5 {
             self.overlay_drew = Some(drew);
             ctx.request_repaint();
         }
     }
 
+    /// Tells the backend how many games each row reads. The backend keeps
+    /// it only while it runs, so it is told again on every connection.
+    pub(super) fn tell_games_read(&self) {
+        let _asked = self.bridge.ask(
+            "games_read",
+            serde_json::json!({
+                "count": self.settings.games_read,
+                "days": self.settings.games_within,
+                "keep": self.settings.party_kept,
+            }),
+        );
+    }
+
     /// The board, both teams, with the headings each side needs.
     pub(super) fn board_view(&mut self, ui: &mut Ui) {
+        if self.settings.welcome == Welcome::Due
+            && !self.board.players.is_empty()
+            && view::welcome(ui)
+        {
+            self.settings.welcome = Welcome::Seen;
+            settings::save(&self.root, &self.settings);
+        }
         let touched = self.rows(ui, Place::Window);
         let typing = ui.memory(egui::Memory::focused).is_some();
         // Read a frame late, which nobody can see: the panel is drawn before
@@ -243,14 +286,9 @@ impl Overseer {
             self.hovered = touched.hovered;
             self.hovered_at = now;
         }
-        // A row the pointer rests on becomes the selection, so the panel
-        // keeps showing it while the pointer crosses over to read it.
-        if let Some(id) = self.hovered.as_ref()
-            && now - self.hovered_at >= DWELL
-            && self.selected.as_ref() != Some(id)
-        {
-            self.selected = Some(id.clone());
-        }
+        // Resting on a row only previews it. A click picks it, so a pick made
+        // with W, the arrows or the opening pick stays put as the pointer
+        // crosses the board.
         if touched.clicked.is_some() {
             self.selected = touched.clicked;
         }
@@ -260,20 +298,46 @@ impl Overseer {
         if let Some(team) = touched.worth {
             self.next_flagged(Some(&team));
         }
+        // Your last stats stay up until a board with players on it comes.
+        match touched.waiting {
+            Some(Asked::LastStats) => self.empty = Empty::LastStats,
+            Some(Asked::Reconnect) => self.reconnect(ui.ctx()),
+            None if !self.board.players.is_empty() => self.empty = Empty::Plate,
+            None => {}
+        }
     }
 
     /// Draws the board, or what to say instead. Read only, so the overlay can
     /// call it too without the two windows disagreeing about the selection.
     fn rows(&self, ui: &mut Ui, place: Place) -> board::Touched {
-        if self.board.players.is_empty() {
-            empty(
+        let kept;
+        let shown = if self.board.players.is_empty() {
+            let asked = self.empty == Empty::LastStats && place == Place::Window;
+            let Some(you) = self.board.you.as_ref().filter(|_| asked) else {
+                let waiting = empty(
+                    ui,
+                    (&self.status, &self.board),
+                    self.reason(),
+                    self.pace(RESTATE),
+                    (place == Place::Window).then_some(self.stopped.is_some()),
+                );
+                return board::Touched {
+                    waiting,
+                    ..board::Touched::default()
+                };
+            };
+            view::warning(
                 ui,
-                (&self.status, &self.board),
-                self.reason(),
-                self.pace(RESTATE),
+                &format!(
+                    "Your stats from {}. Overseer can't read VALORANT right now, so they won't change until it can. Press Esc to go back.",
+                    crate::history::kept_ago(now_ms(), you.at)
+                ),
             );
-            return board::Touched::default();
-        }
+            kept = super::waiting::kept_board(you);
+            &kept
+        } else {
+            &self.board
+        };
         let now = ui.input(|i| i.time);
         // A board that stopped updating says so, and fades, so nobody reads
         // it as the round in front of them.
@@ -288,17 +352,19 @@ impl Overseer {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs(1));
             ui.multiply_opacity(0.45);
+        } else if let Some(at) = shown.held_since.filter(|_| place == Place::Window) {
+            // Not faded, since it is still the match being played.
+            view::warning(
+                ui,
+                &format!(
+                    "Can't reach VALORANT right now. This board is from {}, and it stays up until the match is seen to end.",
+                    crate::history::kept_ago(now_ms(), Some(at))
+                ),
+            );
         }
         let scene = Scene {
-            board: &self.board,
+            board: shown,
             sort: &self.sort,
-            // The overlay has no search box, so the window's filter would
-            // only make it look broken.
-            filter: if place == Place::Window {
-                &self.search.filter
-            } else {
-                ""
-            },
             selected: self.selected.as_deref(),
             notes: &self.notes,
             hidden: &self.settings.hidden_columns,
@@ -309,4 +375,13 @@ impl Overseer {
         };
         board::draw(ui, &scene)
     }
+}
+
+/// The time now, in milliseconds since 1970.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        })
 }

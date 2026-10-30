@@ -34,8 +34,14 @@ pub(super) fn agent(
         choose(ui, atlas, draft, main);
         return;
     }
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            true,
+            format!("Agent, {}", draft.lineup.agent),
+        )
+    });
     let portrait = egui::Rect::from_min_size(rect.min + vec2(0.0, 2.0), vec2(40.0, 40.0));
     face(ui.painter(), portrait, &draft.lineup.agent, 1.0, main);
     let _name = caps_text(

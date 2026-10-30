@@ -103,6 +103,8 @@ pub struct TopAgent {
     /// Matches on it.
     #[serde(deserialize_with = "number::whole")]
     pub games: Option<u32>,
+    /// Their role, as Duelist or Sentinel.
+    pub role: Option<String>,
 }
 
 /// How they do on the map being played.
@@ -359,6 +361,19 @@ pub struct LockProgress {
     pub total: Option<u32>,
 }
 
+/// How far the rows have read back, while they are still reading.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Reading {
+    /// The share of the games in hand, from 0 to 1.
+    pub progress: f32,
+    /// When the backend expects the last of them, in seconds since 1970.
+    pub done_at: f64,
+    /// How many games each row reads back to.
+    #[serde(deserialize_with = "number::whole")]
+    pub games: Option<u32>,
+}
+
 /// Something the backend wants said out loud.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -405,6 +420,24 @@ pub struct Board {
     pub notice: Option<Notice>,
     /// What a board with no one on it waits on: `riot`, `game` or `match`.
     pub waiting: Option<String>,
+    /// Your own row off the last board that had it, which the window can
+    /// show while nothing can be read.
+    pub you: Option<Saved>,
+    /// Set on a match's board held through a dropped connection: when it was
+    /// last read, in seconds since 1970.
+    pub held_since: Option<f64>,
+    /// How far the rows have read back, while they are still reading.
+    pub reading: Option<Reading>,
+}
+
+/// Your row as the backend last kept it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Saved {
+    /// The row itself, as it came on the board.
+    pub player: Player,
+    /// When it was kept, in seconds since 1970.
+    pub at: Option<f64>,
 }
 
 impl Board {

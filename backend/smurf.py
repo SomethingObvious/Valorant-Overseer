@@ -18,8 +18,8 @@ from vconstants import rank_from_tier
 # by itself, and one good headshot percentage is a hint. Two points is a flag.
 _SMURF_PEAK_TIER = 20
 _SMURF_LEVEL = 60
-_SMURF_KD = 1.35
-_SMURF_KD_STRONG = 1.8
+_SMURF_KD = 1.5
+_SMURF_KD_STRONG = 2.2
 _SMURF_KD_LEVEL = 80
 _SMURF_KD_MATCHES = 5
 _SMURF_WR = 62.0
@@ -27,9 +27,12 @@ _SMURF_WR_STRONG = 70.0
 _SMURF_WR_GAMES = 15
 _SMURF_WR_GAMES_STRONG = 20
 _SMURF_WR_LEVEL = 100
-_SMURF_HS = 30.0
+_SMURF_HS = 35.0
 _SMURF_GAP_TIERS = 3
-_SMURF_GAP_STRONG = 6
+# Ranks have come down since the early acts the peak can be from, so two
+# ranks under it is common and only a hint. Three is an argument.
+_SMURF_GAP = 6
+_SMURF_GAP_STRONG = 9
 _SMURF_FLAG_SCORE = 2
 
 
@@ -66,12 +69,14 @@ def smurf_signals(
     # Playing well below their own peak. Skipped when the peak already spoke
     # above, because two lines saying the same thing about the same account is
     # not two pieces of evidence.
-    elif gap >= _SMURF_GAP_STRONG:
-        reasons.append((f"{gap} ranks below their peak of {rank_from_tier(peak)['name']}", 2))
+    elif gap >= _SMURF_GAP:
+        weight = 2 if gap >= _SMURF_GAP_STRONG else 1
+        reasons.append((f"{gap} ranks below their peak of {rank_from_tier(peak)['name']}", weight))
     elif fresh and lvl < _SMURF_LEVEL and peak and gap >= _SMURF_GAP_TIERS:
         reasons.append((f"{gap} ranks below peak", 1))
     # The K/D is the last few matches, not a career, and three good games is
     # something anybody has, so under five matches it is not evidence at all.
+    # Five good games is a good week, so alone it takes a lopsided one.
     if kd is not None and kd >= _SMURF_KD and matches >= _SMURF_KD_MATCHES:
         low = fresh and lvl < _SMURF_KD_LEVEL
         said = f"K/D {kd} at level {lvl}" if low else f"K/D {kd} over {matches} games"
@@ -146,12 +151,16 @@ def _self_check() -> None:
             [],
         )
     )
-    # An old account two ranks under its peak is worth a look on that alone,
-    # and one rank under is nothing. Unranked has no gap at all.
+    # An old account three ranks under its peak is worth a look on that
+    # alone, two is a hint, and one is nothing. Unranked has no gap at all.
     fallen, why = compute_smurf(
+        level=124, peak_tier=21, rank_tier=12, kd=None, win_rate=None, games=None
+    )
+    check(fallen and why == ["9 ranks below their peak of Ascendant 1"], why)
+    drifted, why = compute_smurf(
         level=124, peak_tier=19, rank_tier=12, kd=None, win_rate=None, games=None
     )
-    check(fallen and why == ["7 ranks below their peak of Diamond 2"], why)
+    check(not drifted and why == ["7 ranks below their peak of Diamond 2"], why)
     check(
         compute_smurf(level=124, peak_tier=15, rank_tier=12, kd=None, win_rate=None, games=None)[1]
         == []
@@ -162,22 +171,29 @@ def _self_check() -> None:
     )
     # A dominant run flags at any level, and says how many games it was.
     dominant, why = compute_smurf(
-        level=300, peak_tier=12, rank_tier=12, kd=2.1, win_rate=None, games=None, kd_matches=5
+        level=300, peak_tier=12, rank_tier=12, kd=2.4, win_rate=None, games=None, kd_matches=5
     )
-    check(dominant and why == ["K/D 2.1 over 5 games"], why)
+    check(dominant and why == ["K/D 2.4 over 5 games"], why)
+    # A good week is not a smurf.
+    check(
+        compute_smurf(
+            level=300, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
+        )
+        == (False, [])
+    )
     hot, why = compute_smurf(
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=3
     )
     check((hot, why) == (False, []), why)
+    # On a young account it is a hint: shown, not flagged.
     hot, why = compute_smurf(
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
     )
-    check(hot and why == ["K/D 1.9 at level 41"], why)
-    # 1.4 is the same signal at half the weight: shown, not flagged.
+    check(not hot and why == ["K/D 1.9 at level 41"], why)
     warm, why = compute_smurf(
         level=41, peak_tier=12, rank_tier=12, kd=1.4, win_rate=None, games=None, kd_matches=5
     )
-    check(not warm and why == ["K/D 1.4 at level 41"], why)
+    check((warm, why) == (False, []), why)
     # Aim needs the same sample the K/D needs, and at any level it is a hint
     # that takes something else to flag.
     check(

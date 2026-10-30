@@ -93,6 +93,58 @@ pub(crate) fn button_wide(
     }
 }
 
+/// A box showing the choice made, `wide` points across, that opens a menu
+/// of the others. It reads as a field rather than a button: the choice
+/// sits on the left in plain text, with an arrow that points down, or up
+/// while the menu is open.
+pub(crate) fn select(ui: &mut Ui, text: &str, wide: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(wide, 32.0), Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let hot = response.hovered() || open;
+        painter.rect(
+            rect,
+            4.0,
+            if hot {
+                colour::BG_HOVER
+            } else {
+                colour::BG_INSET
+            },
+            egui::Stroke::new(1.0, if hot { colour::TEXT_DIM } else { colour::LINE }),
+            egui::StrokeKind::Inside,
+        );
+        let arrow = pos2(rect.right() - 16.0, rect.center().y);
+        let tip = if open { -3.0 } else { 3.0 };
+        painter.add(egui::Shape::line(
+            vec![
+                arrow + vec2(-5.0, -tip),
+                arrow + vec2(0.0, tip),
+                arrow + vec2(5.0, -tip),
+            ],
+            egui::Stroke::new(1.5, colour::TEXT_STRONG),
+        ));
+        let room = Rect::from_min_max(
+            rect.min + vec2(12.0, 0.0),
+            pos2(rect.right() - 32.0, rect.bottom()),
+        );
+        let ink = if hot {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT
+        };
+        painter.with_clip_rect(room).text(
+            room.left_center(),
+            Align2::LEFT_CENTER,
+            text,
+            Face::Body.at(size::BODY),
+            ink,
+        );
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, text));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// The card a menu opens in: raised, with a hairline round it.
 pub(crate) fn menu_card() -> egui::Frame {
     egui::Frame::NONE
@@ -107,6 +159,7 @@ pub(crate) fn menu_card() -> egui::Frame {
 pub(crate) fn menu_row(ui: &mut Ui, text: &str, on: bool, wide: f32) -> Response {
     let (rect, row) = ui.allocate_exact_size(vec2(wide, 26.0), Sense::click());
     let row = row.on_hover_cursor(egui::CursorIcon::PointingHand);
+    row.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, text));
     let painter = ui.painter();
     if row.hovered() {
         painter.rect_filled(rect, 4.0, colour::BG_HOVER);
@@ -116,7 +169,7 @@ pub(crate) fn menu_row(ui: &mut Ui, text: &str, on: bool, wide: f32) -> Response
     if on {
         let mark =
             Rect::from_center_size(pos2(rect.left() + 4.0, rect.center().y), vec2(3.0, 14.0));
-        painter.rect_filled(mark, 1.5, colour::ENEMY);
+        painter.rect_filled(mark, 1.5, colour::TEXT_STRONG);
     }
     let ink = if on || row.hovered() {
         colour::TEXT_STRONG
@@ -142,7 +195,7 @@ pub(crate) fn chip_width(ui: &Ui, text: &str) -> f32 {
 pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     let painter = ui.painter().clone();
     let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label()));
-    let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT - 4.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if on {
             colour::TEXT_STRONG
@@ -152,6 +205,9 @@ pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
             colour::BG_INSET
         };
         painter.add(paint::slant(rect, true, true, fill));
+        if !on {
+            paint::chip_edge(&painter, rect, colour::EDGE);
+        }
         let _drawn = caps_text(
             &painter,
             rect.center(),
@@ -180,7 +236,7 @@ pub(crate) fn chip_with(
         0.0
     };
     let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label())) + room;
-    let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT - 2.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if on {
             colour::TEXT_STRONG
@@ -191,6 +247,9 @@ pub(crate) fn chip_with(
         };
         let ink = if on { colour::BG } else { colour::TEXT };
         painter.add(paint::slant(rect, true, true, fill));
+        if !on {
+            paint::chip_edge(&painter, rect, colour::EDGE);
+        }
         if let Some(icon) = icon {
             painter.image(
                 icon.id(),
@@ -274,8 +333,7 @@ pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     response
 }
 
-/// A cream line along the bottom of a text box while it has the keyboard,
-/// the way the search box shows it.
+/// A cream line along the bottom of a text box while it has the keyboard.
 fn underline(ui: &Ui, rect: Rect, response: &Response) {
     if response.has_focus() {
         ui.painter().rect_filled(

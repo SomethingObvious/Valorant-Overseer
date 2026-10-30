@@ -152,17 +152,6 @@ fn order(a: &Key, b: &Key, direction: Direction) -> std::cmp::Ordering {
     }
 }
 
-/// Whether a player's name or agent contains the filter, ignoring case.
-/// Anywhere in the word, not just the start, so a tag finds its player.
-pub(crate) fn matches(player: &Player, filter: &str) -> bool {
-    let needle = filter.trim().to_lowercase();
-    if needle.is_empty() {
-        return true;
-    }
-    let hay = |value: Option<&str>| value.is_some_and(|v| v.to_lowercase().contains(&needle));
-    hay(player.name.as_deref()) || hay(player.agent.as_deref())
-}
-
 #[cfg(test)]
 mod tests {
     use overseer_core::Player;

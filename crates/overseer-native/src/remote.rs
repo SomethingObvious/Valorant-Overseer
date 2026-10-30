@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
@@ -45,6 +45,8 @@ struct Slot {
     heard: Mutex<Heard>,
     /// Asks the app's window for a frame.
     wake: Box<dyn Fn() + Send + Sync>,
+    /// Whether the video process says the video is up on screen.
+    on_screen: AtomicBool,
 }
 
 /// What the video process last said about a clip.
@@ -148,6 +150,7 @@ impl Video {
         let slot = Arc::new(Slot {
             heard: Mutex::new(Heard::new()),
             wake: Box::new(wake),
+            on_screen: AtomicBool::new(false),
         });
         lock(&clips).insert(id, Arc::clone(&slot));
         let video = Self {
@@ -247,6 +250,13 @@ impl Video {
         std::mem::take(&mut self.heard().ended)
     }
 
+    /// Whether the video is up on screen, as the video process last said.
+    /// Until it is, whatever the app drew under it shows.
+    #[must_use]
+    pub fn on_screen(&self) -> bool {
+        self.slot.on_screen.load(Ordering::Relaxed)
+    }
+
     /// Whether the engine couldn't read or play the file, or the video
     /// process has gone.
     #[must_use]
@@ -339,8 +349,8 @@ fn start(parent: isize) -> Result<Process, String> {
     Ok(Process { child, say, clips })
 }
 
-/// Takes one line the video process said: a clip's `state`, `size`, `ended`
-/// or `failed`, with its id and then what it says, split by tabs.
+/// Takes one line the video process said: a clip's `state`, `size`, `ended`,
+/// `failed` or `shown`, with its id and then what it says, split by tabs.
 fn hear(clips: &Clips, line: &str) {
     let mut parts = line.split('\t');
     let (Some(kind), Some(id)) = (
@@ -374,6 +384,10 @@ fn hear(clips: &Clips, line: &str) {
             heard.failed = true;
             true
         }
+        ("shown", [on]) => {
+            slot.on_screen.store(*on == "1", Ordering::Relaxed);
+            true
+        }
         _ => false,
     };
     drop(heard);
@@ -394,14 +408,15 @@ pub fn let_go() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::{Clips, Heard, Slot, hear, lock};
 
     /// What the video process says lands on the clip it names, a playing
     /// clip's time counts on from what was said, and only news about its
-    /// size, its end or its failure asks the window for a frame.
+    /// size, its end, its failure or it coming on screen asks the window for
+    /// a frame.
     #[test]
     fn what_the_video_process_says_is_kept() {
         let clips: Clips = Arc::default();
@@ -412,6 +427,7 @@ mod tests {
             wake: Box::new(move || {
                 counted.fetch_add(1, Ordering::Relaxed);
             }),
+            on_screen: AtomicBool::new(false),
         });
         lock(&clips).insert(7, Arc::clone(&slot));
         hear(&clips, "size	7	1080	1920");
@@ -427,5 +443,9 @@ mod tests {
         assert!(heard.ended && !heard.playing, "{heard:?}");
         drop(heard);
         assert_eq!(woken.load(Ordering::Relaxed), 2);
+        hear(&clips, "shown	7	1");
+        assert!(slot.on_screen.load(Ordering::Relaxed));
+        hear(&clips, "shown	7	0");
+        assert!(!slot.on_screen.load(Ordering::Relaxed));
     }
 }

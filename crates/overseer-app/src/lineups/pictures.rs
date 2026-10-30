@@ -59,8 +59,8 @@ pub(super) fn thumbnails(
                 }
                 if removable {
                     let spot = Rect::from_center_size(
-                        rect.right_top() + vec2(-12.0, 12.0),
-                        vec2(20.0, 20.0),
+                        rect.right_top() + vec2(-14.0, 14.0),
+                        vec2(24.0, 24.0),
                     );
                     let x = ui
                         .interact(

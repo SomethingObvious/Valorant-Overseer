@@ -7,7 +7,7 @@
 //! Under the video sits a bar like a video site's: play and pause, a
 //! timeline to skim along, the volume, the speed and full screen.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::windows::process::CommandExt;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
@@ -17,7 +17,7 @@ use egui::{
     Align2, Color32, ColorImage, CursorIcon, Id, Key, Rect, Sense, Shape, Stroke, TextureHandle,
     TextureOptions, Ui, pos2, vec2,
 };
-use overseer_ui::{Face, colour, size, space};
+use overseer_ui::{Face, colour, size};
 
 /// The most pixels a frame has on its longest side, which is 1080p either
 /// way up. Each keeps the video's own shape, so a short is as tall as a wide
@@ -108,6 +108,9 @@ pub(crate) fn speed_name(speed: f32) -> String {
 pub(crate) struct Player {
     /// The file it plays.
     file: String,
+    /// Its width and height as its own header gives them, so its box has
+    /// its shape before anything has opened it.
+    header: Option<[u32; 2]>,
     /// The frame on screen.
     texture: Option<TextureHandle>,
     /// The ffmpeg decoding now, and the frames it has made.
@@ -261,6 +264,10 @@ impl Player {
     fn new(file: &str, prefs: Prefs) -> Self {
         Self {
             file: file.to_owned(),
+            header: std::fs::File::open(file).ok().and_then(|mut f| {
+                let end = f.metadata().ok()?.len();
+                track_size(&mut f, 0, end)
+            }),
             texture: None,
             run: None,
             ahead: None,
@@ -325,6 +332,11 @@ impl Player {
             }
             Err(_) => self.engine = Engine::Failed,
         }
+    }
+
+    /// Whether Windows' engine has the clip but hasn't put it on screen yet.
+    fn coming(&self) -> bool {
+        self.video().is_some_and(|video| !video.on_screen())
     }
 
     /// Whether it is playing, counting one held while it can't be seen.
@@ -729,19 +741,27 @@ impl Player {
         self.shape().unwrap_or(16.0 / 9.0)
     }
 
-    /// The video's width over its height, once a frame says.
+    /// The video's width over its height, once a frame or its header says.
     pub(super) fn shape(&self) -> Option<f32> {
-        let [w, h] = match self.video() {
-            Some(video) => video.size()?.map(|v| v as usize),
-            None => self.texture.as_ref()?.size(),
-        };
+        let said = self.video().map_or_else(
+            || self.texture.as_ref().map(TextureHandle::size),
+            |video| video.size().map(|s| s.map(|v| v as usize)),
+        );
+        let [w, h] = said.or_else(|| self.header.map(|s| s.map(|v| v as usize)))?;
         Some(w as f32 / h.max(1) as f32)
     }
 
     /// The frame on screen, on black, filling `rect`. The first frame of a
-    /// video fades up out of the black rather than snapping on.
+    /// video fades up out of the black rather than snapping on. Windows'
+    /// engine takes a moment to come up, and a black box flashing first
+    /// looks broken, so until it is up the box is the panel's quiet inset.
     fn picture(&mut self, painter: &egui::Painter, rect: Rect) {
-        painter.rect_filled(rect, 0, Color32::BLACK);
+        let ground = if self.coming() {
+            colour::BG_INSET
+        } else {
+            Color32::BLACK
+        };
+        painter.rect_filled(rect, 0, ground);
         if self.video().is_some() {
             // Windows' engine draws over this, once it is placed.
             self.spot = Some((rect, painter.clip_rect(), painter.layer_id()));
@@ -785,13 +805,17 @@ impl Player {
         self.keys(ui);
         let aspect = self.aspect();
         let wide = ui.available_width();
-        // Never taller than what is left on screen under it, less `room`
-        // for what comes after it, so the clip, its bar and that are all in
-        // view without scrolling.
-        let left = ui.clip_rect().bottom() - ui.cursor().top() - space::SM - room;
-        let high = (wide / aspect)
-            .min(ui.ctx().content_rect().height() * self.prefs.size)
-            .min(left.max(SHORTEST));
+        // Sized from its own shape and a share of the window, not from where
+        // it sits in a scroll, so it keeps its box as the panel scrolls
+        // instead of growing under the player and letting the black backing
+        // show through. `room` holds back height for whatever sits under it,
+        // like the trim bar.
+        let cap = self
+            .prefs
+            .size
+            .mul_add(ui.ctx().content_rect().height(), -room)
+            .max(SHORTEST);
+        let high = (wide / aspect).min(cap);
         let (row, _) = ui.allocate_exact_size(vec2(wide, high), Sense::hover());
         let rect = Rect::from_center_size(row.center(), vec2(high * aspect, high));
         if !self.big {
@@ -919,7 +943,11 @@ impl Player {
             || !self.playing()
             || self.scrub.is_some()
             || egui::Popup::is_id_open(ui.ctx(), id.with("speed"));
-        let fade = ui.ctx().animate_bool_with_time(id.with("fade"), near, 0.15);
+        let fade = ui.ctx().animate_bool_with_time(
+            id.with("fade"),
+            near,
+            overseer_ui::motion::lasting(ui.ctx(), 0.15),
+        );
         if ui.is_rect_visible(rect) {
             self.picture(ui.painter(), rect);
             if fade > 0.0
@@ -934,7 +962,8 @@ impl Player {
         if video.clicked() {
             self.toggle();
         }
-        if fade > 0.0 {
+        // Over an empty box they would be the only thing there.
+        if fade > 0.0 && !self.coming() {
             self.controls(ui, rect, id, fade);
         }
     }
@@ -1648,6 +1677,47 @@ fn end(child: &mut Child) {
     drop(child.wait());
 }
 
+/// The width and height of the first track with a picture, walking an MP4's
+/// boxes from `at` to `end` down through `moov` and each `trak` to its
+/// `tkhd`, which ends with them in 16.16 fixed point.
+fn track_size(file: &mut (impl Read + Seek), mut at: u64, end: u64) -> Option<[u32; 2]> {
+    let word = |b: &[u8]| b.try_into().ok().map(u32::from_be_bytes);
+    while at + 8 <= end {
+        file.seek(SeekFrom::Start(at)).ok()?;
+        let mut head = [0; 8];
+        file.read_exact(&mut head).ok()?;
+        let (mut len, mut body) = (u64::from(word(&head[..4])?), at + 8);
+        if len == 1 {
+            let mut long = [0; 8];
+            file.read_exact(&mut long).ok()?;
+            (len, body) = (u64::from_be_bytes(long), at + 16);
+        } else if len == 0 {
+            len = end - at;
+        }
+        let next = at.checked_add(len).filter(|n| *n >= body)?.min(end);
+        match &head[4..] {
+            b"moov" | b"trak" => {
+                if let Some(size) = track_size(file, body, next) {
+                    return Some(size);
+                }
+            }
+            // A version 0 header is 92 bytes, and a version 1 one longer.
+            b"tkhd" if next - at >= 92 => {
+                file.seek(SeekFrom::Start(next - 8)).ok()?;
+                let mut tail = [0; 8];
+                file.read_exact(&mut tail).ok()?;
+                let size = [word(&tail[..4])? >> 16, word(&tail[4..])? >> 16];
+                if size.iter().all(|v| *v > 0) {
+                    return Some(size);
+                }
+            }
+            _ => {}
+        }
+        at = next;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Player, Prefs, header, of, placed};
@@ -1662,6 +1732,34 @@ mod tests {
         assert_eq!(header(&mut &b"P5\n2 2\n255\n"[..]), None);
         assert_eq!(header(&mut &b"P6\n0 2\n255\n"[..]), None);
         assert_eq!(header(&mut &b"P6\n2"[..]), None);
+    }
+
+    /// An MP4's track header gives its shape, past a track with no picture
+    /// and a 64 bit length, and a cut short file gives nothing.
+    #[test]
+    fn an_mp4_header_gives_its_shape() {
+        fn boxed(kind: &[u8], body: &[u8]) -> Vec<u8> {
+            let len = u32::try_from(body.len() + 8).unwrap_or(u32::MAX);
+            [&len.to_be_bytes()[..], kind, body].concat()
+        }
+        let track = |w: u32, h: u32| {
+            let mut tkhd = vec![0; 76];
+            tkhd.extend((w << 16).to_be_bytes());
+            tkhd.extend((h << 16).to_be_bytes());
+            boxed(b"trak", &boxed(b"tkhd", &tkhd))
+        };
+        let moov = boxed(b"moov", &[track(0, 0), track(1080, 1920)].concat());
+        let mut long = 1_u32.to_be_bytes().to_vec();
+        long.extend(b"mdat");
+        long.extend(20_u64.to_be_bytes());
+        long.extend([0; 4]);
+        let file = [boxed(b"ftyp", b"isom"), long, moov].concat();
+        let end = file.len() as u64;
+        let size = super::track_size(&mut std::io::Cursor::new(&file), 0, end);
+        assert_eq!(size, Some([1080, 1920]));
+        let cut = file.get(..file.len() - 30).unwrap_or_default();
+        let short = super::track_size(&mut std::io::Cursor::new(cut), 0, cut.len() as u64);
+        assert_eq!(short, None);
     }
 
     /// Windows' engine puts the video where egui drew its box, in the

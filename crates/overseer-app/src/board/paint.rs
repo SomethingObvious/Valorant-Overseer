@@ -32,6 +32,26 @@ pub(crate) fn slant(rect: Rect, lead: bool, tail: bool, fill: Color32) -> Shape 
     Shape::convex_polygon(slanted(rect, lead, tail), fill, egui::Stroke::NONE)
 }
 
+/// A side of the map in the colour VALORANT gives it, the attackers' red or
+/// the defenders' blue, so the side reads at a glance. Anything else is
+/// `other`.
+pub(crate) fn side_tint(side: Option<&str>, other: Color32) -> Color32 {
+    match side.map(str::to_ascii_lowercase).as_deref() {
+        Some("attack" | "attacking") => colour::ENEMY,
+        Some("defense" | "defence" | "defending") => colour::INFO,
+        _ => other,
+    }
+}
+
+/// The outline of a chip slanted at both ends.
+pub(crate) fn chip_edge(painter: &egui::Painter, chip: Rect, ink: Color32) {
+    let mut points = slanted(chip, true, true);
+    if let Some(first) = points.first().copied() {
+        points.push(first);
+    }
+    painter.add(Shape::line(points, egui::Stroke::new(1.0, ink)));
+}
+
 /// A tag the app worked out, as an outline in the board's slant. Your own
 /// tags are solid cream, and the difference is who said it.
 pub(crate) fn chip_outline(painter: &egui::Painter, chip: Rect, ink: Color32) {
@@ -369,10 +389,7 @@ pub(crate) struct Spine {
 }
 
 /// Each party on a side and its colour: the side's own pair, in the
-/// order of the parties' numbers, so a sort or a search never swaps them.
-///
-/// `members` is everybody on the side, not only who is showing, or a search
-/// that hid the first party would hand its colour to the second.
+/// order of the parties' numbers, so a sort never swaps them.
 pub(crate) fn party_tints(members: &[&Player], side: Side) -> Vec<(u32, Color32)> {
     let palette = match side {
         Side::Ally => colour::PARTY_OURS,

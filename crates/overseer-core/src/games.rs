@@ -17,6 +17,9 @@ pub struct Recent {
     pub asked: Option<u32>,
     /// Set when Riot held some back, so fewer came than exist.
     pub partial: bool,
+    /// When these were kept, in seconds since 1970, when Riot couldn't be
+    /// asked and the backend sent the last ones it had instead.
+    pub saved_at: Option<f64>,
 }
 
 /// One match, as you saw it.

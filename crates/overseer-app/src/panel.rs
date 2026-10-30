@@ -73,6 +73,7 @@ fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: boo
     let save = notes(ui, player, store, side);
     ranks(ui, player, side, still);
     form(ui, player, side);
+    mains(ui, player);
     numbers(ui, player, side);
     group(ui, player);
     met(ui, player);
@@ -104,7 +105,7 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
         }
         return false;
     }
-    heading(ui, "Your Notes");
+    subheading(ui, "Your Notes", colour::TEXT_DIM);
     let mut text = note.text.clone();
     // The tag line keeps its raw text in egui's scratch space while it has
     // focus, because tidying "toxic," into "toxic" under the cursor eats the
@@ -171,7 +172,7 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
     done
 }
 
-/// A text box drawn as a dark slot like the search, with a cream edge along
+/// A text box drawn as a dark slot, with a cream edge along
 /// its foot while it has the keyboard.
 fn inset(ui: &mut Ui, edit: egui::TextEdit<'_>) -> egui::Response {
     let ground = ui.painter().add(egui::Shape::Noop);
@@ -522,7 +523,7 @@ fn verdict(ui: &mut Ui, player: &Player) {
             if solid {
                 "Worth a Look"
             } else {
-                "One Signal Only"
+                "Not Enough to Flag"
             },
             Face::Heavy.at(size::TITLE),
             if solid { colour::BG } else { colour::WARN },
@@ -732,14 +733,21 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
         Sense::hover(),
     );
     let painter = ui.painter().clone();
+    let mut chips = Vec::with_capacity(spots.len());
+    let mut on = None;
     for (row, x, wide, tag, whole) in spots {
         let chip = Rect::from_min_size(
             pos2(x, row.mul_add(CHIP_ROW, rect.top()) + 2.0),
             vec2(wide, 18.0),
         );
-        let _shown = ui
+        if ui
             .interact(chip, ui.id().with(("read", tag)), Sense::hover())
-            .on_hover_ui(|ui| board::tip::auto(ui, whole, board::paint::win(side)));
+            .hovered()
+        {
+            board::tip::mark_hovered(ui.ctx(), ui.layer_id(), chip);
+            on = Some(chips.len());
+        }
+        chips.push((chip, whole));
         board::paint::chip_outline(&painter, chip, colour::TEXT_FAINT);
         let _word = caps_text(
             &painter,
@@ -749,6 +757,14 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
             font.clone(),
             colour::TEXT,
         );
+    }
+    let group = ui.id().with("read-card");
+    if let Some((chip, whole)) =
+        board::tip::lingering(ui.ctx(), group, on).and_then(|i| chips.get(i))
+    {
+        board::tip::under(ui.ctx(), group, *chip, |ui| {
+            board::tip::auto(ui, whole, board::paint::win(side));
+        });
     }
 }
 
@@ -788,49 +804,118 @@ fn rank_bar(ui: &mut Ui, player: &Player, still: bool) {
     painter.add(shape::pip(filled, rank(player.rank_tier)));
 }
 
-/// Recent results, the run they are on, and what they play.
+/// Recent results and the run they are on.
 fn form(ui: &mut Ui, player: &Player, side: Side) {
-    if player.form.is_empty() && player.top_agents.is_empty() {
+    if player.form.is_empty() {
         return;
     }
-    heading(ui, "Form");
-    if !player.form.is_empty() {
-        let (rect, _response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
-        if ui.is_rect_visible(rect) {
-            pips(ui, player, rect, side);
-        }
-    }
-    let mut agents: Vec<&overseer_core::TopAgent> = player.top_agents.iter().collect();
-    agents.sort_by_key(|a| std::cmp::Reverse(a.games.unwrap_or(0)));
-    let mut mains: Vec<String> = agents
-        .iter()
-        .take(3)
-        .map(|a| {
-            format!(
-                "{} {}",
-                a.agent.clone().unwrap_or_else(|| "?".to_owned()),
-                a.games.unwrap_or(0)
-            )
-        })
-        .collect();
-    // As many as fit beside the label, most played first.
-    let room = 2.0f32.mul_add(-space::LG, ui.available_width()) - VALUE_X;
-    let font = Face::Number.at(size::BODY);
-    while mains.len() > 1
-        && ui
-            .painter()
-            .layout_no_wrap(mains.join("   "), font.clone(), colour::TEXT)
-            .size()
-            .x
-            > room
-    {
-        mains.pop();
-    }
-    if !mains.is_empty() {
-        stat(ui, "Mains", &mains.join("   "), colour::TEXT, "");
+    subheading(ui, "Form", colour::TEXT_DIM);
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        pips(ui, player, rect, side);
     }
 }
+
+/// What they play most, a row each with the agent's face, role and games,
+/// and a bar against their most played so the main reads at a glance.
+fn mains(ui: &mut Ui, player: &Player) {
+    let mut agents: Vec<&overseer_core::TopAgent> = player
+        .top_agents
+        .iter()
+        .filter(|a| a.agent.is_some())
+        .collect();
+    if agents.is_empty() {
+        return;
+    }
+    agents.sort_by_key(|a| std::cmp::Reverse(a.games.unwrap_or(0)));
+    subheading(ui, "Mains", colour::TEXT_DIM);
+    let most = agents.first().and_then(|a| a.games).unwrap_or(0).max(1);
+    for agent in agents.into_iter().take(3) {
+        main_row(ui, agent, most);
+    }
+}
+
+/// How big a main's face is.
+const MAIN_FACE: f32 = 26.0;
+
+/// One agent they play: face, name over role, and games with a bar.
+fn main_row(ui: &mut Ui, agent: &overseer_core::TopAgent, most: u32) {
+    let (rect, _response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), space::SM.mul_add(2.0, MAIN_FACE)),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let name = agent.agent.as_deref().unwrap_or_default();
+    let face = Rect::from_min_size(
+        pos2(rect.left() + space::LG, rect.center().y - MAIN_FACE / 2.0),
+        vec2(MAIN_FACE, MAIN_FACE),
+    );
+    painter.rect_filled(face, 0, colour::BG_INSET);
+    if let Some(portrait) = art::agent(painter.ctx(), name) {
+        let mut mesh = egui::Mesh::with_texture(portrait.id());
+        mesh.add_rect_with_uv(
+            face,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        painter.add(egui::Shape::mesh(mesh));
+    } else {
+        let _initial = caps_text(
+            painter,
+            face.center(),
+            Align2::CENTER_CENTER,
+            &name.chars().take(1).collect::<String>(),
+            Face::Display.at(size::BODY),
+            colour::TEXT_DIM,
+        );
+    }
+    let x = face.right() + space::MD;
+    let named = painter.text(
+        pos2(x, rect.center().y - 1.0),
+        Align2::LEFT_BOTTOM,
+        name,
+        Face::Body.at(size::BODY),
+        colour::TEXT,
+    );
+    let role = agent.role.as_deref().unwrap_or("Agent");
+    let roled = caps_text(
+        painter,
+        pos2(x, rect.center().y + 2.0),
+        Align2::LEFT_TOP,
+        role,
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    let games = agent.games.unwrap_or(0);
+    let count = painter.text(
+        pos2(rect.right() - space::LG, rect.center().y),
+        Align2::RIGHT_CENTER,
+        games.to_string(),
+        Face::Number.at(size::BODY),
+        colour::TEXT,
+    );
+    // The bar starts after the longest name a main has, so the three line up.
+    let from = (x + MAIN_TEXT).max(named.right().max(roled.right()) + space::MD);
+    let to = count.left() - space::MD;
+    if to - from < space::XL {
+        return;
+    }
+    let track = Rect::from_min_max(
+        pos2(from, rect.center().y - 2.0),
+        pos2(to, rect.center().y + 2.0),
+    );
+    painter.rect_filled(track, 0, colour::BG_INSET);
+    let mut filled = track;
+    filled.set_width(track.width() * (games as f32 / most as f32).clamp(0.0, 1.0));
+    painter.rect_filled(filled, 0, colour::TEXT_DIM);
+}
+
+/// Room for a main's name or role before its bar.
+const MAIN_TEXT: f32 = 84.0;
 
 /// The last five results as pips, and the streak when it is two or more.
 fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
@@ -870,12 +955,17 @@ fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
 /// bare K/D reads as a career average when it is only the last few matches.
 fn numbers(ui: &mut Ui, player: &Player, side: Side) {
     let out_of = |games: Option<u32>| games.map_or_else(String::new, |g| format!("\nOut of {g}"));
-    let recent = out_of(u32::try_from(player.form.len()).ok().filter(|n| *n > 0));
+    let behind = player.form.len();
+    let recent = out_of(u32::try_from(behind).ok().filter(|n| *n > 0));
+    let last = match behind {
+        1 => "their last game".to_owned(),
+        n => format!("their last {n} games"),
+    };
     let map = player
         .map_win_rate
         .as_ref()
         .filter(|m| m.games.unwrap_or(0) > 0);
-    let owned: Vec<(String, Color32, String)> = [
+    let owned: Vec<(String, Color32, String, String)> = [
         Some((
             player.kd.map_or_else(dash, |v| format!("{v:.2}")),
             if board::few_games(player) {
@@ -884,11 +974,13 @@ fn numbers(ui: &mut Ui, player: &Player, side: Side) {
                 board::paint::kd_heat(side, player.kd)
             },
             format!("K/D{recent}"),
+            format!("Kills per death over {last} of competitive, unrated, swiftplay and premier."),
         )),
         Some((
             player.hs_pct.map_or_else(dash, |v| format!("{v:.0}%")),
             colour::TEXT,
             format!("HS{recent}"),
+            format!("Share of their hits that landed on the head over {last}."),
         )),
         Some((
             player
@@ -896,12 +988,20 @@ fn numbers(ui: &mut Ui, player: &Player, side: Side) {
                 .map_or_else(dash, |v| format!("{}%", v.round())),
             sample(player.games, 10),
             format!("Win{}", out_of(player.games)),
+            format!(
+                "Share of their {} ranked games this act that they won.",
+                player.games.unwrap_or(0)
+            ),
         )),
         map.map(|m| {
             (
                 format!("{}%", m.win_rate.unwrap_or(0.0).round()),
                 sample(m.games, 5),
                 format!("Map{}", out_of(m.games)),
+                format!(
+                    "Share they won of the {} games on this map in {last}.",
+                    m.games.unwrap_or(0)
+                ),
             )
         }),
     ]
@@ -923,23 +1023,27 @@ fn sample(games: Option<u32>, few: u32) -> Color32 {
 }
 
 /// Borrows a row of owned figures for [`figures`].
-fn figures_of(owned: &[(String, Color32, String)]) -> Vec<(&str, Color32, &str)> {
+fn figures_of(owned: &[(String, Color32, String, String)]) -> Vec<Figure<'_>> {
     owned
         .iter()
-        .map(|(value, tint, under)| (value.as_str(), *tint, under.as_str()))
+        .map(|(value, tint, under, about)| (value.as_str(), *tint, under.as_str(), about.as_str()))
         .collect()
 }
+
+/// One figure: the number, its colour, the words under it, and what it
+/// means, said when the pointer rests on it.
+pub(crate) type Figure<'a> = (&'a str, Color32, &'a str, &'a str);
 
 /// A row of figures across the panel, each a number with a word under it,
 /// and what it is out of on a line of its own after a newline. When the
 /// widest of them will not fit side by side they go onto more rows, evenly,
 /// so a label never runs into the figure beside it.
-pub(crate) fn figures(ui: &mut Ui, row: &[(&str, Color32, &str)]) {
+pub(crate) fn figures(ui: &mut Ui, row: &[Figure<'_>]) {
     let value_font = Face::Heavy.at(size::DISPLAY);
     let under_font = Face::Display.at(size::MICRO);
     let widest = row
         .iter()
-        .map(|&(value, _, under)| {
+        .map(|&(value, _, under, _)| {
             under
                 .lines()
                 .map(|l| caps_width(ui.painter(), l.trim(), under_font.clone()))
@@ -956,7 +1060,7 @@ pub(crate) fn figures(ui: &mut Ui, row: &[(&str, Color32, &str)]) {
     for chunk in row.chunks(per_row) {
         let lines = chunk
             .iter()
-            .map(|&(_, _, under)| under.lines().count())
+            .map(|&(_, _, under, _)| under.lines().count())
             .max()
             .unwrap_or(1);
         let (rect, _response) = ui.allocate_exact_size(
@@ -969,8 +1073,28 @@ pub(crate) fn figures(ui: &mut Ui, row: &[(&str, Color32, &str)]) {
         let painter = ui.painter().clone();
         let inner = rect.shrink2(vec2(space::LG, 0.0));
         let each = inner.width() / per_row as f32;
-        for (i, &(value, tint, under)) in chunk.iter().enumerate() {
+        for (i, &(value, tint, under, about)) in chunk.iter().enumerate() {
             let x = inner.left() + each * i as f32;
+            let cell = Rect::from_min_size(pos2(x, rect.top()), vec2(each, rect.height()));
+            let id = ui.id().with(("figure", under));
+            let hit = ui.interact(cell, id, Sense::hover());
+            hit.widget_info(|| {
+                let under = under.lines().collect::<Vec<_>>().join(" ");
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Label,
+                    true,
+                    format!("{value} {under}. {about}"),
+                )
+            });
+            if !about.is_empty() && hit.hovered() {
+                let line = Rect::from_min_size(
+                    pos2(x, rect.top() + 2.0),
+                    vec2(caps_width(&painter, value, value_font.clone()), 20.0),
+                );
+                board::tip::mark_hovered(ui.ctx(), ui.layer_id(), line);
+                // One card for every figure, so the next one reuses it.
+                board::tip::say_under(ui.ctx(), ui.id().with("figure-card"), cell, about);
+            }
             let _value = caps_text(
                 &painter,
                 pos2(x, rect.top() + 12.0),
@@ -1005,7 +1129,7 @@ fn group(ui: &mut Ui, player: &Player) {
         .and_then(|p| p.size)
         .filter(|s| *s > 1)
     {
-        heading(ui, "Party");
+        subheading(ui, "Party", colour::TEXT_DIM);
         line(
             ui,
             &format!("{}, confirmed by Riot", stack_word(size)),
@@ -1017,11 +1141,11 @@ fn group(ui: &mut Ui, player: &Player) {
     let Some(guess) = player.stack_guess.as_ref() else {
         return;
     };
-    heading_tinted(ui, "Probably Together", colour::WARN);
+    subheading(ui, "Probably Together", colour::TEXT_DIM);
     line(
         ui,
         &stack_word(guess.size.unwrap_or(0)),
-        colour::WARN,
+        colour::TEXT_STRONG,
         size::BODY,
     );
     // Always with the evidence, because this guess accuses strangers of
@@ -1056,7 +1180,11 @@ fn met(ui: &mut Ui, player: &Player) {
     };
     // Neutral: having met somebody before is history, not a warning, and
     // amber is the flag's.
-    heading(ui, &format!("Met {} Times Before", encounter.total()));
+    subheading(
+        ui,
+        &format!("Met {} Times Before", encounter.total()),
+        colour::TEXT_DIM,
+    );
     let with = encounter.with_count.unwrap_or(0);
     if with > 0 {
         stat(
@@ -1109,7 +1237,7 @@ fn loadout(ui: &mut Ui, player: &Player) {
     if skins.is_empty() {
         return;
     }
-    heading(ui, "Carrying");
+    subheading(ui, "Carrying", colour::TEXT_DIM);
     for (weapon, skin) in skins {
         named(ui, &weapon, &skin);
     }
@@ -1158,6 +1286,25 @@ const HEADING: f32 = 22.0;
 /// A section heading: the word in caps with a hairline to the edge.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
     heading_tinted(ui, text, colour::TEXT);
+}
+
+/// A heading for a part of a section: smaller and without the rule, so the
+/// big headings are what the panel reads as at a glance.
+pub(crate) fn subheading(ui: &mut Ui, text: &str, tint: Color32) {
+    ui.add_space(space::MD);
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let _drawn = caps_text(
+        ui.painter(),
+        pos2(rect.left() + space::LG, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        Face::Display.at(size::LABEL),
+        tint,
+    );
 }
 
 /// A section heading in a colour, for the sections that are claims.

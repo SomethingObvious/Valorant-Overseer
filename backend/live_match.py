@@ -8,11 +8,15 @@ throttles so a lobby costs as few calls as it can.
 from __future__ import annotations
 
 import base64
+import contextlib
+import gzip
 import json
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import refresh
@@ -20,9 +24,10 @@ import requests
 import riot_client
 import valapi
 from agents import UUID_TO_NAME, resolve_agent
-from career import career_mids, career_summary, form_streak, rating_run
+from career import STANDARD_QUEUES, career_mids, career_summary, form_streak, rating_run
 from common import console_logger
 from common.check import check
+from common.jsonstore import data_path
 from rounds import buy_habits, habits_of, round_stats
 from smurf import compute_smurf
 from vconstants import GAMEMODES, ROUTING, STATES, map_name_from_path, party_color, rank_from_tier
@@ -71,9 +76,11 @@ _LAST_BOARD: dict[str, Any] = {"board": None, "at": 0.0}
 _HOLD_SECS = 90.0
 
 # Your own party as the party service lists it. The board is built every
-# second and a party cannot change mid-match, so it is asked for every so often.
-_OWN_PARTY: dict[str, Any] = {"id": "", "at": 0.0, "members": []}
-_OWN_PARTY_SECS = 30.0
+# second, and your presence already says the party's id and size, so it is
+# asked again only when either changes, or every five minutes in case
+# somebody swapped in without changing the size.
+_OWN_PARTY: dict[str, Any] = {"id": "", "size": 0, "at": 0.0, "members": []}
+_OWN_PARTY_SECS = 300.0
 
 # How long a failed lookup waits before it is asked again. The board asks on
 # every tick, and a service that is down costs 8 seconds a request.
@@ -93,8 +100,175 @@ _KD_FILLING: set[str] = set()
 _KD_CACHE: dict[str, tuple[tuple[Any, ...], tuple[Any, ...], int]] = {}
 _KD_CACHE_MAX = 300
 
+# Everybody's match list, kept for the whole match, since nobody in it can
+# finish another game until it ends. It is dropped as you get back to menus,
+# when yours and your party's just grew, and otherwise read again after five
+# minutes. Reading it every minute cost 10 or more of Riot's 60 or so a
+# minute while a lobby read back to 20.
 _MIDS_CACHE: dict[str, tuple[list[str], bool, float]] = {}
-_MIDS_TTL = 60.0
+_MIDS_TTL = 300.0
+_STATE_SEEN = {"state": ""}
+# How many games each row is read from, as the window's setting says. Every
+# row gets five first, then they step toward it together, through the rungs
+# between, and a step with no room in Riot's minute goes again once there is.
+GAMES_READ = (5, 10, 20)
+# Only games from the last this many days count, 0 for any age.
+_DEPTH = {"games": 20, "days": 30}
+# When each match id in a history started, in Riot's milliseconds.
+_STARTS: dict[str, int] = {}
+_STARTS_MAX = 5000
+
+
+# The match details behind your party's reads, kept on disk for as many days
+# as the window says, 0 for none. A detail never changes once the game is
+# over, so after a restart only the games played since are asked of Riot,
+# and a read still only counts the newest games in its history.
+_KEPT_DIR = Path(data_path("matches"))
+_KEEP = {"days": 14}
+_MATCH_ID = re.compile(r"[0-9a-fA-F-]{36}")
+# You and everyone in your party since the app started.
+_PARTY: set[str] = set()
+
+
+def set_depth(games: int, days: int = 30, keep: int = 14) -> None:
+    """Read `games` games for each row from now on, the nearest choice the window offers.
+
+    Your party's games are kept on disk for `keep` days, and older ones dropped.
+    """
+    _DEPTH["games"] = min(GAMES_READ, key=lambda g: abs(g - games))
+    _KEEP["days"] = max(0, keep)
+    _prune_kept()
+    if _DEPTH["days"] == max(0, days):
+        return
+    _DEPTH["days"] = max(0, days)
+    # Every read so far counted games the new window may not, so each row
+    # starts again from five.
+    _KD_CACHE.clear()
+    for entry in [*_CACHE.values(), *_LOBBY_KEPT.values()]:
+        if "deep" in entry:
+            entry["deep"] = 0
+
+
+def _kept_path(mid: str) -> Path | None:
+    # Riot's ids only, so a strange one never names a file outside the folder.
+    return _KEPT_DIR / f"{mid}.json.gz" if _MATCH_ID.fullmatch(mid) else None
+
+
+def _kept_detail(mid: str) -> dict[str, Any] | None:
+    """Return a match detail kept on disk, or None."""
+    path = _kept_path(mid)
+    if not _KEEP["days"] or path is None:
+        return None
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            md = json.load(fh)
+    except (OSError, EOFError, ValueError):
+        return None
+    return md if isinstance(md, dict) and "players" in md else None
+
+
+def _keep_detail(mid: str, md: dict[str, Any]) -> None:
+    """Keep a match detail on disk, dated by when the game started so it ages out on time."""
+    path = _kept_path(mid)
+    if not _KEEP["days"] or path is None or path.exists():
+        return
+    started = ((md.get("matchInfo") or {}).get("gameStartMillis") or 0) / 1000
+    if started < time.time() - _KEEP["days"] * 86400:
+        return
+    tmp = path.with_name(f".{mid}.{threading.get_ident()}.tmp")
+    try:
+        _KEPT_DIR.mkdir(parents=True, exist_ok=True)
+        with gzip.open(tmp, "wt", encoding="utf-8") as fh:
+            json.dump(md, fh, separators=(",", ":"))
+        os.utime(tmp, (started, started))
+        tmp.replace(path)
+    except OSError as e:
+        _log(f"couldn't keep match {mid[:8]}: {e}")
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _prune_kept() -> None:
+    """Drop kept games older than the window says, or all of them when it is off."""
+    if not _KEPT_DIR.is_dir():
+        return
+    since = time.time() - _KEEP["days"] * 86400
+    for path in _KEPT_DIR.iterdir():
+        with contextlib.suppress(OSError):
+            if not _KEEP["days"] or path.stat().st_mtime < since:
+                path.unlink()
+
+
+def _recent(mids: list[str]) -> list[str]:
+    # A game with no start time on record counts, since it came from a
+    # history that was just read.
+    if not _DEPTH["days"]:
+        return mids
+    since = (time.time() - _DEPTH["days"] * 86400) * 1000
+    return [m for m in mids if _STARTS.get(m, since) >= since]
+
+
+def _reading(rows: list[tuple[str, int | None]]) -> dict[str, Any] | None:
+    """How far the rows have read back and when they should be done, or None once they are.
+
+    Each row is a player and how many games they have been read from so far,
+    None for not yet. Counted from what is in hand, so it cannot drift from
+    what the rows show.
+    """
+    depth = _DEPTH["games"]
+    got = want = unread = guessed = 0
+    missing: set[str] = set()
+    for puuid, have in rows:
+        hit = _MIDS_CACHE.get(puuid)
+        if hit is not None:
+            mids = _recent(hit[0])[:depth]
+            want += len(mids)
+            for mid in mids:
+                if mid in _MATCH_DETAIL_CACHE:
+                    got += 1
+                else:
+                    missing.add(mid)
+            continue
+        want += depth
+        if have is None:
+            unread += 1
+        else:
+            got += min(have, depth)
+            guessed += depth - min(have, depth)
+    # A row nobody has read yet costs its history and a game a match.
+    left = len(missing) + guessed + unread * (depth + 1)
+    if not left or not want:
+        return None
+    return {
+        "progress": round(got / want, 3),
+        # Whole seconds, so a board rebuilt every second is not new each time.
+        "doneAt": round(time.time() + riot_client.budget_eta(left)),
+        "games": depth,
+    }
+
+
+def _deeper_at() -> float:
+    # When a deeper read held back by Riot's budget is worth trying again.
+    return time.time() + max(1.0, riot_client.budget_wait(background=True))
+
+
+def _note_state(state: str) -> None:
+    # Back in menus from a match, every list in hand is a game short.
+    if state == "MENUS" and _STATE_SEEN["state"] in ("INGAME", "PREGAME"):
+        _MIDS_CACHE.clear()
+    _STATE_SEEN["state"] = state
+    # Room is held back for the players still to come: your team once a match
+    # is found, then the enemies, who can load in half a minute after it when
+    # everybody locks in fast. Once the match is on, everybody is here.
+    riot_client.keep_for_first_reads(0 if state == "INGAME" else 5)
+
+
+def _next_rung(have: int) -> int:
+    # One step from `have` toward the depth: up through the rungs between,
+    # or straight down.
+    want = _DEPTH["games"]
+    return next((g for g in GAMES_READ if have < g < want), want)
+
 
 _RANK_CACHE: dict[str, tuple[dict[str, Any], str]] = {}
 _RR_CACHE: dict[str, tuple[Any, ...]] = {}
@@ -138,6 +312,18 @@ _log = console_logger("reveal")
 
 def _is_throttled(resp: Any) -> bool:
     return isinstance(resp, dict) and resp.get("status") == 429
+
+
+def _standard(md: Any, puuid: str) -> bool:
+    """Whether `md` is a five against five match `puuid` played, with a result."""
+    if not isinstance(md, dict):
+        return False
+    info = md.get("matchInfo") or {}
+    queue = str(info.get("queueID") or info.get("queueId") or "").lower()
+    me = next((p for p in md.get("players") or [] if p.get("subject") == puuid), None)
+    teams = {t.get("teamId"): t for t in md.get("teams") or []}
+    won = (teams.get((me or {}).get("teamId")) or {}).get("won")
+    return queue in STANDARD_QUEUES and won is not None
 
 
 def _fallback_name(puuid: str) -> str:
@@ -219,6 +405,8 @@ def assemble_player(
         "streak": intel.get("streak"),
         "mapWins": intel.get("mapWins") or {},
         "habits": intel.get("habits"),
+        # Reads wait for the depth the window asks for.
+        "readsReady": int((intel.get("habits") or {}).get("asked") or 0) >= _DEPTH["games"],
     }
 
 
@@ -286,16 +474,19 @@ class LiveMatch:
 
     def own_party(self, presences: list[Any]) -> tuple[str, list[str]]:
         """Your party's id and every member of it, from the party service."""
-        own = ""
+        own, size = "", 0
         for p in presences:
             if p.get("puuid") == self.self_puuid:
                 priv = self.decode_private(p.get("private"))
                 if priv.get("isValid"):
-                    own = priv.get("partyPresenceData", priv).get("partyId", "")
+                    data = priv.get("partyPresenceData", priv)
+                    own, size = data.get("partyId", ""), int(data.get("partySize") or 0)
                 break
         if not own:
             return "", []
-        if _OWN_PARTY["id"] == own and time.time() - _OWN_PARTY["at"] < _OWN_PARTY_SECS:
+        if (_OWN_PARTY["id"], _OWN_PARTY["size"]) == (own, size) and (
+            time.time() - _OWN_PARTY["at"] < _OWN_PARTY_SECS
+        ):
             return own, _OWN_PARTY["members"]
         try:
             party = self.auth.glz_get(f"/parties/v1/parties/{own}")
@@ -306,7 +497,7 @@ class LiveMatch:
         rows = party.get("Members") if isinstance(party, dict) else None
         members = [m["Subject"] for m in rows or [] if isinstance(m, dict) and m.get("Subject")]
         if members:
-            _OWN_PARTY.update(id=own, at=time.time(), members=members)
+            _OWN_PARTY.update(id=own, size=size, at=time.time(), members=members)
         return own, members
 
     def valorant_open(self, presences: list[Any]) -> bool:
@@ -541,11 +732,11 @@ class LiveMatch:
                 return s["ID"]
         return None
 
-    def _fresh_mids(self, puuid: str) -> tuple[list[str], bool, bool]:
+    def _fresh_mids(self, puuid: str, *, background: bool = False) -> tuple[list[str], bool, bool]:
         """Their newest match ids, whether competitive, and whether unsure.
 
         Unsure is throttled or failed, which says nothing about the player
-        and is never kept.
+        and is never kept. A `background` read never waits on Riot's budget.
         """
         hit = _MIDS_CACHE.get(puuid)
         if hit and time.time() - hit[2] < _MIDS_TTL:
@@ -556,7 +747,9 @@ class LiveMatch:
         for queue in ("competitive", "unrated", "swiftplay", ""):
             q = f"&queue={queue}" if queue else ""
             hist = self.auth.pd_get(
-                f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=10{q}", retries=3
+                f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=20{q}",
+                retries=0 if background else 3,
+                background=background,
             )
             throttled = throttled or _is_throttled(hist)
             # An error or an empty body is not an empty history. Read as one,
@@ -566,12 +759,35 @@ class LiveMatch:
                 break
             entries = hist["History"]
             mids = [e["MatchID"] for e in entries if e.get("MatchID")]
+            for e in entries:
+                if e.get("MatchID") and e.get("GameStartTime"):
+                    _cache_put(_STARTS, _STARTS_MAX, e["MatchID"], int(e["GameStartTime"]))
             if mids or throttled:
                 is_comp = bool(mids) and queue == "competitive"
                 break
         if not throttled:
             _cache_put(_MIDS_CACHE, _KD_CACHE_MAX, puuid, (mids, is_comp, time.time()))
         return mids, is_comp, throttled
+
+    def _on_hand(self, puuid: str) -> int:
+        """Return how many games back their read can go without asking Riot for a match.
+
+        Counted down their newest games, so a gap where a game is missing
+        stops it there.
+        """
+        mids_all, _, unsure = self._fresh_mids(puuid)
+        mids = _recent(mids_all)[: _DEPTH["games"]]
+        if unsure or not mids:
+            return 0
+        held = 0
+        for mid in mids:
+            path = _kept_path(mid)
+            if mid not in _MATCH_DETAIL_CACHE and not (path and _KEEP["days"] and path.exists()):
+                break
+            held += 1
+        if held == len(mids):
+            return _DEPTH["games"]
+        return max((g for g in GAMES_READ if g <= held), default=0)
 
     def rank_info(
         self, puuid: str, season: str | None, prev_season: str | None = None
@@ -582,7 +798,8 @@ class LiveMatch:
             "rr": 0,
             "lb": 0,
             "peak": 0,
-            "wr": 0,
+            # None until Riot says, so a failed lookup reads as unknown, not 0%.
+            "wr": None,
             "games": 0,
             "prev": 0,
             "peak_season": season,
@@ -636,10 +853,14 @@ class LiveMatch:
                         peak = ti
                         out["peak_season"] = s
             out["peak"] = peak
-            wins = cur.get("NumberOfWinsWithPlacements", 0) or 0
+            wins = cur.get("NumberOfWinsWithPlacements")
+            if wins is None:
+                wins = cur.get("NumberOfWins")
             games = cur.get("NumberOfGames", 0) or 0
             out["games"] = games
-            out["wr"] = round(wins / games * 100) if games else 0
+            out["wr"] = round(int(wins) / games * 100) if games and wins is not None else None
+            if out["tier"] and not games:
+                _log(f"rank without games for {puuid[:8]}: {sorted(cur)}")
             _cache_put(_RANK_CACHE, _KD_CACHE_MAX, puuid, (out, rank_key))
         except Exception as e:
             # This runs per player in the pool, and an odd MMR answer has to
@@ -696,7 +917,7 @@ class LiveMatch:
         return level
 
     def kd_hs(
-        self, puuid: str, count: int = 3
+        self, puuid: str, count: int = 3, *, background: bool = False
     ) -> tuple[float | None, float | None, Any, str, dict[str, Any] | None]:
         """Return K/D and headshot share over the last `count` matches.
 
@@ -707,23 +928,35 @@ class LiveMatch:
         # The third value, the RR earned, is always None here. _top_up fills it
         # in from competitiveupdates.
         try:
-            mids_all, _, throttled = self._fresh_mids(puuid)
-            mids = mids_all[:count]
+            mids_all, _, throttled = self._fresh_mids(puuid, background=background)
+            mids = _recent(mids_all)[:count]
             if not mids:
                 return None, None, None, ("throttled" if throttled else "empty"), None
             cached = _KD_CACHE.get(puuid)
-            if cached and cached[2] >= count and list(cached[1])[:count] == mids:
+            # The same count only: one kept from more games would hand a
+            # five game read the numbers of twenty.
+            if cached and cached[2] == count and list(cached[1])[:count] == mids:
                 return cached[0]
 
             def fetch_detail(mid: str) -> Any:
                 hit = _MATCH_DETAIL_CACHE.get(mid)
                 if hit is not None:
                     return hit
-                md = self.auth.pd_get(f"/match-details/v1/matches/{mid}", retries=3)
+                kept = _kept_detail(mid)
+                if kept is not None:
+                    _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, kept)
+                    return kept
+                md = self.auth.pd_get(
+                    f"/match-details/v1/matches/{mid}",
+                    retries=0 if background else 3,
+                    background=background,
+                )
                 if _is_throttled(md):
                     return "throttled"
                 if isinstance(md, dict) and "players" in md:
                     _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
+                    if puuid in _PARTY:
+                        _keep_detail(mid, md)
                     return md
                 # A detail that failed to load, counted like a throttled one.
                 return "throttled"
@@ -734,12 +967,13 @@ class LiveMatch:
             map_wins: dict[str, list[Any]] = {}
 
             details = list(_DETAIL_POOL.map(fetch_detail, mids))
+            if any(md == "throttled" for md in details):
+                throttled = True
+            # Only five against five counts. A deathmatch is forty kills with
+            # no result, and summed in it gave one game's form a K/D read
+            # from five.
+            details = [md for md in details if _standard(md, puuid)]
             for md in details:
-                if md == "throttled":
-                    throttled = True
-                    continue
-                if not md:
-                    continue
                 for rr in md.get("roundResults", []):
                     for ps in rr.get("playerStats", []):
                         if ps.get("subject") == puuid:
@@ -776,22 +1010,25 @@ class LiveMatch:
                 return None, None, None, ("throttled" if throttled else "empty"), None
             kd = round(kills / deaths, 2) if deaths else float(kills)
             hs = round(heads / hits * 100) if hits else None
+            habits = habits_of([md for md in details if isinstance(md, dict)], puuid)
+            # How many games this read was asked for, 0 for one Riot cut short.
+            habits["asked"] = 0 if throttled else count
             intel = {
-                "habits": habits_of([md for md in details if isinstance(md, dict)], puuid),
+                "habits": habits,
                 "topAgents": [
-                    {"agent": a, "games": n}
+                    {"agent": a, "games": n, "role": (resolve_agent(a) or {}).get("role")}
                     for a, n in sorted(agent_counts.items(), key=lambda x: -x[1])[:3]
                 ],
                 "form": form,
                 "streak": form_streak(form),
                 "mapWins": map_wins,
             }
-            # Fewer matches than asked for is a thinner read, and tags that
+            # A match that didn't come back is a thinner read, and tags that
             # need all of them would come and go. The lobby keeps the last
-            # whole read over a partial one.
-            whole = used == len(mids)
-            result = (kd, hs, None, "ok" if whole else "partial", intel)
-            if not throttled and used == len(mids):
+            # whole read over a partial one. One that came back and wasn't
+            # five against five is no gap.
+            result = (kd, hs, None, "partial" if throttled else "ok", intel)
+            if not throttled:
                 _cache_put(_KD_CACHE, _KD_CACHE_MAX, puuid, (result, tuple(mids), count))
         except Exception as e:
             # This runs per player in the pool, so an odd match detail costs
@@ -813,11 +1050,16 @@ class LiveMatch:
             if entry is None or entry.get("kd_done"):
                 return
             entry["kd_tries"] = entry.get("kd_tries", 0) + 1
-            kd, hs, _, status, intel = self.kd_hs(puuid, count=3)
+            # Games already in hand, kept on disk for your party, go first
+            # at as many as there are rather than three.
+            held = self._on_hand(puuid)
+            kd, hs, _, status, intel = self.kd_hs(puuid, count=max(held, 3))
             if kd is not None:
                 entry["kd"], entry["hs"] = kd, hs
                 entry["intel"] = intel
                 entry["kd_done"] = True
+                if held > 5:
+                    entry["deep"] = held
                 # On screen now, not at the board loop's next tick.
                 refresh.soon()
                 return
@@ -854,6 +1096,9 @@ class LiveMatch:
                 # kd_full stays unset, so the next board sends them back here.
                 _log(f"top up failed for {puuid[:8]}: {type(e).__name__}: {e}")
                 return
+            if entry.get("deep", 5) > 5:
+                entry["kd_full"] = True
+                return
             kd, hs, _, _, intel = self.kd_hs(puuid, count=5)
             before = (entry.get("kd"), entry.get("hs"), entry.get("intel"))
             if kd is not None:
@@ -864,10 +1109,40 @@ class LiveMatch:
             if (entry.get("kd"), entry.get("hs"), entry.get("intel")) != before:
                 refresh.soon()
 
+        def _deepen(puuid: str) -> bool:
+            # One step toward the depth. True when Riot held it back, which
+            # ends the pass for now.
+            entry = _CACHE.get(f"{match_id}:{puuid}")
+            if entry is None or not entry.get("kd_full") or entry.get("kd") is None:
+                return False
+            if entry.get("deep", 5) == _DEPTH["games"]:
+                return False
+            count = _next_rung(entry.get("deep", 5))
+            kd, hs, _, status, intel = self.kd_hs(puuid, count=count, background=True)
+            if status in ("throttled", "partial", "error"):
+                entry["deep_wait"] = _deeper_at()
+                return True
+            if kd is not None and (kd, hs, intel) != (
+                entry["kd"],
+                entry.get("hs"),
+                entry.get("intel"),
+            ):
+                entry["kd"], entry["hs"], entry["intel"] = kd, hs, intel
+                refresh.soon()
+            entry["deep"] = count
+            return False
+
         def _run() -> None:
             try:
                 list(_PLAYER_POOL.map(_fill_one, puuids))
                 list(_PLAYER_POOL.map(_top_up, puuids))
+                # Once everybody has five, every row takes a step further
+                # back before any takes the next, one player at a time, so
+                # the rows fill out together without a burst Riot would
+                # throttle.
+                for _rung in GAMES_READ:
+                    if any(_deepen(puuid) for puuid in puuids):
+                        break
             finally:
                 with _KD_FILL_LOCK:
                     _KD_FILLING.discard(match_id)
@@ -878,20 +1153,18 @@ class LiveMatch:
         """Return the board: the lobby in menus, or every player in agent select or a match."""
         presences = self._presences()
         state = self.game_state(presences)
+        _note_state(state)
 
         if state == "MENUS":
             _LAST_BOARD["board"] = None
             if not self.valorant_open(presences):
                 # Signed in to the Riot client with VALORANT closed or still
-                # starting, where the lobby would be you alone.
-                return {
-                    "state": "MENUS",
-                    "stateLabel": STATES["MENUS"],
-                    "source": "local",
-                    "waiting": "game",
-                    "players": [],
-                    "teams": {},
-                }
+                # starting. Your own row needs only the client's tokens, so
+                # it shows now, and the party fills in once the game is up.
+                board = dict(self.build_lobby(presences))
+                board["stateLabel"] = "Signed In"
+                board["waiting"] = "game"
+                return board
 
             board = dict(self.build_lobby(presences))
             board["queue"] = self.queue_status()
@@ -925,6 +1198,10 @@ class LiveMatch:
 
         raw_players, match_id, map_id, queue = current
         puuids = [p["Subject"] for p in raw_players]
+        if state == "PREGAME":
+            # Agent select shows your team, and the other is the same size,
+            # which is more than five in a mode with bigger teams.
+            riot_client.keep_for_first_reads(max(5, len(puuids)))
 
         if match_id not in _MATCH_META:
             _MATCH_META.clear()
@@ -946,6 +1223,10 @@ class LiveMatch:
             weapons_by_puuid = meta["loadouts"]
 
         pmap = self.party_map(puuids, presences)
+        if self.self_puuid:
+            _PARTY.update(
+                next((ms for ms in pmap.values() if self.self_puuid in ms), [self.self_puuid])
+            )
         party_lookup = {}
         parties_out = []
         team_of = {p["Subject"]: p.get("TeamID") for p in raw_players}
@@ -1002,9 +1283,18 @@ class LiveMatch:
                         cached["rk"], cached["prev"] = rk, rk.get("prev", 0)
                     else:
                         cached["rank_at"] = time.time()
-                # The fill still owes them a K/D, or the top up that comes after it.
-                owed = not cached.get("kd_done") or (
-                    cached.get("kd") is not None and not cached.get("kd_full")
+                # The fill still owes them a K/D, the top up that comes after
+                # it, or a deeper read, unless Riot just held that back.
+                read = cached.get("kd") is not None
+                owed = (
+                    not cached.get("kd_done")
+                    or (read and not cached.get("kd_full"))
+                    or (
+                        read
+                        and cached.get("kd_full")
+                        and cached.get("deep", 5) != _DEPTH["games"]
+                        and time.time() >= cached.get("deep_wait", 0.0)
+                    )
                 )
                 if owed:
                     uncached_kd.append(puuid)
@@ -1095,6 +1385,15 @@ class LiveMatch:
             score=score,
         )
         board["riotRequests"] = self.auth.req_count
+        rows: list[tuple[str, int | None]] = []
+        for puuid in puuids:
+            entry = _CACHE.get(f"{match_id}:{puuid}") or {}
+            if entry.get("kd") is not None:
+                rows.append((puuid, entry.get("deep", 5 if entry.get("kd_full") else 3)))
+            elif not entry.get("kd_done"):
+                rows.append((puuid, None))
+            # Otherwise Riot had nothing on them, and there is nothing to wait for.
+        board["reading"] = _reading(rows)
 
         _LAST_BOARD["board"] = board
         _LAST_BOARD["at"] = time.time()
@@ -1137,6 +1436,7 @@ class LiveMatch:
         ):
             return _LOBBY_CACHE["board"]
 
+        _PARTY.update(puuids)
         names = self.reveal_names(puuids)
         for puuid in puuids:
             kept = _LOBBY_KEPT.setdefault(puuid, {})
@@ -1163,10 +1463,22 @@ class LiveMatch:
                 kept["rank"] = rk
             else:
                 rk = kept.get("rank", rk)
-            kd, hs, _, status, intel = self.kd_hs(puuid, count=5)
+            # Five first, then a step toward the depth each time the lobby
+            # is built, like a match's rows. Once there it is read again at
+            # that depth, which costs nothing until a new game shows up and
+            # then only that game.
+            have = kept.get("deep", 0)
+            count = have or max(self._on_hand(puuid), 5)
+            if have and time.time() >= kept.get("deep_wait", 0.0):
+                count = _next_rung(have)
+            # Only the first five wait their turn. The rest go when Riot's
+            # minute has room for them.
+            kd, hs, _, status, intel = self.kd_hs(puuid, count=count, background=bool(have))
             if status == "ok":
                 kept["stats"] = (kd, hs, intel)
+                kept["deep"] = count
             elif status != "empty" and "stats" in kept:
+                kept["deep_wait"] = _deeper_at()
                 kd, hs, intel = kept["stats"]
 
             level = m.get("level", 0) or 0
@@ -1236,10 +1548,13 @@ class LiveMatch:
             match_id="lobby",
         )
         board["riotRequests"] = self.auth.req_count
+        board["reading"] = _reading(
+            [(m["puuid"], _LOBBY_KEPT.get(m["puuid"], {}).get("deep")) for m in members]
+        )
         _LOBBY_CACHE.update(key=key, at=now, board=board)
         return board
 
-    def player_career(self, puuid: str, count: int = 8) -> dict[str, Any]:
+    def player_career(self, puuid: str, count: int = 20) -> dict[str, Any]:
         """Return a player's career: their recent matches and what they add up to."""
         try:
             hist = self.auth.pd_get(f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=20")
@@ -1725,9 +2040,27 @@ def _self_check() -> None:
         def pd_get(self, path: str, **_: Any) -> Any:
             self.calls.append(path)
             if path.startswith("/match-history"):
-                return {"History": [{"MatchID": m} for m in self.history]}
+                return {
+                    "History": [
+                        {"MatchID": m, "QueueID": "deathmatch" if m.startswith("dm") else "unrated"}
+                        for m in self.history
+                    ]
+                }
             if path.startswith("/match-details"):
                 mid = path.rsplit("/", 1)[-1]
+                if mid.startswith("dm"):
+                    return {
+                        "matchInfo": {"matchId": mid, "queueID": "deathmatch"},
+                        "players": [
+                            {
+                                "subject": "me",
+                                "teamId": "me",
+                                "stats": {"kills": 40, "deaths": 57, "assists": 0, "score": 0},
+                            }
+                        ],
+                        "teams": [],
+                        "roundResults": [],
+                    }
                 return {
                     "matchInfo": {"matchId": mid, "queueID": "competitive", "gameStartMillis": 1},
                     "players": [
@@ -1800,6 +2133,19 @@ def _self_check() -> None:
     flaky.broken = set()
     check(shaky.kd_hs("me", count=3)[3] == "ok")
 
+    # A deathmatch among them adds nothing: its forty kills would drag the
+    # K/D under one beside a form of two games.
+    _MIDS_CACHE.clear()
+    _KD_CACHE.clear()
+    flaky.history = ["f1", "dm1", "f3"]
+    read = shaky.kd_hs("me", count=3)
+    check((read[0], read[3], len((read[4] or {})["form"])) == (2.0, "ok", 2), read)
+    flaky.history = ["dm1"]
+    _MIDS_CACHE.clear()
+    check(shaky.kd_hs("me", count=3)[3] == "empty")
+    _MIDS_CACHE.clear()
+    _KD_CACHE.clear()
+
     # A presence that is not base64 JSON of an object reads as invalid rather
     # than raising: bad padding, bytes that are not UTF-8, not JSON, a list.
     good = base64.b64encode(b'{"isValid": true}').decode()
@@ -1844,6 +2190,53 @@ def _self_check() -> None:
         fill("topup")
     check(entry["kd_full"] and entry["kd"] == 2.0, entry)
     check(woke.called, "a finished top up didn't wake the board loop")
+    # Then it reads as far back as it goes, and is owed nothing more.
+    check(entry.get("deep") == 20, entry)
+    # Asked for fewer, it reads them again from the games it already has.
+    set_depth(4)
+    fill("topup")
+    check(entry.get("deep") == 5, entry)
+    set_depth(20)
+    check([_next_rung(have) for have in (5, 10, 20)] == [10, 20, 20])
+    # Only games inside the window count, and one with no time on record does.
+    now_ms = int(time.time() * 1000)
+    _STARTS.update(new=now_ms, old=now_ms - 40 * 86400 * 1000)
+    check(_recent(["new", "old", "unknown"]) == ["new", "unknown"])
+    set_depth(20, days=0)
+    check(_recent(["new", "old"]) == ["new", "old"])
+    set_depth(20)
+    # A new window starts every row again from five, and the same one doesn't.
+    _CACHE["m:p"] = {"deep": 20}
+    set_depth(20)
+    check(_CACHE["m:p"]["deep"] == 20, _CACHE["m:p"])
+    set_depth(20, days=7)
+    check(_CACHE.pop("m:p")["deep"] == 0)
+    set_depth(20)
+    # Match lists last the match and go the moment it ends.
+    _MIDS_CACHE["kept"] = (["m1"], True, time.time())
+    for state in ("PREGAME", "INGAME", "INGAME"):
+        _note_state(state)
+    check("kept" in _MIDS_CACHE)
+    _note_state("MENUS")
+    check("kept" not in _MIDS_CACHE, _MIDS_CACHE)
+    # The reading counts what is in hand: one row with 15 of its 20 games,
+    # one with its history but no games, which shares two with the first,
+    # and one not read at all. Nothing left to read says nothing.
+    _MIDS_CACHE["a"] = ([f"g{i}" for i in range(20)], True, time.time())
+    _MIDS_CACHE["b"] = ([f"g{i}" for i in range(18, 38)], True, time.time())
+    for i in range(15):
+        _MATCH_DETAIL_CACHE[f"g{i}"] = {}
+    got = _reading([("a", 15), ("b", 5), ("c", None)])
+    check(got is not None and got["progress"] == round(15 / 60, 3), got)
+    check(got is not None and got["games"] == 20 and got["doneAt"] > time.time(), got)
+    check(_reading([("a", 20)]) is not None)
+    for i in range(15, 20):
+        _MATCH_DETAIL_CACHE[f"g{i}"] = {}
+    check(_reading([("a", 20)]) is None)
+    for key in ("a", "b"):
+        _MIDS_CACHE.pop(key)
+    for i in range(20):
+        _MATCH_DETAIL_CACHE.pop(f"g{i}")
 
     # A five stack with one friend in it: presences show two of you, and the
     # party service shows all five, in the match and in the lobby.
@@ -1859,8 +2252,14 @@ def _self_check() -> None:
         check(parties == {"p1": stack}, parties)
         lobby = {m["puuid"] for m in lm.party_members([presence("me"), presence("f1")])}
         check(lobby == set(stack), lobby)
-    # Asked once and kept, since the board is built every second.
-    check(glz.call_count == 1, glz.call_args_list)
+        # Asked once and kept, since the board is built every second.
+        check(glz.call_count == 1, glz.call_args_list)
+        # Somebody joining changes the size, which asks again.
+        grown = {"isValid": True, "partyPresenceData": {"partyId": "p1", "partySize": 4}}
+        lm.own_party(
+            [{"puuid": "me", "private": base64.b64encode(json.dumps(grown).encode()).decode()}]
+        )
+        check(glz.call_count == 2, glz.call_args_list)
 
     # Alone in the lobby, a rebuild whose lookups all fail keeps the rank,
     # the stats and the name the last good one had.
@@ -1971,8 +2370,22 @@ def _self_check() -> None:
         answer.return_value.json.return_value = {"data": {"riotClientVersion": "release-10.00"}}
         check(local.client_version() == "release-10.00")
 
+    # A party game is kept on disk, read back, and dropped once older than
+    # the window says.
+    with tempfile.TemporaryDirectory() as tmp, mock.patch(f"{__name__}._KEPT_DIR", Path(tmp)):
+        mid = "12345678-1234-1234-1234-123456789abc"
+        _KEEP["days"] = 14
+        _keep_detail(mid, {"players": [], "matchInfo": {"gameStartMillis": time.time() * 1000}})
+        check(_kept_detail(mid) == {"players": [], "matchInfo": mock.ANY}, "kept and read back")
+        check(_kept_detail("../outside") is None, "only Riot's ids name files")
+        old = time.time() - 15 * 86400
+        os.utime(Path(tmp) / f"{mid}.json.gz", (old, old))
+        set_depth(20, days=30, keep=14)
+        check(_kept_detail(mid) is None, "kept past 14 days")
+        set_depth(20)
+
     print(
-        "live_match self-check OK (sides, career cached, "
+        "live_match self-check OK (sides, career cached, party games kept, "
         "failed lookups retried, name service over TLS)"
     )
 

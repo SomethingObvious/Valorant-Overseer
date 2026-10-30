@@ -15,6 +15,8 @@ Yoru = "Yoru"
 # Appears inside the base64 X-Riot-ClientPlatform blob, and in Unreal Engine
 # paths in the game's own log lines.
 UE = "UE"
+# An MP4 track box's four-letter name, read for a clip's shape.
+trak = "trak"
 # ruff rule prefixes are not words. CPY is flake8-copyright, which ruff 0.16
 # promoted out of preview; ISC is implicit-str-concat.
 CPY = "CPY"

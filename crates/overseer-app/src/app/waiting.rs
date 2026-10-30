@@ -2,6 +2,7 @@
 //! backend, the Riot client, VALORANT and the match have got, with the step
 //! being waited on moving, so waiting reads apart from stuck.
 
+use std::path::Path;
 use std::time::Duration;
 
 use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
@@ -251,6 +252,15 @@ pub(super) fn clock(seconds: u64) -> String {
     }
 }
 
+/// Your row as the backend last kept it on disk, or None before it kept one.
+pub(crate) fn kept(root: &Path) -> Option<Saved> {
+    let file = root.join("backend").join("data").join("you.json");
+    let raw = std::fs::read_to_string(file).ok()?;
+    serde_json::from_str::<Saved>(&raw)
+        .ok()
+        .filter(|you| you.player.puuid.is_some())
+}
+
 /// A board of just your kept row, drawn as your side of a lobby. Its party
 /// was the lobby it came from, which is long gone, so that is left off.
 pub(crate) fn kept_board(you: &Saved) -> Board {
@@ -448,4 +458,28 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
         sentence,
         colour::TEXT_DIM,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kept;
+
+    #[test]
+    fn your_kept_row_is_read_from_the_backends_folder() {
+        let root = std::env::temp_dir().join(format!("overseer-kept-{}", std::process::id()));
+        let data = root.join("backend").join("data");
+        std::fs::create_dir_all(&data).expect("a temp folder");
+        assert!(kept(&root).is_none(), "nothing kept yet");
+        std::fs::write(data.join("you.json"), "not json").expect("a write");
+        assert!(kept(&root).is_none(), "a broken file reads as nothing");
+        std::fs::write(
+            data.join("you.json"),
+            r#"{"player": {"puuid": "me", "kd": 1.2}, "at": 5.0}"#,
+        )
+        .expect("a write");
+        let you = kept(&root).expect("the row reads");
+        assert_eq!(you.player.puuid.as_deref(), Some("me"));
+        assert_eq!(you.at, Some(5.0));
+        let _gone = std::fs::remove_dir_all(&root);
+    }
 }

@@ -502,7 +502,12 @@ impl Overseer {
             bridge,
             root: root.to_path_buf(),
             settings,
-            board: Board::default(),
+            // Read here too, so Show My Last Stats is offered while the
+            // backend is still starting or can't be reached.
+            board: Board {
+                you: waiting::kept(root),
+                ..Board::default()
+            },
             status: Status::Connecting(String::new()),
             // It never fixes itself, so the light shows it from the start.
             stopped: broken.clone(),
@@ -619,7 +624,8 @@ impl Overseer {
                 Event::Board(board) => {
                     let was = self.board.state.take();
                     let was_on = self.board.map.take();
-                    self.board = *board;
+                    let you = std::mem::replace(&mut self.board, *board).you;
+                    self.board.you = self.board.you.take().or(you);
                     // A match that starts with Lineups open moves it to the
                     // match's map. Only on a change, so a map picked by hand
                     // stays picked.

@@ -1026,14 +1026,23 @@ fn split_name(full: &str) -> (&str, &str) {
 /// The longest cut of a name that fits in `room`, measured in the face it
 /// is drawn in, since a count of letters lets a wide name run into the rank.
 pub(crate) fn fit(painter: &egui::Painter, name: &str, font: &egui::FontId, room: f32) -> String {
-    let mut keep = name.chars().count();
-    loop {
-        let cut = clip(name, keep);
-        if keep <= 4 || caps_width(painter, &cut, font.clone()) <= room {
-            return cut;
-        }
-        keep -= 1;
+    let total = name.chars().count();
+    if total <= 4 || caps_width(painter, name, font.clone()) <= room {
+        return name.to_owned();
     }
+    // Halving the length to try rather than taking a letter off at a time,
+    // since each try lays the text out and this runs for every row each
+    // frame. Four letters is the least it keeps, fitting or not.
+    let (mut low, mut high) = (4, total - 1);
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if caps_width(painter, &clip(name, mid), font.clone()) <= room {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    clip(name, low)
 }
 
 /// A name cut to a length, with an ellipsis if it had to be.

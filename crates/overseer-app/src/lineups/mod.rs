@@ -189,6 +189,9 @@ struct Draft {
     placing: Place,
     /// The pin following the pointer while a drag on the map goes on.
     grab: Option<Place>,
+    /// Where you stand, while the drag is a new throw from there rather than
+    /// an old pin being moved.
+    thrown_from: Option<[f32; 2]>,
     /// A link, or the path of a video on this PC.
     source: String,
     /// Where the clip starts, as typed, like 1:10.
@@ -263,6 +266,7 @@ impl Draft {
             },
             placing: Place::Stand,
             grab: None,
+            thrown_from: None,
             source: String::new(),
             from: String::new(),
             to: String::new(),
@@ -315,6 +319,7 @@ impl Draft {
                 Place::Stand
             },
             grab: None,
+            thrown_from: None,
             source: clip.source.unwrap_or_default(),
             from: clip.from.map(clock).unwrap_or_default(),
             to: clip.to.map(clock).unwrap_or_default(),
@@ -604,6 +609,9 @@ struct View {
     /// The lineup being saved, kept while the backend cuts its clip so a
     /// save that fails can open it again as it was.
     saving: Option<Box<Draft>>,
+    /// A lineup whose save failed while the screen was on to something
+    /// else, opened again once it's back on the list.
+    failed: Option<Box<Draft>>,
     /// A lineup saved while the list was being asked for again, to add to
     /// that list, since the backend may have read it before the save landed.
     late: Option<Lineup>,
@@ -641,8 +649,12 @@ struct View {
     new_default: Option<String>,
     /// The agent you play most, whose outline the blacked-out figure is.
     main: Option<String>,
-    /// Shapes changed on a map and not yet sent to be kept.
-    unsaved: Option<(String, Vec<Drawing>)>,
+    /// Shapes changed and not yet sent to be kept, by map, so a change on a
+    /// second map doesn't take the place of the first.
+    unsaved: std::collections::BTreeMap<String, Vec<Drawing>>,
+    /// The shapes on their way to be kept, put back with the unsent ones if
+    /// they don't get there.
+    drawing_out: Option<(String, Vec<Drawing>)>,
     /// An export asked for and not yet done.
     export: Option<Export>,
     /// Where the map was on screen when the window was asked for a picture.
@@ -887,8 +899,10 @@ impl Lineups {
         }
         self.view.pending = None;
         let saving = self.view.saving.take();
+        let drawing = self.view.drawing_out.take();
         match result {
             Err(why) => {
+                self.view.unsent(drawing);
                 self.view.reopen(saving);
                 self.view.said = Some((why, true));
             }
@@ -1040,6 +1054,8 @@ impl Lineups {
         }
         if self.view.pending.take().is_some() {
             let saving = self.view.saving.take();
+            let drawing = self.view.drawing_out.take();
+            self.view.unsent(drawing);
             self.view.reopen(saving);
             self.view.said = Some((
                 "The backend restarted before it answered. Try again.".to_owned(),
@@ -1142,6 +1158,7 @@ impl Lineups {
         (opacity, prefs, look): (f32, Prefs, Look<'_>),
     ) {
         self.take_look(prefs, look);
+        self.view.reopen_failed();
         if let Some((shown, at)) = &self.view.viewing {
             self.view.viewing =
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
@@ -1291,12 +1308,13 @@ impl Lineups {
         if !live || self.view.pending.is_some() {
             return;
         }
-        if let Some((map, shapes)) = self.view.unsaved.take() {
+        if let Some((map, shapes)) = self.view.unsaved.pop_first() {
             let id = bridge.ask(
                 "lineup_drawing",
-                serde_json::json!({ "map": map, "shapes": shapes }),
+                serde_json::json!({ "map": &map, "shapes": &shapes }),
             );
             self.view.pending = Some((id, Job::Drawing));
+            self.view.drawing_out = Some((map, shapes));
         }
     }
 
@@ -1439,11 +1457,31 @@ impl View {
         side.default_size(wanted)
     }
 
-    /// Opens the editor again on a lineup whose save didn't go through, if
-    /// the screen is back on the list and not on to something else.
+    /// Puts shapes that didn't get kept back with the unsent ones, unless
+    /// that map has changed again since.
+    fn unsent(&mut self, drawing: Option<(String, Vec<Drawing>)>) {
+        if let Some((map, shapes)) = drawing {
+            self.unsaved.entry(map).or_insert(shapes);
+        }
+    }
+
+    /// Opens the editor again on a lineup whose save didn't go through, or
+    /// once the screen is back on the list if it's on to something else.
     fn reopen(&mut self, saving: Option<Box<Draft>>) {
-        if let Some(draft) = saving
-            && matches!(self.mode, Mode::Browse)
+        if let Some(draft) = saving {
+            if matches!(self.mode, Mode::Browse) {
+                self.mode = Mode::Edit(draft);
+            } else {
+                self.failed = Some(draft);
+            }
+        }
+    }
+
+    /// Opens a lineup whose save failed while the screen was busy, once it
+    /// is back on the list.
+    fn reopen_failed(&mut self) {
+        if matches!(self.mode, Mode::Browse)
+            && let Some(draft) = self.failed.take()
         {
             self.mode = Mode::Edit(draft);
         }
@@ -1556,7 +1594,10 @@ impl View {
         if let Mode::Draw(sketch) = &self.mode {
             return &sketch.shapes;
         }
-        if let Some((changed, shapes)) = &self.unsaved
+        if let Some(shapes) = self.unsaved.get(map) {
+            return shapes;
+        }
+        if let Some((changed, shapes)) = &self.drawing_out
             && changed == map
         {
             return shapes;

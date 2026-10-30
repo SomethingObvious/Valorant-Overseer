@@ -103,10 +103,12 @@ pub struct Bridge {
     stop: Sender<()>,
     /// Questions on their way to the thread.
     outbox: Sender<Ask>,
-    /// The next question's id, never reused, so a late answer to an abandoned
-    /// question is not taken for the current one.
-    next: AtomicU64,
 }
+
+/// The next question's id. Shared by every bridge and never reused, so a
+/// late answer to a question abandoned, even on a bridge since replaced, is
+/// not taken for the current one.
+static NEXT: AtomicU64 = AtomicU64::new(1);
 
 impl Bridge {
     /// Connects with the credentials under `root` and calls `wake` whenever an
@@ -132,14 +134,13 @@ impl Bridge {
             events,
             stop,
             outbox,
-            next: AtomicU64::new(1),
         }
     }
 
     /// Queues a question and returns the id its answer will carry. A question
     /// in flight when the socket drops is never answered, so ask it again.
     pub fn ask(&self, request: &str, params: serde_json::Value) -> u64 {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
         drop(self.outbox.send(Ask {
             id,
             request: request.to_owned(),
@@ -305,17 +306,26 @@ fn pump<W: Fn()>(
     asks: &Receiver<Ask>,
     wake: &W,
 ) -> Pumped {
+    let mut live = false;
     loop {
         if stop.try_recv().is_ok() {
             return Pumped::Stopped;
         }
-        if let Err(why) = send_asks(socket, asks) {
+        if live && let Err(why) = send_asks(socket, asks) {
             return Pumped::Dropped(why);
         }
         match socket.read() {
             Ok(Message::Text(text)) => match handle(&text, socket) {
                 Handled::Nothing => {}
                 Handled::Event(event) => {
+                    if matches!(event, Event::Status(Status::Live)) {
+                        // The window counts everything it asked while the
+                        // socket was down as lost, so those questions are
+                        // dropped, not sent late. Sent, an Appear Offline
+                        // pressed minutes ago would restart the game.
+                        asks.try_iter().for_each(drop);
+                        live = true;
+                    }
                     if !post(events, wake, event) {
                         return Pumped::Stopped;
                     }

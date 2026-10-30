@@ -16,6 +16,7 @@ from typing import Any
 import encounter_log
 import history
 import overseerlog
+import requests
 from agents import resolve_agent
 from common.check import check, present
 from common.jsonstore import data_path, read_json, write_atomic
@@ -48,7 +49,12 @@ def _match_ids(auth: Any, puuid: str, count: int) -> tuple[list[str], bool]:
         if _is_throttled(page):
             return ids, True
         entries = page.get("History") if isinstance(page, dict) else None
-        found = [e["MatchID"] for e in entries or [] if isinstance(e, dict) and e.get("MatchID")]
+        # An error or an empty body is not an empty history, and read as one
+        # it would be kept over the games that were there.
+        if not isinstance(entries, list):
+            msg = f"Riot's match history didn't come back: {str(page)[:200]}"
+            raise TypeError(msg)
+        found = [e["MatchID"] for e in entries if isinstance(e, dict) and e.get("MatchID")]
         ids.extend(found)
         if len(found) < end - start:
             break
@@ -128,6 +134,15 @@ def view(board: dict[str, Any], puuid: str, deltas: dict[str, int]) -> dict[str,
     return game
 
 
+def _safely(auth: Any, match_id: str) -> dict[str, Any] | None:
+    """Return `_board`, or None when the request failed, so one lost game isn't all of them."""
+    try:
+        return _board(auth, match_id)
+    except requests.RequestException as e:
+        LOG.warning("match %s didn't load: %r", match_id, e)
+        return None
+
+
 def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
     """Return a match's scoreboard from disk, or from Riot the first time."""
     path = _DIR / f"{match_id}.json"
@@ -149,7 +164,7 @@ def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
     count = max(1, min(MOST, count))
     ids, throttled = _match_ids(auth, puuid, count)
     ids = [i for i in ids if _ID.match(i)]
-    boards = list(_POOL.map(lambda i: _board(auth, i), ids))
+    boards = list(_POOL.map(lambda i: _safely(auth, i), ids))
     try:
         history.refresh(auth)
     except Exception as e:

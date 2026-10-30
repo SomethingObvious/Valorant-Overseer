@@ -224,7 +224,7 @@ def _reading(rows: list[tuple[str, int | None]]) -> dict[str, Any] | None:
             mids = _recent(hit[0])[:depth]
             want += len(mids)
             for mid in mids:
-                if mid in _MATCH_DETAIL_CACHE:
+                if mid in _DETAIL_READ or mid in _MATCH_DETAIL_CACHE:
                     got += 1
                 else:
                     missing.add(mid)
@@ -275,6 +275,9 @@ _RR_CACHE: dict[str, tuple[Any, ...]] = {}
 
 _MATCH_DETAIL_CACHE: dict[str, dict[str, Any]] = {}
 _MATCH_DETAIL_MAX = 200
+# Every match read this session, which outlives the cache above, so a big
+# lobby pushing old details out doesn't count them as unread again.
+_DETAIL_READ: set[str] = set()
 
 # A finished career per player, with the match ids it was built from. Eight
 # match details is the dearest thing the panel asks for, and the answer cannot
@@ -656,8 +659,9 @@ class LiveMatch:
         try:
             ld = self.auth.glz_get(path)
             for entry in ld.get("Loadouts", []):
-                subj = (entry.get("Subject") or "").lower()
                 loadout = entry.get("Loadout", entry) if state == "INGAME" else entry
+                # In a match the subject can sit inside the loadout instead.
+                subj = (entry.get("Subject") or (loadout or {}).get("Subject") or "").lower()
                 items = (loadout or {}).get("Items", {}) or {}
 
                 if not items and isinstance(loadout, dict):
@@ -762,7 +766,9 @@ class LiveMatch:
             for e in entries:
                 if e.get("MatchID") and e.get("GameStartTime"):
                     _cache_put(_STARTS, _STARTS_MAX, e["MatchID"], int(e["GameStartTime"]))
-            if mids or throttled:
+            # Only games inside the age limit count, so a ranked history from
+            # last month doesn't hide the unrated games they play every day.
+            if throttled or _recent(mids):
                 is_comp = bool(mids) and queue == "competitive"
                 break
         if not throttled:
@@ -775,7 +781,13 @@ class LiveMatch:
         Counted down their newest games, so a gap where a game is missing
         stops it there.
         """
-        mids_all, _, unsure = self._fresh_mids(puuid)
+        try:
+            mids_all, _, unsure = self._fresh_mids(puuid)
+        except Exception as e:
+            # One player's history timing out has to cost that player their
+            # read, not the whole board.
+            _log(f"history lookup failed for {puuid[:8]}: {type(e).__name__}: {e}")
+            return 0
         mids = _recent(mids_all)[: _DEPTH["games"]]
         if unsure or not mids:
             return 0
@@ -825,11 +837,13 @@ class LiveMatch:
                     rank_key = mhit[0][0] if (mhit[0] and mhit[1]) else "nocomp"
                 else:
                     rank_key = None
-            if riot_client.held_secs("/mmr/") > 0:
-                return out
+            # Without the act there is no rank to read, and one read as tier 0
+            # would be kept as Unranked until their next ranked game.
+            if not season or riot_client.held_secs("/mmr/") > 0:
+                return hit[0] if hit else out
             r = self.auth.pd_get(f"/mmr/v1/players/{puuid}")
             if not isinstance(r, dict) or "QueueSkills" not in r:
-                return out
+                return hit[0] if hit else out
             out["ok"] = True
             si = (
                 ((r.get("QueueSkills") or {}).get("competitive") or {}).get(
@@ -945,6 +959,7 @@ class LiveMatch:
                 kept = _kept_detail(mid)
                 if kept is not None:
                     _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, kept)
+                    _DETAIL_READ.add(mid)
                     return kept
                 md = self.auth.pd_get(
                     f"/match-details/v1/matches/{mid}",
@@ -955,6 +970,7 @@ class LiveMatch:
                     return "throttled"
                 if isinstance(md, dict) and "players" in md:
                     _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
+                    _DETAIL_READ.add(mid)
                     if puuid in _PARTY:
                         _keep_detail(mid, md)
                     return md
@@ -1214,11 +1230,13 @@ class LiveMatch:
             meta["name_tries"] = meta.get("name_tries", 0) + 1
             names = {**names, **self.reveal_names(missing_names)}
             meta["names"] = names
-        if not meta.get("loadouts"):
+        # Agent select only has your team's loadouts, so the match asks again
+        # for the enemy's.
+        if not meta.get("loadouts") or meta.get("loadouts_for") != state:
             ld = self.loadouts(state, match_id)
             if ld:
-                meta["loadouts"] = ld
-            weapons_by_puuid = ld
+                meta["loadouts"], meta["loadouts_for"] = ld, state
+            weapons_by_puuid = ld or meta.get("loadouts") or {}
         else:
             weapons_by_puuid = meta["loadouts"]
 
@@ -1246,7 +1264,12 @@ class LiveMatch:
                 }
             )
             for m in members:
-                party_lookup[m] = {"id": pid, "color": color, "number": idx + 1}
+                party_lookup[m] = {
+                    "id": pid,
+                    "color": color,
+                    "number": idx + 1,
+                    "size": len(members),
+                }
 
         season = self.season_id()
         prev_season = self.prev_season_id()
@@ -1579,6 +1602,7 @@ class LiveMatch:
                     md = self.auth.pd_get(f"/match-details/v1/matches/{mid}")
                     if isinstance(md, dict) and "players" in md:
                         _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
+                        _DETAIL_READ.add(mid)
                 return self.career_match(md, puuid, mid)
             except Exception as e:
                 # One odd match detail costs that match, not the whole career.
@@ -1603,10 +1627,12 @@ class LiveMatch:
         # above are the last few of anything, so somebody who mixes in unrated
         # would get a line two points long.
         updates: dict[str, Any] = {}
+        rated = False
         try:
             cu = self.auth.pd_get(
                 f"/mmr/v1/players/{puuid}/competitiveupdates?startIndex=0&endIndex=20&queue=competitive"
             )
+            rated = isinstance(cu, dict) and isinstance(cu.get("Matches"), list)
             for update in (cu or {}).get("Matches", []) or []:
                 if update.get("MatchID"):
                     updates[update["MatchID"]] = update
@@ -1638,7 +1664,7 @@ class LiveMatch:
         }
         # Only cache a complete answer. Half a career, because Riot throttled
         # three of the fetches, would otherwise stick until the next match.
-        if mids and len(matches) == len(mids):
+        if rated and mids and len(matches) == len(mids):
             _cache_put(_CAREER_CACHE, _KD_CACHE_MAX, puuid, (out, tuple(mids)))
         return out
 
@@ -1897,7 +1923,10 @@ def _team_stats(team_players: list[Any]) -> dict[str, Any]:
 
 def _win_prob(self_stats: dict[str, Any], enemy_stats: dict[str, Any]) -> int:
     prob = 50.0
-    prob += (self_stats["avgRankTier"] - enemy_stats["avgRankTier"]) * 5
+    # A side with no rank read yet averages 0, which isn't Iron, so ranks only
+    # count once both sides have some.
+    if self_stats["avgRankTier"] and enemy_stats["avgRankTier"]:
+        prob += (self_stats["avgRankTier"] - enemy_stats["avgRankTier"]) * 5
     self_kd = self_stats["avgKd"]
     enemy_kd = enemy_stats["avgKd"]
     if self_kd is not None and enemy_kd is not None:
@@ -2074,6 +2103,8 @@ def _self_check() -> None:
                     "teams": [{"teamId": "Blue", "won": True, "roundsWon": 13}],
                     "roundResults": [],
                 }
+            if "competitiveupdates" in path:
+                return {"Matches": []}
             return {}
 
     _CAREER_CACHE.clear()

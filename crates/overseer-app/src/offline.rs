@@ -5,7 +5,7 @@ use overseer_core::Bridge;
 use serde::Deserialize;
 
 /// How often Settings asks the proxy how it is, in seconds.
-const POLL: f64 = 3.0;
+pub(crate) const POLL: f64 = 3.0;
 
 /// What the proxy says about itself.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -64,9 +64,16 @@ impl Offline {
     }
 
     /// Forgets the question a dropped connection took with it.
-    pub(crate) const fn reconnected(&mut self) {
+    pub(crate) fn reconnected(&mut self) {
         self.waiting = None;
-        self.sent = None;
+        // The bridge drops what it couldn't send, so the switch goes back
+        // and says so rather than flipping later on its own.
+        if self.sent.take().is_some() {
+            self.said = Some(
+                "Overseer lost its connection before that went through, so nothing changed."
+                    .to_owned(),
+            );
+        }
     }
 
     /// Whether the switch shows on: the newest press, or else what the

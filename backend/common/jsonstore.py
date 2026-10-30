@@ -34,22 +34,37 @@ def read_json(path: str, default: Any) -> Any:
     # A corrupt store is not worth refusing to launch over, so the app starts
     # from `default`. The file goes aside first, because the next save would
     # write `default` over the only copy of it.
-    try:
-        with Path(path).open(encoding="utf-8") as fh:
-            return json.load(fh)
-    except FileNotFoundError:
-        return default
-    except (OSError, ValueError) as e:
-        kept = f"{path}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+    for attempt in range(5):
         try:
-            # rename rather than replace, because on Windows rename refuses to
-            # write over a file that is already there.
-            Path(path).rename(kept)
-        except OSError as move_error:
-            _warn(f"unreadable store {path} ({e!r}) could not be moved aside: {move_error!r}")
-        else:
-            _warn(f"unreadable store {path} moved to {kept}: {e!r}")
-        return default
+            with Path(path).open(encoding="utf-8") as fh:
+                return json.load(fh)
+        except FileNotFoundError:
+            return default
+        except PermissionError as e:
+            # Antivirus or a sync tool holding the file is not a corrupt
+            # store, and reading it as empty would get it saved over. That
+            # rarely lasts, and when it does the error stops whoever asked.
+            if attempt == 4:
+                raise
+            _warn(f"store {path} is locked, trying again: {e!r}")
+            time.sleep(0.2 * (attempt + 1))
+        except (OSError, ValueError) as e:
+            return _set_aside(path, default, e)
+    return default
+
+
+def _set_aside(path: str, default: Any, e: Exception) -> Any:
+    """Move an unreadable store out of the way and return `default`."""
+    kept = f"{path}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        # rename rather than replace, because on Windows rename refuses to
+        # write over a file that is already there.
+        Path(path).rename(kept)
+    except OSError as move_error:
+        _warn(f"unreadable store {path} ({e!r}) could not be moved aside: {move_error!r}")
+    else:
+        _warn(f"unreadable store {path} moved to {kept}: {e!r}")
+    return default
 
 
 def write_atomic(path: str, data: Any, *, prefix: str, ensure_ascii: bool = False) -> bool:

@@ -109,12 +109,26 @@ pub(crate) fn load(root: &Path) -> Notes {
 /// Writes the notes, and says whether that worked.
 pub(crate) fn save(root: &Path, notes: &Notes) -> bool {
     let file = path(root);
+    if !crate::settings::may_write(&file) {
+        return false;
+    }
     if let Some(dir) = file.parent()
         && std::fs::create_dir_all(dir).is_err()
     {
         return false;
     }
-    serde_json::to_string_pretty(notes).is_ok_and(|text| std::fs::write(&file, text).is_ok())
+    let Ok(text) = serde_json::to_string_pretty(notes) else {
+        return false;
+    };
+    // The window saves every half minute, and the notes rarely change.
+    if std::fs::read_to_string(&file).is_ok_and(|old| old == text) {
+        return true;
+    }
+    // Through a file beside it, so a write cut short never leaves the notes
+    // half written.
+    let mut fresh = file.clone().into_os_string();
+    fresh.push(".new");
+    std::fs::write(&fresh, text).is_ok() && std::fs::rename(&fresh, &file).is_ok()
 }
 
 /// Splits a line of comma separated tags, lowercased and trimmed so

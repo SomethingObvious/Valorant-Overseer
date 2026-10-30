@@ -683,8 +683,18 @@ impl Overseer {
                 }
             }
         }
-        self.lost_at = matches!(self.status, Status::Lost(_))
-            .then(|| self.lost_at.unwrap_or_else(|| ctx.input(|i| i.time)));
+        self.mark_lost(ctx);
+    }
+
+    /// Notes when the connection went. Held through the retries in between
+    /// too, so the board stays marked stale and its clock counts from the
+    /// first loss, until it's back.
+    fn mark_lost(&mut self, ctx: &egui::Context) {
+        self.lost_at = match self.status {
+            Status::Live => None,
+            Status::Lost(_) => Some(self.lost_at.unwrap_or_else(|| ctx.input(|i| i.time))),
+            Status::Connecting(_) => self.lost_at,
+        };
     }
 
     /// Moves the selection to you, or else the first player, when the
@@ -1137,6 +1147,8 @@ impl Overseer {
     fn reveal(ctx: &egui::Context, focus: bool) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         if focus {
+            // Windows ignores Focus on a minimized window.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }

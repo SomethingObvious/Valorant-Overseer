@@ -329,7 +329,7 @@ impl Overseer {
             view::warning(
                 ui,
                 &format!(
-                    "Your stats from {}. Overseer can't read VALORANT right now, so they won't change until it can. Press Esc to go back.",
+                    "Your stats from {}. They're from the last match Overseer read, and the board comes back once you're in a lobby. Press Esc to go back.",
                     crate::history::kept_ago(now_ms(), you.at)
                 ),
             );

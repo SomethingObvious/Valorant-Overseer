@@ -475,7 +475,13 @@ impl Overseer {
         // The adapter the request really got decides whether the game keeps
         // the discrete GPU, and this is the only place it can be known.
         if let Some(state) = cc.wgpu_render_state.as_ref() {
-            println!("{}", crate::probe::adapter_line(&state.adapter.get_info()));
+            let adapter = state.adapter.get_info();
+            println!("{}", crate::probe::adapter_line(&adapter));
+            if adapter.device_type == eframe::egui_wgpu::wgpu::DeviceType::Cpu {
+                overseer_native::step_back();
+            }
+        } else if cc.gl.is_some() {
+            println!("adapter OpenGL through glow");
         }
     }
 

@@ -10,6 +10,24 @@ use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, wgpu};
 /// window never holds more than a few hundred.
 const BINDINGS: u32 = 16_384;
 
+/// How the window draws, in the order they are tried until one opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Draw {
+    /// DX12 on a real GPU. Asking for every backend starts the Vulkan and
+    /// OpenGL drivers too, at 60 MB and six threads, even when DX12 draws.
+    Dx12,
+    /// Any of wgpu's backends on a real GPU.
+    Gpu,
+    /// OpenGL through glow, for a GPU too old for wgpu.
+    OpenGl,
+    /// Windows' software renderer, when nothing else opens. It keeps every
+    /// core busy even with nothing to draw.
+    Software,
+}
+
+/// Every way to draw, best first.
+pub(crate) const DRAWS: [Draw; 4] = [Draw::Dx12, Draw::Gpu, Draw::OpenGl, Draw::Software];
+
 /// The renderer configuration, asking for the integrated GPU. VALORANT wants
 /// the discrete one, and flat shapes and text don't need it. `LowPower` is a
 /// request, so a machine with one GPU just gets that one.
@@ -18,18 +36,15 @@ const BINDINGS: u32 = 16_384;
 /// 128 MB for textures and 64 MB for uploads before anything is drawn, and on
 /// an integrated GPU that memory is the machine's own RAM. This window only
 /// needs a few MB of either.
-///
-/// With `dx12_only`, only a real GPU through DX12 will do. Asking for every
-/// backend starts the Vulkan and OpenGL drivers too, at 60 MB and six
-/// threads, even when DX12 then draws. A machine where that fails, like an
-/// old laptop whose GPU only speaks OpenGL, is asked again without it.
 #[must_use]
-pub(crate) fn low_power_wgpu(dx12_only: bool) -> WgpuConfiguration {
+pub(crate) fn low_power_wgpu(draw: Draw) -> WgpuConfiguration {
     let mut config = WgpuConfiguration::default();
     if let WgpuSetup::CreateNew(create) = &mut config.wgpu_setup {
         create.power_preference = wgpu::PowerPreference::LowPower;
-        if dx12_only && wgpu::Backends::from_env().is_none() {
+        if draw == Draw::Dx12 && wgpu::Backends::from_env().is_none() {
             create.instance_descriptor.backends = wgpu::Backends::DX12;
+        }
+        if draw != Draw::Software {
             create.native_adapter_selector = Some(std::sync::Arc::new(gpu));
         }
         let default = std::sync::Arc::clone(&create.device_descriptor);
@@ -44,7 +59,7 @@ pub(crate) fn low_power_wgpu(dx12_only: bool) -> WgpuConfiguration {
 }
 
 /// The integrated GPU, or else any other that can draw to the window, but
-/// never Windows' software renderer, which an OpenGL GPU would beat.
+/// never Windows' software renderer, which glow on an old GPU would beat.
 fn gpu(
     adapters: &[wgpu::Adapter],
     surface: Option<&wgpu::Surface<'_>>,
@@ -61,7 +76,7 @@ fn gpu(
         .filter_map(|a| rank(a.get_info().device_type).map(|r| (r, a)))
         .min_by_key(|(r, _)| *r)
         .map(|(_, a)| a.clone())
-        .ok_or_else(|| "no GPU draws through DX12".to_owned())
+        .ok_or_else(|| "no GPU draws through wgpu".to_owned())
 }
 
 /// One line describing the adapter the app ended up on, since that decides

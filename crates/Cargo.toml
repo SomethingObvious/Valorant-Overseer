@@ -37,8 +37,10 @@ image = { version = "0.25.10", default-features = false }
 # fonts, accesskit for screen readers, and winit's own defaults, which is where
 # raw-window-handle lives: turning them off to "keep it lean" removes the
 # renderer and the surface it draws on. `persistence` is the addition, so the
-# window remembers its size and which monitor it was on.
-eframe = { version = "0.36.2", features = ["persistence"] }
+# window remembers its size and which monitor it was on. `glow` is the other,
+# for a GPU too old for wgpu, which would otherwise be drawn in software at
+# every core the PC has.
+eframe = { version = "0.36.2", features = ["persistence", "glow"] }
 # One key combination the whole machine listens for, so the overlay can be
 # switched on and off while the game has the keyboard.
 global-hotkey = "0.8.0"

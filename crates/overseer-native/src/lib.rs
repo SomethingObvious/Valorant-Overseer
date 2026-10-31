@@ -16,7 +16,7 @@ mod video;
 mod window;
 
 pub use helper::serve;
-pub use machine::{animations, graphics_card, memory, text_scale};
+pub use machine::{animations, graphics_card, memory, step_back, text_scale};
 pub use pick::{pick_pictures, take_pictures};
 pub use remote::{Video, let_go};
 pub use window::{hidden, never_activate, set_window};

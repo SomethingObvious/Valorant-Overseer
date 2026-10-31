@@ -732,7 +732,9 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     )
     raise SystemExit(0)
 
-if __name__ == "__main__":
+
+def start() -> int:
+    """Start the bridge and what feeds it, each on its own thread, and return its port."""
     port = _start_ws_bridge()
     threading.Thread(target=_warm_lineups, daemon=True, name="lineups-warm").start()
     threading.Thread(target=_watch_state, daemon=True, name="state-watch").start()
@@ -741,6 +743,11 @@ if __name__ == "__main__":
         f"(source={client.source_pref}, key={'set' if client.api_key else 'unset'})",
         flush=True,
     )
+    return port
+
+
+if __name__ == "__main__":
+    start()
     # The bridge runs in a daemon thread. This one only has to stay alive
     # until the launcher stops the process.
     with contextlib.suppress(KeyboardInterrupt):

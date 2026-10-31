@@ -102,19 +102,30 @@ It only asks DX12 at first, and for a real GPU, since asking every backend
 starts the Vulkan and OpenGL drivers as well, even when DX12 then does the
 drawing. When that fails the window opens again with every backend, then
 with plain OpenGL through glow, which old GPUs like a Sandy Bridge laptop's
-can still run, and only then in Windows' software renderer. That renderer
-keeps every core busy even with nothing to draw (about five of them here), so
-a window drawn in it drops itself to below normal priority, or the backend it
-started there would never get a turn on a single core. It also asks wgpu for
-small memory blocks and room for 16,384 textures rather than a million. On an
-integrated GPU that memory comes out of the machine's own RAM, and together
-these took the window from about 400 MB to 175 MB, of which only 6 MB is the
-app's own heap. `WGPU_BACKEND` still picks a backend by hand.
+can still run, and only then in Windows' software renderer, through DX12
+alone again, which saves about 65 MB. That renderer starts a thread for every
+core it can see, and they spend more time waiting on each other than drawing.
+A board update cost it about 35 core-seconds across sixteen cores here and 3.4
+on one, so a window about to draw in it keeps itself to one core first, which
+leaves the rest to the backend and the game. It also drops to below normal
+priority, so the backend still gets a turn on a single core, and takes the
+efficient tier, because that drawing happens after the frame timings stop and
+auto would never notice. With this laptop forced onto that renderer, the
+window went from about 900% of a core at idle to 100%, and on one core the
+board came up where before the window starved the backend.
+
+Every window asks wgpu for small memory blocks and room for 16,384 textures
+rather than a million. On an integrated GPU that memory comes out of the
+machine's own RAM, and together these took a 2560 by 1528 window from about
+400 MB to 175 MB, of which only 6 MB is the app's own heap. Maximized on a 4K
+screen it took about 290 MB, as its frame buffers grow with the window.
+`WGPU_BACKEND` still picks a backend by hand.
 
 Nothing polls. egui repaints when the bridge, the hotkey, the tray or a
 running animation asks it to, so a window nobody touches draws nothing.
 Quality is auto, efficient or rich, on the settings screen. Efficient is the
-same board with no movement and no shader. Auto starts rich and drops to
+same board with no movement and no shader, and its clocks count in minutes,
+so a still window draws once a minute. Auto starts rich and drops to
 efficient, and says so, once three frames in a row take longer than 1/45 of a
 second to build. It ignores the first second and a half, when the font atlas,
 the shader and the swapchain miss every budget there is, and it tries rich

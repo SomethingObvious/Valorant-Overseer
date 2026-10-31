@@ -120,6 +120,9 @@ fn main() -> eframe::Result {
     // that fails after it ran has nothing to do with drawing.
     let mut ran = Ok(());
     for draw in probe::DRAWS {
+        if draw == probe::Draw::Software {
+            overseer_native::one_core();
+        }
         ran = run(draw);
         if ran.is_ok() || made.get() {
             break;

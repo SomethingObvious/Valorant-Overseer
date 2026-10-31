@@ -342,15 +342,18 @@ impl Overseer {
         // A board that stopped updating says so, and fades, so nobody reads
         // it as the round in front of them.
         if let Some(lost) = self.lost_at {
-            let gone = super::waiting::clock((now - lost).max(0.0) as u64);
+            let still = self.quality() == Quality::Efficient;
+            let gone = super::waiting::since_text(now - lost, still);
             view::warning(
                 ui,
                 &format!(
                     "Lost the connection {gone} ago. This board is from then, and Overseer is reconnecting."
                 ),
             );
+            let step = super::waiting::tick(now - lost, still);
+            let next = (step - (now - lost).rem_euclid(step)).max(0.5);
             ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs(1));
+                .request_repaint_after(std::time::Duration::from_secs_f64(next));
             ui.multiply_opacity(0.45);
         } else if let Some(at) = shown.held_since.filter(|_| place == Place::Window) {
             // Not faded, since it is still the match being played.

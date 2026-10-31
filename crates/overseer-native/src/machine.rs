@@ -6,7 +6,8 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::System::Threading::{
-    BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, SetPriorityClass,
+    BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetProcessAffinityMask, SetPriorityClass,
+    SetProcessAffinityMask,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
@@ -102,6 +103,27 @@ pub fn graphics_card() -> bool {
 pub fn step_back() {
     // SAFETY: the pseudo handle for this process, which needs no closing.
     let _set = unsafe { SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS) };
+}
+
+/// Keeps this process to the last core it may use, before Windows' software
+/// renderer starts.
+///
+/// The renderer starts a thread for every core it can see, and they spend
+/// more time waiting on each other than drawing. Measured here, a frame took
+/// 0.5 core-seconds on one core and 8.7 across sixteen. The backend is
+/// already running by then and keeps every core, though clip programs
+/// started later share the one.
+pub fn one_core() {
+    let (mut mine, mut all) = (0_usize, 0_usize);
+    // SAFETY: the pseudo handle for this process, which needs no closing,
+    // and two plain values for Windows to fill in.
+    let read = unsafe { GetProcessAffinityMask(GetCurrentProcess(), &raw mut mine, &raw mut all) };
+    if read.is_err() || mine == 0 {
+        return;
+    }
+    let last = 1_usize << (usize::BITS - 1 - mine.leading_zeros());
+    // SAFETY: as above, with a mask inside the one Windows gave.
+    let _set = unsafe { SetProcessAffinityMask(GetCurrentProcess(), last) };
 }
 
 #[cfg(test)]

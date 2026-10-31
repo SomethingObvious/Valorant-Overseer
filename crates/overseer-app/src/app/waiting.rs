@@ -170,7 +170,13 @@ pub(super) fn empty(
     if fade > 0.0 {
         ink.multiply_opacity(motion::eased(since as f32 / fade));
     }
-    words(&ink, plate, stage.title, sentence, since);
+    words(
+        &ink,
+        plate,
+        stage.title,
+        sentence,
+        &since_text(since, fade == 0.0),
+    );
     let lit = ui.ctx().animate_value_with_time(
         egui::Id::new("empty-steps"),
         stage.step as f32,
@@ -186,7 +192,7 @@ pub(super) fn empty(
     // The clock only needs its next second, or its next minute after the
     // first, unless something is moving.
     let fading = fade > 0.0 && since < f64::from(fade);
-    let step = if since < 600.0 { 1.0 } else { 60.0 };
+    let step = tick(since, fade == 0.0);
     let next = if moving || fading {
         TICK
     } else {
@@ -244,6 +250,22 @@ fn since(ui: &Ui, title: &str) -> f64 {
 
 /// The clock for a wait `seconds` long: to the second for its first ten
 /// minutes, so it never looks stuck, and in whole minutes after that.
+/// How long something has been going on, to the minute when the window is
+/// still, so it only needs drawing once a minute.
+pub(super) fn since_text(since: f64, still: bool) -> String {
+    let seconds = since.max(0.0) as u64;
+    match (still, seconds) {
+        (true, ..60) => "under a minute".to_owned(),
+        (true, _) => format!("{} min", seconds.div_euclid(60)),
+        (false, _) => clock(seconds),
+    }
+}
+
+/// How often [`since_text`] changes, in seconds.
+pub(super) fn tick(since: f64, still: bool) -> f64 {
+    if still || since >= 600.0 { 60.0 } else { 1.0 }
+}
+
 pub(super) fn clock(seconds: u64) -> String {
     if seconds < 600 {
         format!("{}:{:02}", seconds.div_euclid(60), seconds.rem_euclid(60))
@@ -283,7 +305,7 @@ fn words(
     plate: Rect,
     title: &str,
     sentence: std::sync::Arc<egui::Galley>,
-    since: f64,
+    clock: &str,
 ) {
     let _title = caps_text(
         painter,
@@ -299,12 +321,11 @@ fn words(
         colour::TEXT_DIM,
     );
     let line = plate.bottom() - 58.0;
-    let seconds = since.max(0.0) as u64;
     let clock = caps_text(
         painter,
         pos2(plate.right() - space::XL, line),
         Align2::RIGHT_CENTER,
-        &clock(seconds),
+        clock,
         Face::Display.at(size::MICRO),
         colour::TEXT_FAINT,
     );
@@ -462,7 +483,17 @@ fn plain(ui: &mut Ui, title: &str, detail: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::kept;
+    use super::{kept, since_text, tick};
+
+    #[test]
+    fn a_still_window_counts_in_minutes() {
+        assert_eq!(since_text(42.0, false), "0:42");
+        assert_eq!(since_text(42.0, true), "under a minute");
+        assert_eq!(since_text(135.0, true), "2 min");
+        assert!((tick(42.0, false) - 1.0).abs() < f64::EPSILON);
+        assert!((tick(42.0, true) - 60.0).abs() < f64::EPSILON);
+        assert!((tick(700.0, false) - 60.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn your_kept_row_is_read_from_the_backends_folder() {

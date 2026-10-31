@@ -82,7 +82,9 @@ struct Budget {
     /// Set by `OVERSEER_TRACE_FRAMES`, to print what each frame cost.
     trace: bool,
     /// Set when Windows' animation effects are off, which auto takes as a
-    /// wish for no motion.
+    /// wish for no motion, or when the window is drawn in software. There a
+    /// frame costs over a second of processor time, and the frame timings
+    /// can't see it, since the drawing happens after they stop.
     calm: bool,
 }
 
@@ -456,7 +458,8 @@ impl std::fmt::Debug for Overseer {
 impl Overseer {
     /// Fonts, art, style and zoom for the window, and its handle for the
     /// clips that play inside it.
-    fn dress(cc: &CreationContext<'_>, root: &Path) {
+    /// Says whether the window is drawn in software.
+    fn dress(cc: &CreationContext<'_>, root: &Path) -> bool {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
         overseer_ui::art::set_fetched_dir(root.join("backend").join("data").join("art"));
@@ -479,10 +482,12 @@ impl Overseer {
             println!("{}", crate::probe::adapter_line(&adapter));
             if adapter.device_type == eframe::egui_wgpu::wgpu::DeviceType::Cpu {
                 overseer_native::step_back();
+                return true;
             }
         } else if cc.gl.is_some() {
             println!("adapter OpenGL through glow");
         }
+        false
     }
 
     /// Starts the bridge, installs the fonts and takes the style.
@@ -491,7 +496,7 @@ impl Overseer {
         root: &Path,
         (listener, maximize, broken): (Option<std::net::TcpListener>, bool, Option<String>),
     ) -> Self {
-        Self::dress(cc, root);
+        let software = Self::dress(cc, root);
         let ctx = cc.egui_ctx.clone();
         let bridge = Bridge::start(root, move || ctx.request_repaint());
         let knocked = std::sync::Arc::<std::sync::atomic::AtomicBool>::default();
@@ -524,7 +529,7 @@ impl Overseer {
             boards: 0,
             budget: Budget {
                 trace: std::env::var_os("OVERSEER_TRACE_FRAMES").is_some(),
-                calm: !overseer_native::animations(),
+                calm: !overseer_native::animations() || software,
                 ..Budget::default()
             },
             opened_at: None,

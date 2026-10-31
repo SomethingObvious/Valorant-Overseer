@@ -20,8 +20,8 @@ pub(crate) enum Draw {
     Gpu,
     /// OpenGL through glow, for a GPU too old for wgpu.
     OpenGl,
-    /// Windows' software renderer, when nothing else opens. It keeps every
-    /// core busy even with nothing to draw.
+    /// Windows' software renderer, when nothing else opens. Every frame costs
+    /// it seconds of processor time, spread over as many cores as it can get.
     Software,
 }
 
@@ -41,7 +41,8 @@ pub(crate) fn low_power_wgpu(draw: Draw) -> WgpuConfiguration {
     let mut config = WgpuConfiguration::default();
     if let WgpuSetup::CreateNew(create) = &mut config.wgpu_setup {
         create.power_preference = wgpu::PowerPreference::LowPower;
-        if draw == Draw::Dx12 && wgpu::Backends::from_env().is_none() {
+        // Windows' software renderer is a DX12 adapter too.
+        if matches!(draw, Draw::Dx12 | Draw::Software) && wgpu::Backends::from_env().is_none() {
             create.instance_descriptor.backends = wgpu::Backends::DX12;
         }
         if draw != Draw::Software {

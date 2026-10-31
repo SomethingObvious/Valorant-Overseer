@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "docs/index.html"
+        ],
+        "createdAt": "2026-10-31T03:05:05.670Z",
+        "reason": ".cover and .spread are full-bleed sections padded by the page gutter, and .clock is a 34px centred bar, checked in desktop and 390px captures"
+      },
+      {
+        "rule": "all-caps-body",
+        "value": "*",
+        "files": [
+          "docs/index.html"
+        ],
+        "createdAt": "2026-10-31T03:11:22.260Z",
+        "reason": "the hits are the cover deck line (52 chars) and two ground rule headings (38 and 32 chars), short display lines set in caps by the programme direction, not running text"
+      }
+    ]
+  }
+}

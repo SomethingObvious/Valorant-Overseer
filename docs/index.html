@@ -6,8 +6,8 @@
 <title>Valorant Overseer: Free VALORANT Tracker and Overlay for Windows</title>
 <meta name="description" content="See every player's rank, peak rank, K/D, party and smurf signs in your VALORANT match. Free, runs on your PC with no account, with an agent select overlay, match history and lineups.">
 <link rel="canonical" href="https://somethingobvious.github.io/Valorant-Overseer/">
-<meta name="theme-color" content="#0A0B0E">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1A2BA8">
+<meta name="color-scheme" content="light">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Valorant Overseer">
@@ -25,9 +25,8 @@
 <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-<link rel="preload" href="assets/fonts/BarlowCondensed-ExtraBoldItalic.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/fonts/Inter.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" as="image" href="assets/shots/board-1600.webp" imagesrcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w" imagesizes="(min-width: 1000px) 60vw, 100vw">
+<link rel="preload" href="assets/fonts/Archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" as="image" href="assets/shots/board-1600.webp" imagesrcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w" imagesizes="(min-width: 1000px) 58vw, 100vw">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -110,197 +109,224 @@
 }
 </script>
 <style>
-@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-style: normal; font-display: swap; src: url("assets/fonts/BarlowCondensed-Bold.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-weight: 800; font-style: italic; font-display: swap; src: url("assets/fonts/BarlowCondensed-ExtraBoldItalic.woff2") format("woff2"); }
-@font-face { font-family: "Inter"; font-weight: 100 900; font-style: normal; font-display: swap; src: url("assets/fonts/Inter.woff2") format("woff2"); }
+@font-face { font-family: "Archivo"; font-weight: 100 900; font-stretch: 62% 125%; font-style: normal; font-display: swap; src: url("assets/fonts/Archivo.woff2") format("woff2"); }
 
 :root {
-  --void: #050608;
-  --bg: #0A0B0E;
-  --raised: #15171C;
-  --inset: #1D2027;
-  --line: #2A2E36;
-  --cream: #F2EFE8;
-  --text: #C9CED6;
-  --dim: #9AA1AB;
-  --faint: #8B929C;
-  --ally: #18E5A7;
-  --enemy: #FF4655;
-  --warn: #FFC845;
-  --iron: #868986;
-  --bronze: #A5855D;
-  --silver: #BBC2C2;
-  --gold: #ECCF56;
-  --platinum: #59A9B6;
-  --diamond: #B489C4;
-  --ascendant: #6AE2AF;
-  --immortal: #BB3D65;
-  --radiant: #FFFFAA;
-  /* The app's plates lean by 0.21 of their height. */
-  --lean: 0.21;
-  --gutter: clamp(16px, 4vw, 56px);
-  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
-  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  /* Two inks and two stocks, the way a matchday programme is printed. */
+  --blue: #1A2BA8;
+  --blue-deep: #111C78;
+  --yellow: #FFD100;
+  --paper: #FFFFFF;
+  --ink: #0D1033;
+  --on-blue: #FFFFFF;
+  --on-blue-soft: #C9CFF4;
+  --on-paper-soft: #3C4270;
+  --gutter: clamp(16px, 4vw, 64px);
+  --face: "Archivo", "Arial Narrow", sans-serif;
   --out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * { box-sizing: border-box; }
-html { background: var(--bg); color: var(--text); scroll-behavior: smooth; scroll-padding-top: 76px; scrollbar-color: var(--line) var(--bg); }
-body { margin: 0; font: 400 17px/1.6 var(--body); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
-::selection { background: var(--enemy); color: var(--bg); }
+html { background: var(--blue); color: var(--ink); scroll-behavior: smooth; scroll-padding-top: 64px; scrollbar-color: var(--yellow) var(--blue-deep); }
+body { margin: 0; background: var(--paper); font: 400 17px/1.6 var(--face); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; caret-color: var(--blue); }
+::selection { background: var(--yellow); color: var(--ink); }
 img { display: block; max-width: 100%; height: auto; }
-a { color: var(--cream); text-underline-offset: 0.22em; text-decoration-thickness: 1px; text-decoration-color: var(--faint); }
-a:hover { text-decoration-color: var(--enemy); }
-:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
+a { color: inherit; text-decoration-thickness: 2px; text-underline-offset: 0.2em; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+a:hover { text-decoration-color: currentColor; }
+:focus-visible { outline: 3px solid var(--yellow); outline-offset: 3px; }
+.paper :focus-visible { outline-color: var(--blue); }
 .skip { position: absolute; left: -9999px; }
-.skip:focus { left: var(--gutter); top: 12px; z-index: 20; background: var(--cream); color: var(--bg); padding: 8px 14px; }
+.skip:focus { left: var(--gutter); top: 10px; z-index: 30; background: var(--yellow); color: var(--ink); padding: 8px 14px; }
+p { margin: 0 0 1em; }
+p:last-child { margin-bottom: 0; }
+strong { font-weight: 650; }
 
-.caps { font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+/* Type at three widths from one face. */
+.wide { font-stretch: 125%; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.tight { font-stretch: 62%; font-weight: 900; text-transform: uppercase; letter-spacing: -0.01em; line-height: 0.86; }
 
-/* A plate leaning on both sides, the way the app draws its chips and team bars. */
-.plate {
-  --run: calc(var(--h, 44px) * var(--lean));
-  clip-path: polygon(var(--run) 0, 100% 0, calc(100% - var(--run)) 100%, 0 100%);
-}
+/* The two stocks. */
+.blue { background: var(--blue); color: var(--on-blue); }
+.blue .soft { color: var(--on-blue-soft); }
+.paper { background: var(--paper); color: var(--ink); }
+.paper .soft { color: var(--on-paper-soft); }
+.notice { background: var(--yellow); color: var(--ink); }
 
-/* Masthead, like the app's own: the mark, the name, the state chip. */
-.mast { display: flex; align-items: center; gap: 18px; padding: 14px var(--gutter); border-bottom: 1px solid var(--line); background: var(--bg); }
-.mast .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
-.mast .brand img { width: 30px; height: 30px; }
-.mast .name { font: italic 800 27px/1 var(--display); color: var(--cream); letter-spacing: 0.01em; text-transform: uppercase; }
-.mast .chip { --h: 24px; font: 700 12px/24px var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); background: var(--inset); padding: 0 14px; }
-.mast nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
-.mast nav a { font: 700 14px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); text-decoration: none; }
-.mast nav a:hover { color: var(--cream); }
-.get { --h: 40px; display: inline-flex; align-items: center; gap: 10px; height: var(--h); padding: 0 22px; background: var(--enemy); color: var(--bg) !important; font: italic 800 17px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; text-decoration: none; transition: background 0.2s var(--out), transform 0.2s var(--out); }
-.get:hover { background: #ff5a68; transform: translateY(-1px); }
-.get svg { width: 16px; height: 16px; }
+/* A thick and thin printer's rule across the page. */
+.rule { height: 9px; background: linear-gradient(currentColor 0 0) 0 0 / 100% 5px no-repeat, linear-gradient(currentColor 0 0) 0 8px / 100% 1px no-repeat; }
 
-/* First viewport: the name and the action on the left, the live board on the right. */
-.hero { display: grid; grid-template-columns: minmax(320px, 1fr) 1.6fr; gap: clamp(24px, 4vw, 64px); align-items: center; padding: clamp(28px, 5vw, 64px) var(--gutter) clamp(28px, 4vw, 48px); }
-.hero h1 { margin: 0; font: italic 800 clamp(3.4rem, 6.4vw, 6rem)/0.86 var(--display); color: var(--cream); text-transform: uppercase; letter-spacing: -0.01em; }
-.hero h1 span { display: block; color: var(--enemy); }
-.hero .lede { margin: 22px 0 0; max-width: 30ch; font-size: clamp(1.1rem, 1.6vw, 1.32rem); line-height: 1.45; color: var(--text); }
-.hero .lede strong { color: var(--cream); font-weight: 600; }
-.hero .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; margin-top: 30px; }
-.hero .get { --h: 52px; padding: 0 30px; font-size: 21px; }
-.hero .acts a.quiet { font: 700 15px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; }
-.hero .facts { margin: 22px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
-.hero .facts li { --h: 26px; font: 700 13px/16px var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); background: var(--raised); padding: 5px 14px; }
-.hero .facts li b { color: var(--ally); font-weight: 700; }
-.screen { position: relative; margin: 0; border: 1px solid var(--line); background: var(--void); }
-.screen::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 3px; background: var(--enemy); }
-.rung .screen::before { background: var(--tier); }
+/* Running head: the issue, the pages, the match clock and the way in. */
+.run { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 20px; height: 56px; padding: 0 var(--gutter); background: var(--blue-deep); color: var(--on-blue); }
+.run > * { flex: none; }
+.run .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.run .brand img { width: 26px; height: 26px; }
+.run .brand span { font: 900 22px/1 var(--face); font-stretch: 62%; text-transform: uppercase; letter-spacing: 0.01em; }
+.run .issue { font-size: 12px; color: var(--on-blue-soft); white-space: nowrap; }
+.run nav { display: flex; gap: 22px; margin-left: auto; }
+.run nav a { white-space: nowrap; font-size: 12px; text-decoration: none; color: var(--on-blue-soft); }
+.run nav a:hover { color: var(--on-blue); }
+.clock { display: flex; gap: 10px; min-width: 182px; padding: 0 12px; height: 34px; align-items: center; background: var(--ink); color: var(--on-blue); }
+.clock b { font: 900 22px/1 var(--face); font-stretch: 75%; color: var(--yellow); min-width: 3.1ch; }
+.clock span { font-size: 11px; color: var(--on-blue-soft); white-space: nowrap; }
 
-/* The ladder: nine tiers in the game's colours, sticky, with you on it. */
-.ladder { position: sticky; top: 0; z-index: 10; background: var(--bg); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px var(--gutter) 12px; }
-.ladder ol { position: relative; display: grid; grid-template-columns: repeat(9, 1fr); gap: 3px; margin: 0; padding: 22px 0 0; list-style: none; }
-.ladder li a { display: block; text-decoration: none; }
-.ladder .band { display: block; height: 8px; background: color-mix(in srgb, var(--tier) 34%, var(--inset)); transition: background 0.5s var(--out); }
-.ladder .tier { display: block; margin-top: 7px; font: 700 12px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: clip; transition: color 0.5s var(--out); }
-.ladder .tier .short { display: none; }
-.ladder li.reached .band { background: var(--tier); }
-.ladder li.reached .tier { color: var(--cream); }
-.ladder li a:hover .tier { color: var(--cream); }
-.you { position: absolute; top: 10px; left: 0; visibility: hidden; width: 34px; margin-left: -17px; transform: translateX(var(--x, 0px)); transition: transform 0.9s var(--out); pointer-events: none; }
-.you b { display: block; --h: 18px; height: 18px; font: italic 800 13px/18px var(--display); color: var(--bg); background: var(--cream); text-align: center; letter-spacing: 0.06em; text-transform: uppercase; }
+/* The ticket: the download, with a stub you'd tear off at the gate. */
+.ticket { --notch: 7px; display: inline-flex; align-items: stretch; min-height: 54px; background: var(--yellow); color: var(--ink); text-decoration: none; -webkit-mask: radial-gradient(circle var(--notch) at var(--tear) 0, #0000 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle var(--notch) at var(--tear) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat; mask: radial-gradient(circle var(--notch) at var(--tear) 0, #0000 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle var(--notch) at var(--tear) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat; transition: background-color 0.2s var(--out), transform 0.25s var(--out); }
+.ticket:hover { background: #FFE04D; transform: translateY(-2px); }
+.ticket:active { transform: translateY(0); }
+.ticket .go { display: flex; align-items: center; gap: 12px; padding: 0 24px; white-space: nowrap; font: 900 22px/1 var(--face); font-stretch: 75%; text-transform: uppercase; letter-spacing: 0.01em; }
+.ticket .go svg { width: 18px; height: 18px; flex: none; }
+.ticket .stub { display: flex; flex-direction: column; justify-content: center; padding: 0 18px; border-left: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent); font-size: 11px; line-height: 1.3; }
+.ticket.small { min-height: 34px; --notch: 5px; }
+.ticket.small .go { padding: 0 14px; font-size: 16px; gap: 8px; }
+.ticket.small .go svg { width: 14px; height: 14px; }
+.ticket.big { min-height: 72px; --notch: 9px; }
+.ticket.big { max-width: 100%; }
+.ticket.big .go { padding: 0 26px; font-size: 26px; }
+.ticket.big .stub { padding: 0 24px; font-size: 13px; }
 
-/* A rung: its tier plate with the heading on it, its words, its screen. */
-.rung { padding: clamp(56px, 8vw, 112px) var(--gutter) 0; }
-.rung > .head { display: flex; align-items: stretch; gap: 0; margin: 0 0 clamp(20px, 3vw, 32px); }
-.rung .tag { --h: clamp(44px, 5.4vw, 64px); display: flex; align-items: center; padding: 0 calc(var(--h) * var(--lean) + 16px); background: var(--inset); color: color-mix(in srgb, var(--tier) 70%, var(--cream)); font: italic 800 clamp(1rem, 1.6vw, 1.25rem)/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; position: relative; overflow: hidden; }
-.rung .tag { isolation: isolate; transition: color 0.5s var(--out) 0.3s; }
-.rung .tag::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--tier); clip-path: inset(0 100% 0 0); transition: clip-path 0.9s var(--out); }
-.rung.reached .tag { color: var(--ink, var(--bg)); }
-.rung.reached .tag::before { clip-path: inset(0 0 0 0); }
-.rung .tag .short { display: none; }
-.rung h2 { --h: clamp(44px, 5.4vw, 64px); margin: 0 0 0 calc(var(--h) * var(--lean) * -1 + 4px); display: flex; align-items: center; padding: 0 calc(var(--h) * var(--lean) + 26px); min-height: var(--h); background: var(--raised); font: italic 800 clamp(1.7rem, 3.6vw, 3rem)/1 var(--display); color: var(--cream); text-transform: uppercase; letter-spacing: 0; text-wrap: balance; }
-.rung .body { display: grid; gap: clamp(20px, 3vw, 48px); align-items: start; }
-.rung .words { max-width: 62ch; }
-.rung .words p { margin: 0 0 1em; }
-.rung .words p:last-child { margin-bottom: 0; }
-.rung .words strong { color: var(--cream); font-weight: 600; }
-.wide .body { grid-template-columns: 1fr; }
-.wide .words { max-width: 70ch; }
-.side .body { grid-template-columns: minmax(280px, 1fr) minmax(0, 1.2fr); }
-.side.flip .body { grid-template-columns: minmax(0, 620px) minmax(280px, 1fr); }
-.tall .body { grid-template-columns: minmax(0, 460px) minmax(280px, 1fr); }
-.side.flip .words, .tall .words { order: 2; }
-.side .words, .tall .words { position: sticky; top: 112px; padding-top: 8px; }
+/* Plates: screenshots printed as numbered figures with a caption. */
+.plate { margin: 0; }
+.plate .frame { border: 1px solid currentColor; background: #0A0B0E; }
+.plate figcaption { display: flex; gap: 12px; margin-top: 10px; font-size: 14px; line-height: 1.45; max-width: 70ch; }
+.plate figcaption b { flex: none; font-size: 11px; line-height: 20px; }
+.blue .plate figcaption { color: var(--on-blue-soft); }
+.paper .plate figcaption { color: var(--on-paper-soft); }
 
-/* Reads, as the app draws them: outlined caps chips. */
-.reads { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
-.reads li { font: 700 13px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--cream); border: 1px solid var(--faint); padding: 5px 9px 4px; }
-.reads li.flag { color: var(--bg); background: var(--warn); border-color: var(--warn); }
-kbd { font: 700 0.92em/1 var(--display); letter-spacing: 0.06em; color: var(--cream); background: var(--inset); border: 1px solid var(--line); border-bottom-width: 2px; padding: 2px 7px; }
+/* Cover. */
+.cover { padding: clamp(18px, 3vw, 36px) var(--gutter) clamp(40px, 6vw, 80px); overflow: hidden; }
+.cover h1 { margin: 0; }
+.cover h1 .of { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.cover h1 .name { display: block; font-size: clamp(5.5rem, 26.5vw, 30rem); margin-left: -0.04em; white-space: nowrap; }
+.cover .below { display: grid; grid-template-columns: minmax(300px, 5fr) 7fr; gap: clamp(28px, 4vw, 64px); align-items: start; margin-top: clamp(20px, 3vw, 40px); }
+.cover .deck { margin: 0; font: 800 clamp(1.7rem, 3vw, 2.6rem)/1.02 var(--face); font-stretch: 75%; text-transform: uppercase; text-wrap: balance; }
+.cover .deck em { font-style: normal; color: var(--yellow); }
+.cover .lede { margin: 18px 0 0; max-width: 40ch; font-size: clamp(1.05rem, 1.4vw, 1.2rem); line-height: 1.5; color: var(--on-blue-soft); }
+.cover .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; margin-top: 28px; }
+.cover .acts .ticket { --tear: calc(100% - 92px); }
+.cover .acts > a:not(.ticket) { font-size: 12px; color: var(--on-blue); }
+.cover .plate { margin-top: 4px; }
 
-/* How it runs: what it reads, where from, and what it never does. */
-.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; }
-.node { --h: 92px; min-height: var(--h); padding: 16px calc(var(--h) * var(--lean) + 14px); background: var(--raised); display: flex; flex-direction: column; justify-content: center; }
-.node.me { background: var(--inset); outline: 1px solid var(--line); }
-.node b { font: italic 800 clamp(1.15rem, 1.8vw, 1.45rem)/1.05 var(--display); color: var(--cream); text-transform: uppercase; }
-.node span { margin-top: 6px; font-size: 14px; line-height: 1.4; color: var(--dim); }
-.arrow { width: 40px; height: 14px; color: var(--faint); }
-.never { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.never li { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px 7px; border: 1px solid color-mix(in srgb, var(--enemy) 55%, var(--line)); font: 700 15px/1.2 var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--cream); }
-.never svg { flex: none; width: 12px; height: 12px; color: var(--enemy); }
+/* A spread: its clock time and phase in the margin, its heading, its body. */
+.spread { padding: clamp(48px, 7vw, 104px) var(--gutter); }
+.spread > .rule { margin-bottom: clamp(16px, 2vw, 24px); }
+.head { display: grid; grid-template-columns: minmax(120px, 2fr) 10fr; gap: clamp(16px, 3vw, 48px); align-items: end; margin-bottom: clamp(28px, 4vw, 56px); }
+.when { display: grid; gap: 6px; }
+.when time { font: 900 clamp(2.6rem, 5vw, 4.4rem)/0.9 var(--face); font-stretch: 62%; }
+.blue .when time { color: var(--yellow); }
+.paper .when time { color: var(--blue); }
+.when span { font-size: 11px; }
+/* Section heads take the expanded width, so the masthead stays the one condensed shout. */
+.head h2, .sub { font-stretch: 125%; font-weight: 800; letter-spacing: 0; line-height: 1.02; }
+.head h2 { margin: 0; font-size: clamp(1.9rem, 4.4vw, 3.6rem); text-wrap: balance; }
+.cols { display: grid; grid-template-columns: minmax(120px, 2fr) 10fr; gap: clamp(16px, 3vw, 48px); }
+.cols > .main { min-width: 0; }
+.words { max-width: 62ch; }
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
+.split.tall { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
+.split.tall .sub { margin-top: clamp(32px, 4vw, 48px); }
+.split.wide-plate { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); }
+.sub { margin: clamp(40px, 5vw, 64px) 0 16px; font-size: clamp(1.4rem, 2.4vw, 2rem); }
+kbd { font: 700 0.86em/1 var(--face); font-stretch: 100%; padding: 3px 7px 2px; border: 1.5px solid currentColor; border-bottom-width: 3px; }
 
-/* Radiant: the download, as the top of the ladder. */
-.top { margin-top: clamp(64px, 9vw, 120px); padding: clamp(48px, 7vw, 96px) var(--gutter); background: var(--raised); border-top: 3px solid var(--radiant); }
-.top .head { margin-bottom: 28px; }
-.top h2 { background: var(--inset); }
-.top .body { grid-template-columns: minmax(280px, 1fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 64px); }
-.steps { counter-reset: step; margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
-.steps li { counter-increment: step; display: grid; grid-template-columns: 56px 1fr; gap: 14px; align-items: start; padding: 16px 18px; background: var(--bg); }
-.steps li::before { content: counter(step); font: italic 800 34px/0.9 var(--display); color: var(--radiant); }
-.steps li p { margin: 0; }
-.big { --h: 64px; height: 64px; padding: 0 38px; font-size: 26px; }
-.top .go { margin-top: 28px; }
-.top .after { margin-top: 18px; font-size: 15px; color: var(--dim); }
+/* The team sheet, set the way a programme sets the line-ups. */
+.sheets { display: grid; gap: clamp(32px, 4vw, 48px); margin-top: clamp(28px, 4vw, 48px); max-width: 1000px; }
+.sheet { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* Fixed columns, so both teams line up figure for figure. */
+.sheet th:nth-child(1) { width: 3.2em; }
+.sheet th:nth-child(2) { width: 36%; }
+.sheet th:nth-child(4) { width: 9%; }
+.sheet th:nth-child(n+5) { width: 8%; }
+.sheet caption { text-align: left; padding-bottom: 10px; font-size: 13px; color: var(--yellow); }
+.sheet th { text-align: left; font-size: 11px; font-weight: 700; font-stretch: 125%; letter-spacing: 0.08em; text-transform: uppercase; color: var(--on-blue-soft); padding: 0 8px 8px 0; border-bottom: 1px solid var(--on-blue); }
+.sheet td { padding: 12px 8px 11px 0; border-bottom: 1px solid color-mix(in srgb, var(--on-blue) 28%, transparent); vertical-align: top; line-height: 1.25; }
+.sheet .no { width: 2.4em; font: 900 26px/1 var(--face); font-stretch: 62%; color: var(--yellow); }
+.sheet .who b { display: block; white-space: nowrap; font: 900 22px/1 var(--face); font-stretch: 70%; text-transform: uppercase; letter-spacing: 0.01em; }
+.sheet .who b small { font-size: 13px; font-weight: 600; color: var(--on-blue-soft); letter-spacing: 0.02em; }
+.sheet .rank span { white-space: nowrap; }
+.sheet .who span, .sheet .rank span { display: block; margin-top: 4px; font-size: 13px; color: var(--on-blue-soft); }
+.sheet .rank { font-weight: 650; text-transform: uppercase; font-size: 14px; letter-spacing: 0.02em; }
+.sheet .kd { text-align: right; font: 900 24px/1 var(--face); font-stretch: 75%; }
+.sheet .num { text-align: right; font-weight: 600; font-size: 14px; }
+.sheet tr > :last-child { padding-right: 0; }
+.sheet th.kd, .sheet th.num { text-align: right; font-size: 11px; font-weight: 700; font-stretch: 125%; }
+.flag { display: inline-block; margin-top: 6px; padding: 3px 7px 2px; background: var(--yellow); color: var(--ink); font-size: 11px; font-weight: 700; font-stretch: 125%; letter-spacing: 0.08em; text-transform: uppercase; }
+.party { display: inline-block; margin-top: 6px; padding: 2px 6px 1px; border: 1px solid var(--on-blue-soft); color: var(--on-blue-soft); font-size: 11px; font-weight: 700; font-stretch: 125%; letter-spacing: 0.08em; text-transform: uppercase; }
+.sheet tr.gone .who b { color: var(--on-blue-soft); }
+.sheets + .note { margin-top: 18px; font-size: 13px; color: var(--on-blue-soft); }
 
-/* Questions, opened in place. */
-.faq { padding: clamp(56px, 8vw, 104px) var(--gutter) clamp(40px, 6vw, 80px); max-width: 1040px; }
-.faq h2 { margin: 0 0 24px; font: italic 800 clamp(1.9rem, 3.6vw, 3rem)/1 var(--display); color: var(--cream); text-transform: uppercase; text-wrap: balance; }
-.faq details { border-top: 1px solid var(--line); }
-.faq details:last-of-type { border-bottom: 1px solid var(--line); }
-.faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 18px; padding: 18px 0; font: 600 clamp(1.02rem, 1.4vw, 1.15rem)/1.35 var(--body); color: var(--cream); }
+/* Ground rules, printed as a notice on yellow stock. */
+.rules { margin: 0; padding: 0; list-style: none; counter-reset: rule; columns: 2 380px; column-gap: clamp(28px, 4vw, 64px); }
+.rules li { counter-increment: rule; break-inside: avoid; display: grid; grid-template-columns: 2.6em 1fr; gap: 10px; padding: 16px 0 18px; border-top: 1px solid var(--ink); }
+.rules li::before { content: counter(rule); font: 900 30px/0.95 var(--face); font-stretch: 62%; }
+.rules li strong { display: block; font-weight: 800; font-stretch: 85%; font-size: 1.15em; text-transform: uppercase; line-height: 1.15; margin-bottom: 4px; }
+
+/* Admission. */
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 3em 1fr; gap: 14px; padding: 18px 0; border-top: 1px solid color-mix(in srgb, var(--on-blue) 35%, transparent); }
+.steps li:last-child { border-bottom: 1px solid color-mix(in srgb, var(--on-blue) 35%, transparent); }
+.steps li::before { content: counter(step); font: 900 40px/0.85 var(--face); font-stretch: 62%; color: var(--yellow); }
+.admit .split { grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); }
+.admit .ticket { --tear: calc(100% - 118px); }
+.admit .after { margin-top: 18px; font-size: 14px; }
+
+/* Questions. */
+.faq details { border-top: 1px solid var(--ink); }
+.faq details:last-of-type { border-bottom: 1px solid var(--ink); }
+.faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 18px; padding: 18px 0; font-weight: 750; font-stretch: 85%; font-size: clamp(1.1rem, 1.6vw, 1.3rem); line-height: 1.3; }
 .faq summary::-webkit-details-marker { display: none; }
-.faq summary::after { content: ""; flex: none; width: 14px; height: 14px; margin: 5px 2px 0 0; background: linear-gradient(var(--enemy) 0 0) center / 100% 2px no-repeat, linear-gradient(var(--enemy) 0 0) center / 2px 100% no-repeat; transition: transform 0.3s var(--out); }
+.faq summary::after { content: ""; flex: none; width: 14px; height: 14px; margin-top: 4px; background: linear-gradient(var(--blue) 0 0) center / 100% 3px no-repeat, linear-gradient(var(--blue) 0 0) center / 3px 100% no-repeat; transition: transform 0.3s var(--out); }
+.faq summary:hover { color: var(--blue); }
 .faq details[open] summary::after { transform: rotate(45deg); }
-.faq details p { margin: -4px 0 20px; max-width: 68ch; }
+.faq details p { margin: -4px 0 22px; max-width: 68ch; }
 
-footer { padding: 36px var(--gutter) 48px; border-top: 1px solid var(--line); color: var(--faint); font-size: 14px; display: grid; gap: 12px; }
-footer .row { display: flex; flex-wrap: wrap; gap: 10px 26px; align-items: center; }
-footer .caps { color: var(--cream); }
-footer .legal { max-width: 92ch; font-size: 13px; }
+footer { padding: 40px var(--gutter) 52px; background: var(--ink); color: var(--on-blue-soft); font-size: 14px; display: grid; gap: 14px; }
+footer .row { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: center; }
+footer .row b { font: 900 22px/1 var(--face); font-stretch: 62%; text-transform: uppercase; color: var(--on-blue); }
+footer a { color: var(--on-blue); }
+footer .legal { max-width: 92ch; font-size: 13px; margin: 0; }
 
+@media (max-width: 1600px) {
+  .run .issue + .issue { display: none; }
+}
+@media (max-width: 1360px) {
+  .run nav { display: none; }
+  .run .clock { margin-left: auto; }
+}
 @media (max-width: 1000px) {
-  .hero { grid-template-columns: 1fr; }
-  .hero .lede { max-width: 44ch; }
-  .side .body, .side.flip .body, .tall .body, .top .body { grid-template-columns: 1fr; }
-  .side.flip .words, .tall .words { order: 0; }
-  .side .words, .tall .words { position: static; padding-top: 0; }
-  .tall .screen { max-width: 460px; }
-  .flow { grid-template-columns: 1fr; }
-  .flow .arrow { transform: rotate(90deg); justify-self: center; }
+  .cover .below, .split, .split.tall, .split.wide-plate, .admit .split { grid-template-columns: minmax(0, 1fr); }
+  .head, .cols { grid-template-columns: 1fr; gap: 10px; }
+  .cols > .gap { display: none; }
+  .when { grid-auto-flow: column; justify-content: start; align-items: baseline; gap: 14px; }
+  .split.tall .plate { max-width: 460px; }
 }
 @media (max-width: 720px) {
   body { font-size: 16px; }
-  .mast nav a:not(.get) { display: none; }
-  .mast .chip { display: none; }
-  .mast .get { --h: 36px; padding: 0 14px; font-size: 15px; }
-  .ladder .tier .full { display: none; }
-  .ladder .tier .short { display: inline; }
-  .ladder .tier { font-size: 11px; letter-spacing: 0.04em; }
-  .rung .tag { padding: 0 calc(var(--h) * var(--lean) + 8px); }
-  .rung .tag .full { display: none; }
-  .rung .tag .short { display: inline; }
-  .rung h2 { padding: 8px calc(var(--h) * var(--lean) + 14px); }
-  .big { --h: 54px; height: 54px; padding: 0 26px; font-size: 21px; }
-  /* Wide tables stay legible and pan sideways. */
+  .run { gap: 12px; padding: 0 12px; }
+  .run .issue, .run .brand span { display: none; }
+  .clock { min-width: 0; padding: 0 8px; gap: 6px; }
+  .clock b { font-size: 19px; }
+  .clock span { font-size: 11px; letter-spacing: 0.02em; }
+  .ticket .go { font-size: 19px; padding: 0 18px; }
+  .ticket.big { min-height: 60px; }
+  .cover .acts .ticket { --tear: calc(100% - 84px); }
+  /* Wide screenshots stay legible and pan sideways. */
   .pan { overflow-x: auto; overscroll-behavior-x: contain; }
   .pan img { width: var(--pan, 760px); max-width: none; }
-  .steps li { grid-template-columns: 40px 1fr; }
+  .sheet { table-layout: auto; }
+  .sheet th:nth-child(2) { width: auto; }
+  .sheet .no { width: 1.5em; font-size: 22px; }
+  .sheet .who b { font-size: 19px; max-width: 9.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet .num { display: none; }
+  .sheet .rank { font-size: 12.5px; }
+  .sheet .rank span { white-space: normal; }
+  .sheet .kd { font-size: 20px; }
+  .ticket.big .go { font-size: 19px; padding: 0 16px; gap: 8px; }
+  .ticket.big .stub { padding: 0 12px; font-size: 11px; }
+  .admit .ticket { --tear: calc(100% - 78px); }
+}
+@media (max-width: 400px) {
+  .run .ticket .stub, .clock span { display: none; }
+  .run .ticket { -webkit-mask: none; mask: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -309,234 +335,277 @@ footer .legal { max-width: 92ch; font-size: 13px; }
 </style>
 </head>
 <body>
-<a class="skip" href="#iron">Skip to the features</a>
+<a class="skip" href="#agent-select">Skip to the match</a>
 
-<header class="mast">
+<header class="run">
   <a class="brand" href="./" aria-label="Valorant Overseer home">
-    <img src="assets/mark.svg" width="30" height="30" alt="">
-    <span class="name">Overseer</span>
+    <img src="assets/mark.svg" width="26" height="26" alt="">
+    <span>Overseer</span>
   </a>
-  <span class="chip plate">VALORANT Tracker for Windows</span>
+  <span class="issue wide">Issue 2.3.1</span>
+  <span class="issue wide">Windows 10 and 11</span>
   <nav aria-label="Site">
-    <a href="#iron">Features</a>
-    <a href="#immortal">How It Works</a>
-    <a href="#questions">Questions</a>
-    <a href="https://github.com/SomethingObvious/Valorant-Overseer">GitHub</a>
-    <a class="get plate" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">Download</a>
+    <a class="wide" href="#agent-select">The Match</a>
+    <a class="wide" href="#ground-rules">Ground Rules</a>
+    <a class="wide" href="#questions">Questions</a>
+    <a class="wide" href="https://github.com/SomethingObvious/Valorant-Overseer">GitHub</a>
   </nav>
+  <div class="clock" aria-hidden="true"><b>00:00</b><span class="wide">Before the Match</span></div>
+  <a class="ticket small" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest" style="--tear: calc(100% - 52px)">
+    <span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z"/></svg>Download</span>
+    <span class="stub wide">Free</span>
+  </a>
 </header>
 
 <main>
-  <section class="hero" aria-labelledby="title">
-    <div>
-      <h1 id="title">Valorant <span>Overseer</span></h1>
-      <p class="lede">Every player in your VALORANT match, with their <strong>rank, peak, K/D and party</strong>, before the round starts. Free, and it runs on your PC.</p>
-      <div class="acts">
-        <a class="get plate" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z"/></svg>
-          Download for Windows
-        </a>
-        <a class="quiet" href="https://github.com/SomethingObvious/Valorant-Overseer">Source on GitHub</a>
+  <section class="cover blue" aria-labelledby="title" data-clock="00:00" data-phase="Before the Match">
+    <h1 id="title"><span class="of wide">Valorant</span><span class="name tight">Overseer</span></h1>
+    <div class="below">
+      <div>
+        <p class="deck">Every player in your match, <em>ranked before round one.</em></p>
+        <p class="lede">Rank, peak rank, K/D, headshot and win rates and who queued together, for all ten players, in a window beside VALORANT. Free for Windows 10 and 11, and it runs on your PC with no account.</p>
+        <div class="acts">
+          <a class="ticket" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">
+            <span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z"/></svg>Download for Windows</span>
+            <span class="stub wide">Free<br>2.3.1</span>
+          </a>
+          <a class="wide" href="https://github.com/SomethingObvious/Valorant-Overseer">Source on GitHub</a>
+        </div>
       </div>
-      <ul class="facts" aria-label="At a glance">
-        <li class="plate">Version <b>2.3.1</b></li>
-        <li class="plate">Windows 10 and 11</li>
-        <li class="plate">No Account, No Tracking</li>
-      </ul>
-    </div>
-    <figure class="screen">
-      <img src="assets/shots/board-1600.webp" srcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w" sizes="(min-width: 1000px) 60vw, 100vw" width="1600" height="955" fetchpriority="high" alt="The Overseer board in a VALORANT match on Icebox: the enemy team's ranks, peak ranks, K/D, headshot and win rates, with one player flagged Worth a Look and a possible trio, your team below, and the selected player's panel on the right">
-    </figure>
-  </section>
-
-  <nav class="ladder" aria-label="Features, Iron to Radiant">
-    <ol>
-      <li style="--tier: var(--iron)"><a href="#iron"><span class="band"></span><span class="tier"><span class="full">Iron</span><span class="short">IRN</span></span></a></li>
-      <li style="--tier: var(--bronze)"><a href="#bronze"><span class="band"></span><span class="tier"><span class="full">Bronze</span><span class="short">BRZ</span></span></a></li>
-      <li style="--tier: var(--silver)"><a href="#silver"><span class="band"></span><span class="tier"><span class="full">Silver</span><span class="short">SIL</span></span></a></li>
-      <li style="--tier: var(--gold)"><a href="#gold"><span class="band"></span><span class="tier"><span class="full">Gold</span><span class="short">GLD</span></span></a></li>
-      <li style="--tier: var(--platinum)"><a href="#platinum"><span class="band"></span><span class="tier"><span class="full">Platinum</span><span class="short">PLT</span></span></a></li>
-      <li style="--tier: var(--diamond)"><a href="#diamond"><span class="band"></span><span class="tier"><span class="full">Diamond</span><span class="short">DIA</span></span></a></li>
-      <li style="--tier: var(--ascendant)"><a href="#ascendant"><span class="band"></span><span class="tier"><span class="full">Ascendant</span><span class="short">ASC</span></span></a></li>
-      <li style="--tier: var(--immortal)"><a href="#immortal"><span class="band"></span><span class="tier"><span class="full">Immortal</span><span class="short">IMM</span></span></a></li>
-      <li style="--tier: var(--radiant)"><a href="#radiant"><span class="band"></span><span class="tier"><span class="full">Radiant</span><span class="short">RAD</span></span></a></li>
-    </ol>
-    <span class="you" aria-hidden="true"><b class="plate">You</b></span>
-  </nav>
-
-  <section id="iron" class="rung wide" style="--tier: var(--iron)" aria-labelledby="iron-h">
-    <div class="head"><span class="tag plate"><span class="full">Iron</span><span class="short">IRN</span></span><h2 id="iron-h" class="plate">Every Player, Ranked</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>The whole lobby on one board, with each player's <strong>rank, peak rank</strong> and the act they reached it, <strong>K/D</strong>, headshot rate, win rate, level, RR and their last five games. The other team sits on top, since they're the five you can't see in game.</p>
-<p>In a narrow window the win rate moves under the K/D, and a small count at the end of the headings says which columns didn't fit. Press <kbd>?</kbd> for a Help screen that says what every colour and mark on the board means, with every key.</p>
-      </div>
-      <figure class="screen pan">
-        <img src="assets/shots/rung-ranks-1400.webp" srcset="assets/shots/rung-ranks-800.webp 800w, assets/shots/rung-ranks-1400.webp 1400w" sizes="100vw" width="1400" height="448" loading="lazy" decoding="async" alt="The enemy team in Overseer: five players with their agent, rank, peak rank and act, K/D, games, headshot rate, win rate, level, games met before and last five results, one of them a player Riot didn't name">
+      <figure class="plate">
+        <div class="frame"><img src="assets/shots/board-1600.webp" srcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w" sizes="(min-width: 1000px) 58vw, 100vw" width="1600" height="955" fetchpriority="high" alt="The Overseer board in a VALORANT match on Icebox: the enemy team's ranks, peak ranks, K/D, headshot and win rates, with one player flagged Worth a Look and a possible trio, your team below, and the selected player's panel on the right"></div>
+        <figcaption><b class="wide">Plate 1</b><span>The board in round five on Icebox, with the enemy team on top. Every screenshot here comes from Overseer's demo mode, with made-up players.</span></figcaption>
       </figure>
     </div>
   </section>
 
-  <section id="bronze" class="rung tall" style="--tier: var(--bronze)" aria-labelledby="bronze-h">
-    <div class="head"><span class="tag plate"><span class="full">Bronze</span><span class="short">BRZ</span></span><h2 id="bronze-h" class="plate">Peak, Form and Reads</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Rest on a player and the panel opens on their card, their rank with its RR, their form over recent games, the agents they main and a rating line across their last ten. It also lists who they play with most, and how often they win together.</p>
-        <p>Reads sum up their habits from those matches. An account that looks like a smurf is flagged <strong>Worth a Look</strong>, with the reasons beside it.</p>
-        <ul class="reads" aria-label="Some of the reads">
-          <li class="flag">Worth a Look</li>
-          <li>Saves</li>
-          <li>Forces</li>
-          <li>One-Trick</li>
-          <li>Hot</li>
-          <li>Clutch</li>
-        </ul>
+  <section id="agent-select" class="spread paper" aria-labelledby="overlay-h" data-clock="00:00" data-phase="Agent Select">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"><time>00:00</time><span class="wide">Agent Select</span></p>
+      <h2 id="overlay-h" class="tight">Your Team Before You Lock In</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main split wide-plate">
+        <div class="words">
+          <p>As soon as agent select opens, a small window sits over the game with your team's ranks, peaks, K/D, recent form and parties. It goes away once the match loads.</p>
+          <p>It never takes the focus from VALORANT, and it shows over the game's default borderless window. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> shows or hides it at any time, and it can sit in any corner.</p>
+        </div>
+        <figure class="plate">
+          <div class="frame"><img src="assets/shots/overlay-full.webp" srcset="assets/shots/overlay.webp 774w, assets/shots/overlay-full.webp 1328w" sizes="(min-width: 1000px) 46vw, 100vw" width="1328" height="840" loading="lazy" decoding="async" alt="The Overseer overlay in agent select on Icebox: your team's five players with rank, peak, K/D, last games, headshot, win and map rates, and a duo marked"></div>
+          <figcaption><b class="wide">Plate 2</b><span>The overlay in agent select. The duo tab on the left joins two players who queued together.</span></figcaption>
+        </figure>
       </div>
-      <figure class="screen">
-        <img src="assets/shots/rung-panel-800.webp" width="670" height="1280" loading="lazy" decoding="async" alt="A player's panel in Overseer: their card, a Worth a Look flag with their level and peak, reads, Immortal 1 with RR, four wins in a row, stats, a likely trio and the games you've met them in before">
-      </figure>
     </div>
   </section>
 
-  <section id="silver" class="rung wide" style="--tier: var(--silver)" aria-labelledby="silver-h">
-    <div class="head"><span class="tag plate"><span class="full">Silver</span><span class="short">SIL</span></span><h2 id="silver-h" class="plate">Who Queued Together</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Parties get a tab down the side of their rows, so a duo or a trio reads at a glance. The ladder under the board puts everyone in the lobby at their rank, and your session's RR keeps count of the night.</p>
+  <section class="spread blue" aria-labelledby="sheets-h" data-clock="01:30" data-phase="Match Loads">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"><time>01:30</time><span class="wide">Match Loads</span></p>
+      <h2 id="sheets-h" class="tight">Every Player, Ranked</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main">
+        <div class="words">
+          <p>The whole lobby goes on one board, with each player's <strong>rank, peak rank</strong> and the act they reached it, <strong>K/D</strong>, headshot rate, win rate, level, RR and their last five games. The other team sits on top, since they're the five you can't see in game. Press <kbd>?</kbd> for a Help screen that explains every colour and mark on the board.</p>
+        </div>
+        <div class="sheets">
+          <table class="sheet">
+            <caption class="wide">Enemy Team</caption>
+            <thead><tr><th scope="col">No.</th><th scope="col">Player</th><th scope="col">Rank</th><th scope="col" class="kd">K/D</th><th scope="col" class="num">HS</th><th scope="col" class="num">Win</th><th scope="col" class="num">Lvl</th></tr></thead>
+            <tbody>
+              <tr><td class="no">1</td><td class="who"><b>NeonLock</b><span>Clove</span><em class="flag">Worth a Look</em></td><td class="rank">Immortal 1</td><td class="kd">1.79</td><td class="num">31%</td><td class="num">64%</td><td class="num">43</td></tr>
+              <tr class="gone"><td class="no">2</td><td class="who"><b>Unknown</b><span>Riot didn't say who this is.</span></td><td class="rank"></td><td class="kd"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+              <tr><td class="no">3</td><td class="who"><b>GhostDash <small>#OCE</small></b><span>Phoenix</span><em class="party">Duo</em></td><td class="rank">Gold 3</td><td class="kd">1.71</td><td class="num">32%</td><td class="num">49%</td><td class="num">406</td></tr>
+              <tr><td class="no">4</td><td class="who"><b>FrostSpike <small>#VAL</small></b><span>Yoru</span><em class="party">Duo</em></td><td class="rank">Platinum 1</td><td class="kd">1.54</td><td class="num">30%</td><td class="num">45%</td><td class="num">134</td></tr>
+              <tr><td class="no">5</td><td class="who"><b>DriftAim <small>#GG</small></b><span>Skye</span></td><td class="rank">Gold 1<span>Peak Diamond 2</span></td><td class="kd">2.93</td><td class="num">25%</td><td class="num">52%</td><td class="num">181</td></tr>
+            </tbody>
+          </table>
+          <table class="sheet">
+            <caption class="wide">Your Team</caption>
+            <thead><tr><th scope="col">No.</th><th scope="col">Player</th><th scope="col">Rank</th><th scope="col" class="kd">K/D</th><th scope="col" class="num">HS</th><th scope="col" class="num">Win</th><th scope="col" class="num">Lvl</th></tr></thead>
+            <tbody>
+              <tr><td class="no">1</td><td class="who"><b>SilentEnt</b><span>KAY/O</span><em class="flag">Worth a Look</em> <em class="party">Duo</em></td><td class="rank">Diamond 3<span>Peak Ascendant 3</span></td><td class="kd">1.90</td><td class="num">36%</td><td class="num">64%</td><td class="num">50</td></tr>
+              <tr><td class="no">2</td><td class="who"><b>Day <small>#9932</small></b><span>Chamber</span><em class="party">Duo</em></td><td class="rank">Gold 2<span>Peak Gold 3</span></td><td class="kd">0.91</td><td class="num">25%</td><td class="num">52%</td><td class="num">154</td></tr>
+              <tr><td class="no">3</td><td class="who"><b>AVeryLongNameIndeed</b><span>Astra</span></td><td class="rank">Unranked</td><td class="kd"></td><td class="num"></td><td class="num"></td><td class="num">12</td></tr>
+              <tr><td class="no">4</td><td class="who"><b>DriftFrag <small>#RR</small></b><span>Reyna</span></td><td class="rank">Gold 2</td><td class="kd">1.44</td><td class="num">30%</td><td class="num">41%</td><td class="num">212</td></tr>
+              <tr><td class="no">5</td><td class="who"><b>SageDiff <small>#EUW</small></b><span>Viper</span></td><td class="rank">Bronze 3</td><td class="kd">0.72</td><td class="num">24%</td><td class="num">59%</td><td class="num">77</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">The players on Plate 1, as a programme would set them.</p>
       </div>
-      <figure class="screen pan">
-        <img src="assets/shots/rung-parties-1400.webp" srcset="assets/shots/rung-parties-800.webp 800w, assets/shots/rung-parties-1400.webp 1400w" sizes="100vw" width="1400" height="503" loading="lazy" decoding="async" alt="Your team in Overseer with a duo tab joining two players' rows, the rank ladder placing every player in the lobby, and plus 37 RR for the session">
-      </figure>
     </div>
   </section>
 
-  <section id="gold" class="rung side" style="--tier: var(--gold)" aria-labelledby="gold-h">
-    <div class="head"><span class="tag plate"><span class="full">Gold</span><span class="short">GLD</span></span><h2 id="gold-h" class="plate">An Overlay in Agent Select</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>In agent select a small window sits over the game with your team's ranks, form and parties, and it goes away once the match loads.</p>
-        <p>It never takes the focus from VALORANT, so the game stays full screen. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> shows or hides it any time, and it can sit in any corner.</p>
+  <section class="spread paper" aria-labelledby="panel-h" data-clock="01:45" data-phase="Buy Phase">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"><time>01:45</time><span class="wide">Buy Phase</span></p>
+      <h2 id="panel-h" class="tight">Peak, Form and Reads</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main">
+        <div class="split tall">
+          <figure class="plate">
+            <div class="frame"><img src="assets/shots/rung-panel-800.webp" width="670" height="1280" loading="lazy" decoding="async" alt="A player's panel in Overseer: their card, a Worth a Look flag with their level and peak, reads, Immortal 1 with RR, four wins in a row, stats, a likely trio and the games you've met them in before"></div>
+            <figcaption><b class="wide">Plate 3</b><span>NeonLock's panel, flagged Worth a Look.</span></figcaption>
+          </figure>
+          <div class="words">
+            <p>Rest the pointer on a player and the panel opens on their card, their rank with its RR, their form over recent games, the agents they main and a rating line across their last ten. It also lists who they play with most, and how often they win together.</p>
+            <p>Reads sum up their habits from those matches, like whether they save or force on a bad round, or only ever play one agent. An account that looks like a smurf is flagged <strong>Worth a Look</strong>, with the reasons beside it. Notes and tags you leave on a player come back the next time you meet them.</p>
+            <h3 class="sub tight">Who Queued Together</h3>
+            <p>Parties get a tab down the side of their rows, so a duo or a trio reads at a glance. The ladder under the board puts everyone in the lobby at their rank, and your session's RR keeps count of the night.</p>
+          </div>
+        </div>
+        <figure class="plate pan" style="margin-top: 24px">
+          <div class="frame"><img src="assets/shots/rung-parties-1400.webp" srcset="assets/shots/rung-parties-800.webp 800w, assets/shots/rung-parties-1400.webp 1400w" sizes="(min-width: 1000px) 80vw, 100vw" width="1400" height="503" loading="lazy" decoding="async" alt="Your team in Overseer with a duo tab joining two players' rows, the rank ladder placing every player in the lobby, and plus 37 RR for the session"></div>
+          <figcaption><b class="wide">Plate 4</b><span>Your team with a duo, the lobby's rank ladder and the session's RR.</span></figcaption>
+        </figure>
       </div>
-      <figure class="screen">
-        <img src="assets/shots/overlay-full.webp" srcset="assets/shots/overlay.webp 774w, assets/shots/overlay-full.webp 1328w" sizes="(min-width: 1000px) 52vw, 100vw" width="1328" height="840" loading="lazy" decoding="async" alt="The Overseer overlay in agent select on Icebox: your team's five players with rank, peak, K/D, last games, headshot, win and map rates, and a duo marked">
-      </figure>
     </div>
   </section>
 
-  <section id="platinum" class="rung wide" style="--tier: var(--platinum)" aria-labelledby="platinum-h">
-    <div class="head"><span class="tag plate"><span class="full">Platinum</span><span class="short">PLT</span></span><h2 id="platinum-h" class="plate">Your Match History</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Your recent games with the score, your K/D/A, ACS and the RR you won or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and first bloods for all ten players.</p>
+  <section class="spread blue" aria-labelledby="history-h" data-clock="40:00" data-phase="Full Time">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"><time>40:00</time><span class="wide">Full Time</span></p>
+      <h2 id="history-h" class="tight">Your Match History</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main">
+        <div class="words"><p>Your recent games with the score, your K/D/A, ACS and the RR you won or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and first bloods for all ten players.</p></div>
+        <figure class="plate pan" style="--pan: 1000px; margin-top: 28px">
+          <div class="frame"><img src="assets/shots/rung-history-1400.webp" srcset="assets/shots/rung-history-800.webp 800w, assets/shots/rung-history-1400.webp 1400w" sizes="(min-width: 1000px) 80vw, 100vw" width="1400" height="443" loading="lazy" decoding="async" alt="Overseer's match history with a 13 to 11 win on Haven opened to its scoreboard: both teams' kills, deaths, assists, K/D, ACS, ADR, headshot rate, KAST and first bloods"></div>
+          <figcaption><b class="wide">Plate 5</b><span>A 13 to 11 win on Haven, opened to its scoreboard.</span></figcaption>
+        </figure>
       </div>
-      <figure class="screen pan" style="--pan: 1000px">
-        <img src="assets/shots/rung-history-1400.webp" srcset="assets/shots/rung-history-800.webp 800w, assets/shots/rung-history-1400.webp 1400w" sizes="100vw" width="1400" height="443" loading="lazy" decoding="async" alt="Overseer's match history with a 13 to 11 win on Haven opened to its scoreboard: both teams' kills, deaths, assists, K/D, ACS, ADR, headshot rate, KAST and first bloods">
-      </figure>
     </div>
   </section>
 
-  <section id="diamond" class="rung side flip" style="--tier: var(--diamond)" aria-labelledby="diamond-h">
-    <div class="head"><span class="tag plate"><span class="full">Diamond</span><span class="short">DIA</span></span><h2 id="diamond-h" class="plate">Lineups for Every Map</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Drag from where you stand to where it lands, pick the agent and the ability, and add a clip from a YouTube link or a video of your own, trimmed right in the app.</p>
-        <p>Draw on the map, check a turret's line of sight, and share a map's lineups as a code to paste in chat.</p>
+  <section class="spread paper" aria-labelledby="lineups-h" data-clock="45:00" data-phase="Between Games">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"><time>45:00</time><span class="wide">Between Games</span></p>
+      <h2 id="lineups-h" class="tight">Lineups for Every Map</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main">
+        <div class="split">
+          <div class="words">
+            <p>Drag from where you stand to where it lands, pick the agent and the ability, and add a clip from a YouTube link or a video of your own, trimmed right in the app.</p>
+            <p>Draw on the map, check a turret's line of sight, and share a map's lineups as a code to paste in chat.</p>
+          </div>
+          <figure class="plate">
+            <div class="frame"><img src="assets/shots/rung-lineups-1330.webp" srcset="assets/shots/rung-lineups-800.webp 800w, assets/shots/rung-lineups-1330.webp 1330w" sizes="(min-width: 1000px) 46vw, 100vw" width="1330" height="1330" loading="lazy" decoding="async" alt="Overseer's lineup map of Haven with six Brimstone incendiary lineups, each a line from where to stand to where it lands on the A, B and C sites"></div>
+            <figcaption><b class="wide">Plate 6</b><span>Six Brimstone incendiary lineups on Haven.</span></figcaption>
+          </figure>
+        </div>
+        <h3 class="sub tight">Appear Offline</h3>
+        <div class="words"><p>Hide from your friends in Riot chat without changing anything in the game. Overseer restarts the Riot Client and VALORANT to do it, so finish your match first.</p></div>
+        <figure class="plate pan" style="--pan: 1000px; margin-top: 24px">
+          <div class="frame"><img src="assets/shots/rung-offline-1400.webp" srcset="assets/shots/rung-offline-800.webp 800w, assets/shots/rung-offline-1400.webp 1400w" sizes="(min-width: 1000px) 80vw, 100vw" width="1400" height="170" loading="lazy" decoding="async" alt="Overseer's Settings screen with the Offline Chat section: Appear Offline, which restarts the Riot Client and VALORANT through Overseer"></div>
+          <figcaption><b class="wide">Plate 7</b><span>Appear Offline, on the Settings screen.</span></figcaption>
+        </figure>
       </div>
-      <figure class="screen">
-        <img src="assets/shots/rung-lineups-1330.webp" srcset="assets/shots/rung-lineups-800.webp 800w, assets/shots/rung-lineups-1330.webp 1330w" sizes="(min-width: 1000px) 50vw, 100vw" width="1330" height="1330" loading="lazy" decoding="async" alt="Overseer's lineup map of Haven with six Brimstone incendiary lineups, each a line from where to stand to where it lands on the A, B and C sites">
-      </figure>
     </div>
   </section>
 
-  <section id="ascendant" class="rung wide" style="--tier: var(--ascendant)" aria-labelledby="ascendant-h">
-    <div class="head"><span class="tag plate"><span class="full">Ascendant</span><span class="short">ASC</span></span><h2 id="ascendant-h" class="plate">Appear Offline</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Hide from your friends in Riot chat without changing anything in the game. Overseer restarts the Riot Client and VALORANT to do it, so finish your match first.</p>
-      </div>
-      <figure class="screen pan" style="--pan: 1000px">
-        <img src="assets/shots/rung-offline-1400.webp" srcset="assets/shots/rung-offline-800.webp 800w, assets/shots/rung-offline-1400.webp 1400w" sizes="100vw" width="1400" height="170" loading="lazy" decoding="async" alt="Overseer's Settings screen with the Offline Chat section: Appear Offline, which restarts the Riot Client and VALORANT through Overseer">
-      </figure>
+  <section id="ground-rules" class="spread notice" aria-labelledby="rules-h">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"></p>
+      <h2 id="rules-h" class="tight">Ground Rules</h2>
     </div>
-  </section>
-
-  <section id="immortal" class="rung wide" style="--tier: var(--immortal); --ink: var(--cream)" aria-labelledby="immortal-h">
-    <div class="head"><span class="tag plate"><span class="full">Immortal</span><span class="short">IMM</span></span><h2 id="immortal-h" class="plate">It Runs on Your PC</h2></div>
-    <div class="body">
-      <div class="flow" role="img" aria-label="The Riot Client on your PC gives Overseer your match, and Overseer asks Riot's servers for the recent games of the players in it">
-        <div class="node plate"><b>Riot Client</b><span>Its own local API, on your PC</span></div>
-        <svg class="arrow" viewBox="0 0 40 14" aria-hidden="true"><path fill="currentColor" d="M0 6h33V1l7 6-7 6V8H0z"/></svg>
-        <div class="node me plate"><b>Overseer</b><span>Your notes, lineups and history stay here</span></div>
-        <svg class="arrow" viewBox="0 0 40 14" aria-hidden="true"><path fill="currentColor" d="M40 6H7V1L0 7l7 6V8h33z"/></svg>
-        <div class="node plate"><b>Riot's Servers</b><span>The players' recent games</span></div>
-      </div>
-      <div class="words">
-        <p>Overseer reads your match from the <strong>Riot Client's own local API</strong>, the same one the client uses to show your party, and asks Riot's servers for the recent games of the players in it. Agent and map art comes from valorant-api.com, and nothing about you is sent there. Once a day it asks GitHub which version is newest, and the footer says when a new one is out.</p>
-      </div>
-      <ul class="never" aria-label="What Overseer never does">
-        <li><svg viewBox="0 0 18 18" aria-hidden="true"><path fill="currentColor" d="M3.4 2 9 7.6 14.6 2 16 3.4 10.4 9l5.6 5.6-1.4 1.4L9 10.4 3.4 16 2 14.6 7.6 9 2 3.4z"/></svg>Never reads game memory</li>
-        <li><svg viewBox="0 0 18 18" aria-hidden="true"><path fill="currentColor" d="M3.4 2 9 7.6 14.6 2 16 3.4 10.4 9l5.6 5.6-1.4 1.4L9 10.4 3.4 16 2 14.6 7.6 9 2 3.4z"/></svg>Never clicks, types or locks in</li>
-        <li><svg viewBox="0 0 18 18" aria-hidden="true"><path fill="currentColor" d="M3.4 2 9 7.6 14.6 2 16 3.4 10.4 9l5.6 5.6-1.4 1.4L9 10.4 3.4 16 2 14.6 7.6 9 2 3.4z"/></svg>No account or server of its own</li>
-        <li><svg viewBox="0 0 18 18" aria-hidden="true"><path fill="currentColor" d="M3.4 2 9 7.6 14.6 2 16 3.4 10.4 9l5.6 5.6-1.4 1.4L9 10.4 3.4 16 2 14.6 7.6 9 2 3.4z"/></svg>Never updates itself</li>
-      </ul>
-    </div>
-  </section>
-
-  <section id="radiant" class="rung top" style="--tier: var(--radiant)" aria-labelledby="radiant-h">
-    <div class="head"><span class="tag plate"><span class="full">Radiant</span><span class="short">RAD</span></span><h2 id="radiant-h" class="plate">Download Overseer</h2></div>
-    <div class="body">
-      <div class="words">
-        <p>Setup installs Overseer into <strong>AppData</strong> with its own copy of Python, so it needs no admin rights. It also installs yt-dlp and FFmpeg with winget for lineup clips. A new version's setup updates in place and keeps your region, lineups, notes and settings, and it uninstalls from Settings, then Apps.</p>
-        <p class="go"><a class="get plate big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z"/></svg>
-          Download for Windows
-        </a></p>
-        <p class="after">Valorant Overseer 2.3.1, from the latest release on GitHub.</p>
-      </div>
-      <ol class="steps">
-        <li><p>Download <strong>Valorant-Overseer-Setup.exe</strong> from the latest release.</p></li>
-        <li><p>Open it and pick your region. If Windows says it protected your PC, click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></li>
-        <li><p>Open VALORANT and join a lobby. Overseer fills in as soon as there's a match to show.</p></li>
+    <div class="cols">
+      <div class="gap"></div>
+      <ol class="rules main">
+        <li><p><strong>It reads the Riot Client, not the game</strong>Your match comes from the Riot Client's own local API on your PC, the same one the client uses to show your party.</p></li>
+        <li><p><strong>It never plays for you</strong>It never reads VALORANT's memory, and it never clicks, types or locks in an agent. The overlay is an ordinary window with no hooks into the game.</p></li>
+        <li><p><strong>It asks Riot for match data only</strong>It asks Riot's servers for the recent games of the players in your match. Agent and map art comes from valorant-api.com, and nothing about you is sent there.</p></li>
+        <li><p><strong>No account and no server</strong>There's nothing to sign up for, no server of its own and no tracking. Your notes, lineups and history stay on your PC.</p></li>
+        <li><p><strong>It never updates itself</strong>Once a day it asks GitHub which version is newest, and the footer says when one is out. Settings turns that check off.</p></li>
+        <li><p><strong>It stays out of the game's way</strong>The window takes about 175 MB of memory, draws nothing while you leave it alone, and asks for the integrated GPU so VALORANT keeps the faster one.</p></li>
       </ol>
     </div>
   </section>
 
-  <section id="questions" class="faq" aria-labelledby="questions-h">
-    <h2 id="questions-h">Questions</h2>
-    <details>
-      <summary>Is Valorant Overseer free?</summary>
-      <p>Yes. It's free for anything noncommercial under the PolyForm Strict License 1.0.0. You can't sell it, use it in a business, share copies of it or publish a changed version.</p>
-    </details>
-    <details>
-      <summary>Does it need an account, or send my data anywhere?</summary>
-      <p>No account. Overseer talks to the Riot Client on your PC and to Riot's servers for match data, and fetches agent and map art from valorant-api.com without sending anything about you. Once a day it asks GitHub which version is newest, and Settings turns that off. It has no server of its own and no tracking.</p>
-    </details>
-    <details>
-      <summary>Does it read VALORANT's memory or play for me?</summary>
-      <p>No. It reads your match from the Riot Client's own local API. It never reads the game's memory, and it never clicks, types or locks in an agent.</p>
-    </details>
-    <details>
-      <summary>Can I get banned for using it?</summary>
-      <p>Overseer never touches the game, but whether third-party tools are allowed is Riot's decision, so it can't promise anything either way.</p>
-    </details>
-    <details>
-      <summary>Does it work on Mac or Linux?</summary>
-      <p>No. It's a Windows app, for Windows 10 and 11.</p>
-    </details>
-    <details>
-      <summary>How do I update it?</summary>
-      <p>When a new version is out, the footer says so. Download that version's setup and run it. It updates in place and keeps your region, lineups, notes and settings. Overseer never downloads or installs anything by itself.</p>
-    </details>
-    <details>
-      <summary>How do lineup clips work?</summary>
-      <p>Paste a YouTube link or pick a video on your PC, trim it in the app, and Overseer cuts the clip with yt-dlp and FFmpeg, which setup installs with winget.</p>
-    </details>
+  <section id="download" class="spread blue admit" aria-labelledby="admit-h">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"></p>
+      <h2 id="admit-h" class="tight">Admission Free</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main split">
+        <div>
+          <a class="ticket big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">
+            <span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z"/></svg>Download for Windows</span>
+            <span class="stub wide">Admit One<br>Free</span>
+          </a>
+          <p class="after soft">Setup installs Overseer into AppData with its own copy of Python, so it needs no admin rights. It also installs yt-dlp and FFmpeg with winget for lineup clips. A new version's setup updates in place and keeps your region, lineups, notes and settings, and it uninstalls from Settings, then Apps.</p>
+        </div>
+        <ol class="steps">
+          <li><p>Download <strong>Valorant-Overseer-Setup.exe</strong> from the latest release on GitHub.</p></li>
+          <li><p>Open it and pick your region. If Windows says it protected your PC, click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></li>
+          <li><p>Open VALORANT and join a lobby. Overseer fills in as soon as there's a match to show.</p></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="questions" class="spread paper faq" aria-labelledby="questions-h">
+    <div class="rule" aria-hidden="true"></div>
+    <div class="head">
+      <p class="when"></p>
+      <h2 id="questions-h" class="tight">Questions</h2>
+    </div>
+    <div class="cols">
+      <div class="gap"></div>
+      <div class="main words" style="max-width: 820px">
+        <details>
+          <summary>Is Valorant Overseer free?</summary>
+          <p>Yes. It's free for anything noncommercial under the PolyForm Strict License 1.0.0. You can't sell it, use it in a business, share copies of it or publish a changed version.</p>
+        </details>
+        <details>
+          <summary>Does it need an account, or send my data anywhere?</summary>
+          <p>No account. Overseer talks to the Riot Client on your PC and to Riot's servers for match data, and fetches agent and map art from valorant-api.com without sending anything about you. Once a day it asks GitHub which version is newest, and Settings turns that off. It has no server of its own and no tracking.</p>
+        </details>
+        <details>
+          <summary>Does it read VALORANT's memory or play for me?</summary>
+          <p>No. It reads your match from the Riot Client's own local API. It never reads the game's memory, and it never clicks, types or locks in an agent.</p>
+        </details>
+        <details>
+          <summary>Can I get banned for using it?</summary>
+          <p>Overseer never touches the game, but whether third-party tools are allowed is Riot's decision, so it can't promise anything either way.</p>
+        </details>
+        <details>
+          <summary>Does it work on Mac or Linux?</summary>
+          <p>No. It's a Windows app, for Windows 10 and 11.</p>
+        </details>
+        <details>
+          <summary>How do I update it?</summary>
+          <p>When a new version is out, the footer says so. Download that version's setup and run it. It updates in place and keeps your region, lineups, notes and settings. Overseer never downloads or installs anything by itself.</p>
+        </details>
+        <details>
+          <summary>How do lineup clips work?</summary>
+          <p>Paste a YouTube link or pick a video on your PC, trim it in the app, and Overseer cuts the clip with yt-dlp and FFmpeg, which setup installs with winget.</p>
+        </details>
+      </div>
+    </div>
   </section>
 </main>
 
 <footer>
   <div class="row">
-    <span class="caps">Valorant Overseer</span>
+    <b>Valorant Overseer</b>
     <a href="https://github.com/SomethingObvious/Valorant-Overseer">Source on GitHub</a>
     <a href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest">Latest Release</a>
     <a href="https://github.com/SomethingObvious/Valorant-Overseer/blob/main/LICENSE.md">PolyForm Strict License 1.0.0</a>
@@ -545,38 +614,42 @@ footer .legal { max-width: 92ch; font-size: 13px; }
 </footer>
 
 <script>
-// Climbs the YOU marker up the ladder to the tier whose rung is on screen,
-// lighting every tier it has reached. Without this the ladder is still a
-// working set of links.
+// Runs the match clock in the running head to the time of the spread on
+// screen, counting the minutes up or down on the way. Each spread prints its
+// own time, so the page reads the same without this.
 (() => {
-  const rungs = [...document.querySelectorAll(".rung")];
-  const tiers = [...document.querySelectorAll(".ladder li")];
-  const you = document.querySelector(".you");
-  const list = document.querySelector(".ladder ol");
-  if (!rungs.length || !you || !("IntersectionObserver" in window)) return;
-  let at = -1;
-  you.style.setProperty("--x", `${list.offsetLeft + you.offsetWidth / 2}px`);
-  you.style.visibility = "visible";
-  const climb = (index) => {
-    if (index === at) return;
-    at = index;
-    tiers.forEach((tier, i) => tier.classList.toggle("reached", i <= index));
-    rungs[index].classList.add("reached");
-    const band = tiers[index].querySelector(".band");
-    you.style.setProperty("--x", `${list.offsetLeft + band.offsetLeft + band.offsetWidth / 2}px`);
+  const clock = document.querySelector(".clock");
+  const spreads = [...document.querySelectorAll("[data-clock]")];
+  if (!clock || !spreads.length || !("IntersectionObserver" in window)) return;
+  const face = clock.querySelector("b");
+  const phase = clock.querySelector("span");
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  const seconds = (t) => { const [m, s] = t.split(":").map(Number); return m * 60 + s; };
+  const show = (n) => { face.textContent = `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`; };
+  let shown = 0;
+  let frame = 0;
+  const run = (to) => {
+    cancelAnimationFrame(frame);
+    if (still.matches) { shown = to; show(to); return; }
+    const from = shown;
+    const start = performance.now();
+    const span = Math.min(900, 300 + Math.abs(to - from) * 2);
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / span);
+      shown = Math.round(from + (to - from) * (1 - (1 - t) ** 4));
+      show(shown);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
   };
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) {
-      if (entry.isIntersecting) climb(rungs.indexOf(entry.target));
+      if (!entry.isIntersecting) continue;
+      phase.textContent = entry.target.dataset.phase;
+      run(seconds(entry.target.dataset.clock));
     }
-  }, { rootMargin: "-40% 0px -55% 0px" });
-  rungs.forEach((rung) => seen.observe(rung));
-  addEventListener("resize", () => {
-    const i = at;
-    at = -1;
-    if (i >= 0) climb(i);
-    else you.style.setProperty("--x", `${list.offsetLeft + you.offsetWidth / 2}px`);
-  });
+  }, { rootMargin: "-30% 0px -65% 0px" });
+  spreads.forEach((spread) => seen.observe(spread));
 })();
 </script>
 </body>

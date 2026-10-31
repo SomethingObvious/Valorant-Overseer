@@ -27,3 +27,6 @@ target/
 # by install.ps1 on a source tree.
 /overseer.exe
 /overseer-setup.exe
+
+# Design review screenshots, regenerated on every pass.
+.impeccable/review/

@@ -20,3 +20,5 @@ trak = "trak"
 # ruff rule prefixes are not words. CPY is flake8-copyright, which ruff 0.16
 # promoted out of preview; ISC is implicit-str-concat.
 CPY = "CPY"
+# The OpenType width axis tag, named in DESIGN.md's type tokens.
+wdth = "wdth"

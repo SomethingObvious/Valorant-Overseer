@@ -184,3 +184,10 @@ cast_sign_loss = "allow"
 # them is a large share of what piles up in target/, and nobody steps through
 # them. The workspace's own crates keep full debug info for the debugger.
 debug = "line-tables-only"
+
+[profile.release]
+# One unit, optimized across every crate, so the binary is smaller and has
+# less to page in from a slow disk at start-up. Builds take longer for it,
+# which only the release build pays.
+lto = "fat"
+codegen-units = 1

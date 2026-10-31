@@ -75,36 +75,44 @@ fn main() -> eframe::Result {
     if let Some(icon) = overseer_ui::art::logo_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
-    let mut options = NativeOptions {
-        viewport,
-        // The integrated adapter, so a laptop with two GPUs leaves the
-        // discrete one to VALORANT. Flat shapes, text and one shader that
-        // touches each pixel once need nothing more.
-        wgpu_options: probe::low_power_wgpu(),
-        ..NativeOptions::default()
+    // Taken by whichever run gets as far as making the app.
+    let listener = std::cell::Cell::new(listener);
+    let run = |dx12_only: bool| {
+        let mut options = NativeOptions {
+            viewport: viewport.clone(),
+            // The integrated adapter, so a laptop with two GPUs leaves the
+            // discrete one to VALORANT. Flat shapes, text and one shader that
+            // touches each pixel once need nothing more.
+            wgpu_options: probe::low_power_wgpu(dx12_only),
+            ..NativeOptions::default()
+        };
+
+        // Windows shows a window as it maximizes it, so one saved maximized
+        // would show blank before its first frame. It opens unmaximized at its
+        // saved size, which is the screen it filled, and maximizes once drawn.
+        let maximize = std::rc::Rc::new(std::cell::Cell::new(false));
+        let saved = std::rc::Rc::clone(&maximize);
+        options.window_builder = Some(Box::new(move |builder| {
+            saved.set(builder.maximized == Some(true));
+            builder.with_maximized(false)
+        }));
+
+        eframe::run_native(
+            "Valorant Overseer",
+            options,
+            Box::new(|cc| {
+                Ok(Box::new(app::Overseer::new(
+                    cc,
+                    &root,
+                    (listener.take(), maximize.get(), broken.clone()),
+                )))
+            }),
+        )
     };
-
-    // Windows shows a window as it maximizes it, so one saved maximized
-    // would show blank before its first frame. It opens unmaximized at its
-    // saved size, which is the screen it filled, and maximizes once drawn.
-    let maximize = std::rc::Rc::new(std::cell::Cell::new(false));
-    let saved = std::rc::Rc::clone(&maximize);
-    options.window_builder = Some(Box::new(move |builder| {
-        saved.set(builder.maximized == Some(true));
-        builder.with_maximized(false)
-    }));
-
-    eframe::run_native(
-        "Valorant Overseer",
-        options,
-        Box::new(move |cc| {
-            Ok(Box::new(app::Overseer::new(
-                cc,
-                &root,
-                (listener, maximize.get(), broken.clone()),
-            )))
-        }),
-    )
+    match run(true) {
+        Err(eframe::Error::Wgpu(_)) => run(false),
+        ran => ran,
+    }
 }
 
 /// Windows' `CREATE_NO_WINDOW`, for every program the window starts.

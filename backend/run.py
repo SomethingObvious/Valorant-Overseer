@@ -7,6 +7,7 @@ the window that started it closes.
 
 from __future__ import annotations
 
+import _winapi
 import contextlib
 import ctypes
 import hashlib
@@ -124,8 +125,54 @@ def resolve_python() -> str:
     )
 
 
+# The fingerprint of the last runtime that passed validate_runtime.
+_RUNTIME_OK = OVERSEER_DIR / "runtime-ok"
+
+
+def _runtime_stamp(py: str) -> str:
+    """Return a fingerprint of the packages installed for `py` and the pins they answer to.
+
+    Every installed version has a dist-info folder named after it, so any
+    install, upgrade or removal changes this. Empty when it can't be told.
+    """
+    site = Path(py).parent.parent / "Lib" / "site-packages"
+    try:
+        names = sorted(n.name for n in site.iterdir() if n.name.endswith(".dist-info"))
+        pins = (BACKEND / "requirements.txt").read_bytes()
+    except OSError:
+        return ""
+    digest = hashlib.sha256(pins)
+    for part in (py, *names):
+        digest.update(part.encode("utf-8") + b"\0")
+    return digest.hexdigest()
+
+
+def forget_runtime() -> None:
+    """Make the next launch check the packages again, after a backend that didn't start."""
+    with contextlib.suppress(OSError):
+        _RUNTIME_OK.unlink(missing_ok=True)
+
+
 def validate_runtime(py: str) -> None:
-    """Check the runtime's packages match the pins before anything starts."""
+    """Check the runtime's packages match the pins before anything starts.
+
+    Each check starts Python again, which is most of a second on a slow PC, so
+    a runtime that passed and hasn't changed since isn't checked again.
+    """
+    stamp = _runtime_stamp(py)
+    try:
+        if stamp and _RUNTIME_OK.read_text(encoding="utf-8") == stamp:
+            return
+    except OSError:
+        pass
+    _check_runtime(py)
+    if stamp:
+        with contextlib.suppress(OSError):
+            OVERSEER_DIR.mkdir(exist_ok=True)
+            _RUNTIME_OK.write_text(stamp, encoding="utf-8")
+
+
+def _check_runtime(py: str) -> None:
     exact = ROOT / "scripts" / "verify_installed.py"
     requirements = BACKEND / "requirements.txt"
     if exact.exists() and requirements.exists():
@@ -588,6 +635,29 @@ def parent_alive(pid: int) -> bool:
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
+def wait_either(child: int, parent: int | None) -> bool:
+    """Wait for the backend or the window after --parent to end, and say whether it was the window.
+
+    One wait on both, rather than a look every half second, so a launcher
+    with nothing to do never wakes the CPU. Ctrl+C still ends it.
+    """
+    synchronize, inherit, wait_all = 0x00100000, False, False
+    try:
+        handles = [_winapi.OpenProcess(synchronize, inherit, child)]
+    except OSError:
+        return False
+    try:
+        if parent is not None:
+            try:
+                handles.append(_winapi.OpenProcess(synchronize, inherit, parent))
+            except OSError:
+                return True
+        return _winapi.WaitForMultipleObjects(handles, wait_all, _winapi.INFINITE) == 1
+    finally:
+        for handle in handles:
+            _winapi.CloseHandle(handle)
+
+
 def parent_pid() -> int | None:
     """Return the pid after --parent, if one was given."""
     try:
@@ -632,13 +702,14 @@ def main() -> None:
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         if not wait_bridge(launch_id, proc.pid, 40):
+            forget_runtime()
             LOG.error("VG-BACKEND-001 backend did not start; last output:\n%s", tail_backend_log())
             die("VG-BACKEND-001", f"The backend didn't start. {details}")
-        while proc.poll() is None:
-            time.sleep(0.5)
-            if parent is not None and not parent_alive(parent):
-                LOG.info("the window that started this backend has closed, so it is shutting down")
-                return
+        if wait_either(proc.pid, parent):
+            LOG.info("the window that started this backend has closed, so it is shutting down")
+            return
+        proc.wait()
+        forget_runtime()
         LOG.error(
             "VG-BACKEND-001 backend exited (code %s); last output:\n%s",
             proc.returncode,
@@ -711,6 +782,17 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
         # A bridge with no port is not a bridge.
         _bridge(wsPort=0, pid=999, launchId="mine")
         check(not wait_bridge("mine", 999, 1.2), "a portless bridge was accepted")
+
+        # A runtime is checked again once any package in it changes.
+        _site = Path(_tmp) / "venv" / "Lib" / "site-packages"
+        _site.mkdir(parents=True)
+        _py = str(Path(_tmp) / "venv" / "Scripts" / "python.exe")
+        (_site / "requests-2.34.2.dist-info").mkdir()
+        _before = _runtime_stamp(_py)
+        check(_before and _before == _runtime_stamp(_py), "the same runtime, the same stamp")
+        (_site / "requests-2.34.2.dist-info").rename(_site / "requests-2.35.0.dist-info")
+        check(_runtime_stamp(_py) != _before, "an upgraded package went unnoticed")
+        check(_runtime_stamp(str(Path(_tmp) / "nowhere" / "python.exe")) == "")
 
     OVERSEER_DIR = _real_dir
 

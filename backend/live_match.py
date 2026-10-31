@@ -13,6 +13,7 @@ import gzip
 import json
 import os
 import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -149,6 +150,70 @@ def set_depth(games: int, days: int = 30, keep: int = 14) -> None:
             entry["deep"] = 0
 
 
+# The parts of a match detail nothing here reads. Every kill carries all ten
+# players' positions and the kills are listed twice, so a whole detail took
+# 1.9 MB in memory and a full cache of them nearly 400 MB. Without these, and
+# with every repeated puuid one string, a detail takes about a fifth of that.
+_UNREAD = {
+    "match": ("kills", "bots", "coaches"),
+    "round": (
+        "playerEconomies",
+        "playerScores",
+        "plantPlayerLocations",
+        "defusePlayerLocations",
+        "plantLocation",
+        "defuseLocation",
+    ),
+    "stats": ("ability",),
+    "kill": ("playerLocations", "victimLocation"),
+    "player": (
+        "roundDamage",
+        "scores",
+        "newPlayerExperienceDetails",
+        "behaviorFactors",
+        "bonsaiBloomline",
+        "platformInfo",
+        "xpModifications",
+    ),
+}
+
+
+def _interned(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {sys.intern(k): _interned(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_interned(v) for v in value]
+    return sys.intern(value) if isinstance(value, str) else value
+
+
+def _slim(md: dict[str, Any]) -> dict[str, Any]:
+    """Return a match detail without the parts nothing reads, to be kept."""
+
+    def without(part: Any, kind: str) -> Any:
+        if not isinstance(part, dict):
+            return part
+        return {k: v for k, v in part.items() if k not in _UNREAD[kind]}
+
+    slim = without(md, "match")
+    if isinstance(slim.get("players"), list):
+        slim["players"] = [without(p, "player") for p in slim["players"]]
+    rounds = []
+    for full_round in slim.get("roundResults") or []:
+        rr = without(full_round, "round")
+        if isinstance(rr, dict):
+            stats = []
+            for full_stats in rr.get("playerStats") or []:
+                ps = without(full_stats, "stats")
+                if isinstance(ps, dict) and ps.get("kills"):
+                    ps["kills"] = [without(k, "kill") for k in ps["kills"]]
+                stats.append(ps)
+            rr["playerStats"] = stats
+        rounds.append(rr)
+    if "roundResults" in slim:
+        slim["roundResults"] = rounds
+    return _interned(slim)
+
+
 def _kept_path(mid: str) -> Path | None:
     # Riot's ids only, so a strange one never names a file outside the folder.
     return _KEPT_DIR / f"{mid}.json.gz" if _MATCH_ID.fullmatch(mid) else None
@@ -164,7 +229,7 @@ def _kept_detail(mid: str) -> dict[str, Any] | None:
             md = json.load(fh)
     except (OSError, EOFError, ValueError):
         return None
-    return md if isinstance(md, dict) and "players" in md else None
+    return _slim(md) if isinstance(md, dict) and "players" in md else None
 
 
 def _keep_detail(mid: str, md: dict[str, Any]) -> None:
@@ -969,6 +1034,7 @@ class LiveMatch:
                 if _is_throttled(md):
                     return "throttled"
                 if isinstance(md, dict) and "players" in md:
+                    md = _slim(md)
                     _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
                     _DETAIL_READ.add(mid)
                     if puuid in _PARTY:
@@ -1601,6 +1667,7 @@ class LiveMatch:
                 if md is None:
                     md = self.auth.pd_get(f"/match-details/v1/matches/{mid}")
                     if isinstance(md, dict) and "players" in md:
+                        md = _slim(md)
                         _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
                         _DETAIL_READ.add(mid)
                 return self.career_match(md, puuid, mid)
@@ -2414,6 +2481,35 @@ def _self_check() -> None:
         set_depth(20, days=30, keep=14)
         check(_kept_detail(mid) is None, "kept past 14 days")
         set_depth(20)
+
+    # A kept detail loses the positions nobody reads and keeps what the
+    # rounds and careers are counted from.
+    _kill = {"victim": "b", "roundTime": 9, "finishingDamage": {"damageItem": "v"}}
+    _slimmed = _slim(
+        {
+            "players": [{"subject": "a", "stats": {"kills": 1}, "roundDamage": [{}]}],
+            "kills": [_kill],
+            "roundResults": [
+                {
+                    "winningTeam": "Red",
+                    "playerEconomies": [{}],
+                    "playerStats": [
+                        {"subject": "a", "kills": [{**_kill, "playerLocations": [{}]}]}
+                    ],
+                }
+            ],
+        }
+    )
+    check(
+        _slimmed
+        == {
+            "players": [{"subject": "a", "stats": {"kills": 1}}],
+            "roundResults": [
+                {"winningTeam": "Red", "playerStats": [{"subject": "a", "kills": [_kill]}]}
+            ],
+        },
+        _slimmed,
+    )
 
     print(
         "live_match self-check OK (sides, career cached, party games kept, "

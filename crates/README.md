@@ -98,6 +98,15 @@ GPUs is the integrated one, so VALORANT keeps the discrete one. Flat shapes,
 text and one shader that touches each pixel once need nothing more. It is only
 a request, so a machine with one GPU gets that one.
 
+It only asks DX12 at first, and for a real GPU, since asking every backend
+starts the Vulkan and OpenGL drivers as well, even when DX12 then does the
+drawing. When that fails, which is mostly old GPUs that only speak OpenGL, the
+window opens again with every backend to choose from. It also asks wgpu for
+small memory blocks and room for 16,384 textures rather than a million. On an
+integrated GPU that memory comes out of the machine's own RAM, and together
+these took the window from about 400 MB to 175 MB, of which only 6 MB is the
+app's own heap. `WGPU_BACKEND` still picks a backend by hand.
+
 Nothing polls. egui repaints when the bridge, the hotkey, the tray or a
 running animation asks it to, so a window nobody touches draws nothing.
 Quality is auto, efficient or rich, on the settings screen. Efficient is the

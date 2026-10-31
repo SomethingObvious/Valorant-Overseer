@@ -108,9 +108,8 @@ function Get-PortOwner([int]$port) {
     foreach ($c in $conns) {
         $portPid = $c.OwningProcess
         try {
-            # The listener is the base interpreter running app.py by a relative
-            # path, so it is the venv's python.exe above it that names this
-            # install.
+            # The listener is the base interpreter, so it may be the venv's
+            # python.exe above it that names this install.
             if (Test-ProcessUnder $portPid $Root) { return "ours (Valorant Overseer, PID $portPid)" }
             $exe = (Get-CimInstance Win32_Process -Filter "ProcessId=$portPid" -ErrorAction Stop).ExecutablePath
             return "foreign: $(Split-Path -Leaf ($exe + '')) (PID $portPid)"

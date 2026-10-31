@@ -12,12 +12,14 @@ import contextlib
 import ctypes
 import hashlib
 import json
+import msvcrt
 import os
 import secrets
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -635,27 +637,72 @@ def parent_alive(pid: int) -> bool:
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
-def wait_either(child: int, parent: int | None) -> bool:
-    """Wait for the backend or the window after --parent to end, and say whether it was the window.
+def first_to_end(*pids: int) -> int:
+    """Wait for any of `pids` to end and return which, by its place in the call.
 
-    One wait on both, rather than a look every half second, so a launcher
-    with nothing to do never wakes the CPU. Ctrl+C still ends it.
+    One wait on all of them, rather than a look every half second, so a
+    launcher with nothing to do never wakes the CPU. Ctrl+C still ends it. A
+    process that can't be opened has ended already.
     """
     synchronize, inherit, wait_all = 0x00100000, False, False
+    handles = []
     try:
-        handles = [_winapi.OpenProcess(synchronize, inherit, child)]
-    except OSError:
-        return False
-    try:
-        if parent is not None:
+        for at, pid in enumerate(pids):
             try:
-                handles.append(_winapi.OpenProcess(synchronize, inherit, parent))
+                handles.append(_winapi.OpenProcess(synchronize, inherit, pid))
             except OSError:
-                return True
-        return _winapi.WaitForMultipleObjects(handles, wait_all, _winapi.INFINITE) == 1
+                return at
+        return _winapi.WaitForMultipleObjects(handles, wait_all, _winapi.INFINITE)
     finally:
         for handle in handles:
             _winapi.CloseHandle(handle)
+
+
+def wait_window(parent: int | None) -> None:
+    """Wait for the window after --parent to close, or for ever without one."""
+    if parent is None:
+        threading.Event().wait()
+    else:
+        first_to_end(parent)
+
+
+def _write_to(log: IO[str]) -> None:
+    # Where a child given `log` as its output would write, down to the handles
+    # the programs it starts inherit.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    for std, fd in ((-11, 1), (-12, 2)):
+        os.dup2(log.fileno(), fd)
+        ctypes.windll.kernel32.SetStdHandle(std, msvcrt.get_osfhandle(fd))
+    sys.stdout = sys.stderr = log
+
+
+def serves_here(py: str) -> bool:
+    """Whether `py` is the Python running this, so the backend can run in this process."""
+    return Path(py).resolve() == Path(sys.executable).resolve()
+
+
+def serve_here(ws_port: int, launch_id: str, log: IO[str] | None, details: str) -> None:
+    """Start the backend in this process, or stop with why it didn't start.
+
+    A second interpreter for app.py cost 17 MB and a start of its own, for a
+    launcher that only sat and waited on it.
+    """
+    os.environ["WS_PORT"] = str(ws_port)
+    os.environ["OVERSEER_LAUNCH_ID"] = launch_id
+    os.chdir(BACKEND)
+    if log is not None:
+        _write_to(log)
+    try:
+        import app
+
+        app.start()
+    except (Exception, SystemExit):
+        # Broad because anything app.py raises on the way up is a backend that
+        # didn't start, and it has to say so rather than leave the window waiting.
+        forget_runtime()
+        LOG.exception("VG-BACKEND-001 backend did not start")
+        die("VG-BACKEND-001", f"The backend didn't start. {details}")
 
 
 def parent_pid() -> int | None:
@@ -677,6 +724,7 @@ def main() -> None:
     py = resolve_python()
     validate_runtime(py)
     proc = None
+    served = False
     log = backend_output(prod="--prod" in sys.argv)
     details = (
         "See .overseer\\backend-console.log for details."
@@ -692,6 +740,12 @@ def main() -> None:
         env["OVERSEER_LAUNCH_ID"] = launch_id
         LOG.info("starting stack: ws=%s", ws_port)
         write_runtime_state(ws_port)
+        if serves_here(py):
+            serve_here(ws_port, launch_id, log, details)
+            served = True
+            wait_window(parent)
+            LOG.info("the window that started this backend has closed, so it is shutting down")
+            return
         # Its own process group, so stop() can send it CTRL_BREAK alone.
         proc = subprocess.Popen(
             [py, "app.py"],
@@ -705,7 +759,7 @@ def main() -> None:
             forget_runtime()
             LOG.error("VG-BACKEND-001 backend did not start; last output:\n%s", tail_backend_log())
             die("VG-BACKEND-001", f"The backend didn't start. {details}")
-        if wait_either(proc.pid, parent):
+        if first_to_end(proc.pid, *([parent] if parent is not None else [])) == 1:
             LOG.info("the window that started this backend has closed, so it is shutting down")
             return
         proc.wait()
@@ -727,6 +781,10 @@ def main() -> None:
                 log.close()
         release_instance_lock()
         clear_runtime_state()
+        if served:
+            # The backend's pools and clip downloads would hold up the exit,
+            # and nothing they are doing matters once the window is gone.
+            os._exit(0)
 
 
 def _report_crash() -> None:

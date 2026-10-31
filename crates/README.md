@@ -100,8 +100,12 @@ a request, so a machine with one GPU gets that one.
 
 It only asks DX12 at first, and for a real GPU, since asking every backend
 starts the Vulkan and OpenGL drivers as well, even when DX12 then does the
-drawing. When that fails, which is mostly old GPUs that only speak OpenGL, the
-window opens again with every backend to choose from. It also asks wgpu for
+drawing. When that fails the window opens again with every backend, then
+with plain OpenGL through glow, which old GPUs like a Sandy Bridge laptop's
+can still run, and only then in Windows' software renderer. That renderer
+keeps every core busy even with nothing to draw (about five of them here), so
+a window drawn in it drops itself to below normal priority, or the backend it
+started there would never get a turn on a single core. It also asks wgpu for
 small memory blocks and room for 16,384 textures rather than a million. On an
 integrated GPU that memory comes out of the machine's own RAM, and together
 these took the window from about 400 MB to 175 MB, of which only 6 MB is the

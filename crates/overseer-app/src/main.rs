@@ -77,13 +77,19 @@ fn main() -> eframe::Result {
     }
     // Taken by whichever run gets as far as making the app.
     let listener = std::cell::Cell::new(listener);
-    let run = |dx12_only: bool| {
+    let made = std::cell::Cell::new(false);
+    let run = |draw: probe::Draw| {
         let mut options = NativeOptions {
             viewport: viewport.clone(),
+            renderer: if draw == probe::Draw::OpenGl {
+                eframe::Renderer::Glow
+            } else {
+                eframe::Renderer::Wgpu
+            },
             // The integrated adapter, so a laptop with two GPUs leaves the
             // discrete one to VALORANT. Flat shapes, text and one shader that
             // touches each pixel once need nothing more.
-            wgpu_options: probe::low_power_wgpu(dx12_only),
+            wgpu_options: probe::low_power_wgpu(draw),
             ..NativeOptions::default()
         };
 
@@ -101,6 +107,7 @@ fn main() -> eframe::Result {
             "Valorant Overseer",
             options,
             Box::new(|cc| {
+                made.set(true);
                 Ok(Box::new(app::Overseer::new(
                     cc,
                     &root,
@@ -109,10 +116,16 @@ fn main() -> eframe::Result {
             }),
         )
     };
-    match run(true) {
-        Err(eframe::Error::Wgpu(_)) => run(false),
-        ran => ran,
+    // Each way that fails before the app is made gives way to the next. One
+    // that fails after it ran has nothing to do with drawing.
+    let mut ran = Ok(());
+    for draw in probe::DRAWS {
+        ran = run(draw);
+        if ran.is_ok() || made.get() {
+            break;
+        }
     }
+    ran
 }
 
 /// Windows' `CREATE_NO_WINDOW`, for every program the window starts.

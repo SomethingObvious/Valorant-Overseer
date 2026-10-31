@@ -5,6 +5,9 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows::Win32::System::Threading::{
+    BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, SetPriorityClass,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
 };
@@ -90,6 +93,15 @@ pub fn graphics_card() -> bool {
                     && desc.DedicatedVideoMemory >= CARD_LEAST
             })
     }
+}
+
+/// Drops this process to the backend's priority, below normal.
+///
+/// For a window drawn in software, which keeps the processor busy, so the
+/// backend it started below normal still gets a turn.
+pub fn step_back() {
+    // SAFETY: the pseudo handle for this process, which needs no closing.
+    let _set = unsafe { SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS) };
 }
 
 #[cfg(test)]

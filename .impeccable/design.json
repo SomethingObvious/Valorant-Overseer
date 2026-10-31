@@ -1,135 +1,465 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-30T00:00:00Z",
+  "generatedAt": "2026-10-31T00:00:00Z",
   "title": "Design System: Valorant Overseer",
   "extensions": {
     "colorMeta": {
-      "ultramarine": { "role": "primary", "displayName": "Ultramarine Cover Stock", "canonical": "#1A2BA8", "tonalRamp": ["#0A1142", "#111C6E", "#18289B", "#1F33C7", "#384CE0", "#7280E9", "#B0B8F3", "#E9EBFC"] },
-      "ultramarine-deep": { "role": "primary", "displayName": "Ultramarine Deep", "canonical": "#111C78", "tonalRamp": ["#091043", "#101A70", "#16249C", "#1C2FC9", "#3648E3", "#707DEB", "#AFB6F4", "#E9EBFC"] },
-      "chrome-yellow": { "role": "secondary", "displayName": "Chrome Yellow Second Ink", "canonical": "#FFD100", "tonalRamp": ["#4C3F00", "#806800", "#B29200", "#E6BC00", "#FFD61A", "#FFE25C", "#FFEEA3", "#FFFAE5"] },
-      "chrome-yellow-lit": { "role": "secondary", "displayName": "Chrome Yellow Lit", "canonical": "#FFE04D", "tonalRamp": ["#4C3F00", "#806900", "#B29300", "#E6BE00", "#FFD71A", "#FFE35C", "#FFEFA3", "#FFFBE5"] },
-      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#FFFFFF", "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8C8C8C", "#ADADAD", "#D1D1D1", "#F2F2F2"] },
-      "ink": { "role": "neutral", "displayName": "Programme Ink", "canonical": "#0D1033", "tonalRamp": ["#10133D", "#1A2066", "#242D8E", "#2F39B7", "#4853D0", "#7D85DE", "#B6BAEC", "#EBECFA"] },
-      "cover-blue-soft": { "role": "neutral", "displayName": "Pale Cover Blue", "canonical": "#C9CFF4", "tonalRamp": ["#0D1440", "#16216A", "#1E2F94", "#273CBF", "#4056D8", "#7786E3", "#B3BBEF", "#EAECFB"] },
-      "slate-ink": { "role": "neutral", "displayName": "Slate Ink", "canonical": "#3C4270", "tonalRamp": ["#1B1D32", "#2C3153", "#3E4474", "#505895", "#6A72AF", "#959AC6", "#C3C6DF", "#EEEFF6"] },
-      "plate-black": { "role": "neutral", "displayName": "Plate Black", "canonical": "#0A0B0E", "tonalRamp": ["#0A0B0E", "#20232D", "#353A4A", "#4A5268", "#79839F", "#A0A7BB", "#C9CDD9", "#F0F1F4"] }
+      "water": {
+        "role": "primary",
+        "displayName": "Water Blue",
+        "canonical": "#1F6AA5",
+        "tonalRamp": [
+          "#00092C",
+          "#00245A",
+          "#00447C",
+          "#1865A0",
+          "#4088C5",
+          "#64ABEB",
+          "#98CFFF",
+          "#E0F1FF"
+        ]
+      },
+      "water-deep": {
+        "role": "primary",
+        "displayName": "Deep Water",
+        "canonical": "#174F7C",
+        "tonalRamp": [
+          "#000A26",
+          "#00264F",
+          "#094571",
+          "#2F6594",
+          "#5187B8",
+          "#74ABDD",
+          "#A3CEF8",
+          "#E3F0FD"
+        ]
+      },
+      "contour": {
+        "role": "secondary",
+        "displayName": "Burnt Sienna Contour",
+        "canonical": "#B4532A",
+        "tonalRamp": [
+          "#280000",
+          "#550000",
+          "#791B00",
+          "#9F3F13",
+          "#C5623A",
+          "#EC855D",
+          "#FFB291",
+          "#FFE8DE"
+        ]
+      },
+      "grid": {
+        "role": "tertiary",
+        "displayName": "Grid Magenta",
+        "canonical": "#C2185B",
+        "tonalRamp": [
+          "#310004",
+          "#640016",
+          "#8C0032",
+          "#B40050",
+          "#DD3A71",
+          "#FF6293",
+          "#FF9ABA",
+          "#FFE2EA"
+        ]
+      },
+      "gridline": {
+        "role": "tertiary",
+        "displayName": "Gridline",
+        "canonical": "rgba(194, 24, 91, 0.26)",
+        "tonalRamp": [
+          "#310004",
+          "#640016",
+          "#8C0032",
+          "#B40050",
+          "#DD3A71",
+          "#FF6293",
+          "#FF9ABA",
+          "#FFE2EA"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Survey Paper",
+        "canonical": "#F6F9EF",
+        "tonalRamp": [
+          "#0B0C07",
+          "#24261F",
+          "#41433B",
+          "#60625A",
+          "#81847B",
+          "#A4A69D",
+          "#C8CAC3",
+          "#EEEFEC"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Survey Green",
+        "canonical": "#D7E6C3",
+        "tonalRamp": [
+          "#070E01",
+          "#1F290D",
+          "#3B472A",
+          "#5A6748",
+          "#7B8868",
+          "#9DAB8A",
+          "#C3CEB3",
+          "#ECF0E8"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#161616",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#A5A5A5",
+          "#C9C9C9",
+          "#EEEEEE"
+        ]
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Olive Ink",
+        "canonical": "#3D4A33",
+        "tonalRamp": [
+          "#070E03",
+          "#1D2914",
+          "#3A4730",
+          "#59664E",
+          "#79886F",
+          "#9CAB90",
+          "#C1CEB8",
+          "#ECF0E9"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White",
+        "canonical": "#FFFFFF",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#A5A5A5",
+          "#C9C9C9",
+          "#EEEEEE"
+        ]
+      },
+      "frame-black": {
+        "role": "neutral",
+        "displayName": "Frame Black",
+        "canonical": "#0A0B0E",
+        "tonalRamp": [
+          "#0A0B0D",
+          "#242528",
+          "#414246",
+          "#606165",
+          "#818286",
+          "#A3A5A9",
+          "#C8C9CD",
+          "#EEEEEF"
+        ]
+      },
+      "board-enemy": {
+        "role": "board",
+        "displayName": "Enemy Red",
+        "canonical": "#E8434F",
+        "tonalRamp": [
+          "#330000",
+          "#670000",
+          "#8F0003",
+          "#B80029",
+          "#E13C4A",
+          "#FF646B",
+          "#FF9C9B",
+          "#FFE3E0"
+        ]
+      },
+      "board-team": {
+        "role": "board",
+        "displayName": "Team Teal",
+        "canonical": "#2BB3A3",
+        "tonalRamp": [
+          "#00140E",
+          "#00342A",
+          "#005448",
+          "#007567",
+          "#009889",
+          "#38BCAC",
+          "#82DDCF",
+          "#DBF5F0"
+        ]
+      },
+      "board-flag": {
+        "role": "board",
+        "displayName": "Flag Yellow",
+        "canonical": "#FFC845",
+        "tonalRamp": [
+          "#1F0100",
+          "#451400",
+          "#663500",
+          "#885600",
+          "#AC7800",
+          "#D19B00",
+          "#EDC366",
+          "#FAEDD3"
+        ]
+      },
+      "board-party": {
+        "role": "board",
+        "displayName": "Party Violet",
+        "canonical": "#8E5BD8",
+        "tonalRamp": [
+          "#170039",
+          "#37006F",
+          "#541493",
+          "#733DB9",
+          "#9462DF",
+          "#B786FF",
+          "#D7B3FF",
+          "#F2E8FF"
+        ]
+      }
     },
     "typographyMeta": {
-      "masthead": { "displayName": "Masthead", "purpose": "OVERSEER on the cover only, full width and cropped at the right edge." },
-      "clock": { "displayName": "Clock", "purpose": "Each spread's match time in the left margin." },
-      "headline": { "displayName": "Headline", "purpose": "Spread heads (h2), uppercase, expanded." },
-      "subhead": { "displayName": "Subhead", "purpose": "Sub heads inside a spread (h3), uppercase, expanded." },
-      "deck": { "displayName": "Deck", "purpose": "The one line under the masthead, uppercase." },
-      "figure": { "displayName": "Figure", "purpose": "Ticket text, player names, K/D and the running clock, uppercase." },
-      "body": { "displayName": "Body", "purpose": "Running text at 62ch, 16px under 720px." },
-      "caption": { "displayName": "Caption", "purpose": "Plate captions up to 70ch." },
-      "label": { "displayName": "Label", "purpose": "Plate numbers, phases, nav, stubs, table heads and tags, uppercase." }
+      "display": {
+        "displayName": "Display",
+        "purpose": "OVERSEER in the title block only."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Row heads, set as labels on cleared paper."
+      },
+      "deck": {
+        "displayName": "Deck",
+        "purpose": "The one line in the title block."
+      },
+      "subhead": {
+        "displayName": "Subhead",
+        "purpose": "Heads inside an inset."
+      },
+      "box-head": {
+        "displayName": "Box Head",
+        "purpose": "The head of the Key and the Board Key, ruled under in ink."
+      },
+      "action": {
+        "displayName": "Action",
+        "purpose": "The download text."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text, held to 66ch."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Figure captions and the board key."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Table numbers, row numbers, step counters and figure numbers."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Grid letters, field names, table heads, tags, the download stub and the strip's location."
+      }
     },
     "shadows": [],
-    "rules": [
-      { "name": "printers-rule", "value": "linear-gradient(currentColor 0 0) 0 0 / 100% 5px no-repeat, linear-gradient(currentColor 0 0) 0 8px / 100% 1px no-repeat; height: 9px", "purpose": "Thick and thin rule opening every spread." }
-    ],
     "motion": [
-      { "name": "out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Ticket lift (0.25s), ticket colour (0.2s) and the FAQ plus turn (0.3s). Off under reduced motion." },
-      { "name": "clock-count", "value": "min(900ms, 300ms + 2ms per second of match time), quartic ease out", "purpose": "The running clock counting to a spread's time." }
+      {
+        "name": "out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The one easing curve for every transition and entrance."
+      },
+      {
+        "name": "route-walk",
+        "value": "1.6s after 0.3s",
+        "purpose": "The Key's footpath drawing down once on load."
+      },
+      {
+        "name": "route-pin",
+        "value": "0.5s, from 0.3s, 0.15s apart",
+        "purpose": "Each Key pin scaling in from 0.6 as the path reaches it."
+      },
+      {
+        "name": "strip",
+        "value": "0.4s",
+        "purpose": "The strip sliding in once the title block has scrolled away."
+      },
+      {
+        "name": "download",
+        "value": "0.2s",
+        "purpose": "The download darkening on hover."
+      },
+      {
+        "name": "faq-turn",
+        "value": "0.3s",
+        "purpose": "The FAQ plus turning 45 degrees into a cross."
+      }
     ],
     "breakpoints": [
-      { "name": "head-issue", "value": "1600px" },
-      { "name": "head-nav", "value": "1360px" },
-      { "name": "single-column", "value": "1000px" },
-      { "name": "compact", "value": "720px" },
-      { "name": "narrow", "value": "400px" }
+      {
+        "name": "wide",
+        "value": "1280px"
+      },
+      {
+        "name": "single-column",
+        "value": "1000px"
+      },
+      {
+        "name": "phone",
+        "value": "720px"
+      }
     ]
   },
   "components": [
     {
-      "name": "Download Ticket",
+      "name": "Download",
       "kind": "button",
-      "refersTo": "ticket",
-      "description": "The one action, a yellow admission ticket with a perforated stub.",
-      "html": "<a class=\"ds-ticket\" href=\"#\"><span class=\"ds-ticket-go\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z\"/></svg>Download for Windows</span><span class=\"ds-ticket-stub\">Free<br>2.3.1</span></a>",
-      "css": ".ds-ticket { --tear: calc(100% - 92px); display: inline-flex; align-items: stretch; min-height: 54px; background: var(--yellow, #FFD100); color: var(--ink, #0D1033); text-decoration: none; -webkit-mask: radial-gradient(circle 7px at var(--tear) 0, #0000 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle 7px at var(--tear) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat; mask: radial-gradient(circle 7px at var(--tear) 0, #0000 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle 7px at var(--tear) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat; transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1); } .ds-ticket:hover { background: #FFE04D; transform: translateY(-2px); } .ds-ticket:active { transform: translateY(0); } .ds-ticket:focus-visible { outline: 3px solid #1A2BA8; outline-offset: 3px; } .ds-ticket-go { display: flex; align-items: center; gap: 12px; padding: 0 24px; white-space: nowrap; font: 900 22px/1 Archivo, 'Arial Narrow', sans-serif; font-stretch: 75%; text-transform: uppercase; letter-spacing: 0.01em; } .ds-ticket-go svg { width: 18px; height: 18px; } .ds-ticket-stub { display: flex; flex-direction: column; justify-content: center; padding: 0 18px; border-left: 2px dashed rgba(13, 16, 51, 0.45); font: 700 11px/1.3 Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; }"
+      "refersTo": "download",
+      "description": "The one action, a water blue bar with an ink border and a stub for Free and the version.",
+      "html": "<a class=\"ds-go\" href=\"#\"><b><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z\"/></svg>Download for Windows</b><span>Free<br>2.3.1</span></a>",
+      "css": ".ds-go { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; background: #1F6AA5; color: #FFFFFF; border: 2px solid #161616; text-decoration: none; transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-go:hover { background: #174F7C; } .ds-go:active { transform: translateY(1px); } .ds-go:focus-visible { outline: 3px solid #C2185B; outline-offset: 3px; } .ds-go b { display: flex; align-items: center; gap: 10px; font: 900 19px/1.05 \"Overpass\", \"Segoe UI\", sans-serif; text-transform: uppercase; letter-spacing: 0.01em; } .ds-go b svg { width: 18px; height: 18px; flex: none; } .ds-go span { font: 600 11px/1.35 \"Overpass Mono\", \"Cascadia Mono\", monospace; text-align: right; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }"
     },
     {
-      "name": "Running Head Clock",
-      "kind": "nav",
-      "refersTo": "clock",
-      "description": "The match clock box in the sticky running head, counting to each spread's time.",
-      "html": "<div class=\"ds-run\"><span class=\"ds-run-brand\">Overseer</span><a class=\"ds-run-link\" href=\"#\">Ground Rules</a><div class=\"ds-clock\"><b>01:30</b><span>Match Loads</span></div></div>",
-      "css": ".ds-run { display: flex; align-items: center; gap: 20px; height: 56px; padding: 0 24px; background: var(--blue-deep, #111C78); color: #FFFFFF; } .ds-run-brand { font: 900 22px/1 Archivo, sans-serif; font-stretch: 62%; text-transform: uppercase; } .ds-run-link { margin-left: auto; font: 700 12px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; color: #C9CFF4; text-decoration: none; } .ds-run-link:hover { color: #FFFFFF; } .ds-run-link:focus-visible { outline: 3px solid #FFD100; outline-offset: 3px; } .ds-clock { display: flex; gap: 10px; align-items: center; height: 34px; padding: 0 12px; background: #0D1033; } .ds-clock b { font: 900 22px/1 Archivo, sans-serif; font-stretch: 75%; color: #FFD100; font-variant-numeric: tabular-nums; } .ds-clock span { font: 700 11px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; color: #C9CFF4; }"
-    },
-    {
-      "name": "Spread Head",
-      "kind": "custom",
-      "refersTo": "headline",
-      "description": "A spread opening: thick and thin rule, the clock time and phase in the margin, then the expanded head.",
-      "html": "<section class=\"ds-spread\"><div class=\"ds-rule\"></div><div class=\"ds-head\"><p class=\"ds-when\"><time>01:45</time><span>Buy Phase</span></p><h2>Peak, Form and Reads</h2></div></section>",
-      "css": ".ds-spread { padding: 48px 32px; background: #FFFFFF; color: #0D1033; } .ds-rule { height: 9px; margin-bottom: 20px; background: linear-gradient(currentColor 0 0) 0 0 / 100% 5px no-repeat, linear-gradient(currentColor 0 0) 0 8px / 100% 1px no-repeat; } .ds-head { display: grid; grid-template-columns: minmax(120px, 2fr) 10fr; gap: 32px; align-items: end; } .ds-when { display: grid; gap: 6px; margin: 0; } .ds-when time { font: 900 56px/0.9 Archivo, sans-serif; font-stretch: 62%; color: #1A2BA8; } .ds-when span { font: 700 11px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; } .ds-head h2 { margin: 0; font: 800 44px/1.02 Archivo, sans-serif; font-stretch: 125%; text-transform: uppercase; }"
-    },
-    {
-      "name": "Numbered Plate",
+      "name": "Inset",
       "kind": "card",
-      "refersTo": "plate-frame",
-      "description": "A screenshot printed as a numbered figure with a caption.",
-      "html": "<figure class=\"ds-plate\"><div class=\"ds-plate-frame\"></div><figcaption><b>Plate 5</b><span>A 13 to 11 win on Haven, opened to its scoreboard.</span></figcaption></figure>",
-      "css": ".ds-plate { margin: 0; padding: 24px; background: #1A2BA8; color: #FFFFFF; } .ds-plate-frame { aspect-ratio: 16 / 7; border: 1px solid currentColor; background: #0A0B0E; } .ds-plate figcaption { display: flex; gap: 12px; margin-top: 10px; font: 400 14px/1.45 Archivo, sans-serif; color: #C9CFF4; max-width: 70ch; } .ds-plate figcaption b { flex: none; font: 700 11px/20px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; }"
+      "refersTo": "inset",
+      "description": "Cleared paper with an ink border, on the green ground. Every block of text sits on one.",
+      "html": "<div class=\"ds-ground\"><div class=\"ds-inset\"><h3>Appear Offline</h3><p>Hide from your friends in Riot chat without changing anything in the game.</p></div></div>",
+      "css": ".ds-ground { padding: 24px; background: linear-gradient(90deg, rgba(194, 24, 91, 0.26) 1px, transparent 1px) 0 0 / 12.5% 100%, #D7E6C3; } .ds-inset { background: #F6F9EF; color: #161616; border: 1px solid #161616; padding: 22px; font: 400 17px/1.6 \"Overpass\", \"Segoe UI\", sans-serif; } .ds-inset h3 { margin: 0 0 0.5em; font: 900 1.25rem/1.15 \"Overpass\", \"Segoe UI\", sans-serif; text-transform: uppercase; letter-spacing: 0.01em; } .ds-inset p { margin: 0; }"
     },
     {
-      "name": "Team Sheet Row",
+      "name": "Heading Label",
       "kind": "custom",
-      "refersTo": "figure",
-      "description": "One line of the team sheet, fixed columns with tabular figures, flag and party tags.",
-      "html": "<table class=\"ds-sheet\"><caption>Enemy Team</caption><thead><tr><th>No.</th><th>Player</th><th>Rank</th><th class=\"r\">K/D</th><th class=\"r\">Win</th></tr></thead><tbody><tr><td class=\"no\">1</td><td><b>NeonLock</b><span>Clove</span><em class=\"ds-flag\">Worth a Look</em></td><td class=\"rank\">Immortal 1</td><td class=\"kd\">1.79</td><td class=\"r\">64%</td></tr><tr><td class=\"no\">3</td><td><b>GhostDash</b><span>Phoenix</span><em class=\"ds-party\">Duo</em></td><td class=\"rank\">Gold 3</td><td class=\"kd\">1.71</td><td class=\"r\">49%</td></tr></tbody></table>",
-      "css": ".ds-sheet { width: 100%; border-collapse: collapse; table-layout: fixed; background: #1A2BA8; color: #FFFFFF; font: 400 15px/1.25 Archivo, sans-serif; font-variant-numeric: tabular-nums; } .ds-sheet caption { text-align: left; padding-bottom: 10px; font: 700 13px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.06em; text-transform: uppercase; color: #FFD100; } .ds-sheet th { text-align: left; font: 700 11px Archivo, sans-serif; font-stretch: 125%; letter-spacing: 0.08em; text-transform: uppercase; color: #C9CFF4; padding: 0 8px 8px 0; border-bottom: 1px solid #FFFFFF; } .ds-sheet th:first-child { width: 3.2em; } .ds-sheet th:nth-child(2) { width: 36%; } .ds-sheet td { padding: 12px 8px 11px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.28); vertical-align: top; } .ds-sheet .no { font: 900 26px/1 Archivo, sans-serif; font-stretch: 62%; color: #FFD100; } .ds-sheet td b { display: block; font: 900 22px/1 Archivo, sans-serif; font-stretch: 70%; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-sheet td span { display: block; margin-top: 4px; font-size: 13px; color: #C9CFF4; } .ds-sheet .rank { font-weight: 650; font-size: 14px; text-transform: uppercase; } .ds-sheet .kd { text-align: right; font: 900 24px/1 Archivo, sans-serif; font-stretch: 75%; } .ds-sheet .r { text-align: right; } .ds-flag, .ds-party { display: inline-block; margin-top: 6px; font: 700 11px Archivo, sans-serif; font-style: normal; font-stretch: 125%; letter-spacing: 0.08em; text-transform: uppercase; } .ds-flag { padding: 3px 7px 2px; background: #FFD100; color: #0D1033; } .ds-party { padding: 2px 6px 1px; border: 1px solid #C9CFF4; color: #C9CFF4; }"
+      "refersTo": "heading-label",
+      "description": "A row head knocked out on paper over the relief.",
+      "html": "<div class=\"ds-ground\"><h2 class=\"ds-h2\">Every Player, Ranked</h2></div>",
+      "css": ".ds-ground { padding: 24px; background: #D7E6C3; } .ds-h2 { display: inline-block; margin: 0; padding: 0.14em 0.32em 0.04em; background: #F6F9EF; color: #161616; border: 1px solid #161616; font: 900 clamp(2.1rem, 4.2vw, 3.7rem)/0.98 \"Overpass\", \"Segoe UI\", sans-serif; text-transform: uppercase; letter-spacing: -0.015em; }"
     },
     {
-      "name": "Ground Rules Notice",
+      "name": "Key and Route",
+      "kind": "nav",
+      "refersTo": "route-pin",
+      "description": "The page's navigation, a route of map symbols joined by a dashed sienna footpath.",
+      "html": "<nav class=\"ds-key\"><h2>Key</h2><ol><li><a href=\"#\"><svg class=\"ds-pin\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.5 21.5 20h-19Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/><circle cx=\"12\" cy=\"14.2\" r=\"2.4\" fill=\"currentColor\"/></svg><span><b>Buy Phase</b><small>Peak, form, reads and parties</small></span><i>3</i></a></li><li><a href=\"#\"><svg class=\"ds-pin ds-water\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.5 21.5 20h-19Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/><circle cx=\"12\" cy=\"14.2\" r=\"2.4\" fill=\"currentColor\"/></svg><span><b>Setup</b><small>Three steps, no admin rights</small></span><i>7</i></a></li></ol></nav>",
+      "css": ".ds-key { background: #F6F9EF; border: 1px solid #161616; padding: 22px 22px 14px; color: #161616; font-family: \"Overpass\", \"Segoe UI\", sans-serif; } .ds-key h2 { margin: 0 0 6px; padding-bottom: 10px; border-bottom: 2px solid #161616; font: 900 16px/1 \"Overpass\", \"Segoe UI\", sans-serif; letter-spacing: 0.16em; text-transform: uppercase; } .ds-key ol { position: relative; margin: 0; padding: 0; list-style: none; } .ds-key ol::before { content: \"\"; position: absolute; left: 17px; top: 26px; bottom: 26px; border-left: 2px dashed #B4532A; } .ds-key a { position: relative; display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center; padding: 7px 0; color: #161616; text-decoration: none; } .ds-key a:focus-visible { outline: 3px solid #C2185B; outline-offset: 3px; } .ds-pin { width: 36px; height: 36px; padding: 6px; background: #F6F9EF; border: 1.5px solid #161616; border-radius: 50%; color: #161616; box-sizing: border-box; } .ds-water { color: #1F6AA5; } .ds-key b { display: block; font-weight: 800; font-size: 15px; line-height: 1.2; } .ds-key small { display: block; font-size: 13px; line-height: 1.3; color: #3D4A33; } .ds-key i { font: 700 11px/1 \"Overpass Mono\", \"Cascadia Mono\", monospace; font-style: normal; color: #3D4A33; } .ds-key a:hover b { color: #1F6AA5; } .ds-key a:hover .ds-pin { border-color: #1F6AA5; }"
+    },
+    {
+      "name": "Figure",
+      "kind": "card",
+      "refersTo": "frame",
+      "description": "A screenshot in a black map frame under the magenta grid, numbered and captioned.",
+      "html": "<figure class=\"ds-fig\"><div class=\"ds-frame\"><div class=\"ds-shot\"></div></div><figcaption><b>Fig. 5</b><span>A 13 to 11 win on Haven, opened to its scoreboard.</span></figcaption></figure>",
+      "css": ".ds-fig { margin: 0; } .ds-frame { position: relative; border: 2px solid #161616; background: #0A0B0E; } .ds-frame::after { content: \"\"; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(194, 24, 91, 0.3) 1px, transparent 1px) 0 0 / 12.5% 100%, linear-gradient(rgba(194, 24, 91, 0.3) 1px, transparent 1px) 0 0 / 100% 120px; } .ds-shot { height: 160px; } .ds-fig figcaption { display: flex; gap: 12px; padding: 9px 14px 8px; background: #F6F9EF; color: #161616; border: 1px solid #161616; border-top: 0; font: 400 14px/1.45 \"Overpass\", \"Segoe UI\", sans-serif; } .ds-fig figcaption b { flex: none; font: 700 12px/20px \"Overpass Mono\", \"Cascadia Mono\", monospace; }"
+    },
+    {
+      "name": "Strip",
+      "kind": "nav",
+      "refersTo": "strip",
+      "description": "The bar fixed to the top once the title block has gone, naming the row in view, with the compact download.",
+      "html": "<header class=\"ds-strip\"><p class=\"ds-here\"><svg class=\"ds-pin\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.5 21.5 20h-19Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/><circle cx=\"12\" cy=\"14.2\" r=\"2.4\" fill=\"currentColor\"/></svg><span>Row 3, Buy Phase</span></p><a class=\"ds-go-sm\" href=\"#\"><b><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M7 1h2v8.2l2.8-2.8 1.4 1.4L8 13 2.8 7.8l1.4-1.4L7 9.2V1Zm-5 13h12v1.6H2V14Z\"/></svg>Download</b></a></header>",
+      "css": ".ds-strip { display: flex; align-items: center; gap: 18px; height: 56px; padding: 0 24px; background: #F6F9EF; color: #161616; border-bottom: 3px solid #161616; } .ds-here { display: flex; align-items: center; gap: 10px; margin: 0; } .ds-here .ds-pin { width: 26px; height: 26px; padding: 0; border: 0; background: none; } .ds-here span { font: 700 12px/1 \"Overpass Mono\", \"Cascadia Mono\", monospace; letter-spacing: 0.08em; text-transform: uppercase; } .ds-go-sm { margin-left: auto; padding: 9px 14px; background: #1F6AA5; color: #FFFFFF; border: 2px solid #161616; text-decoration: none; transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-go-sm:hover { background: #174F7C; } .ds-go-sm:focus-visible { outline: 3px solid #C2185B; outline-offset: 3px; } .ds-go-sm b { display: flex; align-items: center; gap: 8px; font: 900 15px/1.05 \"Overpass\", \"Segoe UI\", sans-serif; text-transform: uppercase; } .ds-go-sm svg { width: 14px; height: 14px; }"
+    },
+    {
+      "name": "Worth a Look Tag",
+      "kind": "chip",
+      "refersTo": "board-flag",
+      "description": "The board's smurf flag, a yellow triangle with a mono label, used only in the team sheet.",
+      "html": "<em class=\"ds-look\"><svg viewBox=\"0 0 16 14\" aria-hidden=\"true\"><path d=\"M8 1 15 13H1Z\" fill=\"#FFC845\" stroke=\"#161616\" stroke-width=\"1.2\" stroke-linejoin=\"round\"/></svg>Worth a Look</em>",
+      "css": ".ds-look { display: inline-flex; align-items: center; gap: 6px; color: #161616; font: 700 11px/1 \"Overpass Mono\", \"Cascadia Mono\", monospace; font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; } .ds-look svg { width: 16px; height: 14px; }"
+    },
+    {
+      "name": "Key Cap",
       "kind": "custom",
-      "refersTo": "chrome-yellow",
-      "description": "The one spread on yellow stock, a numbered list printed as a notice.",
-      "html": "<ol class=\"ds-rules\"><li><p><strong>It never plays for you</strong>It never reads VALORANT's memory, and it never clicks, types or locks in an agent.</p></li><li><p><strong>No account and no server</strong>Your notes, lineups and history stay on your PC.</p></li></ol>",
-      "css": ".ds-rules { margin: 0; padding: 24px; list-style: none; counter-reset: rule; background: #FFD100; color: #0D1033; font: 400 17px/1.6 Archivo, sans-serif; } .ds-rules li { counter-increment: rule; display: grid; grid-template-columns: 2.6em 1fr; gap: 10px; padding: 16px 0 18px; border-top: 1px solid #0D1033; } .ds-rules li::before { content: counter(rule); font: 900 30px/0.95 Archivo, sans-serif; font-stretch: 62%; } .ds-rules p { margin: 0; } .ds-rules strong { display: block; margin-bottom: 4px; font-weight: 800; font-stretch: 85%; font-size: 1.15em; line-height: 1.15; text-transform: uppercase; }"
+      "refersTo": "key-cap",
+      "description": "A keyboard shortcut, drawn as a key with a thicker bottom edge.",
+      "html": "<p class=\"ds-kbd-row\"><kbd class=\"ds-kbd\">Ctrl</kbd>+<kbd class=\"ds-kbd\">Alt</kbd>+<kbd class=\"ds-kbd\">O</kbd></p>",
+      "css": ".ds-kbd-row { font: 400 17px/1.6 \"Overpass\", \"Segoe UI\", sans-serif; color: #161616; } .ds-kbd { font: 700 0.82em/1 \"Overpass Mono\", \"Cascadia Mono\", monospace; padding: 3px 6px 2px; background: #FFFFFF; color: #161616; border: 1.5px solid #161616; border-bottom-width: 3px; }"
     },
     {
       "name": "Question",
       "kind": "custom",
-      "refersTo": "body",
-      "description": "A native details element between ink hairlines with a drawn plus that turns to a cross.",
+      "refersTo": "inset",
+      "description": "A native details element with a drawn water blue plus that turns into a cross.",
       "html": "<details class=\"ds-faq\"><summary>Does it work on Mac or Linux?</summary><p>No. It's a Windows app, for Windows 10 and 11.</p></details>",
-      "css": ".ds-faq { border-top: 1px solid #0D1033; border-bottom: 1px solid #0D1033; background: #FFFFFF; color: #0D1033; font: 400 17px/1.6 Archivo, sans-serif; } .ds-faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 18px; padding: 18px 0; font-weight: 750; font-stretch: 85%; font-size: 1.2rem; line-height: 1.3; } .ds-faq summary::-webkit-details-marker { display: none; } .ds-faq summary::after { content: ''; flex: none; width: 14px; height: 14px; margin-top: 4px; background: linear-gradient(#1A2BA8 0 0) center / 100% 3px no-repeat, linear-gradient(#1A2BA8 0 0) center / 3px 100% no-repeat; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); } .ds-faq summary:hover { color: #1A2BA8; } .ds-faq summary:focus-visible { outline: 3px solid #1A2BA8; outline-offset: 3px; } .ds-faq[open] summary::after { transform: rotate(45deg); } .ds-faq p { margin: -4px 0 22px; max-width: 68ch; }"
+      "css": ".ds-faq { border-top: 1px solid #161616; color: #161616; font-family: \"Overpass\", \"Segoe UI\", sans-serif; } .ds-faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 18px; padding: 16px 0; font-weight: 800; font-size: 1.2rem; line-height: 1.3; } .ds-faq summary::-webkit-details-marker { display: none; } .ds-faq summary::after { content: \"\"; flex: none; width: 14px; height: 14px; margin-top: 4px; background: linear-gradient(#1F6AA5 0 0) center / 100% 2.5px no-repeat, linear-gradient(#1F6AA5 0 0) center / 2.5px 100% no-repeat; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); } .ds-faq summary:hover { color: #1F6AA5; } .ds-faq summary:focus-visible { outline: 3px solid #C2185B; outline-offset: 3px; } .ds-faq[open] summary::after { transform: rotate(45deg); } .ds-faq p { margin: -2px 0 18px; }"
     }
   ],
   "narrative": {
-    "northStar": "The Match Programme",
-    "overview": "The site is printed like the programme you would buy at the gate. Saturated ultramarine cover stock owns about half the page, printed in white and one chrome yellow second ink. Inner spreads are white paper in navy ink and ultramarine. Spreads run in the order a match happens, and each one prints its match clock time in the left margin.\n\nEverything is flat print. Stocks change at full bleed, never as floating cards. Depth comes from the stock change, thick and thin printer's rules and the black ground behind each screenshot plate. One face, Archivo, does all the work at its full width range, from an ultra condensed masthead to expanded section heads.\n\nIt refuses the dark gamer landing with a neon accent, feature cards and a glowing hero screenshot.",
+    "northStar": "The Survey Sheet",
+    "overview": "The page is printed the way a survey sheet is, the map you unfold to see the whole ground before you set out. Pale green ground carries real contour lines in burnt sienna, a faint magenta grid runs across the sheet in eight columns lettered A to H, and every section is a numbered row of that grid. Water blue is the one colour you act on. Everything else is ink on paper.\n\nThe sheet is flat and ruled. A hairline outer border and a heavy 3px neat line hold the map, with a margin band between them for the grid letters and row numbers. Text never sits on the relief. It sits on cleared paper insets with a 1px ink border, the way a map knocks out the ground under a label. Screenshots of the app sit in black map frames under the grid, numbered as figures. One face family does all the type: Overpass in black uppercase for the title and heads, Overpass Mono for numbers, references and labels.\n\nIt refuses the dark gamer landing with a neon accent, feature cards and a glowing hero screenshot.",
     "keyCharacteristics": [
-      "Two inks (ultramarine and chrome yellow) on two stocks (ultramarine and white), with yellow used once as a third stock.",
-      "One variable face at three widths, tabular figures everywhere.",
-      "Square corners, no shadows, no gradients that read as gradients.",
-      "Screenshots are numbered plates with captions.",
-      "A running match clock in the sticky head."
+      "Green ground, sienna contours, magenta grid, blue water, on paper, in black ink.",
+      "An eight column grid, lettered in the top and bottom margins and numbered by row in both side margins.",
+      "Text on cleared paper insets, square and outlined in ink.",
+      "Numbered figures in black frames with paper captions.",
+      "A Key that is the route down the page, with one map symbol per stop."
     ],
     "rules": [
-      { "name": "The Two Stock Rule", "body": "Spreads alternate ultramarine and white at full bleed. A spread is one continuous stock from rule to rule.", "section": "colors" },
-      { "name": "The Notice Rule", "body": "Yellow is printed as a stock for exactly one spread, Ground Rules, which reads as a posted notice. No other spread gets a yellow ground.", "section": "colors" },
-      { "name": "The Second Ink Rule", "body": "Yellow carries figures and the one action. It never sets running text on white, where it can't be read.", "section": "colors" },
-      { "name": "The One Shout Rule", "body": "Wdth 62 at weight 900 belongs to the masthead, clock times, numerals and player names. Section heads are expanded, so the masthead stays the only condensed shout on the page.", "section": "typography" },
-      { "name": "The Tabular Rule", "body": "The body sets tabular figures, so every number in a column lines up figure for figure.", "section": "typography" },
-      { "name": "The Flat Print Rule", "body": "Nothing floats. If a surface needs separating, change the stock or draw a rule.", "section": "elevation" }
+      {
+        "name": "The One Water Rule",
+        "body": "Water blue is the only action colour. If something is not a link or the download, it is not blue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Map Inks Rule",
+        "body": "Sienna draws relief and routes, magenta draws the grid and the focus ring. Neither one fills a button or sets running text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Board Colours Rule",
+        "body": "Red, teal, yellow and violet belong to the board. They appear where the page reproduces the app and nowhere else.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Voices Rule",
+        "body": "Overpass speaks in words, Overpass Mono speaks in numbers, references and labels. A heading is never mono and a number in a table is never proportional.",
+        "section": "typography"
+      },
+      {
+        "name": "The Black Caps Rule",
+        "body": "Every head is Overpass at 900 in uppercase. Weight carries the hierarchy, so there is no second display face.",
+        "section": "typography"
+      },
+      {
+        "name": "The Eight Columns Rule",
+        "body": "Every block starts and ends on one of the sheet's eight grid lines. Nothing floats between them.",
+        "section": "layout"
+      },
+      {
+        "name": "The Cleared Ground Rule",
+        "body": "Text that sits on the map gets cleared paper under it, an inset or a label with a 1px ink border. Type never prints straight onto the contours.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Flat Sheet Rule",
+        "body": "Nothing lifts. Separation is a rule, a border or a change from ground to paper.",
+        "section": "elevation"
+      }
     ],
     "dos": [
-      "Do alternate ultramarine and white spreads at full bleed, each opened by the thick and thin rule.",
-      "Do put a spread's match clock time and phase in the left margin, or leave the margin empty.",
-      "Do set every screenshot as a numbered plate on Plate Black with a caption.",
-      "Do keep heads expanded at wdth 125 and weight 800, and keep wdth 62 for the masthead and figures.",
-      "Do make the download a yellow ticket with a stub."
+      "Do keep every surface inside the sheet, within the hairline border, the 30px margin band with grid letters and the 3px neat line.",
+      "Do put text on a paper inset or a paper label with a 1px ink border.",
+      "Do open each row with a gridline rule, its number in both margins and its map symbol in column A.",
+      "Do frame every screenshot on frame black under the magenta grid, numbered as a figure with a caption.",
+      "Do set numbers, references and labels in Overpass Mono with tabular figures.",
+      "Do keep water blue for the download, links and the controls that open something."
     ],
     "donts": [
-      "Don't put a kicker or eyebrow line above a heading.",
-      "Don't add rounded corners, drop shadows, cards or visible gradients.",
-      "Don't print a second spread on yellow stock.",
-      "Don't set running text in yellow on white.",
-      "Don't use a dark page with a neon accent or a glowing hero screenshot."
+      "Don't round a rectangle. Circles are for map symbols, route pins and step counters only.",
+      "Don't add soft shadows or a colour gradient you can see. Gradients only draw hairlines.",
+      "Don't put a kicker or eyebrow line above a row head. The small name line over OVERSEER belongs to the title block alone.",
+      "Don't use sienna or magenta for a button, or board colours outside the team sheet.",
+      "Don't use a dark page with a neon accent, feature cards or a glowing hero screenshot."
     ]
   }
 }

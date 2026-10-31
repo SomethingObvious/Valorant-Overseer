@@ -9,8 +9,8 @@
         "files": [
           "docs/index.html"
         ],
-        "createdAt": "2026-10-31T03:05:05.670Z",
-        "reason": ".cover and .spread are full-bleed sections padded by the page gutter, and .clock is a 34px centred bar, checked in desktop and 390px captures"
+        "createdAt": "2026-10-31T04:09:43.186Z",
+        "reason": "the insets, title cells and steps pad 18 to 36px through clamp(), the neat line holds full-bleed rows and the list and details hits are ruled rows inside padded insets, all checked in desktop and 390px captures"
       },
       {
         "rule": "all-caps-body",
@@ -18,8 +18,8 @@
         "files": [
           "docs/index.html"
         ],
-        "createdAt": "2026-10-31T03:11:22.260Z",
-        "reason": "the hits are the cover deck line (52 chars) and two ground rule headings (38 and 32 chars), short display lines set in caps by the programme direction, not running text"
+        "createdAt": "2026-10-31T04:09:43.228Z",
+        "reason": "the hits are two ground rule headings of 38 and 32 characters, short display lines in the survey sheet's uppercase head style, not running text"
       }
     ]
   }

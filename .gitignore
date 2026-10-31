@@ -30,3 +30,6 @@ target/
 
 # Design review screenshots, regenerated on every pass.
 .impeccable/review/
+# Decision page comps and its server state, only needed while a direction is being picked.
+.impeccable/mocks/
+.impeccable/questions/

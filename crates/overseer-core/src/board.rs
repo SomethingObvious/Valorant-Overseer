@@ -263,6 +263,130 @@ pub struct Player {
     pub smurf_evidence: Vec<Evidence>,
     /// The tags the backend worked out for itself, most useful first.
     pub auto_tags: Vec<AutoTag>,
+    /// The scouting brief: what they tend to do, each line with the count
+    /// behind it, composed for this map and this side of the lobby. The
+    /// panel's History disclosure lists it.
+    pub brief: Vec<BriefLine>,
+    /// The Scout section as the panel draws it, composed by the backend
+    /// for this round: one finding, one buy block, one footer.
+    pub scout: Option<Scout>,
+}
+
+/// The Scout section of a player's card, laid out by the backend.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Scout {
+    /// "Scout", or "Your history" on the user's own card.
+    pub title: Option<String>,
+    /// Their pace in a word, aggressive, passive or even, with the
+    /// percentile among peers behind it.
+    pub tag: Option<ScoutFinding>,
+    /// What they tend to do against peers, up to three lines, every
+    /// readable player.
+    pub habits: Vec<ScoutFinding>,
+    /// The one finding about this round, if one earned it.
+    pub main: Option<ScoutFinding>,
+    /// What they held on this kind of round, when the round has a kind.
+    pub buy: Option<ScoutBuy>,
+    /// Their spacing against peers, as a secondary line.
+    pub style: Option<ScoutFinding>,
+    /// What to say when nothing earned a place; empty otherwise.
+    pub empty: Option<String>,
+    /// The sample and how much of it was on this lobby's agent.
+    pub footer: Option<String>,
+}
+
+/// A finding: the words, the figures under them, what to do about it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScoutFinding {
+    /// The words: the habit, the pace word, or the callout.
+    pub headline: Option<String>,
+    /// The figures behind it, in a sentence.
+    pub evidence: Option<String>,
+    /// What to do about it, when there is something; empty otherwise.
+    pub suggest: Option<String>,
+    /// The share of peers below them, for the curve.
+    pub pct: Option<f32>,
+    /// Their position in standard deviations of peers' means, for the curve.
+    pub pos: Option<f32>,
+    /// What the left end of the curve means.
+    pub left: Option<String>,
+    /// What the right end of the curve means.
+    pub right: Option<String>,
+    /// The real shape of peers, as a density per bin from `lo` to `hi`;
+    /// empty for a normal curve.
+    pub curve: Vec<f32>,
+    /// The value at the curve's left end.
+    pub lo: Option<f32>,
+    /// The value at the curve's right end.
+    pub hi: Option<f32>,
+    /// Their figure, for the chart; empty when the chart prints none.
+    pub own: Option<String>,
+    /// The peers' figure, for the chart; empty when the chart prints none.
+    pub peers: Option<String>,
+    /// The percentile at the mark, read left to right.
+    pub share: Option<String>,
+}
+
+/// A buy block: the family and its rounds, the guns, the armor.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScoutBuy {
+    /// The family and its rounds, or the forecast's context.
+    pub label: Option<String>,
+    /// The guns over the rounds, or with their odds.
+    pub guns: Option<String>,
+    /// The armor over the rounds, or with its odds.
+    pub armor: Option<String>,
+    /// The guns drawn as icons, each with its odds or count.
+    pub items: Vec<ScoutGun>,
+}
+
+/// One gun in a buy block's icon row.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScoutGun {
+    /// The weapon's name, as valorant-api names it.
+    pub name: Option<String>,
+    /// Its odds this round, or its count over past rounds.
+    pub value: Option<String>,
+}
+
+/// One line of the scouting brief, in the backend's words.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BriefLine {
+    /// What sort of line: tendency, positional, buy or record.
+    pub kind: Option<String>,
+    /// The read it came from, as the research names it.
+    pub read: Option<String>,
+    /// The line itself, with its figures and counts.
+    pub text: Option<String>,
+    /// The line in a few words, for the panel.
+    pub headline: Option<String>,
+    /// The figures behind the headline, in small print.
+    pub evidence: Option<String>,
+    /// How far from their peers, in the norm's standard deviations.
+    pub strength: Option<f64>,
+    /// Whether the line earned a place on the panel: at most two do.
+    pub show: bool,
+    /// The line as the panel says it, the measurement with its direction.
+    pub shown: Option<String>,
+    /// The plain count behind it: in how many matches, against what.
+    pub shown_evidence: Option<String>,
+    /// Which agents the history covers, when that is not the lobby's.
+    pub scope: Option<String>,
+    /// Whether this buy family is the one for the round coming.
+    pub now: bool,
+    /// What the line allows, for a teammate or an opponent; empty unless
+    /// the line cleared the bar.
+    pub suggest: Option<String>,
+    /// Whether the read stands out from the player's peers.
+    pub flag: bool,
+    /// How many matches the line rests on.
+    #[serde(deserialize_with = "number::whole")]
+    pub matches: Option<u32>,
 }
 
 /// One line of why an account is worth a look, as the panel draws it.

@@ -27,3 +27,6 @@ target/
 # by install.ps1 on a source tree.
 /overseer.exe
 /overseer-setup.exe
+
+# Local research and datasets are maintained outside the application.
+/research/

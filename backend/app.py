@@ -28,6 +28,7 @@ import contextlib
 
 import agents
 import art
+import brief
 import cards
 import encounter_log
 import history
@@ -225,6 +226,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 except Exception:
                     LOG.exception("encounter logging failed")
                 tags.attach(board)
+                brief.attach(board)
                 cards.attach(board)
                 board["appVersion"] = APP_VERSION
                 try:
@@ -289,7 +291,7 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
             board = sample_match.generate_pregame(seed)
         else:
             board = sample_match.generate(seed)
-        board = cards.attach(tags.attach(_attach_encounters(board)))
+        board = cards.attach(brief.attach(tags.attach(_attach_encounters(board))))
         if notice:
             board["notice"] = notice
         board["appVersion"] = APP_VERSION

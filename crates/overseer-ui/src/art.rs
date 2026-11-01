@@ -44,6 +44,14 @@ pub fn card(ctx: &Context, name: &str) -> Option<TextureHandle> {
     })
 }
 
+/// A weapon's picture, fetched from valorant-api through the backend.
+#[must_use]
+pub fn weapon(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    fetched(ctx, Kind::Weapon, "weapon", name, |dir, key| {
+        raw(dir, "weapons", key)
+    })
+}
+
 /// A map's band of art, for behind the header.
 #[must_use]
 pub fn map(ctx: &Context, name: &str) -> Option<TextureHandle> {
@@ -61,6 +69,8 @@ pub enum Kind {
     Agent,
     /// A map: its band of art.
     Map,
+    /// A weapon: its picture.
+    Weapon,
 }
 
 impl Kind {
@@ -70,6 +80,7 @@ impl Kind {
         match self {
             Self::Agent => "agent",
             Self::Map => "map",
+            Self::Weapon => "weapon",
         }
     }
 }

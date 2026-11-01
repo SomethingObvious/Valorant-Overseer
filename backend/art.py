@@ -47,7 +47,7 @@ def _keep(url: object, path: Path) -> bool:
 
 
 def fetch(kind: object, name: object) -> dict[str, Any]:
-    """Fetch the art for the agent or map `name`, once, and say whether it is here."""
+    """Fetch the art for the agent, map or weapon `name`, once, and say whether it is here."""
     key = slug(name)
     if not 0 < len(key) <= 40:
         return {"ok": False}
@@ -61,6 +61,10 @@ def fetch(kind: object, name: object) -> dict[str, Any]:
         for plan in valapi.get("maps") or []:
             if slug(plan.get("displayName")) == key:
                 return {"ok": _keep(plan.get("listViewIcon"), ART / "maps" / f"{key}.png")}
+    elif kind == "weapon":
+        for gun in valapi.get("weapons") or []:
+            if slug(gun.get("displayName")) == key:
+                return {"ok": _keep(gun.get("displayIcon"), ART / "weapons" / f"{key}.png")}
     return {"ok": False}
 
 

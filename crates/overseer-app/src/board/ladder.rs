@@ -6,7 +6,7 @@
 use egui::epaint::Vertex;
 use egui::{Align2, Color32, Mesh, Rect, Sense, Shape, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
-use overseer_ui::{Face, art, caps_at, colour, hex, rank, shape, size, space};
+use overseer_ui::{Face, art, caps_at, caps_text, colour, hex, rank, shape, size, space};
 
 use super::Side;
 use super::paint;
@@ -93,7 +93,7 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
     }
     let painter = ui.painter().clone();
     let head = rect.top() + space::MD;
-    caps_at(
+    let named = caps_text(
         &painter,
         pos2(rect.left(), head),
         Align2::LEFT_CENTER,
@@ -101,13 +101,18 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
         Face::Heavy.at(size::TITLE),
         colour::TEXT,
     );
-    caps_at(
+    let stood = caps_text(
         &painter,
         pos2(rect.right(), head),
         Align2::RIGHT_CENTER,
         &standing(board, &placed),
         paint::label(),
         colour::TEXT_FAINT,
+    );
+    paint::double_rule(
+        &painter,
+        named.right() + space::MD..=stood.left() - space::LG,
+        head + 1.0,
     );
     let strip = Rect::from_min_max(
         pos2(rect.left(), rect.top() + 48.0),

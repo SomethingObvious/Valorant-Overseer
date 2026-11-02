@@ -1,3 +1,4 @@
 [overseer]
 	maxCommits = 1
 	baseBranch = main
+	email = 46831531+SomethingObvious@users.noreply.github.com

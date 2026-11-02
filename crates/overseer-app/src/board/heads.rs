@@ -1,7 +1,5 @@
-//! What sits over each side: the enemy's red shard, your team's quiet
-//! rule, and the column heads. The enemy plate is the one solid colour on the
-//! board, so the eye lands there first. Your own side only gets a rule and
-//! its name, since you already know who is on your team.
+//! What sits over each side: a plate in the side's colour, red for the
+//! enemy and teal for your team, cut the same way, and the column heads.
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::Board;
@@ -12,7 +10,7 @@ use super::grid::Grid;
 use super::paint;
 use crate::sort::{Direction, Sort};
 
-/// How tall the enemy's plate is.
+/// How tall a side's plate is.
 pub(crate) const PLATE: f32 = 36.0;
 
 /// What was clicked in a heading.
@@ -40,7 +38,7 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         return clicked;
     }
     let painter = ui.painter().clone();
-    plate(&painter, rect);
+    plate(&painter, rect, colour::ENEMY);
     let after = caps_text(
         &painter,
         pos2(rect.left() + space::LG, rect.center().y),
@@ -102,10 +100,10 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
     clicked
 }
 
-/// The enemy's plate: a red shard whose edges are off square by a degree or
-/// so, halftone fading in from its left end, and a thin rule under it that
-/// drops a little faster than its foot, the website's cut.
-fn plate(painter: &egui::Painter, rect: Rect) {
+/// A side's plate: a shard in its colour whose edges are off square by a
+/// degree or so, and a thin rule under it that drops a little faster than
+/// its foot, the website's cut.
+fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
     let at = |x: f32, y: f32| {
         pos2(
             rect.width().mul_add(x, rect.left()),
@@ -114,28 +112,10 @@ fn plate(painter: &egui::Painter, rect: Rect) {
     };
     painter.add(egui::Shape::convex_polygon(
         vec![at(0.0, 0.10), at(1.0, 0.0), at(0.994, 1.0), at(0.004, 0.92)],
-        colour::ENEMY,
+        fill,
         egui::Stroke::NONE,
     ));
-    // Full strength over the first seventh, gone by three tenths, like the
-    // site's dots under a section head.
-    let dot = Color32::from_rgb(0xC8, 0x30, 0x3E);
-    let (top, foot, end) = (at(0.0, 0.10).y, at(0.0, 0.92).y, at(0.30, 0.0).x);
-    for row in 0u16..8 {
-        let y = f32::from(row).mul_add(9.0, top + 4.5);
-        if y > foot - 2.0 {
-            break;
-        }
-        for col in 0u16..80 {
-            let x = f32::from(col).mul_add(9.0, rect.left() + 4.5);
-            if x > end {
-                break;
-            }
-            let across = (x - rect.left()) / rect.width();
-            let fade = 1.0 - (across - 0.14).max(0.0) / 0.16;
-            painter.circle_filled(pos2(x, y), 1.8, dot.gamma_multiply(fade.clamp(0.0, 1.0)));
-        }
-    }
+    let foot = at(0.0, 0.92).y;
     // The plate's foot drops to the right, so a rule that rose would run
     // into it on a wide board. This one drops with it, a touch faster.
     let (left, right) = (foot + 3.0, rect.width().mul_add(0.001, rect.bottom() + 3.0));
@@ -146,7 +126,7 @@ fn plate(painter: &egui::Painter, rect: Rect) {
             pos2(rect.right(), right + 2.5),
             pos2(rect.left(), left + 2.5),
         ],
-        colour::ENEMY,
+        fill,
         egui::Stroke::NONE,
     ));
 }
@@ -193,46 +173,41 @@ fn worth_chip(painter: &egui::Painter, at: Pos2, flagged: usize) -> Rect {
     chip
 }
 
-/// Your side: a rule in your colour and your team's name, nothing solid.
+/// Your side's plate, the enemy's in teal with your team's name and the
+/// same chips and averages.
 fn ally(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
     let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
+        ui.allocate_exact_size(vec2(ui.available_width(), PLATE), Sense::hover());
     ui.add_space(space::SM);
     if !ui.is_rect_visible(rect) {
         return Clicked::default();
     }
     let painter = ui.painter().clone();
-    painter.rect_filled(
-        Rect::from_min_size(
-            pos2(rect.left(), rect.top() + 4.0),
-            vec2(3.0, rect.height() - 8.0),
-        ),
-        0,
-        colour::ALLY,
-    );
+    plate(&painter, rect, colour::ALLY);
     let named = caps_text(
         &painter,
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
         "Your Team",
-        Face::Heavy.at(17.0),
-        colour::ALLY,
+        Face::Cut.at(17.0),
+        colour::BG,
     );
+    let right = rect.width().mul_add(-0.006, rect.right()) - space::LG;
     let taken = economy(
         ui,
         &painter,
         board,
         team,
-        (named.right() + space::XL, rect.right(), rect.center().y),
-        colour::TEXT_DIM,
+        (named.right() + space::LG, right, rect.center().y),
+        colour::BG,
     );
     averages(
         &painter,
         board,
         team,
-        (taken.max(rect.left() + 140.0), rect.right()),
+        (taken + space::LG, right),
         rect.center().y,
-        colour::TEXT_DIM,
+        colour::BG,
     );
     Clicked::default()
 }

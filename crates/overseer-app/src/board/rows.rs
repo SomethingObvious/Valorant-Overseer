@@ -220,12 +220,7 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
     let mut hovers = identity(&inside, player, (rect, limit), look, flagged && !at_end);
     // The fill alone is too close to a plain row's to say which one is picked.
     if look.selected {
-        painter.rect_stroke(
-            rect,
-            0,
-            egui::Stroke::new(1.5, colour::TEXT_STRONG),
-            egui::StrokeKind::Inside,
-        );
+        brackets(&painter, rect);
     }
     // The rail goes over the crop's left edge rather than pushing the crop
     // right, so a flagged row's face and name line up with every other row.
@@ -1135,4 +1130,28 @@ fn clip(name: &str, keep: usize) -> String {
     let mut out: String = name.chars().take(keep.saturating_sub(1)).collect();
     out.push('\u{2026}');
     out
+}
+
+/// Bone brackets just outside a row's corners, the way the website marks
+/// what its board key points at.
+fn brackets(painter: &egui::Painter, rect: Rect) {
+    let outer = rect.expand(5.0);
+    let (arm, tall, thick) = (16.0, 14.0, 3.0);
+    for (corner, (x, y)) in [
+        (outer.left_top(), (1.0, 1.0)),
+        (outer.right_top(), (-1.0, 1.0)),
+        (outer.left_bottom(), (1.0, -1.0)),
+        (outer.right_bottom(), (-1.0, -1.0)),
+    ] {
+        painter.rect_filled(
+            Rect::from_two_pos(corner, corner + vec2(x * arm, y * thick)),
+            0,
+            colour::TEXT_STRONG,
+        );
+        painter.rect_filled(
+            Rect::from_two_pos(corner, corner + vec2(x * thick, y * tall)),
+            0,
+            colour::TEXT_STRONG,
+        );
+    }
 }

@@ -148,14 +148,48 @@ pub(crate) fn parse_tags(line: &str) -> Vec<String> {
     out
 }
 
-/// The tags, as they are typed back into the box.
+/// The tags, as they are typed back into the box. They are kept in lower
+/// case so a match ignores case, and shown with each word capitalized.
 pub(crate) fn tags_line(tags: &[String]) -> String {
-    tags.join(", ")
+    tags.iter()
+        .map(|tag| shown_tag(tag))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A kept tag with each word capitalized. A letter whose capital lowers to
+/// something else, like the dotless i, stays as it is, so the box reads back
+/// to the same tag.
+pub(crate) fn shown_tag(tag: &str) -> String {
+    tag.split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| {
+                let upper: String = first.to_uppercase().collect();
+                if upper.to_lowercase() == first.to_string() {
+                    upper + letters.as_str()
+                } else {
+                    word.to_owned()
+                }
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Note, Notes, load, save};
+    use super::{Note, Notes, load, parse_tags, save, tags_line};
+
+    /// Tags show capitalized in the box and read back as they were kept.
+    #[test]
+    fn tags_show_capitalized() {
+        let kept = vec!["odin".to_owned(), "one tap".to_owned()];
+        assert_eq!(tags_line(&kept), "Odin, One Tap");
+        assert_eq!(parse_tags(&tags_line(&kept)), kept);
+        let odd = vec!["\u{131}l\u{131}k".to_owned(), "\u{df}ig".to_owned()];
+        assert_eq!(parse_tags(&tags_line(&odd)), odd);
+    }
 
     /// A note with only tags is still a note.
     #[test]

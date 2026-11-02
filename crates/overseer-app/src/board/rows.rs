@@ -393,7 +393,7 @@ pub(crate) fn shown_name(player: &Player) -> (&str, &str, bool) {
 }
 
 /// The face and the name, the name stopping at `limit`. `flag` puts the
-/// worth-a-look words where the Riot tag would go.
+/// worth-a-look words after the Riot tag, or in its place when only one fits.
 pub(super) fn identity<'a>(
     painter: &egui::Painter,
     player: &'a Player,
@@ -407,6 +407,7 @@ pub(super) fn identity<'a>(
     paint::crop(painter, player, crop);
     let x = crop.right() + space::LG;
     let (name, tag, standing_in) = shown_name(player);
+    let riot = (!tag.is_empty()).then_some(Mark::Riot(tag));
     let mark = if flag {
         Some(Mark::Flag)
     } else if let Some(yours) = look.tag {
@@ -417,7 +418,7 @@ pub(super) fn identity<'a>(
         // as part of it.
         Some(Mark::Hidden)
     } else {
-        (!tag.is_empty()).then_some(Mark::Riot(tag))
+        None
     };
     let middle = if m.agent_line {
         m.name.mul_add(-0.32, line.center().y)
@@ -426,33 +427,32 @@ pub(super) fn identity<'a>(
     };
     let font = Face::Display.at(m.name);
     let text = fit(painter, name, &font, limit - x);
-    let after = x + caps_width(painter, &text, font.clone()) + space::SM;
-    let fits = mark
-        .as_ref()
-        .is_none_or(|mark| after + mark_width(painter, mark, m) <= limit);
-    let name_colour = if flag && !fits {
-        // No room for the words, so the name carries the amber alone. The
-        // flag must not vanish at a narrow width.
-        colour::WARN
-    } else if standing_in {
-        colour::TEXT_DIM
-    } else if player.is_self {
-        colour::YOU
-    } else if look.side == Side::Enemy {
-        colour::TEXT_STRONG
+    let mut after = x + caps_width(painter, &text, font.clone()) + space::SM;
+    let riot_wide = riot.as_ref().map_or(0.0, |k| mark_width(painter, k, m));
+    let mark_wide = mark.as_ref().map_or(0.0, |k| mark_width(painter, k, m));
+    // The tag goes first when both fit. When only one does, the flag or your
+    // word keeps the room.
+    let both = after + riot_wide + mark.as_ref().map_or(0.0, |_| space::SM + mark_wide) <= limit;
+    let (riot, moved) = if both {
+        (riot, None)
     } else {
-        colour::TEXT
+        (None, Some(tag).filter(|t| !t.is_empty()))
     };
+    let fits = mark.is_none() || after + mark_wide <= limit;
     let named = caps_text(
         painter,
         pos2(x, middle),
         Align2::LEFT_CENTER,
         &text,
         font,
-        name_colour,
+        name_colour(player, look.side, standing_in, flag && !fits),
     );
     if flag && !fits {
         hovers.push((named, Hover::Flag));
+    }
+    if let Some(tag) = riot {
+        draw_mark(painter, &tag, pos2(after, middle), m);
+        after += mark_width(painter, &tag, m) + space::SM;
     }
     if let Some(mark) = mark.filter(|_| fits) {
         let wide = mark_width(painter, &mark, m);
@@ -472,12 +472,30 @@ pub(super) fn identity<'a>(
                 pos2(x, m.name.mul_add(0.9, middle)),
                 limit,
                 standing_in || (m.tags_first && player.auto_tags.iter().any(|t| t.tag.is_some())),
+                moved,
             )
             .into_iter()
             .map(|(rect, tag)| (rect, Hover::Auto(tag))),
         );
     }
     hovers
+}
+
+/// The name's colour. `amber` is a flag with no room for its words, so the
+/// name carries the amber alone, since the flag must not vanish at a narrow
+/// width.
+fn name_colour(player: &Player, side: Side, standing_in: bool, amber: bool) -> Color32 {
+    if amber {
+        colour::WARN
+    } else if standing_in {
+        colour::TEXT_DIM
+    } else if player.is_self {
+        colour::YOU
+    } else if side == Side::Enemy {
+        colour::TEXT_STRONG
+    } else {
+        colour::TEXT
+    }
 }
 
 /// Whether a tag changes how you play the next round: the guns they buy and
@@ -488,33 +506,85 @@ fn valuable(tag: &overseer_core::AutoTag) -> bool {
         .is_some_and(|k| k.eq_ignore_ascii_case("weapon") || k.eq_ignore_ascii_case("economy"))
 }
 
-/// The line under the name: the agent, faint, unless it already stands in
-/// for the name, then the valuable tags as chips and as many of the rest as
-/// fit before the first column. The overlay has no panel, so this is the only
-/// place it shows a habit.
-fn tag_line<'a>(
-    painter: &egui::Painter,
-    player: &'a Player,
-    at: egui::Pos2,
-    limit: f32,
-    standing_in: bool,
-) -> Vec<(Rect, &'a overseer_core::AutoTag)> {
-    let font = Face::Number.at(size::MICRO + 1.0);
+/// The words under the name in order, with the role that leads them before
+/// a pick. Plain words have no tag.
+fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>>) {
     let agent = player.agent.as_deref().filter(|_| !standing_in);
+    // Before a pick there is no agent to hide, and what they might pick is
+    // the one thing worth reading, so the mains show even where tags lead.
+    let unpicked = player.agent.is_none();
+    let role = player.main_role().filter(|_| unpicked);
+    let mains: Vec<&str> = if unpicked {
+        player
+            .mains()
+            .iter()
+            .filter_map(|a| a.agent.as_deref())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut tags: Vec<&overseer_core::AutoTag> = player
         .auto_tags
         .iter()
         .filter(|t| t.tag.is_some())
         .collect();
     tags.sort_by_key(|t| !valuable(t));
-    let words = agent.map(|a| (a, None)).into_iter().chain(
-        tags.into_iter()
-            .filter_map(|t| Some((t.tag.as_deref()?, Some(t)))),
-    );
+    let words = role
+        .into_iter()
+        .chain(agent)
+        .chain(mains)
+        .map(|a| (a, None))
+        .chain(
+            tags.into_iter()
+                .filter_map(|t| Some((t.tag.as_deref()?, Some(t)))),
+        )
+        .collect();
+    (role, words)
+}
+
+/// A word under the name, and the tag it came from if it did.
+type Word<'a> = (&'a str, Option<&'a overseer_core::AutoTag>);
+
+/// The line under the name: the agent, faint, unless it already stands in
+/// for the name, then the valuable tags as chips and as many of the rest as
+/// fit before the first column. Before they pick, their mains take the
+/// agent's place, led by the role two of them share. A Riot tag with no
+/// room beside the name leads the line instead. The overlay has no panel, so
+/// this is the only place it shows a habit.
+fn tag_line<'a>(
+    painter: &egui::Painter,
+    player: &'a Player,
+    at: egui::Pos2,
+    limit: f32,
+    standing_in: bool,
+    riot: Option<&str>,
+) -> Vec<(Rect, &'a overseer_core::AutoTag)> {
+    let font = Face::Number.at(size::MICRO + 1.0);
+    let riot = riot.map(|t| format!("#{t}"));
+    let (role, mut words) = line_words(player, standing_in);
+    // The tag leads only when everything else still fits after it, since a
+    // main or a habit is worth more here than the tag is.
+    let wide = |(word, tag): &Word<'_>| {
+        let around = if tag.is_some_and(valuable) {
+            space::MD * 3.0
+        } else {
+            space::LG
+        };
+        around + caps_width(painter, word, font.clone())
+    };
+    // A Riot tag keeps the case it was typed in, here as beside the name.
+    let riot_wide = |riot: &str| overseer_ui::typed_width(painter, riot, font.clone());
+    let leads = riot
+        .as_deref()
+        .filter(|riot| at.x + riot_wide(riot) + words.iter().map(wide).sum::<f32>() <= limit);
+    if let Some(riot) = leads {
+        words.insert(0, (riot, None));
+    }
+    let leads = leads.is_some();
     let mut x = at.x;
     let mut last_chip = false;
     let mut drawn_tags = Vec::new();
-    for (i, (word, tag)) in words.enumerate() {
+    for (i, (word, tag)) in words.into_iter().enumerate() {
         let chip = tag.is_some_and(valuable);
         let pad = if chip { space::MD } else { 0.0 };
         // A dot sits in the gap between two plain words. A chip's outline
@@ -524,7 +594,12 @@ fn tag_line<'a>(
             _ if chip || last_chip => space::MD,
             _ => space::LG,
         };
-        let wide = 2.0f32.mul_add(pad, caps_width(painter, word, font.clone()));
+        let typed = leads && i == 0;
+        let wide = if typed {
+            riot_wide(word)
+        } else {
+            2.0f32.mul_add(pad, caps_width(painter, word, font.clone()))
+        };
         if x + gap + wide > limit {
             break;
         }
@@ -533,11 +608,17 @@ fn tag_line<'a>(
         }
         let left = x + gap;
         let tint = match tag {
+            None if Some(word) == role => colour::TEXT_DIM,
             None => colour::TEXT_FAINT,
             Some(_) if chip => colour::TEXT_STRONG,
             Some(_) => colour::TEXT,
         };
-        let drawn = caps_text(
+        let draw = if typed {
+            overseer_ui::typed_text
+        } else {
+            caps_text
+        };
+        let drawn = draw(
             painter,
             pos2(left + pad, at.y),
             Align2::LEFT_CENTER,
@@ -568,7 +649,7 @@ fn mark_width(painter: &egui::Painter, mark: &Mark<'_>, m: Metrics) -> f32 {
         Mark::Hidden => caps_width(painter, "Hidden", paint::label()),
         Mark::Yours(tag) => 2.0f32.mul_add(
             space::MD,
-            overseer_ui::typed_width(painter, tag, paint::label()),
+            overseer_ui::typed_width(painter, &crate::notes::shown_tag(tag), paint::label()),
         ),
         Mark::Riot(tag) => {
             painter
@@ -594,9 +675,10 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metric
         // Your word goes on a cream chip, the same cream as the side plate
         // in the masthead.
         Mark::Yours(tag) => {
+            let tag = crate::notes::shown_tag(tag);
             let wide = 2.0f32.mul_add(
                 space::MD,
-                overseer_ui::typed_width(painter, tag, paint::label()),
+                overseer_ui::typed_width(painter, &tag, paint::label()),
             );
             let chip = Rect::from_min_size(pos2(at.x, at.y - 8.0), vec2(wide, 16.0));
             painter.add(paint::slant(chip, false, true, colour::TEXT_STRONG));
@@ -604,7 +686,7 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metric
                 painter,
                 pos2(chip.left() + space::MD - 1.0, chip.center().y),
                 Align2::LEFT_CENTER,
-                tag,
+                &tag,
                 paint::label(),
                 colour::BG,
             );

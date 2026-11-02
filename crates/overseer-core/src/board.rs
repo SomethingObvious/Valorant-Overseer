@@ -259,8 +259,22 @@ pub struct Player {
     pub smurf: bool,
     /// The signals themselves, flagged or not, in the backend's words.
     pub smurf_reasons: Vec<String>,
+    /// The same signals as the panel's rows, each a label, a value and a note.
+    pub smurf_evidence: Vec<Evidence>,
     /// The tags the backend worked out for itself, most useful first.
     pub auto_tags: Vec<AutoTag>,
+}
+
+/// One line of why an account is worth a look, as the panel draws it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Evidence {
+    /// What the number is, as Level or Peak.
+    pub label: String,
+    /// The number itself, or a rank.
+    pub value: String,
+    /// What it is out of or when, as "over 18 games" or "V25 Act 3".
+    pub note: Option<String>,
 }
 
 /// A tag the backend worked out from what it had already fetched.
@@ -289,6 +303,34 @@ impl Player {
     #[must_use]
     pub fn met(&self) -> u32 {
         self.encounter.as_ref().map_or(0, Encounter::total)
+    }
+
+    /// The agents they play most, most played first, three at most.
+    #[must_use]
+    pub fn mains(&self) -> Vec<&TopAgent> {
+        let mut mains: Vec<&TopAgent> = self
+            .top_agents
+            .iter()
+            .filter(|a| a.agent.is_some())
+            .collect();
+        mains.sort_by_key(|a| std::cmp::Reverse(a.games.unwrap_or(0)));
+        mains.truncate(3);
+        mains
+    }
+
+    /// The role at least two of their mains share, like Duelist, when there
+    /// is one. Two of three is already a habit worth knowing in agent select.
+    #[must_use]
+    pub fn main_role(&self) -> Option<&str> {
+        let roles: Vec<&str> = self
+            .mains()
+            .into_iter()
+            .filter_map(|a| a.role.as_deref())
+            .collect();
+        roles
+            .iter()
+            .copied()
+            .find(|role| roles.iter().filter(|r| *r == role).count() >= 2)
     }
 }
 
@@ -465,7 +507,7 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, Encounter};
+    use super::{Board, Encounter, Player, TopAgent};
 
     /// Two counts as big as the socket allows add up to the most a u32 holds,
     /// not a panic in a debug build and a wrap to a small number in release.
@@ -581,5 +623,31 @@ mod tests {
         assert_eq!(player.rr_earned, Some(-13), "-12.6 did not round to -13");
         assert_eq!(player.games, Some(118));
         assert_eq!(board.score.and_then(|s| s.round), Some(5));
+    }
+
+    /// Two mains in one role name it, and three in three roles name none.
+    #[test]
+    fn a_role_needs_two_mains() {
+        let main = |agent: &str, games: u32, role: &str| TopAgent {
+            agent: Some(agent.to_owned()),
+            games: Some(games),
+            role: Some(role.to_owned()),
+        };
+        let mut player = Player {
+            top_agents: vec![
+                main("Omen", 4, "Controller"),
+                main("Jett", 11, "Duelist"),
+                main("Raze", 7, "Duelist"),
+            ],
+            ..Player::default()
+        };
+        assert_eq!(
+            player.mains().first().and_then(|a| a.agent.as_deref()),
+            Some("Jett")
+        );
+        assert_eq!(player.main_role(), Some("Duelist"));
+        player.top_agents.pop();
+        player.top_agents.push(main("Sova", 7, "Initiator"));
+        assert_eq!(player.main_role(), None);
     }
 }

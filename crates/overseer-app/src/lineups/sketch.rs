@@ -1,40 +1,55 @@
 //! The panel for drawing on the map: which shape, which colour, how solid,
 //! how wide a cone opens, and taking back or clearing what is drawn. The
 //! colour and the opacity also change the shape drawn or moved last. Every
-//! change is kept straight away, so closing the window loses nothing.
+//! change is kept straight away, so closing the window loses nothing. The
+//! sandbox is the same panel with agents and the Spike to put down, and
+//! keeps nothing.
 
 use egui::{Sense, Stroke, Ui, vec2};
 use overseer_ui::colour;
 
+use overseer_core::Atlas;
+
 use super::shapes::{COLOURS, KINDS, colour_name, ink};
 use super::side::{title, words};
-use super::{Mode, Sketch, View};
+use super::{Mode, SPIKE, Sketch, View, pick};
 use crate::controls::{self, Tone};
 
 /// Draws the panel while shapes are being drawn.
-pub(super) fn show(ui: &mut Ui, view: &mut View) {
+pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     let map = view.map.clone().unwrap_or_default();
     let Mode::Draw(sketch) = &mut view.mode else {
         return;
     };
-    title(ui, "Draw on the Map", &map);
-    words(
-        ui,
-        "Pick a shape and a colour, then drag on the map. Right-click a drawing or press Delete to take it off.",
-        colour::TEXT_DIM,
-    );
+    if sketch.scratch {
+        title(ui, "Sandbox", &map);
+        words(
+            ui,
+            "Nothing here is kept, and the lineups are hidden. Draw, or pick an agent and click the map to put them down.",
+            colour::TEXT_DIM,
+        );
+    } else {
+        title(ui, "Draw on the Map", &map);
+        words(
+            ui,
+            "Pick a shape and a colour, then drag on the map. Right-click a drawing or press Delete to take it off.",
+            colour::TEXT_DIM,
+        );
+    }
     controls::heading(ui, "Shape");
     ui.horizontal_wrapped(|ui| {
         for (index, (_, name)) in KINDS.iter().enumerate() {
-            if controls::chip(ui, name, sketch.kind == index).clicked() {
+            let on = sketch.kind == index && !sketch.stamping();
+            if controls::chip(ui, name, on).clicked() {
                 sketch.kind = index;
+                sketch.stamp = None;
             }
         }
     });
-    if KINDS
-        .get(sketch.kind)
-        .is_some_and(|(kind, _)| *kind == "cone")
-    {
+    if sketch.scratch {
+        stamps(ui, atlas, sketch);
+    }
+    if sketch.tool() == "cone" {
         controls::heading(ui, "Cone Width");
         let slid = ui.add(
             egui::Slider::new(&mut sketch.spread, 10.0..=180.0)
@@ -62,12 +77,29 @@ pub(super) fn show(ui: &mut Ui, view: &mut View) {
     );
     let (more, done) = buttons(ui, sketch, count);
     changed |= more;
-    if changed {
+    if changed && !sketch.scratch {
         view.unsaved.insert(map, sketch.shapes.clone());
     }
     if done {
         view.mode = Mode::Browse;
     }
+}
+
+/// The Spike and every agent, to put down with a click. Picking the one
+/// already out goes back to the shape.
+fn stamps(ui: &mut Ui, atlas: &Atlas, sketch: &mut Sketch) {
+    controls::heading(ui, "Agents");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+        let names = std::iter::once(SPIKE).chain(atlas.agents.iter().map(|k| k.name.as_str()));
+        for name in names {
+            let on = sketch.stamp.as_deref() == Some(name);
+            if pick::tile(ui, name, on, None) {
+                sketch.stamp = (!on).then(|| name.to_owned());
+                sketch.picked = None;
+            }
+        }
+    });
 }
 
 /// Undo, Delete Shape, Clear All and Done, and the Delete key, under the

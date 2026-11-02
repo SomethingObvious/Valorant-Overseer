@@ -338,6 +338,12 @@ fn flare(painter: &egui::Painter, digit: Rect, value: u32, tint: Color32, still:
             .animate_value_with_time(id.with("eased"), target, 0.0);
     }
     painter.ctx().data_mut(|d| d.insert_temp(id, target));
+    // Asking again straight after the snap starts the animation over each
+    // frame, and its value can miss the target by a rounding error, which
+    // egui reads as still moving and repaints for without end.
+    if still {
+        return;
+    }
     let settled = painter
         .ctx()
         .animate_value_with_time(id.with("eased"), target, motion::MEASURE);
@@ -367,14 +373,10 @@ fn reading(ui: &Ui, painter: &egui::Painter, rect: Rect, right: f32, head: &Mast
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64());
     let left = (reading.done_at - now).max(0.0);
-    // Whole seconds, so it ticks about once a second. egui takes a wait
-    // shorter than a frame as a repaint now, and a frame can take a quarter
-    // second, so a tick due sooner than that waits for the one after.
-    let tick = (1.0 - now.fract()).max(0.3);
     ui.ctx()
-        .request_repaint_after(std::time::Duration::from_secs_f64(tick));
+        .request_repaint_after(motion::turn_over(tick(left, head.still)));
     let middle = rect.center().y;
-    let when = countdown(left);
+    let when = countdown(left, head.still);
     let games = reading.games.unwrap_or(20);
     let time = caps_text(
         painter,
@@ -444,11 +446,25 @@ fn reading(ui: &Ui, painter: &egui::Painter, rect: Rect, right: f32, head: &Mast
     centre.x - RING - space::LG
 }
 
+/// How long until the countdown reads differently: its next second, or its
+/// next minute when `minutes`, since on Windows' software renderer every tick
+/// costs most of a second.
+fn tick(left: f64, minutes: bool) -> f64 {
+    let step = if minutes { 60.0 } else { 1.0 };
+    if left > 0.0 {
+        left.rem_euclid(step)
+    } else {
+        step
+    }
+}
+
 /// What is left, the way the ring says it: seconds, then minutes and
-/// seconds, and once the estimate has run out, that it is finishing.
-fn countdown(left: f64) -> String {
+/// seconds, or whole minutes when `minutes`, and once the estimate has run
+/// out, that it is finishing.
+fn countdown(left: f64, minutes: bool) -> String {
     match left.ceil() {
         s if s < 1.0 => "Finishing".to_owned(),
+        s if minutes => format!("{:.0} min", (s / 60.0).ceil()),
         s if s < 60.0 => format!("{s:.0}s"),
         s => format!("{:.0}:{:02.0}", (s / 60.0).floor(), s.rem_euclid(60.0)),
     }
@@ -478,17 +494,26 @@ fn light(painter: &egui::Painter, rect: Rect, light: &Light, still: bool) -> f32
 
 #[cfg(test)]
 mod tests {
-    use super::countdown;
+    use super::{countdown, tick};
 
     /// A part second counts as a whole one, so it never says 0s while
     /// there is still something to wait for.
     #[test]
     fn the_countdown_reads_like_a_clock() {
-        assert_eq!(countdown(0.0), "Finishing");
-        assert_eq!(countdown(0.2), "1s");
-        assert_eq!(countdown(42.0), "42s");
-        assert_eq!(countdown(59.5), "1:00");
-        assert_eq!(countdown(85.0), "1:25");
-        assert_eq!(countdown(600.0), "10:00");
+        assert_eq!(countdown(0.0, false), "Finishing");
+        assert_eq!(countdown(0.2, false), "1s");
+        assert_eq!(countdown(42.0, false), "42s");
+        assert_eq!(countdown(59.5, false), "1:00");
+        assert_eq!(countdown(85.0, false), "1:25");
+        assert_eq!(countdown(600.0, false), "10:00");
+    }
+
+    #[test]
+    fn a_still_countdown_reads_in_minutes() {
+        assert_eq!(countdown(0.0, true), "Finishing");
+        assert_eq!(countdown(42.0, true), "1 min");
+        assert_eq!(countdown(85.0, true), "2 min");
+        assert!((tick(85.0, true) - 25.0).abs() < 1e-9);
+        assert!((tick(85.5, false) - 0.5).abs() < 1e-9);
     }
 }

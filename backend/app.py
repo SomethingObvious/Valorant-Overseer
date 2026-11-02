@@ -600,7 +600,10 @@ def _write_bridge_file(ws_port: int, token: str) -> None:
         },
         prefix=".bridge-",
     ):
-        LOG.error("bridge.json write failed, so the window cannot find the bridge")
+        # Raised, so the launcher says so instead of the window waiting on a
+        # file that never comes.
+        msg = "bridge.json write failed, so the window cannot find the bridge"
+        raise OSError(msg)
 
 
 if __name__ == "__main__" and "--self-check" in sys.argv:

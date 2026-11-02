@@ -1,8 +1,9 @@
 //! Shapes drawn on the map to show a range or an area: rectangles, circles,
 //! ovals, cones and triangles, in a dozen colours, labels of a few words,
-//! boxes of text and brush strokes. Each is the two points of the drag that
-//! drew it, on the minimap, so it scales with the map. A label is the one
-//! point it starts at, and a stroke keeps every point it went through.
+//! boxes of text, brush strokes, and in the sandbox agents and the Spike.
+//! Each is the two points of the drag that drew it, on the minimap, so it
+//! scales with the map. A label or a stamp is the one point it starts at,
+//! and a stroke keeps every point it went through.
 
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 use overseer_core::Drawing;
@@ -10,12 +11,12 @@ use overseer_ui::{Face, colour, typed_text};
 
 /// The shapes there are, as kept and as named, in the order the panel shows.
 pub(super) const KINDS: [(&str, &str); 9] = [
+    ("brush", "Brush"),
     ("rect", "Rectangle"),
     ("circle", "Circle"),
     ("oval", "Oval"),
     ("cone", "Cone"),
     ("triangle", "Triangle"),
-    ("brush", "Brush"),
     ("text", "Text"),
     ("textbox", "Text Box"),
     // Not a shape. It takes shapes off.
@@ -148,31 +149,17 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
             let line: Vec<Pos2> = drawing.points.iter().map(|&p| at(square, p)).collect();
             painter.add(Shape::line(line, Stroke::new(thick, tint)));
         }
-        "textbox" => {
-            let bounds = Rect::from_two_pos(a, b);
-            let shade = drawing.opacity.clamp(0.1, 1.0) * 0.8;
-            painter.rect(
-                bounds,
-                0,
-                colour::VOID.gamma_multiply(shade),
-                Stroke::new(1.5, tint),
-                egui::StrokeKind::Inside,
-            );
-            let pad = letters(square) * 0.4;
-            // The colour is the box's edge, and the words are in the app's
-            // cream, which reads on any of them.
-            let galley = painter.layout(
-                drawing.text.clone(),
-                Face::Body.at((letters(square) * 0.75).max(11.0)),
-                colour::TEXT_STRONG,
-                (bounds.width() - pad * 2.0).max(1.0),
-            );
-            // Words past the bottom are cut off, and dragging a corner shows
-            // them again.
-            painter.with_clip_rect(bounds.shrink(1.0)).galley(
-                bounds.min + vec2(pad, pad),
-                galley,
-                colour::TEXT_STRONG,
+        "textbox" => text_box(painter, square, drawing, tint),
+        "stamp" => {
+            let rect = stamp(square, a);
+            painter.rect_filled(rect.expand(2.0), 0, tint);
+            painter.rect_filled(rect, 0, colour::VOID);
+            super::face(
+                painter,
+                rect,
+                &drawing.text,
+                drawing.opacity.clamp(0.1, 1.0),
+                None,
             );
         }
         "text" => {
@@ -190,6 +177,37 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
         }
         _ => {}
     }
+}
+
+/// A box of text: dark behind, its colour round the edge, and its words cut
+/// off at the bottom.
+fn text_box(painter: &egui::Painter, square: Square, drawing: &Drawing, tint: Color32) {
+    let (a, b) = (at(square, drawing.a), at(square, drawing.b));
+    let bounds = Rect::from_two_pos(a, b);
+    let shade = drawing.opacity.clamp(0.1, 1.0) * 0.8;
+    painter.rect(
+        bounds,
+        0,
+        colour::VOID.gamma_multiply(shade),
+        Stroke::new(1.5, tint),
+        egui::StrokeKind::Inside,
+    );
+    let pad = letters(square) * 0.4;
+    // The colour is the box's edge, and the words are in the app's
+    // cream, which reads on any of them.
+    let galley = painter.layout(
+        drawing.text.clone(),
+        Face::Body.at((letters(square) * 0.75).max(11.0)),
+        colour::TEXT_STRONG,
+        (bounds.width() - pad * 2.0).max(1.0),
+    );
+    // Words past the bottom are cut off, and dragging a corner shows
+    // them again.
+    painter.with_clip_rect(bounds.shrink(1.0)).galley(
+        bounds.min + vec2(pad, pad),
+        galley,
+        colour::TEXT_STRONG,
+    );
 }
 
 /// A cone's outline: its tip, then an arc as far away as `end`, opening
@@ -262,8 +280,15 @@ pub(super) fn hit(square: Square, drawing: &Drawing, spot: Pos2) -> bool {
             turns.iter().all(|t| *t >= 0.0) || turns.iter().all(|t| *t <= 0.0)
         }
         "text" => plate(square, a, &drawing.text).expand(3.0).contains(spot),
+        "stamp" => stamp(square, a).expand(3.0).contains(spot),
         _ => false,
     }
+}
+
+/// Where an agent or the Spike put down at `at` sits, in step with the map.
+pub(super) fn stamp(square: Square, at: Pos2) -> Rect {
+    let side = (square.width() * 0.05).clamp(20.0, 48.0);
+    Rect::from_center_size(at, vec2(side, side))
 }
 
 /// How far `spot` is from the segment between `one` and `two`.

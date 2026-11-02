@@ -10,6 +10,7 @@ from __future__ import annotations
 import _winapi
 import contextlib
 import ctypes
+import faulthandler
 import hashlib
 import json
 import msvcrt
@@ -19,7 +20,6 @@ import signal
 import socket
 import subprocess
 import sys
-import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -165,7 +165,8 @@ def validate_runtime(py: str) -> None:
     try:
         if stamp and _RUNTIME_OK.read_text(encoding="utf-8") == stamp:
             return
-    except OSError:
+    except (OSError, ValueError):
+        # Unreadable, or not UTF-8 after an edit. Either way it gets rewritten.
         pass
     _check_runtime(py)
     if stamp:
@@ -591,7 +592,8 @@ def backend_output(*, prod: bool) -> IO[str] | None:
         OVERSEER_DIR.mkdir(exist_ok=True)
         log = OVERSEER_DIR / "backend-console.log"
         _rotate(log)
-        return log.open("a", encoding="utf-8", errors="replace")
+        # Line buffered, so the last lines before a crash make it to disk.
+        return log.open("a", encoding="utf-8", errors="replace", buffering=1)
     except OSError:
         return None
 
@@ -625,24 +627,12 @@ def stop(proc: subprocess.Popen[bytes]) -> None:
         proc.wait(timeout=1.5)
 
 
-def parent_alive(pid: int) -> bool:
-    """Whether a process is still running, so the backend can follow its window."""
-    synchronize, wait_timeout = 0x00100000, 0x102
-    handle = ctypes.windll.kernel32.OpenProcess(synchronize, 0, pid)
-    if not handle:
-        return False
-    try:
-        return bool(ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == wait_timeout)
-    finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
-
-
 def first_to_end(*pids: int) -> int:
     """Wait for any of `pids` to end and return which, by its place in the call.
 
     One wait on all of them, rather than a look every half second, so a
-    launcher with nothing to do never wakes the CPU. Ctrl+C still ends it. A
-    process that can't be opened has ended already.
+    launcher with nothing to do never wakes the CPU. A process that can't be
+    opened has ended already.
     """
     synchronize, inherit, wait_all = 0x00100000, False, False
     handles = []
@@ -659,11 +649,12 @@ def first_to_end(*pids: int) -> int:
 
 
 def wait_window(parent: int | None) -> None:
-    """Wait for the window after --parent to close, or for ever without one."""
+    """Wait for the window after --parent to close, or until Ctrl+C without one."""
     if parent is None:
-        threading.Event().wait()
-    else:
-        first_to_end(parent)
+        # Not Event().wait(), which Ctrl+C can't interrupt on Windows.
+        while True:
+            time.sleep(3600)
+    first_to_end(parent)
 
 
 def _write_to(log: IO[str]) -> None:
@@ -682,7 +673,7 @@ def serves_here(py: str) -> bool:
     return Path(py).resolve() == Path(sys.executable).resolve()
 
 
-def serve_here(ws_port: int, launch_id: str, log: IO[str] | None, details: str) -> None:
+def serve_here(py: str, ws_port: int, launch_id: str, log: IO[str] | None) -> None:
     """Start the backend in this process, or stop with why it didn't start.
 
     A second interpreter for app.py cost 17 MB and a start of its own, for a
@@ -693,6 +684,14 @@ def serve_here(ws_port: int, launch_id: str, log: IO[str] | None, details: str) 
     os.chdir(BACKEND)
     if log is not None:
         _write_to(log)
+    # Nothing outside this process is left to notice a native crash, so it at
+    # least leaves a stack in the log. The stamp goes until the bridge is up,
+    # so a crash on the way there gets the packages checked next launch.
+    faulthandler.enable(sys.stderr)
+    stamp: bytes | None = None
+    with contextlib.suppress(OSError):
+        stamp = _RUNTIME_OK.read_bytes()
+    forget_runtime()
     try:
         import app
 
@@ -700,9 +699,14 @@ def serve_here(ws_port: int, launch_id: str, log: IO[str] | None, details: str) 
     except (Exception, SystemExit):
         # Broad because anything app.py raises on the way up is a backend that
         # didn't start, and it has to say so rather than leave the window waiting.
-        forget_runtime()
         LOG.exception("VG-BACKEND-001 backend did not start")
-        die("VG-BACKEND-001", f"The backend didn't start. {details}")
+        # A quarantined or broken package is the usual cause, and that has its
+        # own error with a way to repair it.
+        _check_runtime(py)
+        die("VG-BACKEND-001", "The backend didn't start.")
+    if stamp is not None:
+        with contextlib.suppress(OSError):
+            _RUNTIME_OK.write_bytes(stamp)
 
 
 def parent_pid() -> int | None:
@@ -741,7 +745,7 @@ def main() -> None:
         LOG.info("starting stack: ws=%s", ws_port)
         write_runtime_state(ws_port)
         if serves_here(py):
-            serve_here(ws_port, launch_id, log, details)
+            serve_here(py, ws_port, launch_id, log)
             served = True
             wait_window(parent)
             LOG.info("the window that started this backend has closed, so it is shutting down")

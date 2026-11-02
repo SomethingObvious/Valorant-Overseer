@@ -1,6 +1,8 @@
-//! Links `assets/overseer.ico` into the executable.
+//! Links `assets/overseer.ico` and a version block into the executable.
 //!
-//! Explorer, the Start menu and a taskbar pin all show it. The MSVC linker
+//! Explorer, the Start menu and a taskbar pin all show the icon. Task Manager
+//! names the process by the version block's description, and without one it
+//! falls back to the bare file name. The MSVC linker
 //! takes a compiled `.res` file like any object, so this writes one by hand
 //! and needs no resource compiler or Windows SDK. `overseer-setup` builds
 //! with this script too.
@@ -12,6 +14,7 @@ use std::path::PathBuf;
 
 const RT_ICON: u16 = 3;
 const RT_GROUP_ICON: u16 = 14;
+const RT_VERSION: u16 = 16;
 
 /// Every resource file opens with this empty entry, which marks it 32 bit.
 const EMPTY: [u8; 32] = [
@@ -26,12 +29,19 @@ fn main() -> io::Result<()> {
     if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
         return Ok(());
     }
-    let res = resources(&fs::read(&ico)?).ok_or_else(|| {
+    let mut res = resources(&fs::read(&ico)?).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "assets/overseer.ico is not an icon",
         )
     })?;
+    let name = if env::var("CARGO_PKG_NAME").as_deref() == Ok("overseer-setup") {
+        "Valorant Overseer Setup"
+    } else {
+        "Valorant Overseer"
+    };
+    let version = env::var("CARGO_PKG_VERSION").map_err(io::Error::other)?;
+    res.extend(entry(RT_VERSION, 1, &version_info(name, &version)));
     let out = PathBuf::from(env::var("OUT_DIR").map_err(io::Error::other)?).join("icon.res");
     fs::write(&out, res)?;
     println!("cargo:rustc-link-arg-bins={}", out.display());
@@ -58,6 +68,77 @@ fn resources(ico: &[u8]) -> Option<Vec<u8>> {
     }
     res.extend(entry(RT_GROUP_ICON, 1, &group));
     Some(res)
+}
+
+/// A `VS_VERSIONINFO` naming the program, laid out the way `rc` writes one.
+fn version_info(name: &str, version: &str) -> Vec<u8> {
+    let mut parts = version
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0));
+    let mut next = || parts.next().unwrap_or(0);
+    let (major, minor, patch) = (next(), next(), next());
+    let mut fixed = Vec::with_capacity(52);
+    for word in [
+        0xFEEF_04BD,           // signature
+        0x0001_0000,           // structure version
+        (major << 16) | minor, // file version
+        patch << 16,
+        (major << 16) | minor, // product version
+        patch << 16,
+        0x3F,        // flags mask
+        0,           // flags
+        0x0004_0004, // Windows NT
+        1,           // an application
+        0,
+        0, // date
+        0,
+    ] {
+        fixed.extend_from_slice(&u32::to_le_bytes(word));
+    }
+    let strings: Vec<u8> = [
+        ("FileDescription", name),
+        ("ProductName", "Valorant Overseer"),
+        ("FileVersion", version),
+        ("ProductVersion", version),
+    ]
+    .iter()
+    .flat_map(|(key, value)| node(key, &wide(value), true, &[]))
+    .collect();
+    let table = node("040904B0", &[], true, &strings);
+    let translation = node("Translation", &[0x09, 0x04, 0xB0, 0x04], false, &[]);
+    let children: Vec<u8> = [
+        node("StringFileInfo", &[], true, &table),
+        node("VarFileInfo", &[], true, &translation),
+    ]
+    .concat();
+    node("VS_VERSION_INFO", &fixed, false, &children)
+}
+
+/// One node of a version block: its length, its value's length (in
+/// characters for text, bytes otherwise), its key, its value and its
+/// children, each starting on a four byte boundary.
+fn node(key: &str, value: &[u8], text: bool, children: &[u8]) -> Vec<u8> {
+    let mut out = vec![0; 6];
+    out.extend(wide(key));
+    out.resize(out.len().next_multiple_of(4), 0);
+    out.extend_from_slice(value);
+    out.resize(out.len().next_multiple_of(4), 0);
+    out.extend_from_slice(children);
+    let length = out.len() as u16;
+    let value_length = if text { value.len() >> 1 } else { value.len() } as u16;
+    let head = [length, value_length, u16::from(text)];
+    let _blank: Vec<u8> = out
+        .splice(..6, head.iter().flat_map(|word| word.to_le_bytes()))
+        .collect();
+    out
+}
+
+/// UTF-16 with its terminating null, as every string in a resource is.
+fn wide(text: &str) -> Vec<u8> {
+    text.encode_utf16()
+        .chain([0])
+        .flat_map(u16::to_le_bytes)
+        .collect()
 }
 
 fn entry(kind: u16, id: u16, data: &[u8]) -> Vec<u8> {

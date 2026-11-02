@@ -458,8 +458,9 @@ fn figure(
     );
 }
 
-/// Your rounds in the result's colour, theirs dim beside them, and the
-/// result under both, right against `x`, when the mode has a score.
+/// Your rounds in the result's colour, theirs dim beside them, right
+/// against `x`, and the result on a chip in that colour centred under both,
+/// when the mode has a score.
 fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
     let Some([ours, theirs]) = game.score else {
         return;
@@ -475,7 +476,7 @@ fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
         big.clone(),
         colour::TEXT_DIM,
     );
-    let _ours = caps_text(
+    let ours = caps_text(
         painter,
         pos2(after.left() - space::MD, rect.top() + 24.0),
         Align2::RIGHT_CENTER,
@@ -483,13 +484,23 @@ fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
         big,
         tint,
     );
+    if result.is_empty() {
+        return;
+    }
+    let font = Face::Cut.at(size::MICRO);
+    let wide = space::MD.mul_add(2.0, caps_width(painter, result, font.clone()));
+    let chip = Rect::from_center_size(
+        pos2(f32::midpoint(ours.left(), x), rect.top() + 44.0),
+        vec2(wide, 15.0),
+    );
+    painter.add(paint::slant(chip, true, true, tint));
     let _result = caps_text(
         painter,
-        pos2(x, rect.top() + 44.0),
-        Align2::RIGHT_CENTER,
+        chip.center(),
+        Align2::CENTER_CENTER,
         result,
-        Face::Display.at(size::MICRO),
-        tint,
+        font,
+        colour::BG,
     );
 }
 

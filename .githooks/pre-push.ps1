@@ -7,17 +7,15 @@
 #   3. no more commits in one push than .githooks/policy allows
 #   4. no banned attribution in any commit being pushed, author or committer,
 #      nor in an annotated tag or a branch name
-#   5. the full lint suite passes
+#   5. every commit is authored and committed as the address in the policy
+#   6. no commit adds or changes a file the excludes keep on this machine
+#   7. the full lint suite passes
 #
-# Override for a genuine emergency: OVERSEER_SKIP_HOOKS=1. It prints, so it is
-# never silent.
+# OVERSEER_SKIP_HOOKS=1 skips the lint for a genuine emergency, and prints, so
+# it is never silent. The rest always runs, since what it stops can only be
+# taken back off the remote by rewriting history.
 
 $ErrorActionPreference = "Stop"
-
-if ($env:OVERSEER_SKIP_HOOKS -eq "1") {
-    Write-Host "! OVERSEER_SKIP_HOOKS is set, so the pre-push checks were skipped" -ForegroundColor Yellow
-    exit 0
-}
 
 $Root = (& git rev-parse --show-toplevel).Trim()
 $Scan = Join-Path $Root "scripts\check-attribution.ps1"
@@ -33,6 +31,7 @@ function Get-Policy([string]$Key, [string]$Fallback) {
 
 $MaxCommits = [int](Get-Policy "maxCommits" "5")
 $BaseBranch = Get-Policy "baseBranch" "main"
+$Email = (& git config --file (Join-Path $Root ".githooks\policy") --get overseer.email).Trim()
 
 function Deny([string]$Reason, [string[]]$Detail) {
     Write-Host ""
@@ -119,12 +118,42 @@ foreach ($line in ([Console]::In.ReadToEnd() -split "`r?`n")) {
             "Raise the limit only with a reason: git config overseer.maxCommits N")
     }
 
+    $strangers = @((& git log --format="%h %ae %ce" $range) | Where-Object {
+            $_ -notmatch "^\w+ $([regex]::Escape($Email)) $([regex]::Escape($Email))$"
+        })
+    if ($strangers.Count -gt 0) {
+        Deny "a commit being pushed isn't authored and committed as $Email" (
+            @($strangers | ForEach-Object { "  $_" }) + @(
+                "Fix the identity, then remake the commits:",
+                "  git config user.email $Email",
+                "  git rebase -r --exec 'git commit --amend --no-edit --reset-author' $(if ($upstream) { $upstream } else { $BaseBranch })"))
+    }
+
+    # NUL-separated both ways, since PowerShell ends every line it pipes to a
+    # native command with CRLF and git would look up "notes.md`r".
+    $touched = @((& git -c core.quotepath=off log --format= --name-only --diff-filter=ACMRT $range) |
+            Where-Object { $_ } | Sort-Object -Unique)
+    $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $local = @(((($touched -join "`0") + "`0") | & git -C $Root check-ignore --no-index -z --stdin) -split "`0" |
+            Where-Object { $_.Trim() })
+    if ($local.Count -gt 0) {
+        Deny "a commit being pushed adds files the excludes keep on this machine" (
+            @($local | ForEach-Object { "  $_" }) + @(
+                "Take them out of every commit in the push.",
+                "They stay on disk with:  git rm -r --cached <path>"))
+    }
+
     $text = (& git log --format="%B%n%an%n%ae%n%cn%n%ce" $range) -join "`n"
     if (-not (Test-Attribution $text "a commit being pushed")) {
         Deny "a commit being pushed contains a banned attribution" @(
             "Rewrite the history before pushing:",
             "  git rebase -i $(if ($upstream) { $upstream } else { $BaseBranch })")
     }
+}
+
+if ($env:OVERSEER_SKIP_HOOKS -eq "1") {
+    Write-Host "! OVERSEER_SKIP_HOOKS is set, so the lint before the push was skipped" -ForegroundColor Yellow
+    exit 0
 }
 
 Write-Host "Running the full lint before the push." -ForegroundColor White

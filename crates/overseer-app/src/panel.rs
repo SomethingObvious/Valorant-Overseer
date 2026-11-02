@@ -1375,14 +1375,11 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
         Face::Heavy.at(size::TITLE),
         tint,
     );
-    let from = drawn.right() + space::MD;
-    if from < rect.right() - space::LG {
-        painter.hline(
-            from..=rect.right() - space::LG,
-            rect.center().y + 1.0,
-            (1.0, colour::LINE),
-        );
-    }
+    board::paint::double_rule(
+        painter,
+        drawn.right() + space::MD..=rect.right() - space::LG,
+        rect.center().y + 1.0,
+    );
 }
 
 /// One line of prose, at the panel's left margin. Text wider than the panel

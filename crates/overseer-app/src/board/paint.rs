@@ -27,6 +27,24 @@ pub(crate) fn slanted(rect: Rect, lead: bool, tail: bool) -> Vec<Pos2> {
     ]
 }
 
+/// The website's slash laid level after a heading: a red line with a thin
+/// one under it, centred on `y`. Nothing is drawn when there is no room.
+pub(crate) fn double_rule(painter: &egui::Painter, x: std::ops::RangeInclusive<f32>, y: f32) {
+    if x.end() - x.start() < 8.0 {
+        return;
+    }
+    painter.rect_filled(
+        Rect::from_x_y_ranges(x.clone(), y - 2.75..=y - 0.25),
+        0,
+        colour::ENEMY,
+    );
+    painter.rect_filled(
+        Rect::from_x_y_ranges(x, y + 1.75..=y + 2.75),
+        0,
+        colour::ENEMY,
+    );
+}
+
 /// A filled slanted shape.
 pub(crate) fn slant(rect: Rect, lead: bool, tail: bool, fill: Color32) -> Shape {
     Shape::convex_polygon(slanted(rect, lead, tail), fill, egui::Stroke::NONE)

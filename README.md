@@ -36,9 +36,10 @@ shows or hides it, and it goes away once the match loads.
 When the match loads, the whole lobby goes on one board with each player's
 rank, peak rank and the act they reached it, K/D, headshot rate, win rate,
 level, RR and last five games. The other team sits on top under a red band,
-since they're the five you can't see in game. Each team's header counts who
-tends to force and who saves after a lost round, and a tab down the side joins
-players who queued together. Press `?` for a Help screen that explains every
+since they're the five you can't see in game, and your team sits under a teal
+one. Each band counts who tends to force and who saves after a lost round, the
+player you have picked gets brackets on its corners, and a tab down the side
+joins players who queued together. Press `?` for a Help screen that explains every
 colour and mark on the board, along with every key.
 
 Rest the pointer on a player and the panel beside the board opens on their
@@ -49,8 +50,8 @@ Notes and tags you leave on a player come back the next time you meet them.
 Under the board, the ladder puts everyone in the lobby at their rank, framed
 in their team's colour, and your session's RR keeps count of the night.
 
-Your match history shows each game's score, your K/D/A, ACS and the RR you won
-or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and
+Your match history shows each game's score with a Victory or Defeat chip under
+it, your K/D/A, ACS and the RR you won or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and
 first bloods for all ten players.
 
 The lineup planner covers every map. Drag from where you stand to where it

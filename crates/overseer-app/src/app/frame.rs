@@ -69,9 +69,16 @@ impl Overseer {
 
         let width = ui.available_width();
         // With nobody on the board the panel would only say so, so the
-        // waiting plate has the window.
-        self.panel_visible =
-            width >= COMPACT && self.settings.panel && !self.board.players.is_empty();
+        // waiting plate has the window. Your last stats count as a board.
+        let was = self.panel_visible;
+        self.panel_visible = width >= COMPACT
+            && self.settings.panel
+            && (!self.board.players.is_empty() || self.showing_kept());
+        // `logic` only asks for a history while the panel shows, and it ran
+        // before this frame opened it.
+        if self.panel_visible && !was {
+            ui.ctx().request_repaint();
+        }
         let panel = self.panel_visible.then(|| self.detail(ui, width));
         CentralPanel::default()
             .frame(egui::Frame::NONE)

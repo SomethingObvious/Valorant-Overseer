@@ -1,4 +1,4 @@
-//! What sits over each side: the enemy's solid plate, your team's quiet
+//! What sits over each side: the enemy's red shard, your team's quiet
 //! rule, and the column heads. The enemy plate is the one solid colour on the
 //! board, so the eye lands there first. Your own side only gets a rule and
 //! its name, since you already know who is on your team.
@@ -40,7 +40,7 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         return clicked;
     }
     let painter = ui.painter().clone();
-    painter.add(paint::slant(rect, false, true, colour::ENEMY));
+    plate(&painter, rect);
     let after = caps_text(
         &painter,
         pos2(rect.left() + space::LG, rect.center().y),
@@ -50,7 +50,7 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         } else {
             "Enemy Team"
         },
-        Face::Heavy.at(22.0),
+        Face::Cut.at(17.0),
         colour::BG,
     );
     let mut taken = after.right();
@@ -75,18 +75,14 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
             )
         });
         if hit.hovered() {
-            painter.add(paint::slant(
-                chip,
-                true,
-                true,
-                colour::WARN.gamma_multiply(0.18),
-            ));
+            tilted_chip(&painter, chip, colour::WARN.gamma_multiply(0.18), -2.0);
         }
         clicked.worth = hit
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked();
     }
-    let right = rect.height().mul_add(-paint::LEAN, rect.right()) - space::LG;
+    // The shard's right edge leans in by its foot.
+    let right = rect.width().mul_add(-0.006, rect.right()) - space::LG;
     taken = economy(
         ui,
         &painter,
@@ -106,15 +102,86 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
     clicked
 }
 
+/// The enemy's plate: a red shard whose edges are off square by a degree or
+/// so, halftone fading in from its left end, and a thin rule under it that
+/// drops a little faster than its foot, the website's cut.
+fn plate(painter: &egui::Painter, rect: Rect) {
+    let at = |x: f32, y: f32| {
+        pos2(
+            rect.width().mul_add(x, rect.left()),
+            rect.height().mul_add(y, rect.top()),
+        )
+    };
+    painter.add(egui::Shape::convex_polygon(
+        vec![at(0.0, 0.10), at(1.0, 0.0), at(0.994, 1.0), at(0.004, 0.92)],
+        colour::ENEMY,
+        egui::Stroke::NONE,
+    ));
+    // Full strength over the first seventh, gone by three tenths, like the
+    // site's dots under a section head.
+    let dot = Color32::from_rgb(0xC8, 0x30, 0x3E);
+    let (top, foot, end) = (at(0.0, 0.10).y, at(0.0, 0.92).y, at(0.30, 0.0).x);
+    for row in 0u16..8 {
+        let y = f32::from(row).mul_add(9.0, top + 4.5);
+        if y > foot - 2.0 {
+            break;
+        }
+        for col in 0u16..80 {
+            let x = f32::from(col).mul_add(9.0, rect.left() + 4.5);
+            if x > end {
+                break;
+            }
+            let across = (x - rect.left()) / rect.width();
+            let fade = 1.0 - (across - 0.14).max(0.0) / 0.16;
+            painter.circle_filled(pos2(x, y), 1.8, dot.gamma_multiply(fade.clamp(0.0, 1.0)));
+        }
+    }
+    // The plate's foot drops to the right, so a rule that rose would run
+    // into it on a wide board. This one drops with it, a touch faster.
+    let (left, right) = (foot + 3.0, rect.width().mul_add(0.001, rect.bottom() + 3.0));
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(rect.left(), left),
+            pos2(rect.right(), right),
+            pos2(rect.right(), right + 2.5),
+            pos2(rect.left(), left + 2.5),
+        ],
+        colour::ENEMY,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// A chip slanted at both ends and turned by `degrees` about its centre, so
+/// a row of them on the plate reads as cut out and laid down by hand.
+fn tilted_chip(painter: &egui::Painter, chip: Rect, fill: Color32, degrees: f32) {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let centre = chip.center();
+    let points = paint::slanted(chip, true, true)
+        .into_iter()
+        .map(|p| {
+            let off = p - centre;
+            pos2(
+                off.x.mul_add(cos, -off.y * sin) + centre.x,
+                off.x.mul_add(sin, off.y * cos) + centre.y,
+            )
+        })
+        .collect();
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        fill,
+        egui::Stroke::NONE,
+    ));
+}
+
 /// A black chip on the red plate, in the flag's amber.
 fn worth_chip(painter: &egui::Painter, at: Pos2, flagged: usize) -> Rect {
     let text = format!("{flagged} Worth a Look");
-    let galley = painter.layout_job(overseer_ui::caps(&text, paint::label(), colour::WARN));
+    let galley = painter.layout_job(overseer_ui::caps(&text, Face::Cut.at(10.5), colour::WARN));
     let chip = Rect::from_min_size(
         pos2(at.x, at.y - 10.0),
-        vec2(space::LG.mul_add(2.0, galley.size().x), 20.0),
+        vec2(space::MD.mul_add(2.0, galley.size().x), 20.0),
     );
-    painter.add(paint::slant(chip, true, true, colour::BG));
+    tilted_chip(painter, chip, colour::BG, -2.0);
     painter.galley(
         pos2(
             chip.center().x - galley.size().x / 2.0,
@@ -183,7 +250,16 @@ fn economy(
     ink: Color32,
 ) -> f32 {
     let mut end = x;
-    for (tag, word) in [("forces", "Force"), ("saves", "Save")] {
+    let on_plate = ink == colour::BG;
+    let font = if on_plate {
+        Face::Cut.at(10.5)
+    } else {
+        paint::label()
+    };
+    for ((tag, word), turn) in [("forces", "Force"), ("saves", "Save")]
+        .into_iter()
+        .zip([1.5, -1.0])
+    {
         let who: Vec<&str> = board
             .players
             .iter()
@@ -192,25 +268,25 @@ fn economy(
             .map(|p| super::shown_name(p).0)
             .collect();
         let said = format!("{} {word}", who.len());
-        let wide = space::LG.mul_add(2.0, overseer_ui::caps_width(painter, &said, paint::label()));
+        let pad = if on_plate { space::MD } else { space::LG };
+        let wide = pad.mul_add(2.0, overseer_ui::caps_width(painter, &said, font.clone()));
         if who.is_empty() || end + wide > limit {
             continue;
         }
         // A chip like the worth-a-look count's: black on the red plate, and
         // a raised grey on your own side's dark header.
         let chip = Rect::from_min_size(pos2(end, y - 10.0), vec2(wide, 20.0));
-        let fill = if ink == colour::BG {
-            colour::BG
+        if on_plate {
+            tilted_chip(painter, chip, colour::BG, turn);
         } else {
-            colour::BG_INSET
-        };
-        painter.add(paint::slant(chip, true, true, fill));
+            painter.add(paint::slant(chip, true, true, colour::BG_INSET));
+        }
         let _said = caps_text(
             painter,
             chip.center(),
             Align2::CENTER_CENTER,
             &said,
-            paint::label(),
+            font.clone(),
             colour::TEXT_STRONG,
         );
         let id = ui.id().with(("economy", team, tag));
@@ -246,6 +322,7 @@ fn averages(
         return;
     };
     let on_plate = ink == colour::BG;
+    let value_font = Face::Heavy.at(17.0);
     let mut x = right;
     for (name, value, tint) in [
         ("Win", stats.win_rate.map(|v| format!("{v:.0}%")), ink),
@@ -257,7 +334,7 @@ fn averages(
         ),
     ] {
         let Some(value) = value else { continue };
-        let needs = overseer_ui::caps_width(painter, &value, Face::Heavy.at(17.0))
+        let needs = overseer_ui::caps_width(painter, &value, value_font.clone())
             + overseer_ui::caps_width(painter, name, paint::label())
             + space::SM;
         if x - needs < limit {
@@ -268,7 +345,7 @@ fn averages(
             pos2(x, y),
             Align2::RIGHT_CENTER,
             &value,
-            Face::Heavy.at(17.0),
+            value_font.clone(),
             tint,
         );
         let drawn = caps_text(

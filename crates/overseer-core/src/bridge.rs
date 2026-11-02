@@ -196,6 +196,10 @@ fn run<W: Fn()>(
     wake: &W,
 ) {
     let mut attempt: u32 = 0;
+    // The same failure again on every retry changes nothing on screen, so it
+    // only wakes the window the first time. A still window would otherwise
+    // draw a dozen frames a minute for a backend that isn't there.
+    let mut failing: Option<String> = None;
     loop {
         if stop.try_recv().is_ok() {
             return;
@@ -205,13 +209,19 @@ fn run<W: Fn()>(
         } else {
             Status::Connecting(format!("retry {attempt}"))
         };
-        if !post(events, wake, Event::Status(status)) {
+        let sent = if failing.is_some() {
+            events.send(Event::Status(status)).is_ok()
+        } else {
+            post(events, wake, Event::Status(status))
+        };
+        if !sent {
             return;
         }
 
         match connect(path) {
             Ok(mut socket) => {
                 attempt = 0;
+                failing = None;
                 match pump(&mut socket, events, stop, asks, wake) {
                     Pumped::Stopped => return,
                     Pumped::Rejected(why) => {
@@ -228,7 +238,14 @@ fn run<W: Fn()>(
                 }
             }
             Err(why) => {
-                if !post(events, wake, Event::Status(Status::Lost(why))) {
+                let again = failing.as_ref() == Some(&why);
+                failing = Some(why.clone());
+                let lost = Event::Status(Status::Lost(why));
+                if !(if again {
+                    events.send(lost).is_ok()
+                } else {
+                    post(events, wake, lost)
+                }) {
                     return;
                 }
             }

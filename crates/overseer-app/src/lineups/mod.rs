@@ -479,6 +479,12 @@ struct Sketch {
     /// The shapes as of the last change that finished, which the next one
     /// is measured against.
     settled: Vec<Drawing>,
+    /// Whether this is the sandbox: a blank map with the lineups hidden,
+    /// where nothing drawn is kept.
+    scratch: bool,
+    /// The agent, or the Spike, the next click puts down, in place of a
+    /// shape. Only the sandbox has these.
+    stamp: Option<String>,
 }
 
 impl Sketch {
@@ -498,6 +504,7 @@ impl Sketch {
             text: match self.tool() {
                 "text" => self.words.trim().to_owned(),
                 "textbox" => self.words.trim_end().to_owned(),
+                "stamp" => self.stamp.clone().unwrap_or_default(),
                 _ => String::new(),
             },
             points: if self.tool() == "brush" {
@@ -511,15 +518,23 @@ impl Sketch {
 
     /// The kind the next drag or click draws, as kept.
     fn tool(&self) -> &'static str {
+        if self.stamp.is_some() {
+            return "stamp";
+        }
         shapes::KINDS
             .get(self.kind)
-            .map_or("circle", |(kind, _)| kind)
+            .map_or("brush", |(kind, _)| kind)
     }
 
     /// Whether the next click places a label rather than a drag drawing a
     /// shape.
     fn lettering(&self) -> bool {
         self.tool() == "text"
+    }
+
+    /// Whether the next click puts down an agent or the Spike.
+    const fn stamping(&self) -> bool {
+        self.stamp.is_some()
     }
 
     /// Picks the shape at `index`, so the panel shows its colour, its
@@ -937,10 +952,16 @@ impl Lineups {
         }
     }
 
+    /// How many maps have drawings waiting to be kept, for a test.
+    #[cfg(test)]
+    pub(crate) fn unsaved_maps(&self) -> usize {
+        self.view.unsaved.len()
+    }
+
     /// A screen already holding `atlas` on its first map, for the snapshots:
     /// `browse` with `picked` selected, `write` a new lineup, `any` the same
-    /// for any agent, `add` one with nothing placed, `draw`, or `text` with a
-    /// label picked.
+    /// for any agent, `add` one with nothing placed, `draw`, `text` with a
+    /// label picked, or `sandbox` with Viper out and two things put down.
     #[cfg(test)]
     pub(crate) fn showing(atlas: serde_json::Value, picked: Option<&str>, mode: &str) -> Self {
         let atlas: Atlas = serde_json::from_value(atlas).unwrap_or_default();
@@ -949,13 +970,28 @@ impl Lineups {
         view.selected = picked.map(ToOwned::to_owned);
         if mode == "draw" {
             let mut sketch = view.sketch(&atlas);
-            sketch.kind = 3;
+            sketch.kind = shapes::KINDS
+                .iter()
+                .position(|(kind, _)| *kind == "cone")
+                .unwrap_or_default();
             sketch.colour = 4;
             sketch.opacity = 0.6;
             sketch.picked = sketch.shapes.iter().position(|s| s.kind == "cone");
             if let Some(cone) = sketch.picked.and_then(|i| sketch.shapes.get_mut(i)) {
                 cone.opacity = 0.6;
             }
+            view.mode = Mode::Draw(Box::new(sketch));
+        }
+        if mode == "sandbox" {
+            let mut sketch = view.sandbox(&atlas);
+            sketch.stamp = Some(SPIKE.to_owned());
+            sketch
+                .shapes
+                .push(sketch.drawing([0.42, 0.38], [0.42, 0.38]));
+            sketch.stamp = Some("Viper".to_owned());
+            sketch.colour = 6;
+            sketch.shapes.push(sketch.drawing([0.62, 0.7], [0.62, 0.7]));
+            sketch.settled = sketch.shapes.clone();
             view.mode = Mode::Draw(Box::new(sketch));
         }
         if mode == "erase" {
@@ -1572,7 +1608,7 @@ impl View {
             settled: shapes.clone(),
             history: Vec::new(),
             shapes,
-            kind: 1,
+            kind: 0,
             colour: 0,
             spread: 60.0,
             opacity: 1.0,
@@ -1584,6 +1620,18 @@ impl View {
             moving: None,
             resizing: None,
             confirm: None,
+            scratch: false,
+            stamp: None,
+        }
+    }
+
+    /// A blank sketch for the sandbox, which nothing is kept from.
+    fn sandbox(&self, atlas: &Atlas) -> Sketch {
+        Sketch {
+            shapes: Vec::new(),
+            settled: Vec::new(),
+            scratch: true,
+            ..self.sketch(atlas)
         }
     }
 
@@ -1607,6 +1655,9 @@ impl View {
 
     /// The lineups on the map on screen, for the agent picked if there is one.
     fn shown<'a>(&self, atlas: &'a Atlas) -> Vec<&'a Lineup> {
+        if matches!(&self.mode, Mode::Draw(sketch) if sketch.scratch) {
+            return Vec::new();
+        }
         let mut shown: Vec<&Lineup> = atlas
             .lineups
             .iter()

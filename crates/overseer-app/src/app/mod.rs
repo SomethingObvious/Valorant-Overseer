@@ -81,9 +81,23 @@ struct Budget {
     dropped: bool,
     /// Set by `OVERSEER_TRACE_FRAMES`, to print what each frame cost.
     trace: bool,
-    /// Set when Windows' animation effects are off, which auto takes as a
-    /// wish for no motion.
-    calm: bool,
+    /// Why the window holds still, if it does.
+    calm: Calm,
+}
+
+/// What keeps the window on Efficient besides lag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Calm {
+    #[default]
+    No,
+    /// Windows' animation effects are off, which auto takes as a wish for no
+    /// motion.
+    Animations,
+    /// The window is drawn in software, which holds Efficient whatever the
+    /// setting. A frame there costs most of a second of processor time, and
+    /// the frame timings can't see it, since the drawing happens after they
+    /// stop.
+    Software,
 }
 
 /// The window's state.
@@ -455,8 +469,9 @@ impl std::fmt::Debug for Overseer {
 
 impl Overseer {
     /// Fonts, art, style and zoom for the window, and its handle for the
-    /// clips that play inside it.
-    fn dress(cc: &CreationContext<'_>, root: &Path) {
+    /// clips that play inside it. Says whether the window is drawn in
+    /// software.
+    fn dress(cc: &CreationContext<'_>, root: &Path) -> bool {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
         overseer_ui::art::set_fetched_dir(root.join("backend").join("data").join("art"));
@@ -474,15 +489,27 @@ impl Overseer {
             .set_style_of(egui::Theme::Dark, overseer_ui::style());
         // The adapter the request really got decides whether the game keeps
         // the discrete GPU, and this is the only place it can be known.
-        if let Some(state) = cc.wgpu_render_state.as_ref() {
-            let adapter = state.adapter.get_info();
-            println!("{}", crate::probe::adapter_line(&adapter));
-            if adapter.device_type == eframe::egui_wgpu::wgpu::DeviceType::Cpu {
-                overseer_native::step_back();
+        let software = match cc.wgpu_render_state.as_ref() {
+            Some(state) => {
+                let adapter = state.adapter.get_info();
+                println!("{}", crate::probe::adapter_line(&adapter));
+                crate::probe::software(&adapter)
             }
-        } else if cc.gl.is_some() {
-            println!("adapter OpenGL through glow");
+            // Its driver's name is only an unsafe call away. With no GPU
+            // listed, though, OpenGL can only be drawing in software.
+            None if cc.gl.is_some() => {
+                println!("adapter OpenGL through glow");
+                !overseer_native::any_gpu()
+            }
+            None => false,
+        };
+        if software {
+            // Again for a renderer that turned out to be software, which the
+            // one tried last was pinned before it started.
+            overseer_native::one_core();
+            overseer_native::step_back();
         }
+        software
     }
 
     /// Starts the bridge, installs the fonts and takes the style.
@@ -491,9 +518,8 @@ impl Overseer {
         root: &Path,
         (listener, maximize, broken): (Option<std::net::TcpListener>, bool, Option<String>),
     ) -> Self {
-        Self::dress(cc, root);
-        let ctx = cc.egui_ctx.clone();
-        let bridge = Bridge::start(root, move || ctx.request_repaint());
+        let software = Self::dress(cc, root);
+        let bridge = Bridge::start(root, board_waker(&cc.egui_ctx));
         let knocked = std::sync::Arc::<std::sync::atomic::AtomicBool>::default();
         if let Some(listener) = listener {
             crate::instance::listen(
@@ -524,7 +550,13 @@ impl Overseer {
             boards: 0,
             budget: Budget {
                 trace: std::env::var_os("OVERSEER_TRACE_FRAMES").is_some(),
-                calm: !overseer_native::animations(),
+                calm: if software {
+                    Calm::Software
+                } else if overseer_native::animations() {
+                    Calm::No
+                } else {
+                    Calm::Animations
+                },
                 ..Budget::default()
             },
             opened_at: None,
@@ -673,8 +705,12 @@ impl Overseer {
                         .collect();
                     roster.sort_unstable();
                     if roster != self.roster {
+                        // An empty board has no rows to land, so the match
+                        // ending costs no frames.
+                        if !roster.is_empty() {
+                            self.roster_at = ctx.input(|i| i.time);
+                        }
                         self.roster = roster;
-                        self.roster_at = ctx.input(|i| i.time);
                         self.histories.clear();
                         // A new lobby opens on the account most worth
                         // reading, so the common case costs no input at all.
@@ -784,6 +820,10 @@ impl Overseer {
     /// Whose history to ask for: the hovered account once the pointer has
     /// rested there, or else the selection. Passing over rows asks nothing.
     fn career_subject(&self, now: f64) -> Option<&str> {
+        // Show My Last Stats is about you, with no board to select you on.
+        if self.showing_kept() {
+            return self.board.you.as_ref()?.player.puuid.as_deref();
+        }
         match self.hovered.as_deref() {
             Some(id) if now - self.hovered_at >= DWELL => Some(id),
             Some(_) => None,
@@ -942,7 +982,9 @@ impl Overseer {
                 if let Some(page) = crate::update::newer(&self.settings.updates, VERSION)
                     .and_then(crate::update::page)
                 {
-                    drop(std::process::Command::new("explorer").arg(page).spawn());
+                    drop(overseer_native::launch(
+                        std::process::Command::new("explorer").arg(page),
+                    ));
                 }
             }
             Hint::Quiet => self.quiet(ctx),
@@ -1112,8 +1154,7 @@ impl Overseer {
     /// Starts a fresh connection straight away, rather than after the old
     /// one's wait. Dropping the old one stops its thread.
     pub(super) fn reconnect(&mut self, ctx: &egui::Context) {
-        let ctx = ctx.clone();
-        self.bridge = Bridge::start(&self.root, move || ctx.request_repaint());
+        self.bridge = Bridge::start(&self.root, board_waker(ctx));
         self.stopped = None;
         self.status = Status::Connecting(String::new());
     }
@@ -1225,7 +1266,12 @@ impl Overseer {
     /// The tier in force, once auto has made up its mind.
     const fn quality(&self) -> Quality {
         match self.settings.quality {
-            Quality::Auto if self.budget.dropped || self.budget.calm => Quality::Efficient,
+            _ if matches!(self.budget.calm, Calm::Software) => Quality::Efficient,
+            Quality::Auto
+                if self.budget.dropped || matches!(self.budget.calm, Calm::Animations) =>
+            {
+                Quality::Efficient
+            }
             Quality::Auto => Quality::Rich,
             other => other,
         }
@@ -1472,6 +1518,14 @@ fn report<T, E: std::fmt::Display>(what: &str, outcome: Result<T, E>) -> Result<
 fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<> {
     let ctx = ctx.clone();
     move || ctx.request_repaint()
+}
+
+/// Like `waker`, but for a new board, which needs one frame where egui gives
+/// a plain repaint two. On Windows' software renderer each frame costs most
+/// of a second.
+fn board_waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<> {
+    let ctx = ctx.clone();
+    move || ctx.request_repaint_after(std::time::Duration::from_millis(1))
 }
 
 /// The header's connection text, which has no detail on the first attempt.

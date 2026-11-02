@@ -7,6 +7,8 @@ flag, so the panel can say why.
 
 from __future__ import annotations
 
+from typing import Any, TypedDict
+
 from common.check import check
 from vconstants import rank_from_tier
 
@@ -36,6 +38,18 @@ _SMURF_GAP_STRONG = 9
 _SMURF_FLAG_SCORE = 2
 
 
+class Evidence(TypedDict):
+    """One line of evidence in the panel: a label, the number, and what it is out of."""
+
+    label: str
+    value: str
+    note: str | None
+
+
+def _row(label: str, value: str, note: str | None = None) -> Evidence:
+    return {"label": label, "value": value, "note": note}
+
+
 def smurf_signals(
     *,
     level: int | None,
@@ -46,15 +60,16 @@ def smurf_signals(
     games: int | None,
     kd_matches: int | None = None,
     hs: float | None = None,
-) -> list[tuple[str, int]]:
-    """Every signal that fires, each with what it is worth.
+    peak_act: str | None = None,
+) -> list[tuple[str, int, list[Evidence]]]:
+    """Every signal that fires, each with what it is worth and its evidence rows.
 
     A low level is what makes an ordinary number suspicious, so most signals
     only count under one. The strong versions count at any level, hidden
     included, since an account two whole ranks under its peak is worth a look
     however old it is.
     """
-    reasons: list[tuple[str, int]] = []
+    reasons: list[tuple[str, int, list[Evidence]]] = []
     lvl = level or 0
     # Zero is a hidden level.
     fresh = lvl > 0
@@ -63,37 +78,77 @@ def smurf_signals(
     # An unranked account has no rank to measure a gap from.
     gap = peak - now if now >= 3 else 0
     matches = kd_matches or 0
+    peak_row = _row("Peak", rank_from_tier(peak)["name"], peak_act) if peak else None
     high_peak = fresh and lvl < _SMURF_LEVEL and peak >= _SMURF_PEAK_TIER
-    if high_peak:
-        reasons.append((f"Level {lvl}, peak {rank_from_tier(peak_tier)['name']}", 2))
+    if high_peak and peak_row:
+        reasons.append(
+            (
+                f"Level {lvl}, peak {peak_row['value']}",
+                2,
+                [_row("Level", str(lvl), f"under {_SMURF_LEVEL}"), peak_row],
+            )
+        )
     # Playing well below their own peak. Skipped when the peak already spoke
     # above, because two lines saying the same thing about the same account is
     # not two pieces of evidence.
-    elif gap >= _SMURF_GAP:
+    elif gap >= _SMURF_GAP and peak_row:
         weight = 2 if gap >= _SMURF_GAP_STRONG else 1
-        reasons.append((f"{gap} ranks below their peak of {rank_from_tier(peak)['name']}", weight))
-    elif fresh and lvl < _SMURF_LEVEL and peak and gap >= _SMURF_GAP_TIERS:
-        reasons.append((f"{gap} ranks below peak", 1))
+        reasons.append(
+            (
+                f"{gap} ranks below their peak of {peak_row['value']}",
+                weight,
+                [peak_row, _row("Below Peak", str(gap), "ranks")],
+            )
+        )
+    elif fresh and lvl < _SMURF_LEVEL and peak_row and gap >= _SMURF_GAP_TIERS:
+        reasons.append(
+            (
+                f"{gap} ranks below peak",
+                1,
+                [peak_row, _row("Below Peak", str(gap), f"ranks at level {lvl}")],
+            )
+        )
     # The K/D is the last few matches, not a career, and three good games is
     # something anybody has, so under five matches it is not evidence at all.
     # Five good games is a good week, so alone it takes a lopsided one.
     if kd is not None and kd >= _SMURF_KD and matches >= _SMURF_KD_MATCHES:
         low = fresh and lvl < _SMURF_KD_LEVEL
         said = f"K/D {kd} at level {lvl}" if low else f"K/D {kd} over {matches} games"
+        rows = [_row("K/D", f"{kd}", f"over {matches} games")]
+        # Under the strong line the level is the whole reason, so it shows too.
+        if low:
+            rows.append(_row("Level", str(lvl), f"under {_SMURF_KD_LEVEL}"))
         if kd >= _SMURF_KD_STRONG:
-            reasons.append((said, 2))
+            reasons.append((said, 2, rows))
         elif low:
-            reasons.append((said, 1))
+            reasons.append((said, 1, rows))
     if win_rate is not None and win_rate >= _SMURF_WR and (games or 0) >= _SMURF_WR_GAMES:
         strong = win_rate >= _SMURF_WR_STRONG and (games or 0) >= _SMURF_WR_GAMES_STRONG
+        rows = [_row("Won", f"{round(win_rate)}%", f"of {games} games")]
         if strong:
-            reasons.append((f"Won {win_rate}% of {games} games", 2))
+            reasons.append((f"Won {win_rate}% of {games} games", 2, rows))
         elif fresh and lvl < _SMURF_WR_LEVEL:
-            reasons.append((f"Won {win_rate}% of {games} games", 1))
+            rows.append(_row("Level", str(lvl), f"under {_SMURF_WR_LEVEL}"))
+            reasons.append((f"Won {win_rate}% of {games} games", 1, rows))
     # Aim counts at any level, but only as a hint, off the K/D's own sample.
     if hs is not None and hs >= _SMURF_HS and matches >= _SMURF_KD_MATCHES:
-        reasons.append((f"{round(hs)}% headshots", 1))
+        reasons.append(
+            (
+                f"{round(hs)}% headshots",
+                1,
+                [_row("Headshots", f"{round(hs)}%", f"over {matches} games")],
+            )
+        )
     return reasons
+
+
+def smurf_evidence(**signs: Any) -> list[Evidence]:
+    """Return the signals as rows for the panel, each label once, in the order they fired."""
+    seen: dict[str, Evidence] = {}
+    for _, _, rows in smurf_signals(**signs):
+        for row in rows:
+            seen.setdefault(row["label"], row)
+    return list(seen.values())
 
 
 def compute_smurf(
@@ -124,8 +179,8 @@ def compute_smurf(
     # One ordinary number on a fresh account is how a good week gets called a
     # smurf, so it is not enough alone. The reasons come back either way, and
     # one point still shows in the panel as worth a look, without the accusation.
-    score = sum(weight for _, weight in signals)
-    return score >= _SMURF_FLAG_SCORE, [text for text, _ in signals]
+    score = sum(weight for _, weight, _ in signals)
+    return score >= _SMURF_FLAG_SCORE, [text for text, _, _ in signals]
 
 
 def _self_check() -> None:
@@ -242,8 +297,44 @@ def _self_check() -> None:
         compute_smurf(level=75, peak_tier=12, rank_tier=12, kd=None, win_rate=80.0, games=9)[1]
         == []
     )
+    # The panel's rows: a young account's level and peak with the act it was
+    # reached in, then its aim, each label once.
+    rows = smurf_evidence(
+        level=28,
+        peak_tier=24,
+        rank_tier=17,
+        kd=1.6,
+        win_rate=None,
+        games=None,
+        kd_matches=18,
+        hs=36.0,
+        peak_act="V25 Act 3",
+    )
+    check(
+        [(r["label"], r["value"], r["note"]) for r in rows]
+        == [
+            ("Level", "28", "under 60"),
+            ("Peak", "Immortal 1", "V25 Act 3"),
+            ("K/D", "1.6", "over 18 games"),
+            ("Headshots", "36%", "over 18 games"),
+        ],
+        rows,
+    )
+    check(
+        smurf_evidence(level=300, peak_tier=12, rank_tier=12, kd=None, win_rate=None, games=None)
+        == []
+    )
+    # A K/D under the strong line only counts for its level, so the level shows.
+    rows = smurf_evidence(
+        level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
+    )
+    check(
+        [(r["label"], r["value"], r["note"]) for r in rows]
+        == [("K/D", "1.9", "over 5 games"), ("Level", "41", "under 80")],
+        rows,
+    )
 
-    print("smurf self-check OK (peak gaps, dominant runs, aim, thin samples)")
+    print("smurf self-check OK (peak gaps, dominant runs, aim, thin samples, evidence rows)")
 
 
 if __name__ == "__main__":

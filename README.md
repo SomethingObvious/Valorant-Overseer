@@ -1,22 +1,19 @@
 # Valorant Overseer
 
-![Valorant Overseer showing an enemy team's ranks, peak ranks, K/D and parties in a VALORANT match](docs/banner.svg)
+![Valorant Overseer, every player in your VALORANT match ranked before round one, beside the board with both teams' ranks, peak ranks and K/D](docs/assets/banner.webp)
 
 Valorant Overseer is a match tracker for VALORANT on Windows that runs entirely
-on your PC. It shows everyone in your lobby and your match with their rank,
-peak rank, K/D and win rate, who queued together, and whether an account looks
-like a smurf. It also keeps your match history, has a lineup planner with clips
-for every map, puts an overlay over the game, and can hide you from your
-friends in Riot chat. Press `?` in the app for a Help screen that says what
-each colour and mark on the board means, along with every key.
+on your PC. It shows all ten players in your match with their rank, peak rank,
+K/D and win rate, who queued together, and whether an account looks like a
+smurf. It also keeps your match history, has a lineup planner with clips for
+every map, puts an overlay over the game in agent select, and can hide you
+from your friends in Riot chat.
 
 **[Download Valorant Overseer for Windows](https://github.com/SomethingObvious/Valorant-Overseer/releases/latest)**
 
 There's more on the [Valorant Overseer site](https://somethingobvious.github.io/Valorant-Overseer/).
 
 ## Screenshots
-
-These come from the app's demo mode, so the players are made up.
 
 ![The Overseer board in a VALORANT match, with each player's rank, peak rank and K/D](docs/assets/shots/board-1600.webp)
 
@@ -27,6 +24,45 @@ These come from the app's demo mode, so the players are made up.
 ![Overseer's match history with a game opened to its scoreboard](docs/assets/shots/history-1600.webp)
 
 ![Overseer's lineup planner on Haven](docs/assets/shots/lineups-1600.webp)
+
+## What It Shows
+
+As soon as agent select opens, a small overlay sits over the game with your
+team's ranks, peaks, K/D, recent form and parties. Until someone locks in,
+their row lists the three agents they play most and the role those share, like
+Duelist, and the blacked out figure in their slot is their main. `Ctrl+Alt+O`
+shows or hides it, and it goes away once the match loads.
+
+When the match loads, the whole lobby goes on one board with each player's
+rank, peak rank and the act they reached it, K/D, headshot rate, win rate,
+level, RR and last five games. The other team sits on top under a red band,
+since they're the five you can't see in game. Each team's header counts who
+tends to force and who saves after a lost round, and a tab down the side joins
+players who queued together. Press `?` for a Help screen that explains every
+colour and mark on the board, along with every key.
+
+Rest the pointer on a player and the panel beside the board opens on their
+card, their rank with its RR, their form, the agents they main and who they
+play with most. Reads sum up their habits from recent matches, and an account
+that looks like a smurf is flagged Worth a Look with the reasons beside it.
+Notes and tags you leave on a player come back the next time you meet them.
+Under the board, the ladder puts everyone in the lobby at their rank, framed
+in their team's colour, and your session's RR keeps count of the night.
+
+Your match history shows each game's score, your K/D/A, ACS and the RR you won
+or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and
+first bloods for all ten players.
+
+The lineup planner covers every map. Drag from where you stand to where it
+lands, pick the agent and the ability, and add a clip from a YouTube link or a
+video of your own, trimmed in the app. You can draw on the map, check a
+turret's line of sight, and share a map's lineups as a code to paste in chat.
+The Sandbox under Draw hides the lineups and keeps nothing, and it has every
+agent and the Spike to put on the map while you talk a round through.
+
+Appear Offline hides you from your friends in Riot chat without changing
+anything in the game. It restarts the Riot Client and VALORANT to do it, so
+finish your match first.
 
 ## How It Works
 
@@ -41,6 +77,10 @@ asks GitHub which version is newest, in one small request with nothing about
 you in it, and Look for Updates in settings turns that off. It never downloads
 or installs anything by itself. Your notes, lineups and history stay in the
 install folder, and Your Data in settings opens it.
+
+The window takes about 175 MB of memory, draws nothing while you leave it
+alone, and asks Windows for the integrated GPU so VALORANT keeps the faster
+one.
 
 ## Installing
 
@@ -61,7 +101,9 @@ Update Clip Tools in settings updates them when a link stops downloading.
 
 ## Notice
 
-Valorant Overseer isn't made or endorsed by Riot Games.
+Valorant Overseer isn't made or endorsed by Riot Games. It never touches the
+game, but whether third-party tools are allowed is Riot's call, so it can't
+promise anything about bans either way.
 
 Working on the code? `crates/README.md` covers that.
 

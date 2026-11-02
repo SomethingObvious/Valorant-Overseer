@@ -20,8 +20,8 @@ pub(crate) enum Draw {
     Gpu,
     /// OpenGL through glow, for a GPU too old for wgpu.
     OpenGl,
-    /// Windows' software renderer, when nothing else opens. It keeps every
-    /// core busy even with nothing to draw.
+    /// Windows' software renderer, when nothing else opens. Every frame costs
+    /// it seconds of processor time, spread over as many cores as it can get.
     Software,
 }
 
@@ -41,12 +41,17 @@ pub(crate) fn low_power_wgpu(draw: Draw) -> WgpuConfiguration {
     let mut config = WgpuConfiguration::default();
     if let WgpuSetup::CreateNew(create) = &mut config.wgpu_setup {
         create.power_preference = wgpu::PowerPreference::LowPower;
-        if draw == Draw::Dx12 && wgpu::Backends::from_env().is_none() {
+        // Windows' software renderer is a DX12 adapter too.
+        if matches!(draw, Draw::Dx12 | Draw::Software) && wgpu::Backends::from_env().is_none() {
             create.instance_descriptor.backends = wgpu::Backends::DX12;
         }
-        if draw != Draw::Software {
-            create.native_adapter_selector = Some(std::sync::Arc::new(gpu));
-        }
+        // Asked for by name, since left to itself wgpu ranks a GPU that is
+        // listed but failing ahead of the software renderer.
+        create.native_adapter_selector = Some(if draw == Draw::Software {
+            std::sync::Arc::new(warp)
+        } else {
+            std::sync::Arc::new(gpu)
+        });
         let default = std::sync::Arc::clone(&create.device_descriptor);
         create.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut descriptor = default(adapter);
@@ -64,7 +69,8 @@ fn gpu(
     adapters: &[wgpu::Adapter],
     surface: Option<&wgpu::Surface<'_>>,
 ) -> Result<wgpu::Adapter, String> {
-    let rank = |kind: wgpu::DeviceType| match kind {
+    let rank = |info: &wgpu::AdapterInfo| match info.device_type {
+        _ if software(info) => None,
         wgpu::DeviceType::IntegratedGpu => Some(0),
         wgpu::DeviceType::DiscreteGpu => Some(1),
         wgpu::DeviceType::VirtualGpu | wgpu::DeviceType::Other => Some(2),
@@ -73,10 +79,33 @@ fn gpu(
     adapters
         .iter()
         .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
-        .filter_map(|a| rank(a.get_info().device_type).map(|r| (r, a)))
+        .filter_map(|a| rank(&a.get_info()).map(|r| (r, a)))
         .min_by_key(|(r, _)| *r)
         .map(|(_, a)| a.clone())
         .ok_or_else(|| "no GPU draws through wgpu".to_owned())
+}
+
+/// Windows' software renderer, and nothing else.
+fn warp(
+    adapters: &[wgpu::Adapter],
+    surface: Option<&wgpu::Surface<'_>>,
+) -> Result<wgpu::Adapter, String> {
+    adapters
+        .iter()
+        .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
+        .find(|a| software(&a.get_info()))
+        .cloned()
+        .ok_or_else(|| "the software renderer isn't offered".to_owned())
+}
+
+/// Whether an adapter draws on the processor. OpenGL over Direct3D 12 calls
+/// Windows' software renderer Other, so the name is checked as well.
+#[must_use]
+pub(crate) fn software(info: &wgpu::AdapterInfo) -> bool {
+    info.device_type == wgpu::DeviceType::Cpu
+        || ["Basic Render Driver", "llvmpipe", "SwiftShader"]
+            .iter()
+            .any(|name| info.name.contains(name))
 }
 
 /// One line describing the adapter the app ended up on, since that decides

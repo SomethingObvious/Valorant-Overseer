@@ -30,7 +30,7 @@ from common import console_logger
 from common.check import check
 from common.jsonstore import data_path
 from rounds import buy_habits, habits_of, round_stats
-from smurf import compute_smurf
+from smurf import compute_smurf, smurf_evidence
 from vconstants import GAMEMODES, ROUTING, STATES, map_name_from_path, party_color, rank_from_tier
 
 
@@ -468,6 +468,20 @@ def assemble_player(
         "party": party,
         "smurf": bool(smurf),
         "smurfReasons": smurf_reasons or [],
+        # The same signals as rows for the panel, from the same numbers.
+        "smurfEvidence": smurf_evidence(
+            level=level,
+            peak_tier=peak_tier,
+            rank_tier=rank_tier,
+            kd=kd,
+            win_rate=win_rate,
+            games=games,
+            kd_matches=len(intel.get("form") or []),
+            hs=hs,
+            peak_act=peak_act,
+        )
+        if smurf_reasons
+        else [],
         "topAgents": intel.get("topAgents") or [],
         "form": intel.get("form") or [],
         "streak": intel.get("streak"),

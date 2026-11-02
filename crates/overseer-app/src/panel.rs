@@ -530,8 +530,60 @@ fn verdict(ui: &mut Ui, player: &Player) {
         );
     }
     ui.add_space(space::SM);
-    for reason in &player.smurf_reasons {
-        reason_line(ui, reason);
+    if player.smurf_evidence.is_empty() {
+        for reason in &player.smurf_reasons {
+            reason_line(ui, reason);
+        }
+    } else {
+        evidence(ui, &player.smurf_evidence);
+    }
+}
+
+/// The flag's signals as rows, a label, the number in amber and what it is out
+/// of, so they scan like the stats under them and don't read as a sentence.
+fn evidence(ui: &mut Ui, rows: &[overseer_core::Evidence]) {
+    let label_font = Face::Display.at(size::LABEL);
+    // The values share a spine past the longest label, which is wider than
+    // the panel's usual one when a row says Headshots.
+    let spine = rows
+        .iter()
+        .map(|row| caps_width(ui.painter(), &row.label, label_font.clone()))
+        .fold(VALUE_X, |widest, w| widest.max(w + space::LG));
+    for row in rows {
+        let (rect, _response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+        if !ui.is_rect_visible(rect) {
+            continue;
+        }
+        let painter = ui.painter();
+        caps_at(
+            painter,
+            pos2(rect.left() + space::LG, rect.center().y),
+            Align2::LEFT_CENTER,
+            &row.label,
+            label_font.clone(),
+            colour::TEXT_DIM,
+        );
+        let value = caps_text(
+            painter,
+            pos2(rect.left() + space::LG + spine, rect.center().y),
+            Align2::LEFT_CENTER,
+            &row.value,
+            Face::Heavy.at(size::TITLE),
+            colour::WARN,
+        );
+        // In the card's own caps, so "over 18 games" sits with the number
+        // the way "Level 28" sits on the card, not as a sentence beside it.
+        if let Some(note) = row.note.as_deref() {
+            caps_at(
+                painter,
+                pos2(value.right() + space::MD, rect.center().y + 1.0),
+                Align2::LEFT_CENTER,
+                note,
+                Face::Display.at(size::LABEL),
+                colour::TEXT_DIM,
+            );
+        }
     }
 }
 
@@ -818,20 +870,19 @@ fn form(ui: &mut Ui, player: &Player, side: Side) {
 }
 
 /// What they play most, a row each with the agent's face, role and games,
-/// and a bar against their most played so the main reads at a glance.
+/// and a bar against their most played so the main reads at a glance. The
+/// heading names the role two of them share.
 fn mains(ui: &mut Ui, player: &Player) {
-    let mut agents: Vec<&overseer_core::TopAgent> = player
-        .top_agents
-        .iter()
-        .filter(|a| a.agent.is_some())
-        .collect();
+    let agents = player.mains();
     if agents.is_empty() {
         return;
     }
-    agents.sort_by_key(|a| std::cmp::Reverse(a.games.unwrap_or(0)));
-    subheading(ui, "Mains", colour::TEXT_DIM);
+    let heading = player
+        .main_role()
+        .map_or_else(|| "Mains".to_owned(), |role| format!("Mains: {role}"));
+    subheading(ui, &heading, colour::TEXT_DIM);
     let most = agents.first().and_then(|a| a.games).unwrap_or(0).max(1);
-    for agent in agents.into_iter().take(3) {
+    for agent in agents {
         main_row(ui, agent, most);
     }
 }

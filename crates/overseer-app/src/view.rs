@@ -137,11 +137,9 @@ fn updates(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     ui.horizontal_wrapped(|ui| {
         ui.add_space(space::XL);
         if controls::button(ui, "Open Release Page", controls::Tone::Plain, true).clicked() {
-            drop(
-                std::process::Command::new("explorer")
-                    .arg(crate::update::LATEST)
-                    .spawn(),
-            );
+            drop(overseer_native::launch(
+                std::process::Command::new("explorer").arg(crate::update::LATEST),
+            ));
         }
     });
     let have = crate::update::VERSION;
@@ -234,7 +232,9 @@ fn data(ui: &mut Ui, root: &std::path::Path) {
                 // Made first if it isn't there yet, so the button never does
                 // nothing. Explorer opens it by itself, and nothing waits on it.
                 drop(std::fs::create_dir_all(&folder));
-                drop(std::process::Command::new("explorer").arg(&folder).spawn());
+                drop(overseer_native::launch(
+                    std::process::Command::new("explorer").arg(&folder),
+                ));
             }
         }
     });
@@ -647,12 +647,11 @@ fn clip_tools(ui: &mut Ui) {
                 )
             };
             let script = format!("{} & {} & pause", get("yt-dlp.yt-dlp"), get("Gyan.FFmpeg"));
-            drop(
+            drop(overseer_native::launch(
                 std::process::Command::new("cmd")
                     .raw_arg(format!("/c {script}"))
-                    .creation_flags(0x0000_0010)
-                    .spawn(),
-            );
+                    .creation_flags(0x0000_0010),
+            ));
         }
     });
     note(
@@ -847,12 +846,7 @@ fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, why: Option<&s
         }
     }
     if let Some(why) = why {
-        note(
-            ui,
-            &format!(
-                "Switched to Efficient because {why}. Pick Full or Efficient to choose yourself."
-            ),
-        );
+        note(ui, why);
     } else {
         note(ui, &format!("Currently using {}.", quality.label()));
     }
@@ -1028,8 +1022,8 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
         2.0f32.mul_add(-space::XL, ui.available_width()).max(120.0),
     );
     let tall = galley.size().y.max(space::ROW - space::MD) + space::MD;
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), tall), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), tall), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
     if !ui.is_rect_visible(rect) {
         return;
     }

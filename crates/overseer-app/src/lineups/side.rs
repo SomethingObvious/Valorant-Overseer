@@ -62,7 +62,7 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
                     Mode::Browse => browse(ui, atlas, view, pinned),
                     Mode::Edit(_) => form::body(ui, atlas, view).or(asked),
                     Mode::Draw(_) => {
-                        sketch::show(ui, view);
+                        sketch::show(ui, atlas, view);
                         None
                     }
                 });
@@ -166,13 +166,15 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
             view.mode = Mode::Edit(Box::new(view.draft()));
             view.said = None;
         }
-        if controls::button_wide(ui, "Draw", (Tone::Plain, true), wide).clicked() {
-            view.mode = Mode::Draw(Box::new(view.sketch(atlas)));
-            view.said = None;
-        }
+        draw_menu(ui, atlas, view, wide);
         exports(ui, view, wide)
     });
     let shared = shared.inner;
+    // Add Lineup or Draw just left Browse, and the sandbox shows no lineups,
+    // so the pick check below would drop the pick for good.
+    if !matches!(view.mode, Mode::Browse) {
+        return shared;
+    }
     if here.is_empty() {
         ui.add_space(space::MD);
         for step in [
@@ -215,6 +217,29 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
     .or(shared)
 }
 
+/// Draw, as a menu: drawing kept on the map, or the sandbox, which keeps
+/// nothing and hides the lineups.
+fn draw_menu(ui: &mut Ui, atlas: &Atlas, view: &mut View, wide: f32) {
+    let button = controls::button_wide(ui, "Draw", (Tone::Plain, true), wide);
+    let _menu = egui::Popup::menu(&button)
+        .align(egui::RectAlign::BOTTOM_START)
+        .gap(4.0)
+        .frame(controls::menu_card())
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if controls::menu_row(ui, "Draw on the Map", false, 150.0).clicked() {
+                view.mode = Mode::Draw(Box::new(view.sketch(atlas)));
+                view.said = None;
+                ui.close();
+            }
+            if controls::menu_row(ui, "Sandbox", false, 150.0).clicked() {
+                view.mode = Mode::Draw(Box::new(view.sandbox(atlas)));
+                view.said = None;
+                ui.close();
+            }
+        });
+}
+
 /// Saving the map as a picture or copying it to paste into a chat, and
 /// sharing the map's lineups as a code.
 fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
@@ -253,7 +278,9 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
                 && controls::menu_row(ui, "Open Folder", false, 150.0).clicked()
             {
                 // Explorer opens the folder by itself, and nothing waits on it.
-                drop(std::process::Command::new("explorer").arg(folder).spawn());
+                drop(overseer_native::launch(
+                    std::process::Command::new("explorer").arg(folder),
+                ));
                 ui.close();
             }
         });

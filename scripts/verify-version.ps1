@@ -16,4 +16,13 @@ if ($ws -match 'PROTOCOL_VERSION\s*=\s*(\d+)') {
 }
 else { Fail "ws_server.py has no PROTOCOL_VERSION"; $bad = 1 }
 
+# Nothing builds the site, so its version is typed in by hand and goes stale
+# unless this catches it.
+$site = Get-Content (Join-Path $Root "docs\index.html") -Raw -Encoding UTF8
+$shown = @([regex]::Matches($site, '(?:"softwareVersion":\s*"|<span(?: class="ver")?>)(\d+\.\d+\.\d+)') | ForEach-Object { $_.Groups[1].Value })
+$stale = @($shown | Where-Object { $_ -ne $v })
+if ($shown.Count -eq 0) { Fail "docs/index.html shows no version"; $bad = 1 }
+elseif ($stale.Count) { Fail "docs/index.html shows $($stale[0]) in $($stale.Count) of $($shown.Count) places but VERSION is '$v'"; $bad = 1 }
+else { Ok "docs/index.html shows VERSION in all $($shown.Count) places" }
+
 exit $bad

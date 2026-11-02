@@ -63,6 +63,16 @@ pub mod motion {
     /// list, so a long one doesn't trickle.
     pub const STAGGER_MOST: f32 = 0.25;
 
+    /// How long to wait for a clock on screen that turns over in `gap` seconds.
+    ///
+    /// Never under half a second, since egui takes a wait shorter than a
+    /// frame as a repaint now, and a frame drawn in software can take a
+    /// quarter second.
+    #[must_use]
+    pub fn turn_over(gap: f64) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(gap.max(0.5))
+    }
+
     /// The one easing curve, decelerating, because easing in at both ends
     /// reads as a slideshow.
     #[must_use]
@@ -657,6 +667,9 @@ pub enum Face {
     Number,
     /// Inter, for sentences, the only text here read word by word.
     Body,
+    /// Anybody at black italic, a little narrow, the website's display face,
+    /// for the enemy's plate.
+    Cut,
 }
 
 impl Face {
@@ -667,6 +680,7 @@ impl Face {
             Self::Heavy => "overseer-heavy",
             Self::Number => "overseer-number",
             Self::Body => "overseer-body",
+            Self::Cut => "overseer-cut",
         }
     }
 
@@ -680,7 +694,7 @@ impl Face {
     /// and pins Inter's weight and optical size.
     fn tweak(self) -> egui::FontTweak {
         match self {
-            Self::Display | Self::Heavy | Self::Number => egui::FontTweak {
+            Self::Display | Self::Heavy | Self::Number | Self::Cut => egui::FontTweak {
                 y_offset_factor: 0.02,
                 ..egui::FontTweak::default()
             },
@@ -698,7 +712,7 @@ impl Face {
 }
 
 /// The font file behind each face, bound into the binary.
-const FACES: [(Face, &[u8]); 4] = [
+const FACES: [(Face, &[u8]); 5] = [
     (
         Face::Display,
         include_bytes!("../assets/BarlowCondensed-Bold.ttf"),
@@ -712,9 +726,15 @@ const FACES: [(Face, &[u8]); 4] = [
         include_bytes!("../assets/BarlowCondensed-SemiBold.ttf"),
     ),
     (Face::Body, include_bytes!("../assets/Inter[opsz,wght].ttf")),
+    // Cut from the site's variable Anybody at weight 900 and width 90 with
+    // fontTools' instancer, since egui reads one static TrueType file.
+    (
+        Face::Cut,
+        include_bytes!("../assets/Anybody-BlackItalic.ttf"),
+    ),
 ];
 
-/// Registers the four faces and their fallbacks.
+/// Registers the five faces and their fallbacks.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     // Barlow has no Cyrillic, and egui's own face looks like a caption beside
@@ -1056,7 +1076,13 @@ mod tests {
         // Fonts only exist once a frame has run, so the check runs inside one.
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let ctx = ui.ctx();
-            for face in [Face::Display, Face::Heavy, Face::Number, Face::Body] {
+            for face in [
+                Face::Display,
+                Face::Heavy,
+                Face::Number,
+                Face::Body,
+                Face::Cut,
+            ] {
                 let galley = ctx.fonts_mut(|fonts| {
                     fonts.layout_no_wrap("W".to_owned(), face.at(size::BODY), colour::TEXT)
                 });

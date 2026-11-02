@@ -118,7 +118,7 @@ fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
 }
 
 /// One agent's tile, lit when picked. True when it was clicked.
-fn tile(ui: &mut Ui, agent: &str, on: bool, main: Option<&str>) -> bool {
+pub(super) fn tile(ui: &mut Ui, agent: &str, on: bool, main: Option<&str>) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::click());
     let lit = if on || response.hovered() { 1.0 } else { 0.62 };
     face(ui.painter(), rect.shrink(2.0), agent, lit, main);

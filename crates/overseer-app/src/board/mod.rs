@@ -37,7 +37,7 @@ const NARROW: f32 = 640.0;
 
 /// How long the red slab takes to wipe off the enemy block when a lobby
 /// lands.
-const STINGER: f32 = 0.28;
+const STINGER: f32 = 1.95;
 
 /// How long the numerals take to count up, and how long after the lobby
 /// lands they start.

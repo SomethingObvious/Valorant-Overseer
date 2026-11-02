@@ -146,9 +146,16 @@ fn stand_in(painter: &egui::Painter, player: &Player, rect: Rect) {
 }
 
 /// A player's blacked-out stand-in filling `square`, its rim `rim` points up
-/// and to the right.
+/// and to the right. It is the agent they play most, as the likeliest pick,
+/// or some agent picked by their account for somebody with no history.
 pub(crate) fn figure(painter: &egui::Painter, player: &Player, square: Rect, rim: f32) {
-    let Some(portrait) = art::stand_in_portrait(painter.ctx(), seed(player)) else {
+    let main = player
+        .mains()
+        .first()
+        .and_then(|top| top.agent.as_deref())
+        .and_then(|agent| art::agent(painter.ctx(), agent));
+    let Some(portrait) = main.or_else(|| art::stand_in_portrait(painter.ctx(), seed(player)))
+    else {
         return;
     };
     for (tint, shift) in [(RIM, vec2(rim, -rim)), (SHADOW, egui::Vec2::ZERO)] {

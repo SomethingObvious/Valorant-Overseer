@@ -161,6 +161,10 @@ fn redrawn(ui: &mut Ui, atlas: &Atlas, view: &mut View, plan: &Plan) {
 /// What [`redrawn`] says about `plan`, and the key that says it was seen, or
 /// nothing when it was never redrawn, has no lineup from before, or was seen.
 fn redrawn_notice(atlas: &Atlas, view: &View, plan: &Plan) -> Option<(String, String)> {
+    // The sandbox hides the lineups the notice is about.
+    if matches!(&view.mode, Mode::Draw(sketch) if sketch.scratch) {
+        return None;
+    }
     let at = plan.changed?;
     let key = format!("{} {at:.0}", plan.name);
     if view.redraws.redraws_seen.contains(&key) || view.redraw_seen.as_ref() == Some(&key) {
@@ -741,6 +745,7 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
                 "text" => "Type the words on the right, then click where they go".to_owned(),
                 "brush" => "Drag to draw freehand, or drag a dot to move a stroke".to_owned(),
                 "erase" => "Click a drawing to erase it, or drag across several".to_owned(),
+                "stamp" => "Click the map to put it down, or drag one to move it".to_owned(),
                 _ => format!(
                     "Drag to draw a {name}, drag a dot to move one, or a square to resize it"
                 ),
@@ -792,7 +797,7 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
         return;
     };
     if sketch.tool() == "erase" {
-        if erase(sketch, square, response) {
+        if erase(sketch, square, response) && !sketch.scratch {
             view.unsaved.insert(map, sketch.shapes.clone());
         }
         return;
@@ -812,7 +817,7 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
             // A click on a grip is a resize that didn't move.
         } else if let Some(index) = dot_at(&sketch.shapes, at) {
             sketch.pick(index);
-        } else if sketch.lettering() && !sketch.words.trim().is_empty() {
+        } else if sketch.stamping() || (sketch.lettering() && !sketch.words.trim().is_empty()) {
             let spot = shapes::spot(square, at);
             sketch.shapes.push(sketch.drawing(spot, spot));
             sketch.picked = sketch.shapes.len().checked_sub(1);
@@ -833,10 +838,13 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     changed |= resize(sketch, square, now, response.drag_stopped());
     changed |= brush(painter, sketch, square, now, response.drag_stopped());
     if let (Some(start), Some(end)) = (sketch.dragging, now) {
-        shapes::paint(painter, square, &sketch.drawing(start, end));
+        // A stamp follows the pointer and goes down where it lets go, so a
+        // click that slips a little still puts one down.
+        let from = if sketch.stamping() { end } else { start };
+        shapes::paint(painter, square, &sketch.drawing(from, end));
         if response.drag_stopped() {
-            if shapes::long_enough(square, start, end) {
-                sketch.shapes.push(sketch.drawing(start, end));
+            if sketch.stamping() || shapes::long_enough(square, start, end) {
+                sketch.shapes.push(sketch.drawing(from, end));
                 sketch.picked = sketch.shapes.len().checked_sub(1);
                 changed = true;
             }
@@ -863,7 +871,9 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     );
     if changed {
         sketch.confirm = None;
-        view.unsaved.insert(map, sketch.shapes.clone());
+        if !sketch.scratch {
+            view.unsaved.insert(map, sketch.shapes.clone());
+        }
     }
 }
 
@@ -893,6 +903,19 @@ fn erase(sketch: &mut super::Sketch, square: Square, response: &Response) -> boo
 fn dots(painter: &egui::Painter, square: Square, sketch: &super::Sketch) {
     for (index, shape) in sketch.shapes.iter().enumerate() {
         let picked = sketch.picked == Some(index);
+        // A stamp is grabbed anywhere on it, so a dot would only hide the
+        // face. The picked one gets a cream edge instead.
+        if shape.kind == "stamp" {
+            if picked {
+                painter.rect_stroke(
+                    shapes::stamp(square, shapes::at(square, shape.a)).expand(4.0),
+                    0,
+                    Stroke::new(1.5, colour::TEXT_STRONG),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            continue;
+        }
         let fill = if picked {
             shapes::ink(&shape.colour)
         } else {
@@ -938,11 +961,15 @@ fn take_hold(sketch: &mut super::Sketch, square: Square, origin: Pos2) {
     }
 }
 
-/// The newest shape whose dot is under `at`.
+/// The newest shape whose dot is under `at`, or the newest stamp.
 fn dot_at(square: Square, shapes: &[overseer_core::Drawing], at: Pos2) -> Option<usize> {
-    shapes
-        .iter()
-        .rposition(|s| shapes::handle(square, s).distance(at) <= DOT + 4.0)
+    shapes.iter().rposition(|s| {
+        if s.kind == "stamp" {
+            shapes::hit(square, s, at)
+        } else {
+            shapes::handle(square, s).distance(at) <= DOT + 4.0
+        }
+    })
 }
 
 /// The picked shape and which of its grips is under `at`. Only the picked

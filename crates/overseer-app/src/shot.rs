@@ -287,6 +287,15 @@ fn duo() -> overseer_core::Party {
     }
 }
 
+/// One line of a flag's evidence, as the backend sends it.
+fn evidence(label: &str, value: &str, note: &str) -> overseer_core::Evidence {
+    overseer_core::Evidence {
+        label: label.to_owned(),
+        value: value.to_owned(),
+        note: Some(note.to_owned()),
+    }
+}
+
 /// A run of results, newest first, written the way a person would say it.
 fn form(results: &str) -> Vec<String> {
     results.chars().map(|c| c.to_string()).collect()
@@ -354,8 +363,13 @@ fn smurf_ally() -> Player {
         }],
         smurf: true,
         smurf_reasons: vec![
-            "Level 50, peak Ascendant 2".to_owned(),
+            "Level 50, peak Ascendant 3".to_owned(),
             "36% headshots".to_owned(),
+        ],
+        smurf_evidence: vec![
+            evidence("Level", "50", "under 60"),
+            evidence("Peak", "Ascendant 3", "V25 Act 3"),
+            evidence("Headshots", "36%", "over 5 games"),
         ],
         auto_tags: vec![
             overseer_core::AutoTag {
@@ -388,6 +402,9 @@ fn smurf_enemy() -> Player {
         rank: Some("Immortal 1".to_owned()),
         rank_tier: Some(24),
         rr: Some(97),
+        peak_rank: Some("Immortal 1".to_owned()),
+        peak_rank_tier: Some(24),
+        peak_act: Some("V25 Act 4".to_owned()),
         kd: Some(1.79),
         win_rate: Some(64.0),
         games: Some(261),
@@ -420,6 +437,10 @@ fn smurf_enemy() -> Player {
         }),
         smurf: true,
         smurf_reasons: vec!["Level 43, peak Immortal 1".to_owned()],
+        smurf_evidence: vec![
+            evidence("Level", "43", "under 60"),
+            evidence("Peak", "Immortal 1", "V25 Act 4"),
+        ],
         auto_tags: vec![
             overseer_core::AutoTag {
                 tag: Some("op".to_owned()),
@@ -534,7 +555,11 @@ fn draw(ui: &mut Ui, scene: &mut Scene) {
 /// tested by the same fixture. Its rating crosses between Diamond 2 and 3
 /// three times, in Riot's own numbers, and its K/D goes both ways.
 fn a_history() -> Career {
-    let raw = r#"{
+    career(A_HISTORY)
+}
+
+/// The history behind [`a_history`], in the backend's JSON.
+const A_HISTORY: &str = r#"{
         "source": "demo", "puuid": "b",
         "matches": [
           {"map":"Icebox","mode":"Competitive","result":"Victory","agent":"Chamber",
@@ -577,6 +602,9 @@ fn a_history() -> Career {
         "bonusBuys": [{"name":"Spectre","rounds":4,"share":57}],
         "bonusRounds": 7
     }"#;
+
+/// A career parsed from the backend's JSON.
+fn career(raw: &str) -> Career {
     Career::Have {
         puuid: "b".to_owned(),
         profile: Box::new(serde_json::from_str(raw).expect("the fixture is the wire format")),
@@ -660,11 +688,12 @@ fn scenes() -> Vec<(&'static str, egui::Vec2, Scene)> {
                 ..Board::default()
             }),
         ),
-        // What Show My Last Stats shows: your row alone, as your side.
+        // What Show My Last Stats shows: your row alone, as your side, with
+        // your card in the panel.
         (
             "last-stats",
-            vec2(860.0, 300.0),
-            Scene::empty().with(app::snapshot_kept(&kept())),
+            vec2(860.0, 480.0),
+            Scene::of(Some("Day#9932")).with(app::snapshot_kept(&kept())),
         ),
         // A newer release out, said at the footer's far right.
         (
@@ -888,6 +917,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
         ("lineups", "browse", full),
         ("lineup-edit", "write", full),
         ("lineup-draw", "draw", full),
+        ("lineup-sandbox", "sandbox", full),
         ("lineup-text", "text", full),
         ("lineup-any", "any", full),
         ("lineup-note", "note", full),
@@ -1107,6 +1137,33 @@ fn a_drag_on_the_map_places_a_lineup_and_moves_a_shape() {
     );
 }
 
+/// In the sandbox a click puts the agent that's out on the map, and nothing
+/// drawn there is kept.
+#[test]
+fn the_sandbox_keeps_nothing() {
+    let mut sandbox = screen("sandbox");
+    let before = sandbox.state().1.sketched().unwrap().len();
+    drag(
+        &mut sandbox,
+        egui::pos2(200.0, 300.0),
+        egui::pos2(200.0, 300.0),
+    );
+    let drawn = sandbox.state().1.sketched().unwrap();
+    assert_eq!(drawn.len(), before + 1, "a click put nothing down");
+    let last = drawn.last().unwrap();
+    assert_eq!((last.kind.as_str(), last.text.as_str()), ("stamp", "Viper"));
+    drag(
+        &mut sandbox,
+        egui::pos2(150.0, 650.0),
+        egui::pos2(230.0, 700.0),
+    );
+    assert_eq!(
+        sandbox.state().1.unsaved_maps(),
+        0,
+        "the sandbox kept a drawing"
+    );
+}
+
 /// The eraser takes off the drawing a click lands on, and a sweep takes off
 /// what it crosses, and neither moves a lineup.
 #[test]
@@ -1217,17 +1274,40 @@ fn overlay_shot() -> egui_kittest::SnapshotResults {
         },
         "overlay",
     );
-    // Agent select, where only your own team is known.
+    // Agent select, where only your own team is known, and two of them
+    // haven't picked, so their mains stand in for the agent: one with a role
+    // two of them share and one without.
     let full = sample();
+    let main = |agent: &str, games: u32, role: &str| overseer_core::TopAgent {
+        agent: Some(agent.to_owned()),
+        games: Some(games),
+        role: Some(role.to_owned()),
+    };
+    let mut players: Vec<Player> = full
+        .players
+        .iter()
+        .filter(|p| p.team == full.self_team)
+        .cloned()
+        .collect();
+    for (p, mains) in players.iter_mut().filter(|p| !p.is_self).zip([
+        [
+            main("Jett", 9, "Duelist"),
+            main("Raze", 6, "Duelist"),
+            main("Omen", 3, "Controller"),
+        ],
+        [
+            main("Sova", 7, "Initiator"),
+            main("Killjoy", 5, "Sentinel"),
+            main("Viper", 4, "Controller"),
+        ],
+    ]) {
+        p.agent = None;
+        p.top_agents = mains.to_vec();
+    }
     let ours = Board {
         state: Some("PREGAME".to_owned()),
         score: None,
-        players: full
-            .players
-            .iter()
-            .filter(|p| p.team == full.self_team)
-            .cloned()
-            .collect(),
+        players,
         ..sample()
     };
     results.extend(overlay_frame(ours, "overlay-agent-select"));

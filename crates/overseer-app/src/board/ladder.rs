@@ -13,13 +13,16 @@ use super::paint;
 
 /// How tall the ladder is: a heading, a row of faces, the strip, and a row
 /// of faces back.
-pub(crate) const HEIGHT: f32 = 96.0;
+pub(crate) const HEIGHT: f32 = 100.0;
 
 /// The highest tier Riot has. Radiant is one tier, not the first of three.
 const TOP: u32 = 27;
 
 /// The side of a face on the ladder.
 const FACE: f32 = 22.0;
+
+/// Half the width of the notch under a face, and how far it points.
+const NOTCH: f32 = 3.0;
 
 /// Where one account sits, in tiers times a hundred.
 ///
@@ -107,8 +110,8 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
         colour::TEXT_FAINT,
     );
     let strip = Rect::from_min_max(
-        pos2(rect.left(), rect.top() + 50.0),
-        pos2(rect.right(), rect.top() + 62.0),
+        pos2(rect.left(), rect.top() + 48.0),
+        pos2(rect.right(), rect.top() + 64.0),
     );
     let step = strip.width() / (last - first + 1) as f32;
     bands(&painter, first, last, strip, step);
@@ -121,7 +124,7 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
             .filter(|(p, _)| super::on(p, team))
             .copied()
             .collect();
-        marks(&painter, mine, &x_of, strip, *side == Side::Enemy);
+        marks(&painter, mine, &x_of, strip, *side);
     }
 }
 
@@ -132,8 +135,12 @@ fn marks(
     mut mine: Vec<(&Player, f32)>,
     x_of: &dyn Fn(f32) -> f32,
     strip: Rect,
-    above: bool,
+    side: Side,
 ) {
+    // Enemies above in red and allies below in green, the board's own two
+    // colours, so a face says its side before it says who it is.
+    let above = side == Side::Enemy;
+    let team = if above { colour::ENEMY } else { colour::ALLY };
     mine.sort_by(|a, b| a.1.total_cmp(&b.1));
     let wanted: Vec<f32> = mine.iter().map(|(_, rung)| x_of(*rung)).collect();
     let half = FACE / 2.0;
@@ -148,27 +155,40 @@ fn marks(
     } else {
         strip.bottom() + 8.0 + half
     };
+    // Each face is a pin: framed in its side's colour, with a notch on the
+    // edge toward the strip that the stem leaves from.
+    let toward: f32 = if above { 1.0 } else { -1.0 };
     for ((player, rung), x) in mine.iter().zip(xs) {
         let true_x = x_of(*rung).clamp(strip.left(), strip.right());
-        let (from, to) = if above {
-            (y + half, strip.top())
+        let (frame, stem) = if player.is_self {
+            (colour::YOU, colour::YOU)
         } else {
-            (strip.bottom(), y - half)
+            (team, team.gamma_multiply(0.55))
         };
-        painter.vline(true_x, from..=to, (1.0, colour::TEXT_FAINT));
+        // Past the frame, which is wider round your own face.
+        let rim = if player.is_self { 4.0 } else { 1.5 };
+        let base = toward.mul_add(half + rim, y);
+        let tip = toward.mul_add(NOTCH, base);
+        let edge = if above { strip.top() } else { strip.bottom() };
+        painter.vline(true_x, tip.min(edge)..=tip.max(edge), (1.0, stem));
         if (x - true_x).abs() > 1.0 {
-            let shelf = if above { y + half } else { y - half };
-            painter.hline(
-                true_x.min(x)..=true_x.max(x),
-                shelf,
-                (1.0, colour::TEXT_FAINT),
+            painter.hline(true_x.min(x)..=true_x.max(x), tip, (1.0, stem));
+        }
+        painter.add(Shape::convex_polygon(
+            vec![pos2(x - NOTCH, base), pos2(x + NOTCH, base), pos2(x, tip)],
+            frame,
+            egui::Stroke::NONE,
+        ));
+        let square = Rect::from_center_size(pos2(x, y), vec2(FACE, FACE));
+        face(painter, player, square);
+        if !player.is_self {
+            painter.rect_stroke(
+                square,
+                0,
+                egui::Stroke::new(1.5, frame),
+                egui::StrokeKind::Outside,
             );
         }
-        face(
-            painter,
-            player,
-            Rect::from_center_size(pos2(x, y), vec2(FACE, FACE)),
-        );
     }
 }
 
@@ -223,13 +243,18 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
     for tier in first..=last {
         let from = ((tier - first) as f32).mul_add(step, strip.left());
         let tint = rank(Some(tier));
-        let top = tint.gamma_multiply(0.85);
-        let bottom = tint.gamma_multiply(0.45);
+        let top = tint;
+        // Only a little darker at the foot, or the names in the band lose
+        // their contrast there.
+        let bottom = tint.gamma_multiply(0.9);
+        // A hairline between tiers and a clear break between ranks, so the
+        // three tiers of a rank read as one band.
+        let gap = if tier % 3 == 2 { 3.0 } else { 1.0 };
         let base = mesh.vertices.len() as u32;
         for (x, y, shade) in [
             (from, strip.top(), top),
-            (from + step - 1.0, strip.top(), top),
-            (from + step - 1.0, strip.bottom(), bottom),
+            (from + step - gap, strip.top(), top),
+            (from + step - gap, strip.bottom(), bottom),
             (from, strip.bottom(), bottom),
         ] {
             mesh.vertices.push(Vertex {
@@ -248,24 +273,24 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
         let left = ((from - first) as f32).mul_add(step, strip.left());
         let right = ((to + 1 - first) as f32).mul_add(step, strip.left());
         let name = overseer_ui::rank_group(from);
-        let font = Face::Display.at(size::MICRO);
+        let font = Face::Heavy.at(size::LABEL);
+        // Dark on every band but Immortal's red, which takes cream. Both
+        // clear 4.5:1 down to the band's foot.
+        let ink = if egui::Rgba::from(rank(Some(from))).intensity() > 0.215 {
+            colour::VOID
+        } else {
+            colour::TEXT_STRONG
+        };
         if overseer_ui::caps_width(painter, name, font.clone()) + space::XL > right - left {
             continue;
         }
-        let centre = pos2(f32::midpoint(left, right), strip.center().y + 0.5);
-        let wide = overseer_ui::caps_width(painter, name, font.clone());
-        painter.rect_filled(
-            Rect::from_center_size(centre, vec2(wide + space::SM, strip.height() - 2.0)),
-            0,
-            colour::BG.gamma_multiply(0.85),
-        );
         caps_at(
             painter,
-            centre,
-            Align2::CENTER_CENTER,
+            pos2(left + space::SM, strip.center().y + 0.5),
+            Align2::LEFT_CENTER,
             name,
             font,
-            colour::TEXT_STRONG,
+            ink,
         );
     }
 }

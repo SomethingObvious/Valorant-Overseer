@@ -30,8 +30,9 @@ There's more on the [Valorant Overseer site](https://somethingobvious.github.io/
 As soon as agent select opens, a small overlay sits over the game with your
 team's ranks, peaks, K/D, recent form and parties. Until someone locks in,
 their row lists the three agents they play most and the role those share, like
-Duelist, and the blacked out figure in their slot is their main. `Ctrl+Alt+O`
-shows or hides it, and it goes away once the match loads.
+Duelist, and the blacked out figure in their slot is their main. `Ctrl+Alt+O`,
+or any key or mouse button you set in Settings, shows or hides it, and it goes
+away once the match loads.
 
 When the match loads, the whole lobby goes on one board with each player's
 rank, peak rank and the act they reached it, K/D, headshot rate, win rate,

@@ -37,7 +37,7 @@ impl Overseer {
             "Overlay Key Unavailable",
             Hint::OverlayKey,
             colour::WARN,
-            "Windows wouldn't give Overseer the overlay's key, often because another program has it. Click to pick another.",
+            "Overseer couldn't listen for the overlay's key, so it can't come up in game. Click to see why.",
         ));
         let release = newest.is_some().then_some([
             (

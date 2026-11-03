@@ -41,9 +41,6 @@ image = { version = "0.25.10", default-features = false }
 # for a GPU too old for wgpu, which would otherwise be drawn in software at
 # every core the PC has.
 eframe = { version = "0.36.2", features = ["persistence", "glow"] }
-# One key combination the whole machine listens for, so the overlay can be
-# switched on and off while the game has the keyboard.
-global-hotkey = "0.8.0"
 # The icon beside the clock: somewhere to put the window, and proof the app
 # is running while the overlay is the only thing on screen. Default features
 # are Linux's tray implementations, and this only ever builds for Windows.

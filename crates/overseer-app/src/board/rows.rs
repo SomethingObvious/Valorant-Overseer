@@ -501,6 +501,24 @@ fn valuable(tag: &overseer_core::AutoTag) -> bool {
         .is_some_and(|k| k.eq_ignore_ascii_case("weapon") || k.eq_ignore_ascii_case("economy"))
 }
 
+/// Where a tag comes on a crowded row, first to last. The guns and the
+/// economy change how you play the next round, and the agent and rank say
+/// what they really are. The duels come next, entry before clutch and aced
+/// as the backend lists them, and then form, history and the map.
+fn tier(tag: &overseer_core::AutoTag) -> u8 {
+    let kind = tag.kind.as_deref().unwrap_or_default();
+    let is = |name: &str| kind.eq_ignore_ascii_case(name);
+    if is("weapon") || is("economy") {
+        0
+    } else if is("agent") || is("rank") {
+        1
+    } else if is("duels") {
+        2
+    } else {
+        3
+    }
+}
+
 /// The words under the name in order, with the role that leads them before
 /// a pick. Plain words have no tag.
 fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>>) {
@@ -523,7 +541,7 @@ fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>
         .iter()
         .filter(|t| t.tag.is_some())
         .collect();
-    tags.sort_by_key(|t| !valuable(t));
+    tags.sort_by_key(|t| tier(t));
     let words = role
         .into_iter()
         .chain(agent)
@@ -578,16 +596,19 @@ fn tag_line<'a>(
     let leads = leads.is_some();
     let mut x = at.x;
     let mut last_chip = false;
+    let mut first = true;
     let mut drawn_tags = Vec::new();
     for (i, (word, tag)) in words.into_iter().enumerate() {
         let chip = tag.is_some_and(valuable);
         let pad = if chip { space::MD } else { 0.0 };
         // A dot sits in the gap between two plain words. A chip's outline
         // already separates it.
-        let gap = match i {
-            0 => 0.0,
-            _ if chip || last_chip => space::MD,
-            _ => space::LG,
+        let gap = if first {
+            0.0
+        } else if chip || last_chip {
+            space::MD
+        } else {
+            space::LG
         };
         let typed = leads && i == 0;
         let wide = if typed {
@@ -595,10 +616,11 @@ fn tag_line<'a>(
         } else {
             2.0f32.mul_add(pad, caps_width(painter, word, font.clone()))
         };
+        // A shorter one further down may still fit.
         if x + gap + wide > limit {
-            break;
+            continue;
         }
-        if i > 0 && !chip && !last_chip {
+        if !first && !chip && !last_chip {
             painter.circle_filled(pos2(x + gap / 2.0, at.y + 0.5), 1.0, colour::TEXT_FAINT);
         }
         let left = x + gap;
@@ -632,6 +654,7 @@ fn tag_line<'a>(
             drawn_tags.push((area.expand2(vec2(space::SM - pad / 2.0, 1.0)), tag));
         }
         last_chip = chip;
+        first = false;
         x = area.right();
     }
     drawn_tags
@@ -1152,6 +1175,44 @@ fn brackets(painter: &egui::Painter, rect: Rect) {
             Rect::from_two_pos(corner, corner + vec2(x * thick, y * tall)),
             0,
             colour::TEXT_STRONG,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use overseer_core::{AutoTag, Player};
+
+    /// A gun or the economy comes before entry, clutch and aced however the
+    /// backend listed them, and a kind it doesn't know goes last.
+    #[test]
+    fn tags_come_in_tiers() {
+        let tag = |word: &str, kind: &str| AutoTag {
+            tag: Some(word.to_owned()),
+            kind: Some(kind.to_owned()),
+            ..AutoTag::default()
+        };
+        let player = Player {
+            agent: Some("Jett".to_owned()),
+            auto_tags: vec![
+                tag("entry", "Duels"),
+                tag("hot", "Form"),
+                tag("clutch", "Duels"),
+                tag("odin", "Weapon"),
+                tag("new", "Something"),
+                tag("deranked", "Rank"),
+                tag("saves", "Economy"),
+                tag("aced", "Duels"),
+            ],
+            ..Player::default()
+        };
+        let (_, words) = super::line_words(&player, false);
+        let order: Vec<&str> = words.iter().map(|(word, _)| *word).collect();
+        assert_eq!(
+            order,
+            [
+                "Jett", "odin", "saves", "deranked", "entry", "clutch", "aced", "hot", "new"
+            ]
         );
     }
 }

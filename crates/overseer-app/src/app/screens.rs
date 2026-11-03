@@ -109,10 +109,9 @@ impl Overseer {
         let no_hotkey = self.hotkey.as_ref().and_then(|k| k.as_ref().err()).cloned();
         let no_tray = self.tray.as_ref().err().cloned();
         let trouble = view::Trouble {
-            hotkey: no_hotkey.as_ref(),
+            hotkey: no_hotkey.as_deref(),
             tray: no_tray.as_deref(),
         };
-        let key = self.settings.overlay.key;
         let mut changed = false;
         self.offline.playing = matches!(self.board.state.as_deref(), Some("PREGAME" | "INGAME"));
         CentralPanel::default().frame(chrome).show(ui, |ui| {
@@ -132,16 +131,18 @@ impl Overseer {
         {
             self.tray = crate::tray::start(&self.root, super::waker(ui.ctx()));
         }
+        let catch = egui::Id::new(view::CATCH_KEY);
+        if ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<bool>(catch))
+            .is_some()
+            && let Some(listener) = self.listener()
+        {
+            listener.catch();
+        }
         if changed {
             settings::save(&self.root, &self.settings);
             self.tell_games_read();
-            if self.settings.overlay.key != key {
-                // Gives the old combination back once the new one is held.
-                self.hotkey = Some(crate::hotkey::start(
-                    self.settings.overlay.key,
-                    super::waker(ui.ctx()),
-                ));
-            }
         }
         let now = ui.input(|i| i.time);
         self.offline.ask(&self.bridge, now);

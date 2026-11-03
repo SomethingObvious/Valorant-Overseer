@@ -16,9 +16,9 @@ egui.workspace = true
 tray-icon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-overseer-core = { path = "../overseer-core", version = "2.3.3" }
-overseer-ui = { path = "../overseer-ui", version = "2.3.3" }
-overseer-native = { path = "../overseer-native", version = "2.3.3" }
+overseer-core = { path = "../overseer-core", version = "2.3.4" }
+overseer-ui = { path = "../overseer-ui", version = "2.3.4" }
+overseer-native = { path = "../overseer-native", version = "2.3.4" }
 # Already in the tree through winit. It hands the window's handle to
 # overseer-native, which plays clips in a child of the window.
 raw-window-handle = "0.6.2"

@@ -9,7 +9,7 @@ use crate::board;
 use crate::board::COLUMNS;
 use crate::board::grid::Column;
 use crate::controls;
-use crate::hotkey::{self, Failure};
+use crate::hotkey;
 use crate::lineups::{COLOURS, SIZES, SPEEDS, speed_name, swatch};
 use crate::offline::Offline;
 use crate::overlay::Corner;
@@ -28,8 +28,8 @@ use overseer_ui::{Face, caps_at, caps_text, caps_width, colour, size, space};
 /// promise.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Trouble<'a> {
-    /// Why there is no global hotkey.
-    pub(crate) hotkey: Option<&'a Failure>,
+    /// Why nothing listens for the overlay's button.
+    pub(crate) hotkey: Option<&'a str>,
     /// Why there is no icon beside the clock.
     pub(crate) tray: Option<&'a str>,
 }
@@ -343,15 +343,16 @@ fn keys(ui: &mut Ui) {
         "Keyboard Shortcuts",
         "These work while the Overseer window is in front.",
     );
+    let overlay = format!(
+        "Show the overlay for 15 seconds, or hide it. {} does the same in game",
+        hotkey::label()
+    );
     let keys = [
         (",", "Open or close settings"),
         ("h", "Open or close your match history"),
         ("l", "Open or close your lineups"),
         ("w", "Jump to the next player worth a look"),
-        (
-            "o",
-            "Show the overlay for 15 seconds, or hide it. Ctrl+Alt+O does the same in game",
-        ),
+        ("o", overlay.as_str()),
         ("arrows", "Select the previous or next player"),
         ("home, end", "Select the first or last player"),
         ("n", "Write a note about the selected player"),
@@ -560,45 +561,64 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
             changed = true;
         }
     }
-    let keys: Vec<(f32, String)> = hotkey::Key::ALL
-        .iter()
-        .enumerate()
-        .map(|(at, key)| (at as f32, key.label().to_owned()))
-        .collect();
-    let mut picked = hotkey::Key::ALL
-        .iter()
-        .position(|&k| k == settings.overlay.key)
-        .unwrap_or(0) as f32;
-    if choice(ui, "Key", &keys, &mut picked)
-        && let Some(&key) = hotkey::Key::ALL.get(picked as usize)
-    {
-        settings.overlay.key = key;
-        changed = true;
-    }
-    let label = settings.overlay.key.label();
-    match trouble.hotkey {
-        None => note(
-            ui,
-            &format!(
-                "Press {label} in game to turn the overlay on or off. It only shows when VALORANT runs in windowed fullscreen, not fullscreen."
-            ),
-        ),
-        Some(Failure::Taken) => warning(
-            ui,
-            &format!(
-                "Another program is using {label}. Pick another key above and it works straight away."
-            ),
-        ),
-        Some(Failure::Refused(_)) => warning(
-            ui,
-            &format!(
-                "Windows couldn't set up {label}. Pick another key above, or restart Overseer to try again."
-            ),
-        ),
-    }
+    overlay_key(ui, &settings.overlay.key.label(), trouble.hotkey);
 
     tray(ui, trouble.tray.is_some());
     changed
+}
+
+/// The overlay's key, `label`, as a button that waits for the next press,
+/// and what it does or why it can't, `failed`.
+fn overlay_key(ui: &mut Ui, label: &str, failed: Option<&str>) {
+    let catching = hotkey::catching();
+    ui.horizontal(|ui| {
+        ui.set_height(space::ROW + space::SM);
+        ui.add_space(space::XL);
+        let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
+        let _drawn = caps_text(
+            ui.painter(),
+            pos2(rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            "Key",
+            Face::Heavy.at(size::BODY),
+            colour::TEXT,
+        );
+        let (text, tone) = if catching {
+            ("Press a Key or Button", controls::Tone::Primary)
+        } else {
+            (label, controls::Tone::Plain)
+        };
+        let enabled = failed.is_none();
+        let picked = controls::button(ui, text, tone, enabled)
+            .on_hover_text("Click, then press the key or mouse button you want");
+        if picked.clicked() {
+            // Space or Enter on a focused button would click it again.
+            picked.surrender_focus();
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new(CATCH_KEY), true));
+        }
+    });
+    match failed {
+        None if catching => note(
+            ui,
+            &format!(
+                "Press the key or mouse button for the overlay, holding Ctrl, Alt or Shift with it for a combination. Esc keeps {label}."
+            ),
+        ),
+        None => note(
+            ui,
+            &format!(
+                "Press {label} in game to turn the overlay on or off. Click it to pick another key or mouse button (any but the left one), and it keeps doing its usual job in VALORANT too. The overlay only shows when VALORANT runs in windowed fullscreen, not fullscreen."
+            ),
+        ),
+        Some(why) => warning(
+            ui,
+            &format!(
+                "Overseer couldn't listen for the overlay's key ({}), so it can't come up in game. Restarting Overseer tries again.",
+                why.trim_end_matches('.')
+            ),
+        ),
+    }
 }
 
 /// The tray's section: how the icon works, or that it failed, with a way
@@ -628,6 +648,10 @@ fn tray(ui: &mut Ui, failed: bool) {
 /// Set when Try Again is pressed under a tray icon that failed, for the app
 /// to make it again on its own thread.
 pub(crate) const TRAY_AGAIN: &str = "tray-again";
+
+/// Set when the overlay's key is clicked, for the app to bind the next
+/// press.
+pub(crate) const CATCH_KEY: &str = "catch-key";
 
 /// A button that installs yt-dlp and `FFmpeg`, or updates them, with winget in
 /// a console of its own so the progress shows. Nothing runs until it's

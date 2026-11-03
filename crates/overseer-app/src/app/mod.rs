@@ -16,7 +16,7 @@ use crate::board::{self, Side};
 use crate::career::Career;
 use crate::header;
 use crate::history::History;
-use crate::hotkey::{self, Failure, Hotkey};
+use crate::hotkey::{self, Listener};
 use crate::lineups::Lineups;
 use crate::notes::{self, Notes};
 use crate::offline::Offline;
@@ -141,9 +141,13 @@ pub(crate) struct Overseer {
     sort: Sort,
     /// What you have written about the accounts you have met.
     notes: Notes,
-    /// The one key combination the whole machine listens for, or why not.
-    /// None where it was never asked for, as in the tests.
-    hotkey: Option<Result<Hotkey, Failure>>,
+    /// What listens for the overlay's button while the game is in front, or
+    /// why nothing can. None where it was never asked for, as in the tests.
+    hotkey: Option<Result<Listener, String>>,
+    /// Until when the window's own shortcuts are left alone, after a press
+    /// was caught for the overlay's button, since the window sees that
+    /// press too and might see it after the catch is over.
+    keys_quiet_until: f64,
     /// The icon beside the clock, or why there isn't one.
     tray: Result<Tray, String>,
     /// The selected player's history, or where the request for it has got to.
@@ -566,9 +570,13 @@ impl Overseer {
             empty: Empty::Plate,
             sort: Sort::default(),
             notes: notes::load(root),
-            // Both own a hidden window whose messages go to the thread that
+            hotkey: Some(report(
+                "overlay key",
+                hotkey::start(key, waker(&cc.egui_ctx)),
+            )),
+            keys_quiet_until: 0.0,
+            // It owns a hidden window whose messages go to the thread that
             // made it, and this is the message loop's thread.
-            hotkey: Some(report("hotkey", hotkey::start(key, waker(&cc.egui_ctx)))),
             tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
             career: Career::default(),
             history: History::default(),
@@ -627,10 +635,7 @@ impl Overseer {
         // Pressed mid-round, so it only switches the overlay. Showing or
         // focusing the window would take the focus from the game, and the
         // tray is how the window comes back.
-        let pressed = self.presses();
-        if pressed % 2 == 1 {
-            self.flip_overlay(ctx.input(|i| i.time));
-        }
+        self.overlay_key(ctx.input(|i| i.time));
         self.reach(ctx);
         for event in self.bridge.drain() {
             match event {
@@ -836,6 +841,9 @@ impl Overseer {
         // Only Escape works while a text box has the keyboard, so typing a
         // name never changes screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
+        if hotkey::catching() || ui.input(|i| i.time) < self.keys_quiet_until {
+            return;
+        }
         let note = ui.input(|i| i.key_pressed(Key::N));
         let (up, down, settings, history, lineups, escape, overlay, worth, copy) = ui.input(|i| {
             (
@@ -1042,12 +1050,31 @@ impl Overseer {
         );
     }
 
-    /// How many times the overlay's key was pressed since the last look.
-    fn presses(&self) -> usize {
-        self.hotkey
-            .as_ref()
-            .and_then(|k| k.as_ref().ok())
-            .map_or(0, |k| k.presses().count())
+    /// The overlay's listener, when it started.
+    fn listener(&self) -> Option<&Listener> {
+        self.hotkey.as_ref().and_then(|k| k.as_ref().ok())
+    }
+
+    /// Acts on what the overlay's listener heard at `now`.
+    fn overlay_key(&mut self, now: f64) {
+        let heard = self.listener().map(Listener::heard).unwrap_or_default();
+        if heard.presses % 2 == 1 {
+            self.flip_overlay(now);
+        }
+        if heard.done {
+            self.keys_quiet_until = now + 0.3;
+        }
+        if let Some(caught) = heard.caught {
+            self.settings.overlay.key = caught;
+            settings::save(&self.root, &self.settings);
+        }
+        // Waiting for a press is something Settings shows, so it ends with it.
+        if hotkey::catching()
+            && self.screen != Screen::Settings
+            && let Some(listener) = self.listener()
+        {
+            listener.stop();
+        }
     }
 
     /// Opens the note box on the selected player, which lives in the detail
@@ -1576,9 +1603,10 @@ pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overse
         empty: Empty::Plate,
         sort: Sort::default(),
         notes: Notes::default(),
-        // Neither in a test: one would take a key combination off the
-        // machine and the other would put an icon beside the clock.
+        // Neither in a test: one would read the keyboard and the other
+        // would put an icon beside the clock.
         hotkey: None,
+        keys_quiet_until: 0.0,
         tray: Err(String::new()),
         career: Career::default(),
         history: History::default(),

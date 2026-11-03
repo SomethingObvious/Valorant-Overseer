@@ -197,9 +197,9 @@ pub(crate) struct OverlaySettings {
     pub(crate) auto: bool,
     /// Which corner it parks in.
     pub(crate) corner: Corner,
-    /// The key that shows and hides it in game.
+    /// The key or mouse button that shows and hides it in game.
     #[serde(rename = "overlay_key")]
-    pub(crate) key: crate::hotkey::Key,
+    pub(crate) key: crate::hotkey::Binding,
 }
 
 impl Default for OverlaySettings {
@@ -209,7 +209,7 @@ impl Default for OverlaySettings {
         Self {
             auto: true,
             corner: Corner::default(),
-            key: crate::hotkey::Key::default(),
+            key: crate::hotkey::Binding::DEFAULT,
         }
     }
 }

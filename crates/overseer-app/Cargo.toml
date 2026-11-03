@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
-global-hotkey.workspace = true
 tray-icon.workspace = true
 serde.workspace = true
 serde_json.workspace = true

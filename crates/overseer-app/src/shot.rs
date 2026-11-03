@@ -1428,7 +1428,7 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
                         // wrapping are in the picture.
                         (
                             view::Trouble {
-                                hotkey: Some(&crate::hotkey::Failure::Taken),
+                                hotkey: Some("Access is denied."),
                                 tray: Some("assets/overseer.ico: not found"),
                             },
                             std::path::Path::new("."),

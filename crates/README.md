@@ -84,9 +84,10 @@ Nothing that acts on the game, at any point. No instalock, no dodging, no
 queue automation, no input injection, no reading another process's memory.
 The overlay is an ordinary always-on-top window with no hooks and no graphics
 injection. It shows over VALORANT's default borderless mode, and nothing can
-draw over exclusive fullscreen. The Ctrl+Alt+O hotkey that switches it is
-plain `RegisterHotKey`, the API every screenshot tool uses. The window doesn't
-go online either. Its art is in the binary, and the only connections it makes
+draw over exclusive fullscreen. The key that switches it, Ctrl+Alt+O or any
+key or mouse button picked in Settings, is read through Windows' raw input,
+which sees a press without taking it from the game. The window doesn't go
+online either. Its art is in the binary, and the only connections it makes
 are to the bridge and, at start-up, to an earlier copy of itself, both on
 127.0.0.1. This is the rule the whole project is built around, and the window
 doesn't relax it.

@@ -268,13 +268,17 @@ class Places:
     def __init__(self, entry: dict[str, Any]) -> None:
         """Index one map's callouts."""
         callouts = [
-            (str(c.get("superRegionName") or ""), at)
+            (str(c.get("superRegionName") or ""), str(c.get("regionName") or ""), at)
             for c in entry.get("callouts") or []
             if isinstance(c, dict) and (at := _xy(c.get("location"))) is not None
         ]
+        # The side's region holds more than its spawn, and on Fracture and
+        # Pearl another of its callouts comes first, so the spawn is asked
+        # for by name.
         self.spawn = {
-            "attack": next((at for s, at in callouts if s == "Attacker Side"), None),
-            "defense": next((at for s, at in callouts if s == "Defender Side"), None),
+            side: next((at for s, r, at in callouts if s == region and r == "Spawn"), None)
+            or next((at for s, _, at in callouts if s == region), None)
+            for side, region in (("attack", "Attacker Side"), ("defense", "Defender Side"))
         }
 
     def to_spawn(self, side: str | None, at: tuple[float, float]) -> float | None:
@@ -1975,7 +1979,7 @@ HABIT_WORDS = {
         "Tends to die early in rounds",
     ),
     "plant_rate": (
-        "Carries and plants the spike",
+        "Plants the spike",
         "Leaves planting to others",
         "Tends to plant the spike",
         "Tends to leave planting to others",
@@ -2106,15 +2110,15 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     pct = float(pace.get("pct") or 0.5)
     n = int(pace["count"])
     if pct >= TAG_HI:
-        word, where = "Aggressive", f"earlier into fights than {pct:.0%} of peers"
+        word, where = "Aggressive", f"more aggressive than {pct:.0%} of peers"
     elif pct <= TAG_LO:
-        word, where = "Passive", f"later into fights than {1 - pct:.0%} of peers"
+        word, where = "Passive", f"more passive than {1 - pct:.0%} of peers"
     else:
         word = "Even pace"
         where = (
-            f"earlier into fights than {pct:.0%} of peers"
+            f"more aggressive than {pct:.0%} of peers"
             if pct >= 0.5
-            else f"later into fights than {1 - pct:.0%} of peers"
+            else f"more passive than {1 - pct:.0%} of peers"
         )
     return {
         "headline": word,
@@ -2493,6 +2497,23 @@ def _self_check() -> None:
     places = Places(
         {"callouts": [{"superRegionName": "Attacker Side", "location": {"x": 0, "y": 0}}]}
     )
+    fracture = Places(
+        {
+            "callouts": [
+                {
+                    "superRegionName": "Attacker Side",
+                    "regionName": "Bridge",
+                    "location": {"x": 9, "y": 9},
+                },
+                {
+                    "superRegionName": "Attacker Side",
+                    "regionName": "Spawn",
+                    "location": {"x": 1, "y": 1},
+                },
+            ]
+        }
+    )
+    check(fracture.spawn["attack"] == (1.0, 1.0), f"spawn picked by name: {fracture.spawn}")
     names = {"gun-1": "Ghost", "gun-x": None}
 
     def read_fixture() -> dict[str, Any]:

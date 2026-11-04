@@ -166,7 +166,8 @@ def set_depth(games: int, days: int = 30, keep: int = 14) -> None:
 
 # Drop unused fields and duplicate top-level kills, and share repeated strings.
 # Scout needs playerLocations and victimLocation on each round's kills for
-# spacing, spawn distance and gun range, so those stay in the bounded cache.
+# spacing, spawn distance and gun range, so they stay on disk. In memory they
+# go once the match is measured (see _remember), as they double its size.
 _UNREAD = {
     "match": ("kills", "bots", "coaches"),
     "round": (
@@ -441,6 +442,45 @@ def _standard(md: Any, puuid: str) -> bool:
 
 def _fallback_name(puuid: str) -> str:
     return f"Player-{(puuid or '????')[:4].upper()}"
+
+
+def _unplaced(md: dict[str, Any]) -> dict[str, Any]:
+    """Return a slimmed match detail without the kill positions only the brief reads."""
+
+    def kill(k: Any) -> Any:
+        if not isinstance(k, dict):
+            return k
+        return {f: v for f, v in k.items() if f not in ("playerLocations", "victimLocation")}
+
+    def stats(ps: Any) -> Any:
+        if not isinstance(ps, dict) or not ps.get("kills"):
+            return ps
+        return {**ps, "kills": [kill(k) for k in ps["kills"]]}
+
+    def played(rr: Any) -> Any:
+        if not isinstance(rr, dict):
+            return rr
+        return {**rr, "playerStats": [stats(ps) for ps in rr.get("playerStats") or []]}
+
+    if "roundResults" not in md:
+        return md
+    return {**md, "roundResults": [played(rr) for rr in md["roundResults"] or []]}
+
+
+def _remember(mid: str, md: dict[str, Any]) -> dict[str, Any]:
+    """Measure every player in a slimmed match, then cache it without kill positions.
+
+    Their reads are kept by match and player, so whoever's history brings
+    the match up next finds theirs measured, and the cache holds the match
+    at about half the size. Returns what was cached.
+    """
+    for player in md.get("players") or []:
+        sub = str(player.get("subject") or "") if isinstance(player, dict) else ""
+        if sub and _standard(md, sub):
+            _measure(mid, md, sub)
+    lean = _unplaced(md)
+    _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, lean)
+    return lean
 
 
 def _measure(mid: str, md: dict[str, Any], puuid: str) -> dict[str, Any] | None:
@@ -1100,9 +1140,8 @@ class LiveMatch:
                     return hit
                 kept = _kept_detail(mid)
                 if kept is not None:
-                    _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, kept)
                     _DETAIL_READ.add(mid)
-                    return kept
+                    return _remember(mid, kept)
                 md = self.auth.pd_get(
                     f"/match-details/v1/matches/{mid}",
                     retries=0 if background else 3,
@@ -1112,11 +1151,10 @@ class LiveMatch:
                     return "throttled"
                 if isinstance(md, dict) and "players" in md:
                     md = _slim(md)
-                    _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
-                    _DETAIL_READ.add(mid)
                     if puuid in _PARTY:
                         _keep_detail(mid, md)
-                    return md
+                    _DETAIL_READ.add(mid)
+                    return _remember(mid, md)
                 # A detail that failed to load, counted like a throttled one.
                 return "throttled"
 
@@ -1761,8 +1799,7 @@ class LiveMatch:
                 if md is None:
                     md = self.auth.pd_get(f"/match-details/v1/matches/{mid}")
                     if isinstance(md, dict) and "players" in md:
-                        md = _slim(md)
-                        _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, md)
+                        md = _remember(mid, _slim(md))
                         _DETAIL_READ.add(mid)
                 return self.career_match(md, puuid, mid)
             except Exception as e:
@@ -2364,20 +2401,20 @@ def _self_check() -> None:
             _READS_CACHE.clear()
             flaky.history = ["scout1", missing, "scout3"]
             flaky.broken = {"unavailable"}
-            scout_result = shaky.kd_hs("me", count=3)
+            brief_result = shaky.kd_hs("me", count=3)
             check(
-                [r["matchId"] for r in (scout_result[4] or {})["reads"]] == ["scout1", "scout3"],
-                scout_result,
+                [r["matchId"] for r in (brief_result[4] or {})["reads"]] == ["scout1", "scout3"],
+                brief_result,
             )
             check(f"{missing}:me" not in _READS_CACHE, _READS_CACHE)
             check(_READS_CACHE["scout3:me"] == {"matchId": "scout3"}, _READS_CACHE)
             # Retrying a failed match must measure it under its own id.
             if missing == "unavailable":
                 flaky.broken.clear()
-                scout_result = shaky.kd_hs("me", count=3)
+                brief_result = shaky.kd_hs("me", count=3)
                 check(
-                    [r["matchId"] for r in (scout_result[4] or {})["reads"]] == flaky.history,
-                    scout_result,
+                    [r["matchId"] for r in (brief_result[4] or {})["reads"]] == flaky.history,
+                    brief_result,
                 )
         _MIDS_CACHE.clear()
         _KD_CACHE.clear()
@@ -2385,8 +2422,8 @@ def _self_check() -> None:
         _READS_CACHE.clear()
         flaky.history = [f"limit{i}" for i in range(30)]
         flaky.calls.clear()
-        scout_result = shaky.kd_hs("me", count=999)
-        check(len((scout_result[4] or {})["reads"]) == 20, scout_result)
+        brief_result = shaky.kd_hs("me", count=999)
+        check(len((brief_result[4] or {})["reads"]) == 20, brief_result)
         fetched = [c for c in flaky.calls if c.startswith("/match-details")]
         check(len(fetched) == 20, flaky.calls)
         shaky.kd_hs("me", count=999)
@@ -2660,7 +2697,7 @@ def _self_check() -> None:
     )
 
     _check_kept_limits()
-    _check_scout_positions()
+    _check_brief_positions()
 
     print(
         "live_match self-check OK (sides, career cached, party games kept, "
@@ -2668,7 +2705,7 @@ def _self_check() -> None:
     )
 
 
-def _check_scout_positions() -> None:
+def _check_brief_positions() -> None:
     """Scout's spatial measurements survive both memory and disk caching."""
     import tempfile
     from unittest import mock
@@ -2727,6 +2764,22 @@ def _check_scout_positions() -> None:
     with tempfile.TemporaryDirectory() as tmp, mock.patch(f"{__name__}._KEPT_DIR", Path(tmp)):
         _keep_detail(mid, slimmed)
         check(read(_kept_detail(mid) or {}) == expected, "disk cache changed Scout's measurements")
+    _READS_CACHE.clear()
+    whole = brief.match_reads
+
+    def offline(detail: dict[str, Any], who: str) -> dict[str, Any] | None:
+        return whole(
+            detail, who, places=places, weapon_name=lambda _: None, map_name=lambda _: "Fixture"
+        )
+
+    with mock.patch.object(brief, "match_reads", side_effect=offline):
+        lean = _remember(mid, {**slimmed, "teams": [{"teamId": "Red", "won": True}]})
+    kills = [k for rr in lean["roundResults"] for ps in rr["playerStats"] for k in ps["kills"]]
+    check(kills and not any("playerLocations" in k for k in kills), "cached without positions")
+    check(_MATCH_DETAIL_CACHE.pop(mid) is lean, "the lean copy is what is cached")
+    check(_READS_CACHE[f"{mid}:p0"] == expected, "measured before the positions went")
+    check(slimmed["roundResults"][0]["playerStats"][0]["kills"][0]["playerLocations"], "kept whole")
+    _READS_CACHE.clear()
 
 
 def _check_kept_limits() -> None:

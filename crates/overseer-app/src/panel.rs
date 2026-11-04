@@ -70,12 +70,14 @@ fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: boo
         verdict(ui, player);
     }
     reads(ui, player, side);
-    brief(ui, player);
     let save = notes(ui, player, store, side);
     ranks(ui, player, side, still);
     form(ui, player, side);
     mains(ui, player);
     numbers(ui, player, side);
+    // Under the rank and the numbers, which are what a glance at the panel
+    // is for. Scout is four curves tall and would push them out of sight.
+    brief(ui, player);
     group(ui, player);
     met(ui, player);
     save
@@ -303,6 +305,36 @@ fn invite(ui: &mut Ui) -> egui::Response {
         );
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A faint line like Write a Note's that opens what is under it, and says
+/// whether it is open. The state is kept under `id` for the session.
+fn disclosure(ui: &mut Ui, id: egui::Id, label: &str) -> bool {
+    let open = ui.data(|store| store.get_temp::<bool>(id)).unwrap_or(false);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::click());
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, label));
+    if ui.is_rect_visible(rect) {
+        let tint = if response.hovered() {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT_DIM
+        };
+        ui.painter().text(
+            pos2(rect.left() + space::LG, rect.center().y),
+            Align2::LEFT_CENTER,
+            format!("{} {label}", if open { "-" } else { "+" }),
+            Face::Body.at(size::MICRO),
+            tint,
+        );
+    }
+    let open = open
+        ^ response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked();
+    ui.data_mut(|store| store.insert_temp(id, open));
+    open
 }
 
 /// Grey placeholder text, in the panel's own face.
@@ -836,6 +868,7 @@ fn brief(ui: &mut Ui, player: &Player) {
             line(ui, word, colour::TEXT_STRONG, size::TITLE);
         }
         placed(ui, tag);
+        ui.add_space(space::MD);
     }
     // What they tend to do, each on the curve of their peers: the centre
     // of the card, every readable player.
@@ -845,11 +878,9 @@ fn brief(ui: &mut Ui, player: &Player) {
         }
         placed(ui, habit);
         if let Some(suggest) = habit.suggest.as_deref().filter(|s| !s.is_empty()) {
-            line(ui, suggest, colour::TEXT, size::MICRO);
+            line(ui, suggest, colour::TEXT, size::LABEL);
         }
-    }
-    if !scout.habits.is_empty() {
-        ui.add_space(space::SM);
+        ui.add_space(space::MD);
     }
     // One tactical callout: a weapon or buy habit, the words, the figures,
     // what to do.
@@ -870,50 +901,46 @@ fn brief(ui: &mut Ui, player: &Player) {
             gun_row(ui, &buy.items);
         }
         if let Some(armor) = buy.armor.as_deref() {
-            line(ui, armor, colour::TEXT, size::MICRO + 1.0);
+            line(ui, armor, colour::TEXT, size::LABEL);
         }
         ui.add_space(space::SM);
     }
     // Spacing against peers, quieter, as the secondary line.
     if let Some(style) = &scout.style {
-        finding(ui, style, colour::TEXT, size::MICRO + 1.0);
+        finding(ui, style, colour::TEXT, size::LABEL);
     }
     if let Some(empty) = scout.empty.as_deref().filter(|s| !s.is_empty()) {
-        line(ui, empty, colour::TEXT_DIM, size::MICRO + 1.0);
+        line(ui, empty, colour::TEXT_DIM, size::LABEL);
     }
-    // Every line the brief composed, behind a disclosure.
+    // Every line the brief composed, shut until asked for. Not "History",
+    // which is the match history's name everywhere else in the window.
     if !player.brief.is_empty() {
-        let salt = player.puuid.as_deref().unwrap_or("");
-        ui.push_id(("history", salt), |ui| {
-            egui::CollapsingHeader::new(
-                RichText::new("History")
-                    .size(size::MICRO)
-                    .color(colour::TEXT_DIM),
-            )
-            .show(ui, |ui| {
-                for text in player.brief.iter().filter_map(|l| l.text.as_deref()) {
-                    line(ui, text, colour::TEXT_DIM, size::MICRO);
-                }
-            });
-        });
+        let id = ui
+            .id()
+            .with(("all-figures", player.puuid.as_deref().unwrap_or("")));
+        if disclosure(ui, id, "All Figures") {
+            for text in player.brief.iter().filter_map(|l| l.text.as_deref()) {
+                line(ui, text, colour::TEXT_DIM, size::MICRO);
+            }
+        }
     }
     if let Some(footer) = scout.footer.as_deref() {
         line(ui, footer, colour::TEXT_FAINT, size::MICRO);
     }
 }
 
-/// The curve of peers with the player's mark on it and the number
-/// printed on the chart; the evidence alone when there is no position.
+/// The curve of peers with the player's mark on it and the number printed
+/// on the chart, then the figures behind it, which a percentile alone hides.
 fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
     let evidence = found.evidence.as_deref().unwrap_or("");
     match found.pos {
         Some(pos) => {
             // The real shape of peers when the backend has one, else a normal.
-            let (shape, lo, hi) = if found.curve.is_empty() {
-                (normal_shape(), -BELL_SPAN, BELL_SPAN)
+            let (shape, lo, hi): (&[f32], f32, f32) = if found.curve.is_empty() {
+                (NORMAL_SHAPE.as_slice(), -BELL_SPAN, BELL_SPAN)
             } else {
                 (
-                    found.curve.clone(),
+                    found.curve.as_slice(),
                     found.lo.unwrap_or(-BELL_SPAN),
                     found.hi.unwrap_or(BELL_SPAN),
                 )
@@ -929,7 +956,7 @@ fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
             bell(
                 ui,
                 &Bell {
-                    shape: &shape,
+                    shape,
                     lo,
                     hi,
                     pos,
@@ -937,8 +964,12 @@ fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
                     at_middle: found.peers.as_deref().unwrap_or(""),
                     left_word: found.left.as_deref().unwrap_or(""),
                     right_word: found.right.as_deref().unwrap_or(""),
+                    named: found.headline.as_deref().unwrap_or(""),
                 },
             );
+            if !evidence.is_empty() {
+                line(ui, evidence, colour::TEXT_DIM, size::MICRO);
+            }
         }
         None if !evidence.is_empty() => line(ui, evidence, colour::TEXT_DIM, size::MICRO),
         None => {}
@@ -948,9 +979,9 @@ fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
 /// How narrow at least and how tall the curve of peers is drawn, and the
 /// room above it for the number and under it for the words at its ends.
 const BELL_MIN_W: f32 = 48.0;
-const BELL_H: f32 = 26.0;
-const BELL_ENDS: f32 = 14.0;
-const BELL_TOP: f32 = 15.0;
+const BELL_H: f32 = 24.0;
+const BELL_ENDS: f32 = 16.0;
+const BELL_TOP: f32 = 16.0;
 /// How many standard deviations a normal curve spans each way.
 const BELL_SPAN: f32 = 2.6;
 
@@ -968,6 +999,8 @@ struct Bell<'a> {
     at_middle: &'a str,
     left_word: &'a str,
     right_word: &'a str,
+    /// What the curve is of, for a screen reader, which cannot see it.
+    named: &'a str,
 }
 
 /// Where a curve sits on the panel.
@@ -986,14 +1019,17 @@ impl Frame {
 }
 
 /// A normal curve, for a read without a measured shape.
-fn normal_shape() -> Vec<f32> {
-    (0..=48u8)
+static NORMAL_SHAPE: std::sync::LazyLock<Vec<f32>> = std::sync::LazyLock::new(|| {
+    (0..=BELL_SAMPLES)
         .map(|i| {
-            let z = (f32::from(i) / 48.0).mul_add(2.0 * BELL_SPAN, -BELL_SPAN);
+            let z = (f32::from(i) / f32::from(BELL_SAMPLES)).mul_add(2.0 * BELL_SPAN, -BELL_SPAN);
             (-(z * z) / 2.0).exp()
         })
         .collect()
-}
+});
+
+/// How many straight pieces a curve is drawn in.
+const BELL_SAMPLES: u8 = 48;
 
 /// The curve's height a share `t` of the way along it, the samples
 /// joined by straight lines, as a share of `peak`.
@@ -1017,8 +1053,18 @@ fn shape_at(shape: &[f32], peak: f32, t: f32) -> f32 {
 fn bell(ui: &mut Ui, bell: &Bell<'_>) {
     let width = ui.available_width();
     let frame_width = 2.0f32.mul_add(-space::LG, width).max(BELL_MIN_W);
-    let height = BELL_TOP + BELL_H + BELL_ENDS + space::SM;
-    let (rect, _response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let height = BELL_TOP + BELL_H + BELL_ENDS;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            true,
+            format!(
+                "{}: {}, between {} and {}",
+                bell.named, bell.at_mark, bell.left_word, bell.right_word
+            ),
+        )
+    });
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1038,27 +1084,27 @@ fn bell(ui: &mut Ui, bell: &Bell<'_>) {
         .max(f32::EPSILON);
     let height_at = |t: f32| shape_at(bell.shape, peak, t) * (BELL_H - 2.0);
     let mark = ((bell.pos - bell.lo) / span).clamp(0.0, 1.0);
-    // The share of peers below them, tinted solid under the curve: one
-    // stroke per step, wide enough to leave no gaps at any panel width.
-    let steps: u16 = 160;
-    let stroke = frame.width / f32::from(steps) + 0.6;
-    let fill = colour::EDGE.gamma_multiply(0.45);
-    for i in 0..=steps {
-        let t = f32::from(i) / f32::from(steps);
-        if t > mark {
-            break;
+    // The share of peers below them, tinted under the curve as one mesh. A
+    // stroke per step overlapped its neighbours, which striped the tint.
+    let tint = colour::EDGE.gamma_multiply(0.45);
+    let mut fill = egui::Mesh::default();
+    let samples = (0..=BELL_SAMPLES)
+        .map(|i| f32::from(i) / f32::from(BELL_SAMPLES))
+        .take_while(|t| *t < mark)
+        .chain(std::iter::once(mark));
+    for t in samples {
+        let at = u32::try_from(fill.vertices.len()).unwrap_or(u32::MAX);
+        fill.colored_vertex(pos2(frame.x_at(t), frame.base), tint);
+        fill.colored_vertex(pos2(frame.x_at(t), frame.base - height_at(t)), tint);
+        if at >= 2 {
+            fill.add_triangle(at - 2, at - 1, at);
+            fill.add_triangle(at - 1, at, at + 1);
         }
-        painter.line_segment(
-            [
-                pos2(frame.x_at(t), frame.base),
-                pos2(frame.x_at(t), frame.base - height_at(t)),
-            ],
-            (stroke, fill),
-        );
     }
-    let curve: Vec<egui::Pos2> = (0..=48u8)
+    painter.add(fill);
+    let curve: Vec<egui::Pos2> = (0..=BELL_SAMPLES)
         .map(|i| {
-            let t = f32::from(i) / 48.0;
+            let t = f32::from(i) / f32::from(BELL_SAMPLES);
             pos2(frame.x_at(t), frame.base - height_at(t))
         })
         .collect();
@@ -1137,8 +1183,8 @@ fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32
 
 /// How tall a gun's picture is drawn in a buy block's row, and the room
 /// under it for its figure and name.
-const GUN_H: f32 = 30.0;
-const GUN_WORDS: f32 = 26.0;
+const GUN_H: f32 = 32.0;
+const GUN_WORDS: f32 = space::SM + size::TITLE + space::SM + size::MICRO;
 
 /// The guns of a buy block side by side: each one's picture, its odds or
 /// count in the panel's numerals under it, and its name in caps.
@@ -1173,7 +1219,7 @@ fn gun_row(ui: &mut Ui, items: &[overseer_core::ScoutGun]) {
         }
         let centre = left + cell / 2.0;
         painter.text(
-            pos2(centre, rect.top() + GUN_H + 1.0),
+            pos2(centre, rect.top() + GUN_H + space::SM),
             Align2::CENTER_TOP,
             gun.value.as_deref().unwrap_or(""),
             Face::Heavy.at(size::TITLE),
@@ -1181,7 +1227,10 @@ fn gun_row(ui: &mut Ui, items: &[overseer_core::ScoutGun]) {
         );
         let _name = caps_text(
             painter,
-            pos2(centre, rect.top() + GUN_H + size::TITLE + 3.0),
+            pos2(
+                centre,
+                rect.top() + GUN_H + space::SM + size::TITLE + space::SM,
+            ),
             Align2::CENTER_TOP,
             name,
             Face::Display.at(size::MICRO),
@@ -1200,7 +1249,7 @@ fn finding(ui: &mut Ui, found: &overseer_core::ScoutFinding, tint: Color32, poin
         line(ui, evidence, colour::TEXT_DIM, size::MICRO);
     }
     if let Some(suggest) = found.suggest.as_deref().filter(|s| !s.is_empty()) {
-        line(ui, suggest, colour::TEXT, size::MICRO + 1.0);
+        line(ui, suggest, colour::TEXT, size::LABEL);
     }
     ui.add_space(space::SM);
 }

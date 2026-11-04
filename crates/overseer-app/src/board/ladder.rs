@@ -133,8 +133,16 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
     }
 }
 
-/// One side's faces along the strip, spread so none overlap, each on a stem
-/// down to the point it is really about.
+/// How near two faces' centres may come: closer than a face, so a crowd
+/// overlaps like a hand of cards rather than walking off its point.
+const OVERLAP: f32 = FACE * 0.78;
+
+/// How far a face in a crowd turns, the other way from its neighbour, so
+/// the overlap reads as one card on another.
+const TURN: f32 = 0.06;
+
+/// One side's faces along the strip, spread so none hides another, each on
+/// a straight stem down to the point it is really about.
 fn marks(
     painter: &egui::Painter,
     mut mine: Vec<(&Player, f32)>,
@@ -149,68 +157,126 @@ fn marks(
     mine.sort_by(|a, b| a.1.total_cmp(&b.1));
     let wanted: Vec<f32> = mine.iter().map(|(_, rung)| x_of(*rung)).collect();
     let half = FACE / 2.0;
-    let xs = spread(
-        &wanted,
-        FACE + 2.0,
-        strip.left() + half,
-        strip.right() - half,
-    );
+    let xs = spread(&wanted, OVERLAP, strip.left() + half, strip.right() - half);
     let y = if above {
         strip.top() - 8.0 - half
     } else {
         strip.bottom() + 8.0 + half
     };
-    // Each face is a pin: framed in its side's colour, with a notch on the
-    // edge toward the strip that the stem leaves from.
     let toward: f32 = if above { 1.0 } else { -1.0 };
-    for ((player, rung), x) in mine.iter().zip(xs) {
+    let edge = if above { strip.top() } else { strip.bottom() };
+    // You last, so you lie on top of whoever you share a spot with.
+    let mut order: Vec<usize> = (0..mine.len()).collect();
+    order.sort_by_key(|i| mine.get(*i).is_some_and(|(p, _)| p.is_self));
+    for i in order {
+        let (Some((player, rung)), Some(&x)) = (mine.get(i), xs.get(i)) else {
+            continue;
+        };
         let true_x = x_of(*rung).clamp(strip.left(), strip.right());
+        let near = |other: Option<&f32>| other.is_some_and(|o| (o - x).abs() < FACE + 2.0);
+        let crowded = near(i.checked_sub(1).and_then(|j| xs.get(j))) || near(xs.get(i + 1));
+        // A stand-in is cut from a card that does not turn, so it stays level.
+        let turns = crowded && !player.is_self && player.agent.is_some();
+        let turn = match (turns, i % 2 == 0) {
+            (false, _) => 0.0,
+            (true, true) => -TURN,
+            (true, false) => TURN,
+        };
         let (frame, stem) = if player.is_self {
             (colour::YOU, colour::YOU)
         } else {
             (team, team.gamma_multiply(0.55))
         };
+        face(painter, player, pos2(x, y), turn, frame);
         // Past the frame, which is wider round your own face.
         let rim = if player.is_self { 4.0 } else { 1.5 };
         let base = toward.mul_add(half + rim, y);
         let tip = toward.mul_add(NOTCH, base);
-        let edge = if above { strip.top() } else { strip.bottom() };
-        painter.vline(true_x, tip.min(edge)..=tip.max(edge), (1.0, stem));
-        if (x - true_x).abs() > 1.0 {
-            painter.hline(true_x.min(x)..=true_x.max(x), tip, (1.0, stem));
+        // The notch slides along the face to sit over the point, so the stem
+        // drops straight to it, but only along the part of the face no
+        // neighbour lies over, or the stem would seem to end on them. It
+        // leans when a crowd pushes a face further than that.
+        let (mut lo, mut hi) = (x - half, x + half);
+        if !player.is_self
+            && let Some((next, &at)) = mine.get(i + 1).zip(xs.get(i + 1))
+        {
+            hi = hi.min(at - cover(next.0));
         }
+        if !player.is_self
+            && let Some((before, &at)) = i.checked_sub(1).and_then(|j| mine.get(j).zip(xs.get(j)))
+            && before.0.is_self
+        {
+            lo = lo.max(at + cover(before.0));
+        }
+        let notch = true_x.max(lo + NOTCH).min(hi - NOTCH);
+        painter.line_segment([pos2(true_x, edge), pos2(notch, tip)], (1.0, stem));
         painter.add(Shape::convex_polygon(
-            vec![pos2(x - NOTCH, base), pos2(x + NOTCH, base), pos2(x, tip)],
+            vec![
+                pos2(notch - NOTCH, base),
+                pos2(notch + NOTCH, base),
+                pos2(notch, tip),
+            ],
             frame,
             egui::Stroke::NONE,
         ));
-        let square = Rect::from_center_size(pos2(x, y), vec2(FACE, FACE));
-        face(painter, player, square);
-        if !player.is_self {
-            painter.rect_stroke(
-                square,
-                0,
-                egui::Stroke::new(1.5, frame),
-                egui::StrokeKind::Outside,
-            );
-        }
     }
 }
 
-/// One account's square portrait, with a cream frame if it is you.
-fn face(painter: &egui::Painter, player: &Player, rect: Rect) {
+/// How far from its centre a face hides what lies under it: its frame and
+/// the rim of background round that.
+fn cover(player: &Player) -> f32 {
+    FACE / 2.0 + if player.is_self { 4.0 } else { 2.5 }
+}
+
+/// One account's square portrait, turned by `turn` and framed in `frame`,
+/// or in cream if it is you. A rim of the background round it keeps a face
+/// laid over another apart from it.
+fn face(painter: &egui::Painter, player: &Player, centre: egui::Pos2, turn: f32, frame: Color32) {
+    let rect = Rect::from_center_size(centre, vec2(FACE, FACE));
+    let corners = |grow: f32| -> Vec<egui::Pos2> {
+        let (sin, cos) = turn.sin_cos();
+        let h = FACE / 2.0 + grow;
+        [(-h, -h), (h, -h), (h, h), (-h, h)]
+            .iter()
+            .map(|(dx, dy)| {
+                pos2(
+                    centre.x + dx * cos - dy * sin,
+                    centre.y + dx * sin + dy * cos,
+                )
+            })
+            .collect()
+    };
+    painter.add(Shape::convex_polygon(
+        corners(2.5),
+        colour::BG,
+        egui::Stroke::NONE,
+    ));
     let tint = hex(player.agent_color.as_deref()).unwrap_or(colour::BG_INSET);
-    painter.rect_filled(rect, 0, shape::blend(tint, colour::BG, 0.4));
+    painter.add(Shape::convex_polygon(
+        corners(0.0),
+        shape::blend(tint, colour::BG, 0.4),
+        egui::Stroke::NONE,
+    ));
     if player.agent.is_none() {
         stand_in(painter, player, rect);
     } else if let Some(portrait) = art::agent(painter.ctx(), player.agent.as_deref().unwrap_or(""))
     {
         let mut mesh = Mesh::with_texture(portrait.id());
-        mesh.add_rect_with_uv(
-            rect,
-            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
+        let uvs = [
+            pos2(0.0, 0.0),
+            pos2(1.0, 0.0),
+            pos2(1.0, 1.0),
+            pos2(0.0, 1.0),
+        ];
+        for (pos, uv) in corners(0.0).into_iter().zip(uvs) {
+            mesh.vertices.push(Vertex {
+                pos,
+                uv,
+                color: Color32::WHITE,
+            });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
         painter.add(Shape::mesh(mesh));
     }
     if player.is_self {
@@ -220,6 +286,11 @@ fn face(painter: &egui::Painter, player: &Player, rect: Rect) {
             egui::Stroke::new(2.0, colour::YOU),
             egui::StrokeKind::Outside,
         );
+    } else {
+        painter.add(Shape::closed_line(
+            corners(0.75),
+            egui::Stroke::new(1.5, frame),
+        ));
     }
 }
 
@@ -241,62 +312,75 @@ fn stand_in(painter: &egui::Painter, player: &Player, rect: Rect) {
     paint::figure(painter, player, rect, 1.0);
 }
 
-/// The strip: one segment per tier in the tier's own colour, and the rank
-/// named in its band wherever the band is wide enough to hold the name.
-fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32) {
-    let mut mesh = Mesh::default();
-    for tier in first..=last {
-        let from = ((tier - first) as f32).mul_add(step, strip.left());
-        let tint = rank(Some(tier));
-        let top = tint;
-        // Only a little darker at the foot, or the names in the band lose
-        // their contrast there.
-        let bottom = tint.gamma_multiply(0.9);
-        // A hairline between tiers and a clear break between ranks, so the
-        // three tiers of a rank read as one band.
-        let gap = if tier % 3 == 2 { 3.0 } else { 1.0 };
-        let base = mesh.vertices.len() as u32;
-        for (x, y, shade) in [
-            (from, strip.top(), top),
-            (from + step - gap, strip.top(), top),
-            (from + step - gap, strip.bottom(), bottom),
-            (from, strip.bottom(), bottom),
-        ] {
-            mesh.vertices.push(Vertex {
-                pos: pos2(x, y),
-                uv: egui::epaint::WHITE_UV,
-                color: shade,
-            });
-        }
-        mesh.add_triangle(base, base + 1, base + 2);
-        mesh.add_triangle(base, base + 2, base + 3);
+/// Dark type on a light plate, cream on a dark one. Both clear 4.5:1.
+fn ink_on(fill: Color32) -> Color32 {
+    if egui::Rgba::from(fill).intensity() > 0.215 {
+        colour::VOID
+    } else {
+        colour::TEXT_STRONG
     }
-    painter.add(Shape::mesh(mesh));
+}
+
+/// The strip: a plate per rank on the board's lean, brightening from its
+/// first tier to its last so where someone sits inside a rank shows too,
+/// and the rank named on it wherever it is wide enough.
+fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32) {
+    let run = strip.height() * paint::LEAN;
+    let left_of = |tier: u32| ((tier - first) as f32).mul_add(step, strip.left());
+    let font = Face::Heavy.at(size::LABEL);
     for group in first.div_euclid(3)..=last.div_euclid(3) {
         let from = (group * 3).max(first);
         let to = (group * 3 + 2).min(last);
-        let left = ((from - first) as f32).mul_add(step, strip.left());
-        let right = ((to + 1 - first) as f32).mul_add(step, strip.left());
-        let name = overseer_ui::rank_group(from);
-        let font = Face::Heavy.at(size::LABEL);
-        // Dark on every band but Immortal's red, which takes cream. Both
-        // clear 4.5:1 down to the band's foot.
-        let ink = if egui::Rgba::from(rank(Some(from))).intensity() > 0.215 {
-            colour::VOID
-        } else {
-            colour::TEXT_STRONG
-        };
-        if overseer_ui::caps_width(painter, name, font.clone()) + space::XL > right - left {
-            continue;
+        let left = left_of(from);
+        // A clear break between ranks, so the three tiers of one read as one.
+        let right = left_of(to + 1) - 4.0;
+        let tint = rank(Some(from));
+        let low = shape::blend(tint, colour::BG, 0.42);
+        let high = shape::blend(tint, colour::TEXT_STRONG, 0.12);
+        let mut mesh = Mesh::default();
+        for (x, y, shade) in [
+            (left + run, strip.top(), low),
+            (right, strip.top(), high),
+            (right - run, strip.bottom(), high),
+            (left, strip.bottom(), low),
+        ] {
+            mesh.colored_vertex(pos2(x, y), shade);
         }
-        caps_at(
-            painter,
-            pos2(left + space::SM, strip.center().y + 0.5),
-            Align2::LEFT_CENTER,
-            name,
-            font,
-            ink,
-        );
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(Shape::mesh(mesh));
+        let name = overseer_ui::rank_group(from);
+        let width = overseer_ui::caps_width(painter, name, font.clone());
+        let fits = width + space::XL + run <= right - left;
+        // The tiers as upright gaps on whole points, which stay crisp where a
+        // hairline on the lean would stairstep, and none under the name.
+        let clear = if fits {
+            left + run + space::SM + width + space::SM
+        } else {
+            left
+        };
+        for tier in from + 1..=to {
+            let x = left_of(tier).round();
+            if x >= clear {
+                painter.rect_filled(
+                    Rect::from_x_y_ranges(x - 1.0..=x, strip.top()..=strip.bottom()),
+                    0,
+                    colour::BG,
+                );
+            }
+        }
+        if fits {
+            // On the darkest end, so cream unless the rank's colour is light
+            // enough to stay light there.
+            caps_at(
+                painter,
+                pos2(left + run + space::SM, strip.center().y - 1.0),
+                Align2::LEFT_CENTER,
+                name,
+                font.clone(),
+                ink_on(low),
+            );
+        }
     }
 }
 

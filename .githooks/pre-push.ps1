@@ -7,7 +7,9 @@
 #   3. no more commits in one push than .githooks/policy allows
 #   4. no banned attribution in any commit being pushed, author or committer,
 #      nor in an annotated tag or a branch name
-#   5. every commit is authored and committed as the address in the policy
+#   5. every commit is committed as the address in the policy, and authored
+#      by it or by a contributor this clone's git config names with
+#      overseer.author, kept out of the tree since no address may be in it
 #   6. no commit adds or changes a file the excludes keep on this machine
 #   7. the full lint suite passes
 #
@@ -118,11 +120,13 @@ foreach ($line in ([Console]::In.ReadToEnd() -split "`r?`n")) {
             "Raise the limit only with a reason: git config overseer.maxCommits N")
     }
 
+    $authors = @($Email) + @(& git config --local --get-all overseer.author | ForEach-Object { $_.Trim() })
     $strangers = @((& git log --format="%h %ae %ce" $range) | Where-Object {
-            $_ -notmatch "^\w+ $([regex]::Escape($Email)) $([regex]::Escape($Email))$"
+            $null, $author, $committer = $_ -split " "
+            $committer -ne $Email -or $authors -notcontains $author
         })
     if ($strangers.Count -gt 0) {
-        Deny "a commit being pushed isn't authored and committed as $Email" (
+        Deny "a commit being pushed isn't committed as $Email by an author the policy names" (
             @($strangers | ForEach-Object { "  $_" }) + @(
                 "Fix the identity, then remake the commits:",
                 "  git config user.email $Email",

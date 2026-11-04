@@ -13,7 +13,7 @@ use super::paint;
 
 /// How tall the ladder is: a heading, a row of faces, the strip, and a row
 /// of faces back.
-pub(crate) const HEIGHT: f32 = 100.0;
+pub(crate) const HEIGHT: f32 = 108.0;
 
 /// The highest tier Riot has. Radiant is one tier, not the first of three.
 const TOP: u32 = 27;
@@ -115,8 +115,8 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
         head + 1.0,
     );
     let strip = Rect::from_min_max(
-        pos2(rect.left(), rect.top() + 48.0),
-        pos2(rect.right(), rect.top() + 64.0),
+        pos2(rect.left(), rect.top() + 56.0),
+        pos2(rect.right(), rect.top() + 72.0),
     );
     let step = strip.width() / (last - first + 1) as f32;
     bands(&painter, first, last, strip, step);

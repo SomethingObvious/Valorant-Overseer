@@ -65,6 +65,10 @@ BEFORE_ASCENDANT = {
 _CACHE: dict[str, dict[str, Any]] = {}
 
 _MATCH_META: dict[str, dict[str, Any]] = {}
+# Matches left behind, to a dodge or the end of the game. Their K/D fill
+# stops, since it spends the same workers and Riot budget the next match's
+# board waits on.
+_ENDED: set[str] = set()
 
 _LOBBY_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "board": None}
 
@@ -321,6 +325,7 @@ def _note_state(state: str) -> None:
     # Back in menus from a match, every list in hand is a game short.
     if state == "MENUS" and _STATE_SEEN["state"] in ("INGAME", "PREGAME"):
         _MIDS_CACHE.clear()
+        _ENDED.update(_MATCH_META)
     _STATE_SEEN["state"] = state
     # Room is held back for the players still to come: your team once a match
     # is found, then the enemies, who can load in half a minute after it when
@@ -1143,7 +1148,7 @@ class LiveMatch:
 
         def _fill_one(puuid: str) -> None:
             entry = _CACHE.get(f"{match_id}:{puuid}")
-            if entry is None or entry.get("kd_done"):
+            if entry is None or entry.get("kd_done") or match_id in _ENDED:
                 return
             entry["kd_tries"] = entry.get("kd_tries", 0) + 1
             # Games already in hand, kept on disk for your party, go first
@@ -1168,6 +1173,8 @@ class LiveMatch:
         def _top_up(puuid: str) -> None:
             entry = _CACHE.get(f"{match_id}:{puuid}")
             if entry is None or entry.get("kd_full") or entry.get("kd") is None:
+                return
+            if match_id in _ENDED:
                 return
             try:
                 mids, is_comp, _ = self._fresh_mids(puuid)
@@ -1209,6 +1216,8 @@ class LiveMatch:
             # One step toward the depth. True when Riot held it back, which
             # ends the pass for now.
             entry = _CACHE.get(f"{match_id}:{puuid}")
+            if match_id in _ENDED:
+                return True
             if entry is None or not entry.get("kd_full") or entry.get("kd") is None:
                 return False
             if entry.get("deep", 5) == _DEPTH["games"]:
@@ -1300,8 +1309,11 @@ class LiveMatch:
             riot_client.keep_for_first_reads(max(5, len(puuids)))
 
         if match_id not in _MATCH_META:
+            _ENDED.update(_MATCH_META)
             _MATCH_META.clear()
             _MATCH_META[match_id] = {}
+        # A state blip that looked like the end of it is not.
+        _ENDED.discard(match_id)
         meta = _MATCH_META[match_id]
 
         names = meta.get("names") or {}
@@ -2297,6 +2309,12 @@ def _self_check() -> None:
         fill("topup")
     check(not crashed.called, crashed.call_args)
     check("kd_full" not in entry, entry)
+    # A dodged match's fill asks Riot for nothing more.
+    _ENDED.add("topup")
+    with mock.patch.object(auth, "pd_get") as sent:
+        fill("topup")
+    check(not sent.called, sent.call_args)
+    _ENDED.discard("topup")
     # A top up that lands wakes the board loop rather than waiting for it.
     with mock.patch.object(refresh, "soon") as woke:
         fill("topup")

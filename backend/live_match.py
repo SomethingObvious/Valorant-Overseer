@@ -30,6 +30,7 @@ from career import STANDARD_QUEUES, career_mids, career_summary, form_streak, ra
 from common import console_logger
 from common.check import check
 from common.jsonstore import data_path
+from match_cache import MatchCache
 from rounds import buy_habits, habits_of, round_stats
 from smurf import compute_smurf, smurf_evidence
 from vconstants import GAMEMODES, ROUTING, STATES, map_name_from_path, party_color, rank_from_tier
@@ -388,8 +389,10 @@ def _next_rung(have: int) -> int:
 _RANK_CACHE: dict[str, tuple[dict[str, Any], str]] = {}
 _RR_CACHE: dict[str, tuple[Any, ...]] = {}
 
-_MATCH_DETAIL_CACHE: dict[str, dict[str, Any]] = {}
-_MATCH_DETAIL_MAX = 200
+# Keep the spatial data Scout uses without retaining hundreds of parsed object
+# trees. Only compressed payloads count toward this 16 MiB retention budget;
+# workers still decode the matches they are currently analysing.
+_MATCH_DETAIL_CACHE = MatchCache(max_entries=200, max_bytes=16 * 1024 * 1024)
 # Every match read this session, which outlives the cache above, so a big
 # lobby pushing old details out doesn't count them as unread again.
 _DETAIL_READ: set[str] = set()
@@ -510,7 +513,7 @@ def _remember(mid: str, md: dict[str, Any]) -> dict[str, Any]:
         if sub and _standard(md, sub):
             _measure(mid, md, sub)
     lean = _unplaced(md)
-    _cache_put(_MATCH_DETAIL_CACHE, _MATCH_DETAIL_MAX, mid, lean)
+    _MATCH_DETAIL_CACHE.put(mid, lean)
     return lean
 
 
@@ -2485,6 +2488,12 @@ def _self_check() -> None:
         check(len(fetched) == 20, flaky.calls)
         shaky.kd_hs("me", count=999)
         check(fetched == [c for c in flaky.calls if c.startswith("/match-details")])
+        # Rebuild from compressed details, including Scout measurements, when
+        # the smaller result caches miss. This must not cost another download.
+        _KD_CACHE.clear()
+        _READS_CACHE.clear()
+        check(shaky.kd_hs("me", count=999) == brief_result, "cached details changed the read")
+        check(fetched == [c for c in flaky.calls if c.startswith("/match-details")])
     _MIDS_CACHE.clear()
     _KD_CACHE.clear()
     _MATCH_DETAIL_CACHE.clear()
@@ -2561,33 +2570,35 @@ def _self_check() -> None:
     _MIDS_CACHE["a"] = ([f"g{i}" for i in range(20)], True, time.time())
     _MIDS_CACHE["b"] = ([f"g{i}" for i in range(18, 38)], True, time.time())
     for i in range(15):
-        _MATCH_DETAIL_CACHE[f"g{i}"] = {}
+        _MATCH_DETAIL_CACHE.put(f"g{i}", {})
     got = _reading([("a", 15), ("b", 5), ("c", None)])
     check(got is not None and got["progress"] == round(15 / 60, 3), got)
     check(got is not None and got["games"] == 20 and got["doneAt"] > time.time(), got)
     check(_reading([("a", 20)]) is not None)
     for i in range(15, 20):
-        _MATCH_DETAIL_CACHE[f"g{i}"] = {}
+        _MATCH_DETAIL_CACHE.put(f"g{i}", {})
     check(_reading([("a", 20)]) is None)
     for key in ("a", "b"):
         _MIDS_CACHE.pop(key)
-    for i in range(20):
-        _MATCH_DETAIL_CACHE.pop(f"g{i}")
+    _MATCH_DETAIL_CACHE.clear()
     # Two strangers who queued together last game are a party on the same
     # side now, and not once they are on opposite sides.
     _MIDS_CACHE["x"] = (["last"], True, time.time())
-    _MATCH_DETAIL_CACHE["last"] = {
-        "players": [
-            {"subject": "x", "partyId": "d"},
-            {"subject": "y", "partyId": "d"},
-            {"subject": "z", "partyId": "e"},
-        ]
-    }
+    _MATCH_DETAIL_CACHE.put(
+        "last",
+        {
+            "players": [
+                {"subject": "x", "partyId": "d"},
+                {"subject": "y", "partyId": "d"},
+                {"subject": "z", "partyId": "e"},
+            ]
+        },
+    )
     together = _history_parties(["x", "y", "z"], {"x": "Red", "y": "Red", "z": "Red"})
     check(together == {"d": ["x", "y"]}, together)
     check(_history_parties(["x", "y"], {"x": "Red", "y": "Blue"}) == {})
     _MIDS_CACHE.pop("x")
-    _MATCH_DETAIL_CACHE.pop("last")
+    _MATCH_DETAIL_CACHE.clear()
 
     # A five stack with one friend in it: presences show two of you, and the
     # party service shows all five, in the match and in the lobby.
@@ -2833,6 +2844,10 @@ def _check_brief_positions() -> None:
     check(expected["positional"]["attack"]["separation"] == 500.0, expected)
     slimmed = _slim(md)
     check(read(slimmed) == expected, "slimming changed Scout's measurements")
+    cache = MatchCache(max_entries=1, max_bytes=1024 * 1024)
+    cache.put(mid, slimmed)
+    check(cache.get(mid) == slimmed, "memory cache changed match details")
+    check(read(cache.get(mid) or {}) == expected, "memory cache changed Scout's measurements")
     with tempfile.TemporaryDirectory() as tmp, mock.patch(f"{__name__}._KEPT_DIR", Path(tmp)):
         _keep_detail(mid, slimmed)
         check(read(_kept_detail(mid) or {}) == expected, "disk cache changed Scout's measurements")
@@ -2848,7 +2863,8 @@ def _check_brief_positions() -> None:
         lean = _remember(mid, {**slimmed, "teams": [{"teamId": "Red", "won": True}]})
     kills = [k for rr in lean["roundResults"] for ps in rr["playerStats"] for k in ps["kills"]]
     check(kills and not any("playerLocations" in k for k in kills), "cached without positions")
-    check(_MATCH_DETAIL_CACHE.pop(mid) is lean, "the lean copy is what is cached")
+    check(_MATCH_DETAIL_CACHE.get(mid) == lean, "the lean copy is what is cached")
+    _MATCH_DETAIL_CACHE.clear()
     check(_READS_CACHE[f"{mid}:p0"] == expected, "measured before the positions went")
     check(slimmed["roundResults"][0]["playerStats"][0]["kills"][0]["playerLocations"], "kept whole")
     _READS_CACHE.clear()

@@ -22,3 +22,5 @@ trak = "trak"
 CPY = "CPY"
 # The OpenType width axis tag, as font-variation-settings writes it.
 wdth = "wdth"
+# The suffix of 2nd, kept apart from its number to build ordinals.
+nd = "nd"

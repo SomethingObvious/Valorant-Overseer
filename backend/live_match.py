@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import brief
 import refresh
 import requests
 import riot_client
@@ -103,6 +104,11 @@ _KD_FILL_LOCK = threading.Lock()
 _KD_FILLING: set[str] = set()
 
 _KD_CACHE: dict[str, tuple[tuple[Any, ...], tuple[Any, ...], int]] = {}
+# The brief's measurements of one match for one player, keyed match:player.
+# Measurements reuse the K/D downloads; Scout never fetches extra matches.
+# The lines composed from them are rebuilt for every board.
+_READS_CACHE: dict[str, dict[str, Any] | None] = {}
+_READS_MAX = 4000
 _KD_CACHE_MAX = 300
 
 # Everybody's match list, kept for the whole match, since nobody in it can
@@ -130,6 +136,10 @@ _STARTS_MAX = 5000
 # and a read still only counts the newest games in its history.
 _KEPT_DIR = Path(data_path("matches"))
 _KEEP = {"days": 14}
+# Retention limits apply together: age, file count and compressed bytes.
+_KEPT_MAX_MATCHES = 200
+_KEPT_MAX_BYTES = 64 * 1024 * 1024
+_KEPT_LOCK = threading.RLock()
 _MATCH_ID = re.compile(r"[0-9a-fA-F-]{36}")
 # You and everyone in your party since the app started.
 _PARTY: set[str] = set()
@@ -154,10 +164,9 @@ def set_depth(games: int, days: int = 30, keep: int = 14) -> None:
             entry["deep"] = 0
 
 
-# The parts of a match detail nothing here reads. Every kill carries all ten
-# players' positions and the kills are listed twice, so a whole detail took
-# 1.9 MB in memory and a full cache of them nearly 400 MB. Without these, and
-# with every repeated puuid one string, a detail takes about a fifth of that.
+# Drop unused fields and duplicate top-level kills, and share repeated strings.
+# Scout needs playerLocations and victimLocation on each round's kills for
+# spacing, spawn distance and gun range, so those stay in the bounded cache.
 _UNREAD = {
     "match": ("kills", "bots", "coaches"),
     "round": (
@@ -169,7 +178,6 @@ _UNREAD = {
         "defuseLocation",
     ),
     "stats": ("ability",),
-    "kill": ("playerLocations", "victimLocation"),
     "player": (
         "roundDamage",
         "scores",
@@ -208,8 +216,6 @@ def _slim(md: dict[str, Any]) -> dict[str, Any]:
             stats = []
             for full_stats in rr.get("playerStats") or []:
                 ps = without(full_stats, "stats")
-                if isinstance(ps, dict) and ps.get("kills"):
-                    ps["kills"] = [without(k, "kill") for k in ps["kills"]]
                 stats.append(ps)
             rr["playerStats"] = stats
         rounds.append(rr)
@@ -229,6 +235,8 @@ def _kept_detail(mid: str) -> dict[str, Any] | None:
     if not _KEEP["days"] or path is None:
         return None
     try:
+        if path.stat().st_mtime < time.time() - _KEEP["days"] * 86400:
+            return None
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             md = json.load(fh)
     except (OSError, EOFError, ValueError):
@@ -237,7 +245,7 @@ def _kept_detail(mid: str) -> dict[str, Any] | None:
 
 
 def _keep_detail(mid: str, md: dict[str, Any]) -> None:
-    """Keep a match detail on disk, dated by when the game started so it ages out on time."""
+    """Keep a party match within the disk budget, dated by when the game started."""
     path = _kept_path(mid)
     if not _KEEP["days"] or path is None or path.exists():
         return
@@ -246,26 +254,58 @@ def _keep_detail(mid: str, md: dict[str, Any]) -> None:
         return
     tmp = path.with_name(f".{mid}.{threading.get_ident()}.tmp")
     try:
-        _KEPT_DIR.mkdir(parents=True, exist_ok=True)
-        with gzip.open(tmp, "wt", encoding="utf-8") as fh:
-            json.dump(md, fh, separators=(",", ":"))
-        os.utime(tmp, (started, started))
-        tmp.replace(path)
+        payload = gzip.compress(json.dumps(md, separators=(",", ":")).encode("utf-8"))
+        with _KEPT_LOCK:
+            # Reserve space before writing, including for the temporary file.
+            if not _KEEP["days"] or path.exists() or not _prune_kept(incoming=len(payload)):
+                return
+            _KEPT_DIR.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(payload)
+            os.utime(tmp, (started, started))
+            tmp.replace(path)
     except OSError as e:
         _log(f"couldn't keep match {mid[:8]}: {e}")
         with contextlib.suppress(OSError):
             tmp.unlink()
 
 
-def _prune_kept() -> None:
-    """Drop kept games older than the window says, or all of them when it is off."""
-    if not _KEPT_DIR.is_dir():
-        return
-    since = time.time() - _KEEP["days"] * 86400
-    for path in _KEPT_DIR.iterdir():
-        with contextlib.suppress(OSError):
-            if not _KEEP["days"] or path.stat().st_mtime < since:
+def _prune_kept(*, incoming: int = 0) -> bool:
+    """Evict oldest cached matches to meet all limits; return whether a write fits."""
+    with _KEPT_LOCK:
+        if incoming > _KEPT_MAX_BYTES:
+            return False
+        since = time.time() - _KEEP["days"] * 86400
+        kept = []
+        # A process interrupted during a write may leave a temporary file.
+        # Under the writer lock none of these belongs to an active write.
+        paths = [*_KEPT_DIR.glob("*.json.gz"), *_KEPT_DIR.glob(".*.tmp")]
+        for path in paths:
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                _log(f"couldn't inspect match cache: {e}")
+                return False
+            kept.append((0.0 if path.suffix == ".tmp" else stat.st_mtime, path, stat.st_size))
+        total = sum(size for _, _, size in kept)
+        count = len(kept)
+        for modified, path, size in sorted(kept):
+            if (
+                _KEEP["days"]
+                and modified >= since
+                and count + bool(incoming) <= _KEPT_MAX_MATCHES
+                and total + incoming <= _KEPT_MAX_BYTES
+            ):
+                break
+            try:
                 path.unlink()
+            except OSError as e:
+                _log(f"couldn't prune match cache: {e}")
+                continue
+            total -= size
+            count -= 1
+        return count + bool(incoming) <= _KEPT_MAX_MATCHES and total + incoming <= _KEPT_MAX_BYTES
 
 
 def _recent(mids: list[str]) -> list[str]:
@@ -403,6 +443,20 @@ def _fallback_name(puuid: str) -> str:
     return f"Player-{(puuid or '????')[:4].upper()}"
 
 
+def _measure(mid: str, md: dict[str, Any], puuid: str) -> dict[str, Any] | None:
+    """Measure one match for one player for the brief, once, and keep the result."""
+    key = f"{mid}:{puuid}"
+    if key in _READS_CACHE:
+        return _READS_CACHE[key]
+    try:
+        read = brief.match_reads(md, puuid)
+    except Exception as e:
+        _log(f"brief could not read {mid[:8]} for {puuid[:8]}: {type(e).__name__}: {e}")
+        read = None
+    _cache_put(_READS_CACHE, _READS_MAX, key, read)
+    return read
+
+
 def assemble_player(
     *,
     puuid: str,
@@ -492,6 +546,9 @@ def assemble_player(
         "streak": intel.get("streak"),
         "mapWins": intel.get("mapWins") or {},
         "habits": intel.get("habits"),
+        # The brief's measurements, composed into lines by brief.attach once
+        # the board knows its map and the user's team.
+        "reads": intel.get("reads") or [],
         # Reads wait for the depth the window asks for.
         "readsReady": int((intel.get("habits") or {}).get("asked") or 0) >= _DEPTH["games"],
     }
@@ -1025,6 +1082,7 @@ class LiveMatch:
         """
         # The third value, the RR earned, is always None here. _top_up fills it
         # in from competitiveupdates.
+        count = max(0, min(count, GAMES_READ[-1]))
         try:
             mids_all, _, throttled = self._fresh_mids(puuid, background=background)
             mids = _recent(mids_all)[:count]
@@ -1063,6 +1121,7 @@ class LiveMatch:
                 return "throttled"
 
             kills = deaths = hits = heads = used = 0
+            reads: list[dict[str, Any]] = []
             agent_counts: dict[str, int] = {}
             form: list[str] = []
             map_wins: dict[str, list[Any]] = {}
@@ -1073,7 +1132,10 @@ class LiveMatch:
             # Only five against five counts. A deathmatch is forty kills with
             # no result, and summed in it gave one game's form a K/D read
             # from five.
-            details = [md for md in details if _standard(md, puuid)]
+            matches = [
+                (mid, md) for mid, md in zip(mids, details, strict=True) if _standard(md, puuid)
+            ]
+            details = [md for _, md in matches]
             for md in details:
                 for rr in md.get("roundResults", []):
                     for ps in rr.get("playerStats", []):
@@ -1112,10 +1174,16 @@ class LiveMatch:
             kd = round(kills / deaths, 2) if deaths else float(kills)
             hs = round(heads / hits * 100) if hits else None
             habits = habits_of([md for md in details if isinstance(md, dict)], puuid)
+            for mid, md in matches:
+                if isinstance(md, dict):
+                    read = _measure(mid, md, puuid)
+                    if read:
+                        reads.append(read)
             # How many games this read was asked for, 0 for one Riot cut short.
             habits["asked"] = 0 if throttled else count
             intel = {
                 "habits": habits,
+                "reads": reads,
                 "topAgents": [
                     {"agent": a, "games": n, "role": (resolve_agent(a) or {}).get("role")}
                     for a, n in sorted(agent_counts.items(), key=lambda x: -x[1])[:3]
@@ -2284,6 +2352,50 @@ def _self_check() -> None:
     from pathlib import Path
     from unittest import mock
 
+    # Skipped or unavailable matches must never shift another match's reads
+    # onto their cache key. Scout must reuse the same bounded K/D fetches.
+    with mock.patch.object(
+        brief, "match_reads", side_effect=lambda md, _: {"matchId": md["matchInfo"]["matchId"]}
+    ):
+        for missing in ("dm-skipped", "unavailable"):
+            _MIDS_CACHE.clear()
+            _KD_CACHE.clear()
+            _MATCH_DETAIL_CACHE.clear()
+            _READS_CACHE.clear()
+            flaky.history = ["scout1", missing, "scout3"]
+            flaky.broken = {"unavailable"}
+            scout_result = shaky.kd_hs("me", count=3)
+            check(
+                [r["matchId"] for r in (scout_result[4] or {})["reads"]] == ["scout1", "scout3"],
+                scout_result,
+            )
+            check(f"{missing}:me" not in _READS_CACHE, _READS_CACHE)
+            check(_READS_CACHE["scout3:me"] == {"matchId": "scout3"}, _READS_CACHE)
+            # Retrying a failed match must measure it under its own id.
+            if missing == "unavailable":
+                flaky.broken.clear()
+                scout_result = shaky.kd_hs("me", count=3)
+                check(
+                    [r["matchId"] for r in (scout_result[4] or {})["reads"]] == flaky.history,
+                    scout_result,
+                )
+        _MIDS_CACHE.clear()
+        _KD_CACHE.clear()
+        _MATCH_DETAIL_CACHE.clear()
+        _READS_CACHE.clear()
+        flaky.history = [f"limit{i}" for i in range(30)]
+        flaky.calls.clear()
+        scout_result = shaky.kd_hs("me", count=999)
+        check(len((scout_result[4] or {})["reads"]) == 20, scout_result)
+        fetched = [c for c in flaky.calls if c.startswith("/match-details")]
+        check(len(fetched) == 20, flaky.calls)
+        shaky.kd_hs("me", count=999)
+        check(fetched == [c for c in flaky.calls if c.startswith("/match-details")])
+    _MIDS_CACHE.clear()
+    _KD_CACHE.clear()
+    _MATCH_DETAIL_CACHE.clear()
+    _READS_CACHE.clear()
+
     # A top up that loses its connection is logged and owed again, rather than
     # killing the fill thread with the player marked done.
     def fill(match_id: str) -> None:
@@ -2510,13 +2622,19 @@ def _self_check() -> None:
         check(_kept_detail("../outside") is None, "only Riot's ids name files")
         old = time.time() - 15 * 86400
         os.utime(Path(tmp) / f"{mid}.json.gz", (old, old))
+        check(_kept_detail(mid) is None, "expired cache must not be read before pruning")
         set_depth(20, days=30, keep=14)
         check(_kept_detail(mid) is None, "kept past 14 days")
         set_depth(20)
 
-    # A kept detail loses the positions nobody reads and keeps what the
-    # rounds and careers are counted from.
-    _kill = {"victim": "b", "roundTime": 9, "finishingDamage": {"damageItem": "v"}}
+    # Slimming drops unused fields while retaining the positions Scout reads.
+    _kill = {
+        "victim": "b",
+        "roundTime": 9,
+        "finishingDamage": {"damageItem": "v"},
+        "victimLocation": {"x": 0, "y": 0},
+        "playerLocations": [{"subject": "a", "location": {"x": 300, "y": 400}}],
+    }
     _slimmed = _slim(
         {
             "players": [{"subject": "a", "stats": {"kills": 1}, "roundDamage": [{}]}],
@@ -2525,9 +2643,7 @@ def _self_check() -> None:
                 {
                     "winningTeam": "Red",
                     "playerEconomies": [{}],
-                    "playerStats": [
-                        {"subject": "a", "kills": [{**_kill, "playerLocations": [{}]}]}
-                    ],
+                    "playerStats": [{"subject": "a", "kills": [_kill]}],
                 }
             ],
         }
@@ -2543,10 +2659,122 @@ def _self_check() -> None:
         _slimmed,
     )
 
+    _check_kept_limits()
+    _check_scout_positions()
+
     print(
         "live_match self-check OK (sides, career cached, party games kept, "
         "failed lookups retried, name service over TLS)"
     )
+
+
+def _check_scout_positions() -> None:
+    """Scout's spatial measurements survive both memory and disk caching."""
+    import tempfile
+    from unittest import mock
+
+    mid = "12345678-1234-1234-1234-123456789abc"
+    md = {
+        "matchInfo": {
+            "matchId": mid,
+            "queueID": "competitive",
+            "gameStartMillis": time.time() * 1000,
+        },
+        "players": [{"subject": f"p{i}", "teamId": "Red" if i < 5 else "Blue"} for i in range(10)],
+        "roundResults": [
+            {
+                "roundNum": 0,
+                "winningTeam": "Red",
+                "winningTeamRole": "Attacker",
+                "playerStats": [
+                    {
+                        "subject": "p0",
+                        "kills": [
+                            {
+                                "killer": "p0",
+                                "victim": "p5",
+                                "roundTime": 1000,
+                                "finishingDamage": {"damageType": "Weapon"},
+                                "victimLocation": {"x": 0, "y": 0},
+                                "playerLocations": [
+                                    {"subject": "p0", "location": {"x": 300, "y": 400}},
+                                    {"subject": "p1", "location": {"x": 0, "y": 0}},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    places = brief.Places(
+        {"callouts": [{"superRegionName": "Attacker Side", "location": {"x": 0, "y": 0}}]}
+    )
+
+    def read(detail: dict[str, Any]) -> dict[str, Any]:
+        result = brief.match_reads(
+            detail, "p0", places=places, weapon_name=lambda _: None, map_name=lambda _: "Fixture"
+        )
+        check(result is not None, "fixture must have a Scout read")
+        return result or {}
+
+    expected = read(md)
+    check(expected["sums"]["kill_dist_mean"] == [500.0, 1.0], expected)
+    check(expected["positional"]["attack"]["forward"] == 500.0, expected)
+    check(expected["positional"]["attack"]["separation"] == 500.0, expected)
+    slimmed = _slim(md)
+    check(read(slimmed) == expected, "slimming changed Scout's measurements")
+    with tempfile.TemporaryDirectory() as tmp, mock.patch(f"{__name__}._KEPT_DIR", Path(tmp)):
+        _keep_detail(mid, slimmed)
+        check(read(_kept_detail(mid) or {}) == expected, "disk cache changed Scout's measurements")
+
+
+def _check_kept_limits() -> None:
+    """Exercise cache eviction with small limits and concurrent writers."""
+    import tempfile
+    from unittest import mock
+
+    def match(index: int) -> tuple[str, dict[str, Any]]:
+        return f"{index:08x}-1234-1234-1234-123456789abc", {
+            "players": [],
+            "matchInfo": {"gameStartMillis": (time.time() - 100 + index) * 1000},
+        }
+
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        mock.patch(f"{__name__}._KEPT_DIR", Path(tmp)),
+        mock.patch(f"{__name__}._KEPT_MAX_MATCHES", 2),
+    ):
+        games = [match(i) for i in range(8)]
+        for mid, md in games[:3]:
+            _keep_detail(mid, md)
+        check(_kept_detail(games[0][0]) is None, "oldest match evicted at the count limit")
+        check(_kept_detail(games[2][0]) == games[2][1], "newest match retained")
+        sizes = [p.stat().st_size for p in Path(tmp).glob("*.json.gz")]
+        with mock.patch(f"{__name__}._KEPT_MAX_BYTES", max(sizes)):
+            check(_prune_kept(), "cache can be pruned to the byte limit")
+            check(len(list(Path(tmp).glob("*.json.gz"))) == 1, "byte limit evicts a match")
+        with mock.patch(f"{__name__}._KEPT_MAX_BYTES", 1):
+            _keep_detail(*games[3])
+            check(_kept_detail(games[3][0]) is None, "oversized match not persisted")
+        # A locked file that cannot be evicted must not allow an over-budget write.
+        with (
+            mock.patch(f"{__name__}._KEPT_MAX_MATCHES", 1),
+            mock.patch.object(Path, "unlink", side_effect=PermissionError("locked")),
+        ):
+            _keep_detail(*games[3])
+        check(_kept_detail(games[3][0]) is None, "failed eviction prevents a new write")
+        abandoned = Path(tmp) / f".{games[0][0]}.123.tmp"
+        abandoned.write_bytes(b"interrupted write")
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(lambda game: _keep_detail(*game), games))
+        check(len(list(Path(tmp).glob("*.json.gz"))) == 2, "concurrent writes respect the cap")
+        check(not list(Path(tmp).glob("*.tmp")), "no temporary files remain")
+        set_depth(20, keep=0)
+        check(not list(Path(tmp).iterdir()), "disabling retention clears the cache")
+        _keep_detail(*games[0])
+        check(not list(Path(tmp).iterdir()), "disabled retention never writes")
+        set_depth(20)
 
 
 if __name__ == "__main__":

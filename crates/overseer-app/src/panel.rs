@@ -70,6 +70,7 @@ fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: boo
         verdict(ui, player);
     }
     reads(ui, player, side);
+    brief(ui, player);
     let save = notes(ui, player, store, side);
     ranks(ui, player, side, still);
     form(ui, player, side);
@@ -818,6 +819,390 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
             board::tip::auto(ui, whole, board::paint::win(side));
         });
     }
+}
+
+/// The scouting brief: at most two lines that earned their place, each the
+/// measurement with its direction and the plain count behind it, and what
+/// it allows. When nothing earned a place, it says so, with the matches
+/// reviewed, rather than pad.
+fn brief(ui: &mut Ui, player: &Player) {
+    let Some(scout) = player.scout.as_ref() else {
+        return;
+    };
+    heading(ui, scout.title.as_deref().unwrap_or("Scout"));
+    // Their pace in a word, with where they sit among peers on the curve.
+    if let Some(tag) = &scout.tag {
+        if let Some(word) = tag.headline.as_deref() {
+            line(ui, word, colour::TEXT_STRONG, size::TITLE);
+        }
+        placed(ui, tag);
+    }
+    // What they tend to do, each on the curve of their peers: the centre
+    // of the card, every readable player.
+    for habit in &scout.habits {
+        if let Some(words) = habit.headline.as_deref() {
+            line(ui, words, colour::TEXT_STRONG, size::BODY);
+        }
+        placed(ui, habit);
+        if let Some(suggest) = habit.suggest.as_deref().filter(|s| !s.is_empty()) {
+            line(ui, suggest, colour::TEXT, size::MICRO);
+        }
+    }
+    if !scout.habits.is_empty() {
+        ui.add_space(space::SM);
+    }
+    // One tactical callout: a weapon or buy habit, the words, the figures,
+    // what to do.
+    if let Some(main) = &scout.main {
+        finding(ui, main, colour::TEXT_STRONG, size::BODY);
+    }
+    // What they held on this kind of round: the family over its rounds,
+    // the guns, the armor. History, never a forecast.
+    if let Some(buy) = &scout.buy {
+        if let Some(label) = buy.label.as_deref() {
+            line(ui, label, colour::TEXT_DIM, size::MICRO);
+        }
+        if buy.items.is_empty() {
+            if let Some(guns) = buy.guns.as_deref() {
+                line(ui, guns, colour::TEXT_STRONG, size::BODY);
+            }
+        } else {
+            gun_row(ui, &buy.items);
+        }
+        if let Some(armor) = buy.armor.as_deref() {
+            line(ui, armor, colour::TEXT, size::MICRO + 1.0);
+        }
+        ui.add_space(space::SM);
+    }
+    // Spacing against peers, quieter, as the secondary line.
+    if let Some(style) = &scout.style {
+        finding(ui, style, colour::TEXT, size::MICRO + 1.0);
+    }
+    if let Some(empty) = scout.empty.as_deref().filter(|s| !s.is_empty()) {
+        line(ui, empty, colour::TEXT_DIM, size::MICRO + 1.0);
+    }
+    // Every line the brief composed, behind a disclosure.
+    if !player.brief.is_empty() {
+        let salt = player.puuid.as_deref().unwrap_or("");
+        ui.push_id(("history", salt), |ui| {
+            egui::CollapsingHeader::new(
+                RichText::new("History")
+                    .size(size::MICRO)
+                    .color(colour::TEXT_DIM),
+            )
+            .show(ui, |ui| {
+                for text in player.brief.iter().filter_map(|l| l.text.as_deref()) {
+                    line(ui, text, colour::TEXT_DIM, size::MICRO);
+                }
+            });
+        });
+    }
+    if let Some(footer) = scout.footer.as_deref() {
+        line(ui, footer, colour::TEXT_FAINT, size::MICRO);
+    }
+}
+
+/// The curve of peers with the player's mark on it and the number
+/// printed on the chart; the evidence alone when there is no position.
+fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
+    let evidence = found.evidence.as_deref().unwrap_or("");
+    match found.pos {
+        Some(pos) => {
+            // The real shape of peers when the backend has one, else a normal.
+            let (shape, lo, hi) = if found.curve.is_empty() {
+                (normal_shape(), -BELL_SPAN, BELL_SPAN)
+            } else {
+                (
+                    found.curve.clone(),
+                    found.lo.unwrap_or(-BELL_SPAN),
+                    found.hi.unwrap_or(BELL_SPAN),
+                )
+            };
+            let own = found.own.as_deref().unwrap_or("");
+            let pct_word = found.share.as_deref().unwrap_or("");
+            let at_mark = match (own.is_empty(), pct_word.is_empty()) {
+                (false, false) => format!("{own} · {pct_word}"),
+                (true, false) => pct_word.to_owned(),
+                (false, true) => own.to_owned(),
+                (true, true) => String::new(),
+            };
+            bell(
+                ui,
+                &Bell {
+                    shape: &shape,
+                    lo,
+                    hi,
+                    pos,
+                    at_mark: &at_mark,
+                    at_middle: found.peers.as_deref().unwrap_or(""),
+                    left_word: found.left.as_deref().unwrap_or(""),
+                    right_word: found.right.as_deref().unwrap_or(""),
+                },
+            );
+        }
+        None if !evidence.is_empty() => line(ui, evidence, colour::TEXT_DIM, size::MICRO),
+        None => {}
+    }
+}
+
+/// How narrow at least and how tall the curve of peers is drawn, and the
+/// room above it for the number and under it for the words at its ends.
+const BELL_MIN_W: f32 = 48.0;
+const BELL_H: f32 = 26.0;
+const BELL_ENDS: f32 = 14.0;
+const BELL_TOP: f32 = 15.0;
+/// How many standard deviations a normal curve spans each way.
+const BELL_SPAN: f32 = 2.6;
+
+/// What a curve of peers is drawn from.
+struct Bell<'a> {
+    /// Heights sampled evenly from `lo` to `hi`.
+    shape: &'a [f32],
+    lo: f32,
+    hi: f32,
+    /// Where the player sits, in the shape's units.
+    pos: f32,
+    /// Printed above the mark: the percentile, read left to right.
+    at_mark: &'a str,
+    /// Printed under the middle: the peers' figure, when the chart has one.
+    at_middle: &'a str,
+    left_word: &'a str,
+    right_word: &'a str,
+}
+
+/// Where a curve sits on the panel.
+struct Frame {
+    left: f32,
+    width: f32,
+    base: f32,
+    top: f32,
+}
+
+impl Frame {
+    /// The x of a share `t` of the way along the curve.
+    const fn x_at(&self, t: f32) -> f32 {
+        t.mul_add(self.width, self.left)
+    }
+}
+
+/// A normal curve, for a read without a measured shape.
+fn normal_shape() -> Vec<f32> {
+    (0..=48u8)
+        .map(|i| {
+            let z = (f32::from(i) / 48.0).mul_add(2.0 * BELL_SPAN, -BELL_SPAN);
+            (-(z * z) / 2.0).exp()
+        })
+        .collect()
+}
+
+/// The curve's height a share `t` of the way along it, the samples
+/// joined by straight lines, as a share of `peak`.
+fn shape_at(shape: &[f32], peak: f32, t: f32) -> f32 {
+    let last = shape.len().saturating_sub(1);
+    if last == 0 {
+        return 0.0;
+    }
+    let scaled = t.clamp(0.0, 1.0) * last as f32;
+    let i = (scaled.floor() as usize).min(last - 1);
+    let frac = scaled - i as f32;
+    let (Some(&from), Some(&to)) = (shape.get(i), shape.get(i + 1)) else {
+        return 0.0;
+    };
+    (to - from).mul_add(frac, from) / peak
+}
+
+/// The curve of the player's peers, the share below them tinted and
+/// their position marked, with the percentile above the mark and the
+/// ends named under it.
+fn bell(ui: &mut Ui, bell: &Bell<'_>) {
+    let width = ui.available_width();
+    let frame_width = 2.0f32.mul_add(-space::LG, width).max(BELL_MIN_W);
+    let height = BELL_TOP + BELL_H + BELL_ENDS + space::SM;
+    let (rect, _response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let frame = Frame {
+        left: rect.left() + space::LG,
+        width: frame_width,
+        base: rect.top() + BELL_TOP + BELL_H,
+        top: rect.top(),
+    };
+    let painter = ui.painter();
+    let span = (bell.hi - bell.lo).max(f32::EPSILON);
+    let peak = bell
+        .shape
+        .iter()
+        .copied()
+        .fold(0.0f32, f32::max)
+        .max(f32::EPSILON);
+    let height_at = |t: f32| shape_at(bell.shape, peak, t) * (BELL_H - 2.0);
+    let mark = ((bell.pos - bell.lo) / span).clamp(0.0, 1.0);
+    // The share of peers below them, tinted solid under the curve: one
+    // stroke per step, wide enough to leave no gaps at any panel width.
+    let steps: u16 = 160;
+    let stroke = frame.width / f32::from(steps) + 0.6;
+    let fill = colour::EDGE.gamma_multiply(0.45);
+    for i in 0..=steps {
+        let t = f32::from(i) / f32::from(steps);
+        if t > mark {
+            break;
+        }
+        painter.line_segment(
+            [
+                pos2(frame.x_at(t), frame.base),
+                pos2(frame.x_at(t), frame.base - height_at(t)),
+            ],
+            (stroke, fill),
+        );
+    }
+    let curve: Vec<egui::Pos2> = (0..=48u8)
+        .map(|i| {
+            let t = f32::from(i) / 48.0;
+            pos2(frame.x_at(t), frame.base - height_at(t))
+        })
+        .collect();
+    painter.add(egui::Shape::line(curve, (1.0, colour::EDGE)));
+    painter.line_segment(
+        [
+            pos2(frame.left, frame.base),
+            pos2(frame.left + frame.width, frame.base),
+        ],
+        (1.0, colour::LINE),
+    );
+    // The middle of the peers, a faint tick, and the player's mark.
+    painter.line_segment(
+        [
+            pos2(frame.x_at(0.5), frame.base),
+            pos2(frame.x_at(0.5), frame.base + 3.0),
+        ],
+        (1.0, colour::EDGE),
+    );
+    painter.line_segment(
+        [
+            pos2(frame.x_at(mark), frame.base),
+            pos2(frame.x_at(mark), frame.base - BELL_H),
+        ],
+        (1.5, colour::TEXT_STRONG),
+    );
+    bell_words(painter, bell, &frame, mark);
+}
+
+/// The percentile above the mark, kept inside the chart, the ends named
+/// under it, and the peers' figure under the middle when there is one.
+fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32) {
+    if !bell.at_mark.is_empty() {
+        let font = Face::Heavy.at(size::BODY);
+        let galley = painter.layout_no_wrap(bell.at_mark.to_owned(), font, colour::TEXT_STRONG);
+        let half = galley.size().x / 2.0;
+        let x = frame
+            .x_at(mark)
+            .clamp(frame.left + half, frame.left + frame.width - half);
+        painter.galley(
+            pos2(
+                x - half,
+                frame.top + (BELL_TOP - galley.size().y).max(0.0) / 2.0,
+            ),
+            galley,
+            colour::TEXT_STRONG,
+        );
+    }
+    let ends = Face::Display.at(size::MICRO);
+    let _left = caps_text(
+        painter,
+        pos2(frame.left, frame.base + 2.0),
+        Align2::LEFT_TOP,
+        bell.left_word,
+        ends.clone(),
+        colour::TEXT_FAINT,
+    );
+    let _right = caps_text(
+        painter,
+        pos2(frame.left + frame.width, frame.base + 2.0),
+        Align2::RIGHT_TOP,
+        bell.right_word,
+        ends.clone(),
+        colour::TEXT_FAINT,
+    );
+    if !bell.at_middle.is_empty() {
+        painter.text(
+            pos2(frame.x_at(0.5), frame.base + 1.0),
+            Align2::CENTER_TOP,
+            format!("peers {}", bell.at_middle),
+            ends,
+            colour::TEXT_FAINT,
+        );
+    }
+}
+
+/// How tall a gun's picture is drawn in a buy block's row, and the room
+/// under it for its figure and name.
+const GUN_H: f32 = 30.0;
+const GUN_WORDS: f32 = 26.0;
+
+/// The guns of a buy block side by side: each one's picture, its odds or
+/// count in the panel's numerals under it, and its name in caps.
+fn gun_row(ui: &mut Ui, items: &[overseer_core::ScoutGun]) {
+    let width = ui.available_width();
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(width, GUN_H + GUN_WORDS + space::SM), Sense::hover());
+    if !ui.is_rect_visible(rect) || items.is_empty() {
+        return;
+    }
+    let inner = 2.0f32.mul_add(-space::LG, width);
+    let cell = inner / items.len() as f32;
+    let painter = ui.painter();
+    for (i, gun) in items.iter().enumerate() {
+        let name = gun.name.as_deref().unwrap_or("");
+        let left = (i as f32).mul_add(cell, rect.left() + space::LG);
+        let slot = Rect::from_min_size(
+            pos2(left + space::SM, rect.top()),
+            vec2(2.0f32.mul_add(-space::SM, cell), GUN_H),
+        );
+        if let Some(texture) = art::weapon(ui.ctx(), name) {
+            // Fit inside the slot, keeping the picture's shape.
+            let size = texture.size_vec2();
+            let scale = (slot.width() / size.x.max(1.0)).min(slot.height() / size.y.max(1.0));
+            let drawn = Rect::from_center_size(slot.center(), size * scale);
+            painter.image(
+                texture.id(),
+                drawn,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let centre = left + cell / 2.0;
+        painter.text(
+            pos2(centre, rect.top() + GUN_H + 1.0),
+            Align2::CENTER_TOP,
+            gun.value.as_deref().unwrap_or(""),
+            Face::Heavy.at(size::TITLE),
+            colour::TEXT_STRONG,
+        );
+        let _name = caps_text(
+            painter,
+            pos2(centre, rect.top() + GUN_H + size::TITLE + 3.0),
+            Align2::CENTER_TOP,
+            name,
+            Face::Display.at(size::MICRO),
+            colour::TEXT_FAINT,
+        );
+    }
+}
+
+/// A finding as three lines: the words, the figures in small print, and
+/// what it allows, when there is one.
+fn finding(ui: &mut Ui, found: &overseer_core::ScoutFinding, tint: Color32, points: f32) {
+    if let Some(words) = found.headline.as_deref() {
+        line(ui, words, tint, points);
+    }
+    if let Some(evidence) = found.evidence.as_deref().filter(|s| !s.is_empty()) {
+        line(ui, evidence, colour::TEXT_DIM, size::MICRO);
+    }
+    if let Some(suggest) = found.suggest.as_deref().filter(|s| !s.is_empty()) {
+        line(ui, suggest, colour::TEXT, size::MICRO + 1.0);
+    }
+    ui.add_space(space::SM);
 }
 
 /// One line of chips.

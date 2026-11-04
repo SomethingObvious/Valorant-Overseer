@@ -9,8 +9,9 @@ pub mod lineups;
 pub mod profile;
 
 pub use board::{
-    AutoTag, Board, Encounter, Evidence, LockProgress, MapWinRate, Notice, Party, Player, Reading,
-    Saved, Score, Session, SessionPoint, Skin, StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
+    AutoTag, Board, BriefLine, Encounter, Evidence, LockProgress, MapWinRate, Notice, Party,
+    Player, Reading, Saved, Score, Scout, ScoutBuy, ScoutFinding, ScoutGun, Session, SessionPoint,
+    Skin, StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
 };
 pub use bridge::{Bridge, Event, Status};
 pub use games::{Game, Line, Recent};

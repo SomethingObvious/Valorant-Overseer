@@ -80,9 +80,17 @@ you in it, and Look for Updates in settings turns that off. It never downloads
 or installs anything by itself. Your notes, lineups and history stay in the
 install folder, and Your Data in settings opens it.
 
-The window takes about 175 MB of memory, draws nothing while you leave it
-alone, and asks Windows for the integrated GPU so VALORANT keeps the faster
+The window draws nothing while you leave it alone, and asks Windows for the
+integrated GPU so VALORANT keeps the faster
 one.
+
+Scout reuses those recent games (5, 10 or 20 per player) and a bundled 1 MB
+file of peer statistics; it never downloads the research dataset or crawls
+other players' histories. The peer baseline was sampled through one account,
+so its percentiles describe that sample, not the whole ranked population.
+The optional party match cache expires after the selected number of days
+and holds at most 200 compressed matches or 64 MiB, evicting the oldest first.
+Turning retention off clears that cache. Scout adds no permanent match log.
 
 ## Installing
 

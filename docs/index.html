@@ -36,11 +36,11 @@
   "@type": "SoftwareApplication",
   "name": "Valorant Overseer",
   "alternateName": "Overseer",
-  "description": "A free match tracker for VALORANT on Windows that runs entirely on your PC. It shows everyone in your lobby and match with their rank, peak rank, K/D and win rate, who queued together, and whether an account looks like a smurf, with an agent select overlay, match history, a lineup planner and Appear Offline for Riot chat.",
+  "description": "A free match tracker for VALORANT on Windows that runs entirely on your PC. It shows everyone in your lobby and match with their rank, peak rank, K/D and win rate, who queued together, whether an account looks like a smurf, and how each player's habits compare with others on their agent and rank, with an agent select overlay, match history, a lineup planner and Appear Offline for Riot chat.",
   "applicationCategory": "GameApplication",
   "applicationSubCategory": "Match tracker",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "2.3.4",
+  "softwareVersion": "2.4.0",
   "dateModified": "2026-11-02",
   "inLanguage": "en-CA",
   "url": "https://somethingobvious.github.io/Valorant-Overseer/",
@@ -62,6 +62,7 @@
     "Rank, peak rank, K/D, headshot rate, win rate and level for every player",
     "Party detection for duos and trios",
     "Smurf signs flagged as Worth a Look",
+    "Scout, which sets each player's pace and habits against peers on the same agent and rank",
     "Agent select overlay toggled with Ctrl+Alt+O",
     "Each player's three most played agents and shared role before they lock in",
     "Reads on who forces and who saves after a lost round",
@@ -507,11 +508,11 @@ h1 .w { gap: 0.05em; }
     <p class="say"><span>Every player in your match, ranked before round one.</span></p>
     <p class="lede">Rank, peak rank, K/D, headshot and win rates and who queued together, for all ten players, in a window beside VALORANT. Free for Windows 10 and 11, and it runs on your PC with no account.</p>
     <div class="get">
-      <a class="dl" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.3.4</span></span></a>
+      <a class="dl" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.4.0</span></span></a>
       <a class="src" href="https://github.com/SomethingObvious/Valorant-Overseer">Source on GitHub</a>
     </div>
     <figure class="shot">
-      <div class="px"><img src="assets/shots/board-1600.webp" srcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w, assets/shots/board-3200.webp 3200w" sizes="(min-width: 1000px) 48vw, 100vw" width="1600" height="955" fetchpriority="high" alt="The Overseer board in a VALORANT match on Icebox: the enemy team's ranks, peak ranks, K/D, headshot and win rates, with one player flagged Worth a Look and a possible trio, your team below, and the selected player's panel on the right"></div>
+      <div class="px"><img src="assets/shots/board-1600.webp" srcset="assets/shots/board-960.webp 960w, assets/shots/board-1600.webp 1600w, assets/shots/board-3200.webp 3200w" sizes="(min-width: 1000px) 48vw, 100vw" width="1600" height="980" fetchpriority="high" alt="The Overseer board in a VALORANT match on Icebox: the enemy team's ranks, peak ranks, K/D, headshot and win rates, with one player flagged Worth a Look and a possible trio, your team below, and the selected player's panel on the right"></div>
       <figcaption>Round five on Icebox, enemy team on top.</figcaption>
       <span class="call star red" aria-hidden="true">All Ten Players</span>
     </figure>
@@ -579,18 +580,20 @@ h1 .w { gap: 0.05em; }
     <div class="wrap">
       <div class="head cutin"><h2 id="panel-h"><span class="vh">Peak, Form and Reads</span><span class="rn" aria-hidden="true"><span class="w"><i class="t v3" style="--s:1.05;--r:-6.5deg;--y:-0.03em">P</i><i class="t v1" style="--s:0.89;--r:-5.3deg;--y:-0.03em">E</i><i class="t v3" style="--s:0.87;--r:-5.0deg;--y:-0.05em">A</i><i class="t v7" style="--s:0.87;--r:-1.8deg;--y:0.06em">K</i><i class="t tp">,</i></span> <span class="w"><i class="t v3" style="--s:1.03;--r:0.5deg;--y:-0.05em">F</i><i class="t v8" style="--s:1.06;--r:-3.5deg;--y:0.02em">O</i><i class="t v7" style="--s:0.94;--r:3.4deg;--y:0.02em">r</i><i class="t v1" style="--s:1.00;--r:-2.8deg;--y:0.04em">M</i></span> <span class="w"><i class="t v6" style="--s:0.89;--r:-2.5deg;--y:0.03em">A</i><i class="t v5" style="--s:1.04;--r:-0.1deg;--y:0.04em">N</i><i class="t v7" style="--s:0.96;--r:-3.1deg;--y:0.00em">D</i></span> <span class="w"><i class="t v6" style="--s:1.05;--r:-1.4deg;--y:-0.03em">R</i><i class="t v7" style="--s:0.91;--r:-5.2deg;--y:0.02em">e</i><i class="t v3" style="--s:1.08;--r:-0.9deg;--y:0.01em">A</i><i class="t v1" style="--s:0.94;--r:6.5deg;--y:0.06em">D</i><i class="t v3" style="--s:0.96;--r:-2.8deg;--y:-0.06em">S</i></span></span></h2></div>
       <figure class="shot back panel">
-        <div class="px"><img src="assets/shots/rung-panel-800.webp" srcset="assets/shots/rung-panel-800.webp 1x, assets/shots/rung-panel-1340.webp 2x" width="670" height="1280" loading="lazy" decoding="async" alt="A player's panel in Overseer: their card, a Worth a Look flag listing their level, their peak and when they reached it, their K/D and win rate, reads, Platinum 3 with RR, four wins in a row, stats, a likely trio and the games you've met them in before"></div>
+        <div class="px"><img src="assets/shots/rung-panel-800.webp" srcset="assets/shots/rung-panel-800.webp 1x, assets/shots/rung-panel-1340.webp 2x" width="670" height="1544" loading="lazy" decoding="async" alt="A player's panel in Overseer: their card, a Worth a Look flag listing their level, their peak and when they reached it, their K/D and win rate, reads, Platinum 3 with RR, four wins in a row, their stats, and Scout placing them as more aggressive than 86% of Clove players at their rank"></div>
         <figcaption>Vexlyn's panel, flagged Worth a Look.</figcaption>
         <span class="call star warn" aria-hidden="true">Worth a Look</span>
       </figure>
       <div class="words">
         <p>Rest the pointer on a player and the panel opens on their card, their rank with its RR, their form over recent games, the agents they main and a rating line across their last ten. It also lists who they play with most, and how often they win together.</p>
         <p>Reads sum up their habits from those matches, like whether they save or force on a bad round, or only ever play one agent. An account that looks like a smurf is flagged <strong>Worth a Look</strong>, with the reasons beside it. Notes and tags you leave on a player come back the next time you meet them.</p>
+        <h3>Scout</h3>
+        <p>Scout sets their recent games against other players on the same agent in the same rank band. It names their pace, like Aggressive, and up to two habits that stand out, each on a curve of those peers with a tip for playing against it, then guesses what they will buy on this kind of round from the rounds like it they have played.</p>
         <h3>Who Queued Together</h3>
-        <p>Parties get a tab down the side of their rows, so a duo or a trio reads at a glance. The ladder under the board puts everyone in the lobby at their rank, and your session's RR keeps count of the night.</p>
+        <p>Parties get a tab down the side of their rows, so a duo or a trio reads at a glance. The ladder under the board puts everyone in the lobby on their rank's plate, the other team above it and yours below, and your session's RR keeps count of the night.</p>
       </div>
       <figure class="shot back parties pan">
-        <div class="px"><img src="assets/shots/rung-parties-1400.webp" srcset="assets/shots/rung-parties-800.webp 800w, assets/shots/rung-parties-1400.webp 1400w, assets/shots/rung-parties-2800.webp 2800w" sizes="(max-width: 720px) 760px, (min-width: 1000px) 56vw, 100vw" width="1400" height="503" loading="lazy" decoding="async" alt="Your team in Overseer with a duo tab joining two players' rows, the rank ladder placing every player in the lobby, and plus 37 RR for the session"></div>
+        <div class="px"><img src="assets/shots/rung-parties-1400.webp" srcset="assets/shots/rung-parties-800.webp 800w, assets/shots/rung-parties-1400.webp 1400w, assets/shots/rung-parties-2800.webp 2800w" sizes="(max-width: 720px) 760px, (min-width: 1000px) 56vw, 100vw" width="1400" height="532" loading="lazy" decoding="async" alt="Your team in Overseer with a duo tab joining two players' rows, the rank ladder placing every player in the lobby on plates for Gold, Platinum and Diamond, and plus 37 RR for the session"></div>
         <figcaption>Your team with a duo, the lobby's rank ladder and the session's RR.</figcaption>
         <span class="call say-it swipe" aria-hidden="true">Swipe for the Ladder</span>
       </figure>
@@ -664,7 +667,7 @@ h1 .w { gap: 0.05em; }
       <div class="head cutin"><h2 id="admit-h"><span class="vh">Setup in Three Steps</span><span class="rn" aria-hidden="true"><span class="w"><i class="t v5" style="--s:0.96;--r:6.5deg;--y:0.05em">S</i><i class="t v1" style="--s:0.99;--r:-0.2deg;--y:0.00em">E</i><i class="t v6" style="--s:0.89;--r:1.9deg;--y:-0.03em">T</i><i class="t v2" style="--s:0.88;--r:-0.8deg;--y:-0.03em">U</i><i class="t v5" style="--s:0.86;--r:-1.9deg;--y:-0.01em">P</i></span> <span class="w"><i class="t v8" style="--s:1.01;--r:1.6deg;--y:0.05em">I</i><i class="t v7" style="--s:0.97;--r:4.9deg;--y:0.01em">N</i></span> <span class="w"><i class="t v6" style="--s:0.90;--r:-3.9deg;--y:0.03em">T</i><i class="t v8" style="--s:0.89;--r:-6.4deg;--y:0.05em">H</i><i class="t v5" style="--s:0.94;--r:4.3deg;--y:-0.00em">R</i><i class="t v3" style="--s:1.11;--r:2.8deg;--y:0.01em">E</i><i class="t v1" style="--s:1.05;--r:0.7deg;--y:0.00em">E</i></span> <span class="w"><i class="t v7" style="--s:0.91;--r:2.6deg;--y:-0.00em">S</i><i class="t v1" style="--s:0.88;--r:-3.4deg;--y:-0.04em">T</i><i class="t v3" style="--s:1.07;--r:2.1deg;--y:-0.05em">E</i><i class="t v7" style="--s:1.12;--r:2.2deg;--y:-0.01em">p</i><i class="t v6" style="--s:0.89;--r:-3.5deg;--y:-0.01em">S</i></span></span></h2></div>
       <div class="get2">
         <span class="call star red" aria-hidden="true">No Admin Rights</span>
-        <a class="dl big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.3.4</span></span></a>
+        <a class="dl big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.4.0</span></span></a>
         <p>Setup installs Overseer into AppData with its own copy of Python, so it needs no admin rights. It also installs yt-dlp and FFmpeg with winget for lineup clips. A new version's setup updates in place and keeps your region, lineups, notes and settings, and it uninstalls from Settings, then Apps.</p>
       </div>
       <ol class="steps">
@@ -695,8 +698,8 @@ h1 .w { gap: 0.05em; }
     <article class="card">
       <div class="head cutin"><h2 id="close-h"><span class="vh">Before Round One</span><span class="rn" aria-hidden="true"><span class="w"><i class="t v8" style="--s:1.07;--r:-3.6deg;--y:-0.00em">B</i><i class="t v2" style="--s:1.08;--r:0.1deg;--y:-0.05em">E</i><i class="t v4" style="--s:0.93;--r:2.8deg;--y:0.04em">F</i><i class="t v5" style="--s:0.86;--r:1.7deg;--y:-0.05em">O</i><i class="t v1" style="--s:1.01;--r:-5.0deg;--y:0.01em">R</i><i class="t v2" style="--s:0.86;--r:1.2deg;--y:0.01em">E</i></span> <span class="w"><i class="t v6" style="--s:0.88;--r:-1.0deg;--y:-0.04em">R</i><i class="t v1" style="--s:1.06;--r:5.4deg;--y:-0.00em">O</i><i class="t v7" style="--s:0.91;--r:-0.2deg;--y:0.05em">u</i><i class="t v1" style="--s:1.04;--r:-1.1deg;--y:0.04em">N</i><i class="t v8" style="--s:1.01;--r:4.2deg;--y:0.00em">D</i></span> <span class="w"><i class="t v3" style="--s:0.92;--r:-6.0deg;--y:-0.03em">O</i><i class="t v6" style="--s:0.98;--r:-4.7deg;--y:-0.05em">N</i><i class="t v2" style="--s:1.06;--r:6.3deg;--y:-0.03em">E</i></span></span></h2></div>
       <p class="note">Every player in your match, ranked. Free for Windows 10 and 11, and it runs on your PC with no account.</p>
-      <a class="dl big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.3.4</span></span></a>
-      <p class="sign"><span class="chip"><img src="assets/mark.svg" width="32" height="32" alt=""></span><span class="who">Valorant Overseer</span><span class="ver">2.3.4</span></p>
+      <a class="dl big" href="https://github.com/SomethingObvious/Valorant-Overseer/releases/latest"><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg><b>Download for Windows</b><span class="meta"><span>Free</span><span>2.4.0</span></span></a>
+      <p class="sign"><span class="chip"><img src="assets/mark.svg" width="32" height="32" alt=""></span><span class="who">Valorant Overseer</span><span class="ver">2.4.0</span></p>
     </article>
   </section>
 </main>

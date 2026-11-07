@@ -341,6 +341,81 @@ fn vexlyn(p: &mut Player) {
             "Economy",
         ),
     ];
+    p.scout = Some(scout());
+    p.brief = [
+        "Opening kill/death involvement: 24% · 412 rounds · peers 15%",
+        "Gun-kill range: 2,140 map units · 211 kills · peers 1,630 map units",
+        "Rounds with Operator: 14% · 412 rounds · peers 4%",
+        "Death timing: 31s · 284 deaths · peers 38s",
+        "Spike plants: 19% · 206 attack rounds · peers 21%",
+    ]
+    .into_iter()
+    .map(|text| overseer_core::BriefLine {
+        text: Some(text.to_owned()),
+        ..overseer_core::BriefLine::default()
+    })
+    .collect();
+}
+
+/// The selected enemy's Scout section, worded the way the backend words it:
+/// an aggressive Operator player who takes the first fight.
+fn scout() -> overseer_core::Scout {
+    let finding = |headline: &str, evidence: &str, suggest: &str, pct: f32, ends: (&str, &str)| {
+        overseer_core::ScoutFinding {
+            headline: Some(headline.to_owned()),
+            evidence: Some(evidence.to_owned()),
+            suggest: Some(suggest.to_owned()),
+            pct: Some(pct),
+            pos: Some(1.4 * (pct - 0.5) / 0.4),
+            left: Some(ends.0.to_owned()),
+            right: Some(ends.1.to_owned()),
+            share: Some(format!("{}th pct", (pct * 100.0).round())),
+            ..overseer_core::ScoutFinding::default()
+        }
+    };
+    overseer_core::Scout {
+        title: Some("Scout".to_owned()),
+        tag: Some(finding(
+            "Aggressive",
+            "more aggressive than 86% of peers · 18 games",
+            "",
+            0.86,
+            ("passive", "aggressive"),
+        )),
+        habits: vec![
+            finding(
+                "Takes the first fight",
+                "in the opening fight more than 89% of peers · 24% vs 15% · 18 games",
+                "Set up a trade for the opening.",
+                0.89,
+                ("stays out", "takes fights"),
+            ),
+            finding(
+                "Fights at long range",
+                "kills from further than 81% of peers · 16/18 games",
+                "Use utility before a long peek.",
+                0.81,
+                ("close", "long range"),
+            ),
+        ],
+        buy: Some(overseer_core::ScoutBuy {
+            label: Some("Pistol · 36 past rounds".to_owned()),
+            armor: Some("Light armor 25/36".to_owned()),
+            items: vec![
+                overseer_core::ScoutGun {
+                    name: Some("Ghost".to_owned()),
+                    value: Some("22/36".to_owned()),
+                },
+                overseer_core::ScoutGun {
+                    name: Some("Classic".to_owned()),
+                    value: Some("14/36".to_owned()),
+                },
+            ],
+            ..overseer_core::ScoutBuy::default()
+        }),
+        footer: Some("Last 18 ranked games · 15 on Clove".to_owned()),
+        ..overseer_core::Scout::default()
+    }
 }
 
 /// The site's lobby: the snapshot board's shapes with the numbers a real
@@ -469,7 +544,17 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     vec![
         (
             "board",
-            vec2(1600.0, 955.0),
+            vec2(1600.0, 980.0),
+            Shot::Window(Box::new(
+                Scene::of(Some(SELECTED))
+                    .with(lobby())
+                    .lived(career(&renamed(A_HISTORY))),
+            )),
+        ),
+        (
+            // The same board, tall enough for the whole of Vexlyn's panel.
+            "panel",
+            vec2(1600.0, 1500.0),
             Shot::Window(Box::new(
                 Scene::of(Some(SELECTED))
                     .with(lobby())
@@ -668,7 +753,7 @@ fn the_site_pictures_render_to_the_folder() {
         // render, and the board's key and panel crops are a part of it.
         let scale = match name {
             "settings" => 5.0,
-            "board" => 4.0,
+            "board" | "panel" => 4.0,
             _ => 3.0,
         };
         let mut harness = Harness::builder()

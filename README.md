@@ -5,7 +5,8 @@
 Valorant Overseer is a match tracker for VALORANT on Windows that runs entirely
 on your PC. It shows all ten players in your match with their rank, peak rank,
 K/D and win rate, who queued together, and whether an account looks like a
-smurf. It also keeps your match history, has a lineup planner with clips for
+smurf, and Scout sets each player's habits against others on the same agent at
+about the same rank. It also keeps your match history, has a lineup planner with clips for
 every map, puts an overlay over the game in agent select, and can hide you
 from your friends in Riot chat.
 
@@ -17,7 +18,7 @@ There's more on the [Valorant Overseer site](https://somethingobvious.github.io/
 
 ![The Overseer board in a VALORANT match, with each player's rank, peak rank and K/D](docs/assets/shots/board-1600.webp)
 
-![Overseer in agent select, with your team's ranks, a duo and the rank ladder](docs/assets/shots/pregame-1600.webp)
+![Overseer in agent select, with your team's ranks, a duo and the rank ladder of plates](docs/assets/shots/pregame-1600.webp)
 
 ![The Overseer overlay over VALORANT in agent select](docs/assets/shots/overlay-full.webp)
 
@@ -48,12 +49,24 @@ card, their rank with its RR, their form, the agents they main and who they
 play with most. Reads sum up their habits from recent matches, and an account
 that looks like a smurf is flagged Worth a Look with the reasons beside it.
 Notes and tags you leave on a player come back the next time you meet them.
-Under the board, the ladder puts everyone in the lobby at their rank, framed
-in their team's colour, and your session's RR keeps count of the night.
+
+Under their stats, Scout puts the player's recent games against other players
+on the same agent in the same rank band. It names their pace, like Aggressive,
+and up to two habits that stand out, each on a curve of those peers with a tip
+for playing against it. It also guesses what they'll buy on this kind of round
+from the rounds like it they've played, and All Figures opens every line it
+worked out. Games and Within in Settings pick how many recent games each row
+reads (5, 10 or 20) and how old they can be.
+
+Under the board, the ladder lays the lobby's ranks out as a strip of plates
+that brighten toward the top of each rank. Your team sits below it and the
+other team above, each face framed in its team's colour, and faces that land
+close together overlap a little instead of hiding each other. Your session's
+RR keeps count of the night beneath it.
 
 Your match history shows each game's score with a Victory or Defeat chip under
-it, your K/D/A, ACS and the RR you won or lost. Open one for the full scoreboard, with ADR, headshot rate, KAST and
-first bloods for all ten players.
+it, your K/D/A, ACS and the RR you won or lost. Open one for the full
+scoreboard, with ADR, headshot rate, KAST and first bloods for all ten players.
 
 The lineup planner covers every map. Drag from where you stand to where it
 lands, pick the agent and the ability, and add a clip from a YouTube link or a
@@ -81,16 +94,15 @@ or installs anything by itself. Your notes, lineups and history stay in the
 install folder, and Your Data in settings opens it.
 
 The window draws nothing while you leave it alone, and asks Windows for the
-integrated GPU so VALORANT keeps the faster
-one.
+integrated GPU so VALORANT keeps the faster one.
 
-Scout reuses those recent games (5, 10 or 20 per player) and a bundled 1 MB
-file of peer statistics; it never downloads the research dataset or crawls
-other players' histories. The peer baseline was sampled through one account,
-so its percentiles describe that sample, not the whole ranked population.
-The optional party match cache expires after the selected number of days
-and holds at most 200 compressed matches or 64 MiB, evicting the oldest first.
-Turning retention off clears that cache. Scout adds no permanent match log.
+Scout works from the same recent games and a 1 MB file of peer statistics
+that ships with the app, so it doesn't crawl anyone else's history. That
+baseline was sampled through one account, which means its percentiles describe
+that sample and not every ranked player. Keep in settings holds your party's
+games on disk for 7, 14 or 30 days, so a restart doesn't ask Riot for them
+again. It keeps at most 200 matches or 64 MiB and drops the oldest first, and
+setting it to Off clears it.
 
 ## Installing
 

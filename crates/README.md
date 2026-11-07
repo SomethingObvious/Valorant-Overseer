@@ -225,7 +225,7 @@ game, that is the right way round.
 
 ## The Python Backend Stays for Now
 
-`backend/` is about 10,000 lines, and its value is in the parts nobody sees:
+`backend/` is about 16,000 lines, and its value is in the parts nobody sees:
 the 429 handling, the caches keyed on match ids, the queue preference order in
 `_fresh_mids`, the throttles that keep this read-only and unbannable.
 Rewriting that in one go is where a ban comes from. The window only reaches

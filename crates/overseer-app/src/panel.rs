@@ -781,7 +781,7 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side, still: bool) {
         } else {
             colour::TEXT_DIM
         };
-        let _delta = caps_text(
+        let shown = caps_text(
             &painter,
             pos2(after.right() + space::LG, rect.center().y + 14.0),
             Align2::LEFT_CENTER,
@@ -789,6 +789,17 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side, still: bool) {
             Face::Heavy.at(16.0),
             tint,
         );
+        // Only where the ladder moved by something else, as on a rank up.
+        if let Some(actual) = player.rr_actual.filter(|a| *a != delta) {
+            let _actual = caps_text(
+                &painter,
+                pos2(shown.right() + space::MD, rect.center().y + 15.0),
+                Align2::LEFT_CENTER,
+                &format!("{actual:+} actual"),
+                Face::Display.at(size::LABEL),
+                colour::TEXT_DIM,
+            );
+        }
     }
 }
 

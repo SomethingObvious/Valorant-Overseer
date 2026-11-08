@@ -141,6 +141,8 @@ pub(crate) fn sample() -> Board {
         team_stats: stats,
         session: Some(overseer_core::Session {
             net: Some(37),
+            // One of the losses landed on derank protection.
+            actual: Some(53),
             points: ["W", "W", "L", "W", "L", "W"]
                 .iter()
                 .enumerate()
@@ -148,6 +150,7 @@ pub(crate) fn sample() -> Board {
                     map: Some("Icebox".to_owned()),
                     result: Some(if *result == "W" { "Victory" } else { "Defeat" }.to_owned()),
                     delta: Some(if *result == "W" { 19 } else { -16 }),
+                    actual: None,
                     rr: Some(40 + i64::try_from(i).unwrap_or(0) * 6),
                 })
                 .collect(),

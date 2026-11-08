@@ -98,6 +98,30 @@ def rank_from_tier(tier: int | None) -> dict[str, Any]:
     return RANKS[tier]
 
 
+# Immortal 1. From here up the rating counts on without starting over at
+# each tier.
+IMMORTAL = 24
+
+
+def rr_moved(update: dict[str, Any]) -> int | None:
+    """How far a ranked match really moved somebody, from one competitive update.
+
+    Riot's RankedRatingEarned is the match's own figure. A rank up, derank
+    protection or a placement can leave the rating somewhere else, so this
+    is where they stood on the whole ladder after it less where they stood
+    before. None when Riot left either end out.
+    """
+
+    def place(tier: Any, rr: Any) -> int | None:
+        if not isinstance(tier, int) or not isinstance(rr, int) or tier < 3:
+            return None
+        return min(tier, IMMORTAL) * 100 + rr
+
+    before = place(update.get("TierBeforeUpdate"), update.get("RankedRatingBeforeUpdate"))
+    after = place(update.get("TierAfterUpdate"), update.get("RankedRatingAfterUpdate"))
+    return None if before is None or after is None else after - before
+
+
 def map_name_from_path(map_id: str) -> str:
     """Return a map's name from its path, Unknown when there is none."""
     if not map_id:

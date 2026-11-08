@@ -11,12 +11,13 @@ use egui::{Ui, Vec2, vec2};
 use egui_kittest::Harness;
 use overseer_core::{Board, Bridge, Player};
 
-use super::{A_HISTORY, NOW_MS, Scene, career, draw, evidence, past_games, sample, still_clips};
+use super::{
+    A_HISTORY, NOW_MS, Scene, career, draw, evidence, machine, overlay_board, past_games, sample,
+    settle, show_lineups,
+};
 use crate::history::History;
 use crate::lineups::Lineups;
-use crate::notes::Notes;
-use crate::settings::{Quality, Settings};
-use crate::sort::Sort;
+use crate::settings::{MapTurn, Quality, Settings};
 use crate::view;
 use overseer_ui as design;
 
@@ -235,7 +236,6 @@ fn tag(tag: &str, why: &str, kind: &str) -> overseer_core::AutoTag {
 /// Puts one row's numbers from [`LOBBY`] on a player, with the run they are on.
 fn set(p: &mut Player, line: &Line) {
     p.name = Some(line.name.to_owned());
-    p.team = p.team.clone().or_else(|| Some("Red".to_owned()));
     p.rank = Some(line.rank.0.to_owned());
     p.rank_tier = Some(line.rank.1);
     p.peak_rank = Some(line.peak.0.to_owned());
@@ -578,44 +578,30 @@ enum Shot {
 
 /// Agent select, where only your own team is known.
 fn agent_select() -> Board {
-    let full = lobby();
+    let mut board = lobby();
+    board.players.retain(|p| p.team == board.self_team);
     Board {
         state: Some("PREGAME".to_owned()),
         state_label: Some("Agent Select".to_owned()),
         score: None,
         side: None,
-        players: full
-            .players
-            .iter()
-            .filter(|p| p.team == full.self_team)
-            .cloned()
-            .collect(),
-        ..full.clone()
+        ..board
     }
 }
 
 /// Every picture, by name and size in points.
 fn shots() -> Vec<(&'static str, Vec2, Shot)> {
+    let board = || {
+        Shot::Window(Box::new(
+            Scene::of(Some(SELECTED))
+                .with(lobby())
+                .lived(career(&renamed(A_HISTORY))),
+        ))
+    };
     vec![
-        (
-            "board",
-            vec2(1600.0, 980.0),
-            Shot::Window(Box::new(
-                Scene::of(Some(SELECTED))
-                    .with(lobby())
-                    .lived(career(&renamed(A_HISTORY))),
-            )),
-        ),
-        (
-            // The same board, tall enough for the whole of Vexlyn's panel.
-            "panel",
-            vec2(1600.0, 1500.0),
-            Shot::Window(Box::new(
-                Scene::of(Some(SELECTED))
-                    .with(lobby())
-                    .lived(career(&renamed(A_HISTORY))),
-            )),
-        ),
+        ("board", vec2(1600.0, 980.0), board()),
+        // The same board, tall enough for the whole of Vexlyn's panel.
+        ("panel", vec2(1600.0, 1500.0), board()),
         (
             "pregame",
             vec2(1600.0, 955.0),
@@ -654,11 +640,7 @@ fn paint(ui: &mut Ui, shot: &mut Shot) {
                 });
         }
         Shot::Settings(settings) => {
-            let machine = crate::machine::Machine {
-                memory: Some(16 << 30),
-                threads: 8,
-                card: true,
-            };
+            let machine = machine();
             let mut offline = crate::offline::Offline::default();
             offline.state = Some(crate::offline::State::default());
             egui::CentralPanel::default()
@@ -678,42 +660,13 @@ fn paint(ui: &mut Ui, shot: &mut Shot) {
         }
         Shot::Lineups(screen) => {
             let (lineups, bridge) = &mut **screen;
-            lineups.show(
-                ui,
-                (bridge, std::path::Path::new(".")),
-                true,
-                (
-                    1.0,
-                    still_clips(),
-                    crate::lineups::Look {
-                        // The app's default, attackers at the bottom.
-                        turn: crate::settings::MapTurn::Attack,
-                        names: false,
-                        area: None,
-                        agent: "Brimstone",
-                        slow: false,
-                        redraws: &crate::settings::RedrawSettings::default(),
-                    },
-                ),
-            );
+            // The app's default, attackers at the bottom.
+            show_lineups(ui, lineups, bridge, MapTurn::Attack);
         }
         Shot::Overlay(board) => {
             crate::overlay::contents(ui, &mut |ui: &mut Ui| {
                 let corner = ui.max_rect();
-                let _drew = crate::board::draw(
-                    ui,
-                    &crate::board::Scene {
-                        board,
-                        sort: &Sort::default(),
-                        selected: None,
-                        notes: &Notes::default(),
-                        hidden: &[],
-                        enemies_first: true,
-                        place: crate::board::Place::Overlay,
-                        still: true,
-                        since: 10.0,
-                    },
-                );
+                overlay_board(ui, board);
                 let _hide = crate::overlay::hide_button(ui, corner);
             });
         }
@@ -827,11 +780,7 @@ fn the_site_pictures_render_to_the_folder() {
         harness.run();
         harness.state_mut().0 = true;
         harness.run();
-        let mut frames = 0;
-        while harness.ctx.has_requested_repaint() && frames < 120 {
-            harness.run();
-            frames += 1;
-        }
+        settle(&mut harness);
         harness
             .render()
             .expect("a frame renders")

@@ -29,7 +29,7 @@ pub(crate) fn window() -> HWND {
 
 /// Stops the top-level window titled `title` from taking the focus on a click.
 ///
-/// Clicking the overlay used to make it the foreground window, which pulls
+/// Otherwise a click makes the overlay the foreground window, which pulls
 /// VALORANT out of full screen. Does nothing while there is no such window,
 /// and nothing to one that already has the style.
 pub fn never_activate(title: &str) {

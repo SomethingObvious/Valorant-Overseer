@@ -8,7 +8,7 @@ use overseer_core::{
     Board, Encounter, LockProgress, Party, Player, Reading, Score, StackGuess, Streak,
 };
 
-use super::{Scene, a_history, draw, form, sample};
+use super::{Scene, a_history, draw, form, sample, settle};
 use crate::notes::Notes;
 use crate::sort::Sort;
 use overseer_ui as design;
@@ -60,6 +60,12 @@ fn rank_name(tier: u32) -> Option<String> {
         name.into_iter().collect::<String>()
     ))
 }
+
+/// Fourteen agents, for the modes with more than ten players.
+const AGENTS: [&str; 14] = [
+    "Jett", "Reyna", "Neon", "Raze", "Yoru", "Phoenix", "Iso", "Sova", "Omen", "Sage", "Fade",
+    "Skye", "Viper", "Chamber",
+];
 
 /// A board around these players, in a match, you on Blue.
 fn board(players: Vec<Player>) -> Board {
@@ -277,11 +283,7 @@ fn sparse() -> Board {
 
 /// A deathmatch: fourteen players, each their own team.
 fn deathmatch() -> Board {
-    let agents = [
-        "Jett", "Reyna", "Neon", "Raze", "Yoru", "Phoenix", "Iso", "Sova", "Omen", "Sage", "Fade",
-        "Skye", "Viper", "Chamber",
-    ];
-    let players: Vec<Player> = agents
+    let players: Vec<Player> = AGENTS
         .iter()
         .enumerate()
         .map(|(i, agent)| {
@@ -324,11 +326,7 @@ fn reading() -> Board {
 
 /// A mode with more than five a side: two teams of seven.
 fn crowd() -> Board {
-    let agents = [
-        "Jett", "Reyna", "Neon", "Raze", "Yoru", "Phoenix", "Iso", "Sova", "Omen", "Sage", "Fade",
-        "Skye", "Viper", "Chamber",
-    ];
-    let players = agents
+    let players = AGENTS
         .iter()
         .enumerate()
         .map(|(i, agent)| {
@@ -424,12 +422,7 @@ fn wordy() -> Board {
 
 /// The scenes, each at the size it is worth seeing at.
 fn shots() -> Vec<(&'static str, Vec2, Shot)> {
-    let window = |board: Board, selected: Option<&'static str>| {
-        Shot::Window(Scene {
-            board,
-            ..Scene::of(selected)
-        })
-    };
+    let window = |board: Board, selected| Shot::Window(Scene::of(selected).with(board));
     let (odd, noted) = strangers();
     vec![
         (
@@ -505,10 +498,7 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
 
 /// The longest of everything, at the panel's narrow, default and wide sizes.
 fn wordy_shots() -> Vec<(&'static str, Vec2, Shot)> {
-    let wordy_scene = || Scene {
-        board: wordy(),
-        ..Scene::of(Some("WWWWWWWWWWWWWWWW#WWWWW"))
-    };
+    let wordy_scene = || Scene::of(Some("WWWWWWWWWWWWWWWW#WWWWW")).with(wordy());
     vec![
         (
             "wordy-narrow",
@@ -646,11 +636,7 @@ fn every_stress_lobby_renders_to_the_folder() {
                 harness.step();
             }
         }
-        let mut frames = 0;
-        while harness.ctx.has_requested_repaint() && frames < 120 {
-            harness.run();
-            frames += 1;
-        }
+        settle(&mut harness);
         let image = harness.render().expect("a frame renders");
         image
             .save(format!("{out}/{name}.png"))

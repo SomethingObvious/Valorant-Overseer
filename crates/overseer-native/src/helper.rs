@@ -223,7 +223,7 @@ fn report(id: u32, shown: &mut Shown, out: &mut impl Write) {
     let on_screen = shown.clip.on_screen();
     if on_screen != shown.told.on_screen {
         shown.told.on_screen = on_screen;
-        drop(writeln!(out, "shown	{id}	{}", u8::from(on_screen)));
+        drop(writeln!(out, "shown\t{id}\t{}", u8::from(on_screen)));
     }
 }
 

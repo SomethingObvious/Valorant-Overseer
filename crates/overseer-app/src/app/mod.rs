@@ -24,6 +24,7 @@ use crate::panel;
 use crate::settings::{self, Quality, Settings};
 use crate::sort::Sort;
 use crate::tray::{self, Action, Tray};
+use crate::update::VERSION;
 use overseer_ui::{self, colour, motion};
 
 mod foot;
@@ -215,8 +216,6 @@ pub(crate) struct Overseer {
 
 /// How long the footer keeps something it was told to say, in seconds.
 const SAID: f64 = 2.5;
-
-use crate::update::VERSION;
 
 /// The key eframe keeps the window's place under.
 const WINDOW_KEY: &str = "window";
@@ -1591,7 +1590,6 @@ fn board_waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<>
     move || ctx.request_repaint_after(std::time::Duration::from_millis(1))
 }
 
-/// The header's connection text, which has no detail on the first attempt.
 /// The empty state, drawn for the snapshot test.
 #[cfg(test)]
 pub(crate) fn snapshot_empty(ui: &mut Ui, shown: &Board) {

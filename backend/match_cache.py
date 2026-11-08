@@ -14,12 +14,12 @@ from common.check import check, present
 class MatchCache:
     """A thread-safe FIFO of compressed JSON, with fresh objects on each read.
 
-    The byte budget covers retained compressed payloads. Decoded documents,
-    temporary compression buffers and the bounded index use additional RAM.
+    The byte budget counts the compressed payloads only, not the decoded
+    documents or the index.
     """
 
     def __init__(self, *, max_entries: int, max_bytes: int) -> None:
-        """Set both retention limits; a nonpositive limit disables retention."""
+        """Set both retention limits. A limit of zero or less turns retention off."""
         self._max_entries = max_entries
         self._max_bytes = max_bytes
         self._entries: dict[str, bytes] = {}

@@ -13,7 +13,7 @@ use super::paint;
 
 /// How tall the ladder is: a heading, a row of faces, the strip, and a row
 /// of faces back.
-pub(crate) const HEIGHT: f32 = 108.0;
+const HEIGHT: f32 = 108.0;
 
 /// The highest tier Riot has. Radiant is one tier, not the first of three.
 const TOP: u32 = 27;
@@ -51,7 +51,7 @@ fn span(lowest: u32, highest: u32) -> (u32, u32) {
 /// back from the far end pulls in any pushed off it. Order is kept, so a
 /// mark never jumps past its neighbour. When there is not room for them all,
 /// they are spaced evenly from the near end.
-pub(crate) fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> {
+fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> {
     let mut at: Vec<f32> = wanted.iter().map(|w| w.min(high).max(low)).collect();
     for i in 1..at.len() {
         let before = at.get(i - 1).copied().unwrap_or(low);
@@ -72,7 +72,7 @@ pub(crate) fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> 
 
 /// The ladder, if at least two accounts in the lobby have a rank to put on
 /// it.
-pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, String); 2]) {
+pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, &str); 2]) {
     let placed: Vec<(&Player, f32)> = board
         .players
         .iter()

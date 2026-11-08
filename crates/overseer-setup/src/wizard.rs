@@ -139,10 +139,7 @@ impl App for Wizard {
                         Action::Recheck => {
                             self.survey = plan::survey(&self.root, self.carried.is_some());
                         }
-                        Action::CopyLog => ui.ctx().copy_text(self.log.join(
-                            "
-",
-                        )),
+                        Action::CopyLog => ui.ctx().copy_text(self.log.join("\n")),
                     }
                 }
             });

@@ -30,7 +30,6 @@ pub(crate) const COLOURS: [&str; 12] = [
     "#F28DD5", "#FF8088", "#F2EFE8", "#8B929C",
 ];
 
-/// A kept colour as one to paint with.
 /// What each of [`COLOURS`] is called, for a screen reader.
 const NAMES: [&str; 12] = [
     "Red", "Orange", "Yellow", "Green", "Sky", "Cyan", "Blue", "Purple", "Pink", "Coral", "Cream",
@@ -38,7 +37,7 @@ const NAMES: [&str; 12] = [
 ];
 
 /// The name of the colour `hex`, or the code itself for one not on the list.
-pub(crate) fn colour_name(hex: &str) -> &str {
+pub(super) fn colour_name(hex: &str) -> &str {
     COLOURS
         .iter()
         .position(|c| c.eq_ignore_ascii_case(hex))
@@ -46,7 +45,8 @@ pub(crate) fn colour_name(hex: &str) -> &str {
         .unwrap_or(hex)
 }
 
-pub(crate) fn ink(hex: &str) -> Color32 {
+/// A kept colour as one to paint with.
+pub(super) fn ink(hex: &str) -> Color32 {
     overseer_ui::hex(Some(hex)).unwrap_or(colour::WARN)
 }
 
@@ -82,12 +82,6 @@ impl std::ops::Deref for Square {
 
     fn deref(&self) -> &Rect {
         &self.rect
-    }
-}
-
-impl From<Rect> for Square {
-    fn from(rect: Rect) -> Self {
-        Self { rect, turn: 0 }
     }
 }
 
@@ -345,11 +339,6 @@ pub(super) fn resized(drawing: &Drawing, grip: usize, to: [f32; 2]) -> Drawing {
     }
 }
 
-/// Where a grip from [`grips`] is on screen.
-pub(super) fn grip_at(square: Square, spot: [f32; 2]) -> Pos2 {
-    at(square, spot)
-}
-
 /// `drawing` moved by `by` on the minimap, held so no part of it leaves the
 /// map rather than squashing against the edge.
 pub(super) fn moved(drawing: &Drawing, by: [f32; 2]) -> Drawing {
@@ -412,7 +401,10 @@ mod tests {
     /// doesn't, so removing a shape never takes the wrong one.
     #[test]
     fn every_shape_is_hit_where_it_is_drawn() {
-        let square = Square::from(Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)));
+        let square = Square {
+            rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)),
+            turn: 0,
+        };
         for (kind, a, b, on, off) in [
             (
                 "rect",

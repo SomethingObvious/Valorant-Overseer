@@ -176,7 +176,6 @@ fn cant_write(e: &std::io::Error) -> String {
     format!("{said}. ({e})")
 }
 
-/// The version already installed, from the marker the installer writes.
 /// One field of the marker an install leaves, like its version or region.
 fn installed(root: &Path, field: &str) -> Option<String> {
     let raw = std::fs::read_to_string(root.join(".overseer").join("installed.json")).ok()?;

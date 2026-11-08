@@ -15,13 +15,13 @@ use crate::controls::{self, Tone};
 /// The page above the footer. Returns a request when the clip's source
 /// should be measured, or fetched to watch.
 pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
-    let main = view.main.clone();
     let View {
         mode: Mode::Edit(draft),
         player,
         prefs,
         default_agent,
         new_default,
+        main,
         ..
     } = view
     else {
@@ -33,7 +33,7 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     } else {
         "Add a Lineup"
     };
-    title(ui, heading, &draft.lineup.map.clone());
+    title(ui, heading, &draft.lineup.map);
     let planted = draft.lineup.agent == SPIKE;
     let placed = (planted || draft.lineup.stand.is_some()) && draft.lineup.land.is_some();
     section(ui, "On the Map", placed, false);
@@ -463,6 +463,14 @@ fn clip(
 /// being done to get one, playing the part kept. Before Load Video, a
 /// saved lineup shows its clip as it was cut.
 fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
+    // Nothing starts on its own here, and it is smaller than a saved
+    // lineup's, so the trim bar, the times and the volume under it fit on
+    // screen with it.
+    let prefs = Prefs {
+        autoplay: false,
+        size: prefs.size * 0.6,
+        ..prefs
+    };
     let Some(file) = draft.measure.file.as_deref() else {
         if draft.measure.asking {
             words(ui, "Reading how long the video is.", colour::TEXT_FAINT);
@@ -476,11 +484,6 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
             notice(ui, why, colour::WARN);
         } else if let Some((cut, runs)) = draft.cut.as_ref().filter(|_| draft.same_source()) {
             // Its volume is in it already, so it plays as it is.
-            let prefs = Prefs {
-                autoplay: false,
-                size: prefs.size * 0.6,
-                ..prefs
-            };
             player::of(slot, cut, 0.0, prefs).show(ui, (0.0, *runs), 100.0, CUTTING_ROOM);
             words(
                 ui,
@@ -491,14 +494,6 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
         return;
     };
     let span = kept(draft).unwrap_or((0.0, LONGEST));
-    // Nothing starts on its own while it is being cut, and it is smaller than
-    // a saved lineup's, so the trim bar, the times and the volume under it
-    // fit on screen with it.
-    let prefs = Prefs {
-        autoplay: false,
-        size: prefs.size * 0.6,
-        ..prefs
-    };
     let player = player::of(slot, file, span.0, prefs);
     // The bar carries the clip's volume, so the clip itself plays as it is.
     player.follow(draft.volume, ui.input(|i| i.time));
@@ -533,13 +528,18 @@ fn scrub(ui: &mut Ui, draft: &mut Draft, slot: &mut Option<Player>) {
     }
 }
 
-/// The stretch the trim bar spans once it settles: what is kept, with as
-/// much again either side, the same as `around` eases to.
+/// The stretch the trim bar spans once it settles.
 fn reach(draft: &Draft) -> Option<(f64, f64)> {
-    let total = draft.measure.length?;
     let (start, end) = kept(draft)?;
+    Some(widened(start, end, draft.measure.length?))
+}
+
+/// What is kept from `start` to `end`, with as much again either side, so a
+/// short clip out of a long video still gets the width to be cut to a tenth
+/// of a second.
+fn widened(start: f64, end: f64, total: f64) -> (f64, f64) {
     let margin = (end - start).max(5.0);
-    Some(((start - margin).max(0.0), (end + margin).min(total)))
+    ((start - margin).max(0.0), (end + margin).min(total))
 }
 
 /// Where the part kept starts and ends, once the source's length is known.
@@ -680,12 +680,10 @@ fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
     dragged
 }
 
-/// The part of the video the bar spans: what is kept, with as much again
-/// either side, so a short clip out of a long video still gets the width to
-/// be cut to a tenth of a second. Eases there, so the bar zooms rather than
-/// jumps once a handle is let go.
+/// The part of the video the bar spans, [`widened`], eased there so the bar
+/// zooms rather than jumps once a handle is let go.
 fn around(ui: &Ui, start: f64, end: f64, total: f64) -> (f64, f64) {
-    let margin = (end - start).max(5.0);
+    let (lo, hi) = widened(start, end, total);
     let ease = |name: &str, to: f64| {
         f64::from(ui.ctx().animate_value_with_time(
             ui.id().with(name),
@@ -693,8 +691,8 @@ fn around(ui: &Ui, start: f64, end: f64, total: f64) -> (f64, f64) {
             overseer_ui::motion::lasting(ui.ctx(), ZOOM),
         ))
     };
-    let lo = ease("trim-lo", (start - margin).max(0.0));
-    let hi = ease("trim-hi", (end + margin).min(total));
+    let lo = ease("trim-lo", lo);
+    let hi = ease("trim-hi", hi);
     (lo, hi.max(lo + 0.1))
 }
 

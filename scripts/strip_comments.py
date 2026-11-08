@@ -55,13 +55,12 @@ def strip_source(src: str) -> str:
     comments = _comment_spans(src)
     lines = src.splitlines()
 
-    drop = set()
+    drop: set[int] = set()
     replace: dict[int, str] = {}
     for start, end, needs_pass, indent in docs:
         if lines[start - 1][:indent].strip():
             continue
-        for ln in range(start, end + 1):
-            drop.add(ln)
+        drop.update(range(start, end + 1))
         if needs_pass:
             replace[start] = " " * indent + "pass"
 

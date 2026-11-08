@@ -15,7 +15,7 @@ use crate::career::Career;
 use crate::history::History;
 use crate::lineups::Lineups;
 use crate::notes::{Note, Notes};
-use crate::settings::{Quality, Settings, Welcome};
+use crate::settings::{MapTurn, Quality, Settings, Welcome};
 use crate::sort::{Direction, Sort};
 use crate::view;
 use overseer_ui as design;
@@ -66,11 +66,7 @@ impl Scene {
 
     /// No board at all, which is what the app opens on.
     fn empty() -> Self {
-        Self {
-            board: Board::default(),
-            selected: None,
-            ..Self::of(None)
-        }
+        Self::of(None).with(Board::default())
     }
 
     /// Ordered by a heading somebody clicked.
@@ -104,7 +100,7 @@ impl Scene {
 /// account, an unranked one, a name too long for its column, a player with
 /// nothing filled in at all, and us.
 pub(crate) fn sample() -> Board {
-    let mut players = flagged();
+    let mut players = vec![smurf_ally(), smurf_enemy()];
     players.extend(plain());
     players.extend(more_allies());
     players.extend(more_enemies());
@@ -304,11 +300,6 @@ fn form(results: &str) -> Vec<String> {
     results.chars().map(|c| c.to_string()).collect()
 }
 
-/// The two accounts the app is for: one on each side, both flagged.
-fn flagged() -> Vec<Player> {
-    vec![smurf_ally(), smurf_enemy()]
-}
-
 /// A low level account on your side with an Ascendant peak and the aim to
 /// match, which is the case the whole flag exists for.
 fn smurf_ally() -> Player {
@@ -330,10 +321,7 @@ fn smurf_ally() -> Player {
         games: Some(118),
         level: Some(50),
         hs_pct: Some(36.2),
-        form: ["W", "W", "L", "W", "W"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect(),
+        form: form("WWLWW"),
         streak: Some(overseer_core::Streak {
             kind: Some("W".to_owned()),
             count: Some(2),
@@ -414,10 +402,7 @@ fn smurf_enemy() -> Player {
         level: Some(43),
         hs_pct: Some(31.4),
         rr_earned: Some(19),
-        form: ["W", "W", "W", "W", "L"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect(),
+        form: form("WWWWL"),
         streak: Some(overseer_core::Streak {
             kind: Some("W".to_owned()),
             count: Some(4),
@@ -501,10 +486,7 @@ fn plain() -> Vec<Player> {
             is_self: true,
             rr_earned: Some(-12),
             hs_pct: Some(24.8),
-            form: ["L", "W", "L", "L", "W"]
-                .iter()
-                .map(|s| (*s).to_owned())
-                .collect(),
+            form: form("LWLLW"),
             map_win_rate: Some(overseer_core::MapWinRate {
                 win_rate: Some(48.0),
                 games: Some(21),
@@ -525,7 +507,7 @@ fn plain() -> Vec<Player> {
             rank: Some("Unranked".to_owned()),
             rank_tier: Some(0),
             level: Some(12),
-            form: ["L", "L", "L"].iter().map(|s| (*s).to_owned()).collect(),
+            form: form("LLL"),
             streak: Some(overseer_core::Streak {
                 kind: Some("L".to_owned()),
                 count: Some(3),
@@ -732,14 +714,8 @@ fn every_layout_is_unchanged() {
     for (name, size, scene) in scenes {
         harness.set_size(size);
         *harness.state_mut() = scene;
-        // Run until nothing asks for another frame, so the image is not a
-        // fade caught halfway.
         harness.run();
-        let mut frames = 0;
-        while harness.ctx.has_requested_repaint() && frames < 120 {
-            harness.run();
-            frames += 1;
-        }
+        settle(&mut harness);
         harness.snapshot(name);
     }
 
@@ -751,6 +727,25 @@ fn every_layout_is_unchanged() {
     results.extend(harness.take_snapshot_results());
     if let Err(failed) = results.into_result() {
         panic!("{failed}");
+    }
+}
+
+/// Runs `harness` until nothing asks for another frame, so a picture is not
+/// a fade caught halfway.
+fn settle<S>(harness: &mut Harness<'_, S>) {
+    let mut frames = 0;
+    while harness.ctx.has_requested_repaint() && frames < 120 {
+        harness.run();
+        frames += 1;
+    }
+}
+
+/// The PC the settings pictures describe.
+const fn machine() -> crate::machine::Machine {
+    crate::machine::Machine {
+        memory: Some(16 << 30),
+        threads: 8,
+        card: true,
     }
 }
 
@@ -901,17 +896,62 @@ fn an_atlas() -> serde_json::Value {
     })
 }
 
-/// Clip settings that leave a clip still, so a snapshot doesn't start a
-/// video playing.
-fn still_clips() -> crate::lineups::Prefs {
-    crate::lineups::Prefs {
+/// Draws the Lineups screen the way every picture of it is taken, with the
+/// maps turned `turn`.
+fn show_lineups(ui: &mut Ui, lineups: &mut Lineups, bridge: &Bridge, turn: MapTurn) {
+    // A clip stays still, so a snapshot doesn't start a video playing.
+    let prefs = crate::lineups::Prefs {
         autoplay: false,
         ..crate::lineups::Prefs::default()
-    }
+    };
+    lineups.show(
+        ui,
+        (bridge, std::path::Path::new(".")),
+        true,
+        (
+            1.0,
+            prefs,
+            crate::lineups::Look {
+                turn,
+                names: false,
+                area: None,
+                agent: "Brimstone",
+                slow: false,
+                redraws: &crate::settings::RedrawSettings::default(),
+            },
+        ),
+    );
 }
 
-/// The Lineups screen, browsing with a lineup picked and writing a new one,
-/// from a harness of its own.
+/// `lineups` in a harness of its own at `size`, past the frame its fonts
+/// land on.
+fn lineups_harness(
+    size: egui::Vec2,
+    lineups: Lineups,
+    turn: MapTurn,
+) -> Harness<'static, (bool, Lineups, Bridge)> {
+    let mut shot = Harness::builder().with_size(size).build_ui_state(
+        move |ui, state: &mut (bool, Lineups, Bridge)| {
+            if state.0 {
+                show_lineups(ui, &mut state.1, &state.2, turn);
+            }
+        },
+        (
+            false,
+            lineups,
+            Bridge::start(std::path::Path::new("."), || {}),
+        ),
+    );
+    design::install_fonts(&shot.ctx);
+    shot.ctx.set_style_of(egui::Theme::Dark, design::style());
+    shot.run();
+    shot.state_mut().0 = true;
+    shot.run();
+    shot.run();
+    shot
+}
+
+/// Every Lineups snapshot, each from a harness of its own.
 fn lineups_shot() -> egui_kittest::SnapshotResults {
     let mut results = egui_kittest::SnapshotResults::default();
     // The small ones are what Lineups gets in the smallest window, 520 by
@@ -929,51 +969,19 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
         ("lineups-small", "browse", small),
         ("lineup-edit-small", "write", small),
     ] {
-        let mut shot = Harness::builder().with_size(size).build_ui_state(
-            |ui, state: &mut (bool, Lineups, Bridge)| {
-                if state.0 {
-                    state.1.show(
-                        ui,
-                        (&state.2, std::path::Path::new(".")),
-                        true,
-                        (
-                            1.0,
-                            still_clips(),
-                            crate::lineups::Look {
-                                turn: crate::settings::MapTurn::Drawn,
-                                names: false,
-                                area: None,
-                                agent: "Brimstone",
-                                slow: false,
-                                redraws: &crate::settings::RedrawSettings::default(),
-                            },
-                        ),
-                    );
-                }
+        let screen = Lineups::showing(
+            if mode == "redrawn" {
+                redrawn_atlas()
+            } else {
+                an_atlas()
             },
-            (
-                false,
-                Lineups::showing(
-                    if mode == "redrawn" {
-                        redrawn_atlas()
-                    } else {
-                        an_atlas()
-                    },
-                    (mode == "browse").then_some("brim-a"),
-                    match mode {
-                        "note" | "redrawn" => "browse",
-                        other => other,
-                    },
-                ),
-                Bridge::start(std::path::Path::new("."), || {}),
-            ),
+            (mode == "browse").then_some("brim-a"),
+            match mode {
+                "note" | "redrawn" => "browse",
+                other => other,
+            },
         );
-        design::install_fonts(&shot.ctx);
-        shot.ctx.set_style_of(egui::Theme::Dark, design::style());
-        shot.run();
-        shot.state_mut().0 = true;
-        shot.run();
-        shot.run();
+        let mut shot = lineups_harness(size, screen, MapTurn::Drawn);
         if mode == "note" {
             // Resting on the A Main pin, which has notes, past the tooltip's delay.
             shot.hover_at(egui::pos2(425.0, 220.0));
@@ -1006,43 +1014,11 @@ fn drag(shot: &mut Harness<'_, (bool, Lineups, Bridge)>, from: egui::Pos2, to: e
 /// The Lineups screen in `mode`, laid out as its snapshots are, for real
 /// pointer events.
 fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
-    let mut shot = Harness::builder()
-        .with_size(vec2(1200.0, 820.0))
-        .build_ui_state(
-            |ui, state: &mut (bool, Lineups, Bridge)| {
-                if state.0 {
-                    state.1.show(
-                        ui,
-                        (&state.2, std::path::Path::new(".")),
-                        true,
-                        (
-                            1.0,
-                            still_clips(),
-                            crate::lineups::Look {
-                                turn: crate::settings::MapTurn::Drawn,
-                                names: false,
-                                area: None,
-                                agent: "Brimstone",
-                                slow: false,
-                                redraws: &crate::settings::RedrawSettings::default(),
-                            },
-                        ),
-                    );
-                }
-            },
-            (
-                false,
-                Lineups::showing(an_atlas(), None, mode),
-                Bridge::start(std::path::Path::new("."), || {}),
-            ),
-        );
-    design::install_fonts(&shot.ctx);
-    shot.ctx.set_style_of(egui::Theme::Dark, design::style());
-    shot.run();
-    shot.state_mut().0 = true;
-    shot.run();
-    shot.run();
-    shot
+    lineups_harness(
+        vec2(1200.0, 820.0),
+        Lineups::showing(an_atlas(), None, mode),
+        MapTurn::Drawn,
+    )
 }
 
 /// The trim bar on the clip from the `lineup-edit` snapshot, 2:31 to 2:38,
@@ -1225,42 +1201,11 @@ fn lineups_live() {
         ("lineup-any-live", "any"),
         ("lineup-draw-live", "draw"),
     ] {
-        let mut shot = Harness::builder()
-            .with_size(vec2(1600.0, 1000.0))
-            .build_ui_state(
-                |ui, state: &mut (bool, Lineups, Bridge)| {
-                    if state.0 {
-                        state.1.show(
-                            ui,
-                            (&state.2, std::path::Path::new(".")),
-                            true,
-                            (
-                                1.0,
-                                still_clips(),
-                                crate::lineups::Look {
-                                    turn: crate::settings::MapTurn::Attack,
-                                    names: false,
-                                    area: None,
-                                    agent: "Brimstone",
-                                    slow: false,
-                                    redraws: &crate::settings::RedrawSettings::default(),
-                                },
-                            ),
-                        );
-                    }
-                },
-                (
-                    false,
-                    Lineups::showing(atlas.clone(), picked.as_deref(), mode),
-                    Bridge::start(std::path::Path::new("."), || {}),
-                ),
-            );
-        design::install_fonts(&shot.ctx);
-        shot.ctx.set_style_of(egui::Theme::Dark, design::style());
-        shot.run();
-        shot.state_mut().0 = true;
-        shot.run();
-        shot.run();
+        let mut shot = lineups_harness(
+            vec2(1600.0, 1000.0),
+            Lineups::showing(atlas.clone(), picked.as_deref(), mode),
+            MapTurn::Attack,
+        );
         shot.render()
             .unwrap()
             .save(format!("{out}/{name}.png"))
@@ -1330,20 +1275,7 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
                 }
                 crate::overlay::contents(ui, &mut |ui: &mut Ui| {
                     let corner = ui.max_rect();
-                    let _drew = crate::board::draw(
-                        ui,
-                        &crate::board::Scene {
-                            board: &board,
-                            sort: &Sort::default(),
-                            selected: None,
-                            notes: &Notes::default(),
-                            hidden: &[],
-                            enemies_first: true,
-                            place: crate::board::Place::Overlay,
-                            still: true,
-                            since: 10.0,
-                        },
-                    );
+                    overlay_board(ui, &board);
                     let _hide = crate::overlay::hide_button(ui, corner);
                 });
             },
@@ -1357,6 +1289,24 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
     shot.run();
     shot.snapshot(name);
     shot.take_snapshot_results()
+}
+
+/// The lobby on `board` as the overlay draws it.
+fn overlay_board(ui: &mut Ui, board: &Board) {
+    let _drew = crate::board::draw(
+        ui,
+        &crate::board::Scene {
+            board,
+            sort: &Sort::default(),
+            selected: None,
+            notes: &Notes::default(),
+            hidden: &[],
+            enemies_first: true,
+            place: crate::board::Place::Overlay,
+            still: true,
+            since: 10.0,
+        },
+    );
 }
 
 /// The overlay's greeting, saved as its own snapshot.
@@ -1419,15 +1369,7 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
                     view::settings(
                         ui,
                         &mut state.1,
-                        (
-                            Quality::Rich,
-                            None,
-                            &crate::machine::Machine {
-                                memory: Some(16 << 30),
-                                threads: 8,
-                                card: true,
-                            },
-                        ),
+                        (Quality::Rich, None, &machine()),
                         // Both broken, so the longer notes and their
                         // wrapping are in the picture.
                         (
@@ -1475,15 +1417,7 @@ fn a_setting_is_named_and_works_from_the_keyboard() {
                     view::settings(
                         ui,
                         &mut state.1,
-                        (
-                            Quality::Rich,
-                            None,
-                            &crate::machine::Machine {
-                                memory: Some(16 << 30),
-                                threads: 8,
-                                card: true,
-                            },
-                        ),
+                        (Quality::Rich, None, &machine()),
                         (
                             view::Trouble {
                                 hotkey: None,
@@ -1564,22 +1498,7 @@ fn a_tag_in_the_overlay_explains_itself() {
         .build_ui_state(
             move |ui, ready: &mut bool| {
                 if *ready {
-                    crate::overlay::contents(ui, &mut |ui: &mut Ui| {
-                        let _drew = crate::board::draw(
-                            ui,
-                            &crate::board::Scene {
-                                board: &board,
-                                sort: &Sort::default(),
-                                selected: None,
-                                notes: &Notes::default(),
-                                hidden: &[],
-                                enemies_first: true,
-                                place: crate::board::Place::Overlay,
-                                still: true,
-                                since: 10.0,
-                            },
-                        );
-                    });
+                    crate::overlay::contents(ui, &mut |ui: &mut Ui| overlay_board(ui, &board));
                 }
             },
             false,

@@ -16,7 +16,7 @@ const ACROSS: usize = 3;
 pub(super) const TALLEST: f32 = 0.6;
 
 /// The kinds of file a picture can be added from, by extension.
-pub(super) const KINDS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+const KINDS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 
 /// The most pictures one lineup carries, the same as the backend keeps.
 pub(super) const MOST: usize = 8;

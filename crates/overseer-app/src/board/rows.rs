@@ -28,9 +28,7 @@ pub(crate) struct Metrics {
     pub(crate) stat: f32,
     /// One result pip's width.
     pub(crate) pip: f32,
-    /// Whether there is room for a second line under the name, for the agent.
-    pub(crate) agent_line: bool,
-    /// Whether that line gives the agent's place to the tags when there are
+    /// Whether the line under the name gives the agent's place to the tags when there are
     /// any. The overlay's cards are too narrow for both, and the face
     /// already says who they play.
     pub(crate) tags_first: bool,
@@ -53,7 +51,6 @@ pub(crate) const ENEMY: Metrics = Metrics {
     kd: 32.0,
     stat: 17.0,
     pip: 9.0,
-    agent_line: true,
     tags_first: false,
 };
 
@@ -66,7 +63,6 @@ pub(crate) const ALLY: Metrics = Metrics {
     kd: 21.0,
     stat: 14.0,
     pip: 7.0,
-    agent_line: true,
     tags_first: false,
 };
 
@@ -79,7 +75,6 @@ pub(crate) const SMALL: Metrics = Metrics {
     kd: 26.0,
     stat: 15.0,
     pip: 8.0,
-    agent_line: true,
     tags_first: false,
 };
 
@@ -415,11 +410,7 @@ pub(super) fn identity<'a>(
     } else {
         None
     };
-    let middle = if m.agent_line {
-        m.name.mul_add(-0.32, line.center().y)
-    } else {
-        line.center().y
-    };
+    let middle = m.name.mul_add(-0.32, line.center().y);
     let font = Face::Display.at(m.name);
     let text = fit(painter, name, &font, limit - x);
     let mut after = x + caps_width(painter, &text, font.clone()) + space::SM;
@@ -459,20 +450,18 @@ pub(super) fn identity<'a>(
         }
         draw_mark(painter, &mark, pos2(after, middle), m);
     }
-    if m.agent_line {
-        hovers.extend(
-            tag_line(
-                painter,
-                player,
-                pos2(x, m.name.mul_add(0.9, middle)),
-                limit,
-                standing_in || (m.tags_first && player.auto_tags.iter().any(|t| t.tag.is_some())),
-                moved,
-            )
-            .into_iter()
-            .map(|(rect, tag)| (rect, Hover::Auto(tag))),
-        );
-    }
+    hovers.extend(
+        tag_line(
+            painter,
+            player,
+            pos2(x, m.name.mul_add(0.9, middle)),
+            limit,
+            standing_in || (m.tags_first && player.auto_tags.iter().any(|t| t.tag.is_some())),
+            moved,
+        )
+        .into_iter()
+        .map(|(rect, tag)| (rect, Hover::Auto(tag))),
+    );
     hovers
 }
 
@@ -496,9 +485,7 @@ fn name_colour(player: &Player, side: Side, standing_in: bool, amber: bool) -> C
 /// Whether a tag changes how you play the next round: the guns they buy and
 /// whether they save. Those go first on the row, in a chip.
 fn valuable(tag: &overseer_core::AutoTag) -> bool {
-    tag.kind
-        .as_deref()
-        .is_some_and(|k| k.eq_ignore_ascii_case("weapon") || k.eq_ignore_ascii_case("economy"))
+    tier(tag) == 0
 }
 
 /// Where a tag comes on a crowded row, first to last. The guns and the
@@ -797,13 +784,10 @@ fn cell(
             let (text, tint) = games_of(player);
             stat(text, tint);
         }
-        "hs" => match player.hs_pct {
-            Some(v) => stat(
-                format!("{v:.0}%"),
-                paint::heat(side, (v as f32 - 16.0) / 16.0),
-            ),
-            None => stat("-".to_owned(), colour::TEXT_FAINT),
-        },
+        "hs" => {
+            let (text, tint) = hs(side, player.hs_pct);
+            stat(text, tint);
+        }
         "win" => {
             let (text, tint) = rate(side, player.win_rate, player.games, FEW_GAMES);
             stat(text, tint);
@@ -859,6 +843,19 @@ pub(super) fn rate(
         ),
         None => ("-".to_owned(), colour::TEXT_FAINT),
     }
+}
+
+/// The headshot rate and its colour, faint when there is none.
+pub(super) fn hs(side: Side, hs: Option<f64>) -> (String, Color32) {
+    hs.map_or_else(
+        || ("-".to_owned(), colour::TEXT_FAINT),
+        |v| {
+            (
+                format!("{v:.0}%"),
+                paint::heat(side, (v as f32 - 16.0) / 16.0),
+            )
+        },
+    )
 }
 
 /// The rank as its emblem alone, for a row too narrow for its word, with
@@ -1070,7 +1067,7 @@ fn rank_cell(
         );
     }
     let x = at.x + if tier >= 3 { m.emblem + space::SM } else { 0.0 };
-    let peak = peak_line(player, tier).filter(|_| m.agent_line && peak_under_rank);
+    let peak = peak_line(player, tier).filter(|_| peak_under_rank);
     let y = if peak.is_some() {
         m.tier.mul_add(-0.4, at.y)
     } else {

@@ -56,11 +56,8 @@ def compare(pins: dict[str, str], installed: dict[str, str]) -> list[dict[str, s
     """Return each pin the installed packages miss or get wrong."""
     problems: list[dict[str, str]] = []
     for name in sorted(pins):
-        expected = pins[name]
-        actual = installed.get(name)
-        if actual is None:
-            problems.append({"package": name, "expected": expected, "actual": "missing"})
-        elif actual != expected:
+        expected, actual = pins[name], installed.get(name, "missing")
+        if actual != expected:
             problems.append({"package": name, "expected": expected, "actual": actual})
     return problems
 

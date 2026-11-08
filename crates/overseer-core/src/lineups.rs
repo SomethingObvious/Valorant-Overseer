@@ -170,8 +170,8 @@ pub struct Drawing {
     pub width: f32,
 }
 
-// By hand rather than derived, because a shape kept before it had an
-// opacity is a solid one, not an invisible one.
+// By hand rather than derived, because a saved shape with no opacity is a
+// solid one, not an invisible one.
 impl Default for Drawing {
     fn default() -> Self {
         Self {
@@ -196,8 +196,6 @@ pub struct Tools {
     pub ytdlp: bool,
     /// ffmpeg, for cutting a clip and setting its volume.
     pub ffmpeg: bool,
-    /// ffplay, for watching one.
-    pub ffplay: bool,
 }
 
 #[cfg(test)]
@@ -222,7 +220,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(atlas.maps.first().unwrap().sites, ["A", "B"]);
-        assert!(atlas.tools.ytdlp && !atlas.tools.ffplay);
+        assert!(atlas.tools.ytdlp && atlas.tools.ffmpeg);
         let cone = atlas.drawings.get("Ascent").unwrap().first().unwrap();
         assert_eq!((cone.kind.as_str(), cone.spread), ("cone", 60.0));
         assert!(

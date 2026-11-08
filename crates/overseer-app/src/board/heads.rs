@@ -13,49 +13,36 @@ use crate::sort::{Direction, Sort};
 /// How tall a side's plate is.
 pub(crate) const PLATE: f32 = 36.0;
 
-/// What was clicked in a heading.
-#[derive(Debug, Default)]
-pub(crate) struct Clicked {
-    /// The worth-a-look chip, which jumps to the next flagged account.
-    pub(crate) worth: bool,
-}
-
-/// The heading over one side, with its averages.
-pub(crate) fn team(ui: &mut Ui, board: &Board, side: Side, team: &str) -> Clicked {
-    match side {
-        Side::Enemy => enemy(ui, board, team),
-        Side::Ally => ally(ui, board, team),
-    }
-}
-
-/// The enemy's plate: solid red, black type, the tail cut to the slant.
-fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
+/// The plate over one side, with its averages. True when its worth-a-look
+/// chip was clicked.
+pub(crate) fn team(ui: &mut Ui, board: &Board, side: Side, team: &str) -> bool {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), PLATE), Sense::hover());
     ui.add_space(space::SM);
-    let mut clicked = Clicked::default();
     if !ui.is_rect_visible(rect) {
-        return clicked;
+        return false;
     }
     let painter = ui.painter().clone();
-    plate(&painter, rect, colour::ENEMY);
+    let (fill, title) = match side {
+        Side::Enemy if team == super::EVERYONE => (colour::ENEMY, "The Lobby"),
+        Side::Enemy => (colour::ENEMY, "Enemy Team"),
+        Side::Ally => (colour::ALLY, "Your Team"),
+    };
+    plate(&painter, rect, fill);
     let after = caps_text(
         &painter,
         pos2(rect.left() + space::LG, rect.center().y),
         Align2::LEFT_CENTER,
-        if team == super::EVERYONE {
-            "The Lobby"
-        } else {
-            "Enemy Team"
-        },
+        title,
         Face::Cut.at(17.0),
         colour::BG,
     );
     let mut taken = after.right();
+    let mut clicked = false;
     let flagged = board
         .players
         .iter()
-        .filter(|p| super::on(p, team) && p.smurf)
+        .filter(|p| side == Side::Enemy && super::on(p, team) && p.smurf)
         .count();
     if flagged > 0 {
         let chip = worth_chip(
@@ -75,7 +62,7 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         if hit.hovered() {
             tilted_chip(&painter, chip, colour::WARN.gamma_multiply(0.18), -2.0);
         }
-        clicked.worth = hit
+        clicked = hit
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked();
     }
@@ -87,7 +74,6 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         board,
         team,
         (taken + space::LG, right, rect.center().y),
-        colour::BG,
     );
     averages(
         &painter,
@@ -95,7 +81,6 @@ fn enemy(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
         team,
         (taken + space::LG, right),
         rect.center().y,
-        colour::BG,
     );
     clicked
 }
@@ -173,45 +158,6 @@ fn worth_chip(painter: &egui::Painter, at: Pos2, flagged: usize) -> Rect {
     chip
 }
 
-/// Your side's plate, the enemy's in teal with your team's name and the
-/// same chips and averages.
-fn ally(ui: &mut Ui, board: &Board, team: &str) -> Clicked {
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), PLATE), Sense::hover());
-    ui.add_space(space::SM);
-    if !ui.is_rect_visible(rect) {
-        return Clicked::default();
-    }
-    let painter = ui.painter().clone();
-    plate(&painter, rect, colour::ALLY);
-    let named = caps_text(
-        &painter,
-        pos2(rect.left() + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        "Your Team",
-        Face::Cut.at(17.0),
-        colour::BG,
-    );
-    let right = rect.width().mul_add(-0.006, rect.right()) - space::LG;
-    let taken = economy(
-        ui,
-        &painter,
-        board,
-        team,
-        (named.right() + space::LG, right, rect.center().y),
-        colour::BG,
-    );
-    averages(
-        &painter,
-        board,
-        team,
-        (taken + space::LG, right),
-        rect.center().y,
-        colour::BG,
-    );
-    Clicked::default()
-}
-
 /// How many on a side buy after a lost pistol round and how many save, from
 /// the tags, with who on hover. Round two is where it pays to know. Each
 /// stops short of `limit`. Returns where it ended, which is `x` when nobody
@@ -222,15 +168,9 @@ fn economy(
     board: &Board,
     team: &str,
     (x, limit, y): (f32, f32, f32),
-    ink: Color32,
 ) -> f32 {
     let mut end = x;
-    let on_plate = ink == colour::BG;
-    let font = if on_plate {
-        Face::Cut.at(10.5)
-    } else {
-        paint::label()
-    };
+    let font = Face::Cut.at(10.5);
     for ((tag, word), turn) in [("forces", "Force"), ("saves", "Save")]
         .into_iter()
         .zip([1.5, -1.0])
@@ -243,19 +183,13 @@ fn economy(
             .map(|p| super::shown_name(p).0)
             .collect();
         let said = format!("{} {word}", who.len());
-        let pad = if on_plate { space::MD } else { space::LG };
-        let wide = pad.mul_add(2.0, overseer_ui::caps_width(painter, &said, font.clone()));
+        let wide = space::MD.mul_add(2.0, overseer_ui::caps_width(painter, &said, font.clone()));
         if who.is_empty() || end + wide > limit {
             continue;
         }
-        // A chip like the worth-a-look count's: black on the red plate, and
-        // a raised grey on your own side's dark header.
+        // A black chip like the worth-a-look count's.
         let chip = Rect::from_min_size(pos2(end, y - 10.0), vec2(wide, 20.0));
-        if on_plate {
-            tilted_chip(painter, chip, colour::BG, turn);
-        } else {
-            painter.add(paint::slant(chip, true, true, colour::BG_INSET));
-        }
+        tilted_chip(painter, chip, colour::BG, turn);
         let _said = caps_text(
             painter,
             chip.center(),
@@ -291,22 +225,16 @@ fn averages(
     team: &str,
     (limit, right): (f32, f32),
     y: f32,
-    ink: Color32,
 ) {
     let Some(stats) = board.stats(team) else {
         return;
     };
-    let on_plate = ink == colour::BG;
     let value_font = Face::Heavy.at(17.0);
     let mut x = right;
-    for (name, value, tint) in [
-        ("Win", stats.win_rate.map(|v| format!("{v:.0}%")), ink),
-        ("K/D", stats.kd.map(|v| format!("{v:.2}")), ink),
-        (
-            "Avg",
-            stats.rank.clone(),
-            if on_plate { ink } else { colour::TEXT },
-        ),
+    for (name, value) in [
+        ("Win", stats.win_rate.map(|v| format!("{v:.0}%"))),
+        ("K/D", stats.kd.map(|v| format!("{v:.2}"))),
+        ("Avg", stats.rank.clone()),
     ] {
         let Some(value) = value else { continue };
         let needs = overseer_ui::caps_width(painter, &value, value_font.clone())
@@ -321,7 +249,7 @@ fn averages(
             Align2::RIGHT_CENTER,
             &value,
             value_font.clone(),
-            tint,
+            colour::BG,
         );
         let drawn = caps_text(
             painter,
@@ -329,7 +257,7 @@ fn averages(
             Align2::RIGHT_CENTER,
             name,
             paint::label(),
-            ink,
+            colour::BG,
         );
         x = drawn.left() - space::XL;
     }

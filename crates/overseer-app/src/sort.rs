@@ -1,26 +1,16 @@
-//! Ordering and filtering the board. Neither changes what the backend sent,
-//! only the order it is read in. Sorting stays inside each team, because the
-//! two sides are the first thing the eye goes to.
+//! Ordering the board. It never changes what the backend sent, only the
+//! order it is read in. Sorting stays inside each team, because the two sides
+//! are the first thing the eye goes to.
 
 use overseer_core::Player;
 
 /// Which way a sorted column runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
-    /// Smallest or earliest first.
+    /// Smallest first.
     Up,
-    /// Largest or latest first.
+    /// Largest first.
     Down,
-}
-
-impl Direction {
-    /// The other one.
-    pub(crate) const fn flipped(self) -> Self {
-        match self {
-            Self::Up => Self::Down,
-            Self::Down => Self::Up,
-        }
-    }
 }
 
 /// How the board is ordered, if it has been touched at all.
@@ -33,22 +23,17 @@ pub(crate) struct Sort {
 }
 
 impl Sort {
-    /// A click on a heading. The first sorts the useful way round, the second
+    /// A click on a heading. The first sorts best first, the second
     /// reverses, and the third goes back to the backend's order.
     pub(crate) fn clicked(&mut self, column: &str) {
         if self.column.as_deref() != Some(column) {
             self.column = Some(column.to_owned());
-            self.direction = Some(default_direction(column));
-            return;
-        }
-        match self.direction {
-            Some(direction) if direction == default_direction(column) => {
-                self.direction = Some(direction.flipped());
-            }
-            _ => {
-                self.column = None;
-                self.direction = None;
-            }
+            self.direction = Some(Direction::Down);
+        } else if self.direction == Some(Direction::Down) {
+            self.direction = Some(Direction::Up);
+        } else {
+            self.column = None;
+            self.direction = None;
         }
     }
 
@@ -62,52 +47,23 @@ impl Sort {
     }
 }
 
-/// Which way a column is worth reading first.
-fn default_direction(column: &str) -> Direction {
+/// The value one player sorts on, for one column, or None when there is
+/// nothing to compare.
+fn key_of(column: &str, player: &Player) -> Option<f64> {
     match column {
-        // Names read from A. Everything else reads best first.
-        "player" | "agent" => Direction::Up,
-        _ => Direction::Down,
-    }
-}
-
-/// The value a column sorts on. Missing sorts last whichever way the column
-/// runs, since a row with no data never answers "who is best".
-#[derive(Debug, Clone, PartialEq)]
-enum Key {
-    /// A number, largest last.
-    Number(f64),
-    /// Words, compared without case.
-    Text(String),
-    /// Nothing to compare.
-    Missing,
-}
-
-/// What one player sorts as, for one column.
-fn key_of(column: &str, player: &Player) -> Key {
-    let number = |value: Option<f64>| value.map_or(Key::Missing, Key::Number);
-    match column {
-        "player" => player
-            .name
-            .clone()
-            .map_or(Key::Missing, |n| Key::Text(n.to_lowercase())),
-        "agent" => player
-            .agent
-            .clone()
-            .map_or(Key::Missing, |a| Key::Text(a.to_lowercase())),
-        "rank" => number(player.rank_tier.map(f64::from)),
-        "rr" => number(player.rr.map(|r| r as f64)),
-        "peak" => number(player.peak_rank_tier.map(f64::from)),
-        "k/d" if crate::board::few_games(player) => Key::Missing,
-        "k/d" => number(player.kd),
-        "games" => number(player.kd.map(|_| player.form.len() as f64)),
-        "hs" => number(player.hs_pct),
-        "win" => number(player.win_rate),
-        "map" => number(player.map_win_rate.as_ref().and_then(|m| m.win_rate)),
-        "met" => Key::Number(f64::from(player.met())),
-        "lvl" => number(player.level.map(f64::from)),
-        "last 5" => Key::Number(wins(player)),
-        _ => Key::Missing,
+        "rank" => player.rank_tier.map(f64::from),
+        "rr" => player.rr.map(|r| r as f64),
+        "peak" => player.peak_rank_tier.map(f64::from),
+        "k/d" if crate::board::few_games(player) => None,
+        "k/d" => player.kd,
+        "games" => player.kd.map(|_| player.form.len() as f64),
+        "hs" => player.hs_pct,
+        "win" => player.win_rate,
+        "map" => player.map_win_rate.as_ref().and_then(|m| m.win_rate),
+        "met" => Some(f64::from(player.met())),
+        "lvl" => player.level.map(f64::from),
+        "last 5" => Some(wins(player)),
+        _ => None,
     }
 }
 
@@ -126,27 +82,18 @@ pub(crate) fn apply(players: &mut [&Player], sort: &Sort) {
     let (Some(column), Some(direction)) = (sort.column.as_deref(), sort.direction) else {
         return;
     };
-    // Each key made once, not twice a comparison, since a name's key is a
-    // new lowercase string and this runs every frame.
-    let mut keyed: Vec<(Key, &Player)> = players.iter().map(|p| (key_of(column, p), *p)).collect();
-    keyed.sort_by(|(a, _), (b, _)| order(a, b, direction));
-    for (slot, (_, player)) in players.iter_mut().zip(keyed) {
-        *slot = player;
-    }
+    players.sort_by(|a, b| order(key_of(column, a), key_of(column, b), direction));
 }
 
-/// Compares two keys, with missing always last.
-fn order(a: &Key, b: &Key, direction: Direction) -> std::cmp::Ordering {
+/// Compares two keys. Missing sorts last whichever way the column runs,
+/// since a row with no data never answers "who is best".
+fn order(a: Option<f64>, b: Option<f64>, direction: Direction) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let natural = match (a, b) {
-        (Key::Missing, Key::Missing) => return Ordering::Equal,
-        (Key::Missing, _) => return Ordering::Greater,
-        (_, Key::Missing) => return Ordering::Less,
-        (Key::Number(x), Key::Number(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
-        (Key::Text(x), Key::Text(y)) => x.cmp(y),
-        // A column never mixes numbers and words, and equal changes nothing
-        // if one ever does.
-        _ => return Ordering::Equal,
+        (None, None) => return Ordering::Equal,
+        (None, _) => return Ordering::Greater,
+        (_, None) => return Ordering::Less,
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
     };
     if direction == Direction::Down {
         natural.reverse()

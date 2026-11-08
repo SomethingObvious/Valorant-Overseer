@@ -107,8 +107,7 @@ def _point(lm: Any, board: dict[str, Any]) -> dict[str, Any] | None:
         "actual": rr.get("actual"),
         "tier": rr.get("tier"),
         "rr": rr.get("rr"),
-        **{k: you.get(k) for k in ("agent", "kills", "deaths", "assists")},
-        **{k: you.get(k) for k in ("kd", "acs", "hsPct")},
+        **{k: you.get(k) for k in ("agent", "kills", "deaths", "assists", "kd", "acs", "hsPct")},
         "resultExact": True,
     }
 

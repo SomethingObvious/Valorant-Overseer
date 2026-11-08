@@ -63,21 +63,25 @@ pub(crate) fn side_tint(side: Option<&str>, other: Color32) -> Color32 {
 
 /// The outline of a chip slanted at both ends.
 pub(crate) fn chip_edge(painter: &egui::Painter, chip: Rect, ink: Color32) {
-    let mut points = slanted(chip, true, true);
-    if let Some(first) = points.first().copied() {
-        points.push(first);
-    }
-    painter.add(Shape::line(points, egui::Stroke::new(1.0, ink)));
+    outline(painter, slanted(chip, true, true), (1.0, ink));
 }
 
 /// A tag the app worked out, as an outline in the board's slant. Your own
 /// tags are solid cream, and the difference is who said it.
 pub(crate) fn chip_outline(painter: &egui::Painter, chip: Rect, ink: Color32) {
-    let mut points = slanted(chip, false, true);
+    outline(painter, slanted(chip, false, true), (1.0, ink));
+}
+
+/// `points` drawn as a line back round to the first.
+pub(crate) fn outline(
+    painter: &egui::Painter,
+    mut points: Vec<Pos2>,
+    stroke: impl Into<egui::Stroke>,
+) {
     if let Some(first) = points.first().copied() {
         points.push(first);
     }
-    painter.add(Shape::line(points, egui::Stroke::new(1.0, ink)));
+    painter.add(Shape::line(points, stroke.into()));
 }
 
 /// One slab, with an offset shadow under it and a light along its top edge.

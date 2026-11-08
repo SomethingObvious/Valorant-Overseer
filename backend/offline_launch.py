@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import codecs
+import contextlib
 import functools
 import hashlib
 import http.client
@@ -30,8 +31,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-import contextlib
 
 import requests
 from common.check import check, present
@@ -66,7 +65,6 @@ _LOG_PATH = str(_OFFLINE_DIR / "engine.log")
 
 @functools.cache
 def _http() -> requests.Session:
-    """Return the one HTTP session, made on first use."""
     return requests.Session()
 
 
@@ -1110,35 +1108,23 @@ def _relay_main() -> int:
                     result = _status_local()
                 elif command == "launch":
                     result = _launch_local(payload.get("status"))
-                elif command == "set_status":
-                    result = _set_status_local(str(payload.get("status") or ""))
                 elif command == "set_enabled":
                     result = _set_enabled_local(enabled=bool(payload.get("enabled", True)))
                 elif command == "presence":
                     result = {"private": _captured_presence_private_local()}
-                elif command == "shutdown":
-                    result = {"ok": True}
-                    threading.Thread(
-                        target=server.shutdown, name="offline-helper-stop", daemon=True
-                    ).start()
                 else:
                     result = {"ok": False, "message": "Unknown helper command."}
-                body = json.dumps(result).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
             except Exception as e:
                 # The backend waits on this answer, so every failure still
                 # gets one.
                 _dbg(f"helper: control request failed ({e!r})")
-                body = json.dumps({"ok": False, "message": str(e)}).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                result = {"ok": False, "message": str(e)}
+            body = json.dumps(result).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     _write_relay_info(server.server_address[1], token)
@@ -1244,21 +1230,6 @@ def set_enabled(*, enabled: bool) -> dict[str, Any]:
     return _set_enabled_local(enabled=enabled)
 
 
-def _set_status_local(status_: str) -> dict[str, Any]:
-    if not _engine.started:
-        return {"ok": False, "message": "Offline mode isn't running."}
-    return _engine.set_status(status_)
-
-
-def set_status(status_: str) -> dict[str, Any]:
-    """Set how you appear in chat: online, away or offline."""
-    if not _IN_RELAY:
-        remote = _relay_request("set_status", {"status": status_})
-        if remote is not None:
-            return remote
-    return _set_status_local(status_)
-
-
 def _status_local() -> dict[str, Any]:
     live = bool(_engine.conns)
     active = bool(_engine.connected and live)
@@ -1284,14 +1255,10 @@ def status() -> dict[str, Any]:
 
 
 def _captured_presence_private_local() -> dict[str, Any] | None:
-    if not (_engine.connected and _engine.conns):
+    candidates = [c for c in list(_engine.conns) if c.last_private]
+    if not (_engine.connected and candidates):
         return None
-    conns = list(_engine.conns)
-    candidates = [c for c in conns if c.last_private]
-    if not candidates:
-        return None
-    newest = max(candidates, key=lambda c: c.captured_at)
-    return dict(newest.last_private or {})
+    return dict(max(candidates, key=lambda c: c.captured_at).last_private or {})
 
 
 def captured_presence_private() -> dict[str, Any] | None:

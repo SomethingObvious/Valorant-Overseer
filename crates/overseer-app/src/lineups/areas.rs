@@ -448,17 +448,13 @@ fn sight(
         (low / step).floor() as i32 + 1,
         (high / step).ceil() as i32 - 1,
     );
-    let rays: Vec<(Vec2, f32)> = std::iter::once(low)
+    let ends: Vec<Pos2> = std::iter::once(low)
         .chain((first..=last).map(|k| k as f32 * step))
         .chain(std::iter::once(high))
         .map(|turn| {
             let way = Vec2::angled(turn);
-            (way, run(from, way, far).unwrap_or(far))
+            from + way * run(from, way, far).unwrap_or(far)
         })
-        .collect::<Vec<_>>();
-    let ends: Vec<Pos2> = rays
-        .into_iter()
-        .map(|(way, long)| from + way * long)
         .collect();
     view(from, ends, (fill, edge))
 }

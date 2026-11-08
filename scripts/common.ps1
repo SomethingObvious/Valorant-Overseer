@@ -439,16 +439,17 @@ function Test-Venv([switch]$Quick) {
         catch { }
     }
 
+    $depsFile = Join-Path $OverseerDir "deps.json"
+    $recorded = ""
+    if (Test-Path $depsFile) {
+        try { $recorded = (Get-Content $depsFile -Raw | ConvertFrom-Json).requirements } catch { }
+    }
+    $depsStale = -not $recorded -or $recorded -ne (HashOf "backend\requirements.txt")
+    $depsReason = "requirements.txt changed since packages were installed (hash mismatch)"
+
     # The launcher's check stops here, without starting Python.
     if ($Quick) {
-        $depsFileQ = Join-Path $OverseerDir "deps.json"
-        $recordedQ = ""
-        if (Test-Path $depsFileQ) {
-            try { $recordedQ = (Get-Content $depsFileQ -Raw | ConvertFrom-Json).requirements } catch { }
-        }
-        if (-not $recordedQ -or $recordedQ -ne (HashOf "backend\requirements.txt")) {
-            $reasons += "requirements.txt changed since packages were installed (hash mismatch)"
-        }
+        if ($depsStale) { $reasons += $depsReason }
         return @{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
     }
 
@@ -473,15 +474,7 @@ function Test-Venv([switch]$Quick) {
 
     $pipVer = Get-VenvPipVersion
     if ($pipVer -ne $mf.pip.version) { $reasons += "pip is '$pipVer' but the pin is $($mf.pip.version)" }
-
-    $depsFile = Join-Path $OverseerDir "deps.json"
-    $recorded = ""
-    if (Test-Path $depsFile) {
-        try { $recorded = (Get-Content $depsFile -Raw | ConvertFrom-Json).requirements } catch { }
-    }
-    if (-not $recorded -or $recorded -ne (HashOf "backend\requirements.txt")) {
-        $reasons += "requirements.txt changed since packages were installed (hash mismatch)"
-    }
+    if ($depsStale) { $reasons += $depsReason }
 
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -613,7 +606,7 @@ function Get-SavedRegion {
 
 function Get-AppExe {
     # The window: beside the launcher once installed, in the build tree when
-    # run from source. $null when neither exists.
+    # run from source.
     foreach ($candidate in @((Join-Path $Root "overseer.exe"), (Join-Path $Root "crates\target\release\overseer.exe"))) {
         if (Test-Path $candidate) { return $candidate }
     }

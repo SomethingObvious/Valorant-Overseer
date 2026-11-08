@@ -71,7 +71,7 @@ def _skins_map() -> dict[str, Any]:
     return keep("_skins", out)
 
 
-def skin_from_id(skin_id: str, weapon: str = "Vandal") -> dict[str, Any] | None:
+def skin_from_id(skin_id: str, weapon: str) -> dict[str, Any] | None:
     """Return a skin's name without its weapon's, and its icon, by skin id."""
     if not skin_id:
         return None
@@ -190,11 +190,11 @@ def title_text(title_id: str | None) -> str | None:
     return _titles_map().get(title_id.lower()) or None
 
 
-def player_card(card_id: str | None, kind: str = "wide") -> str | None:
-    """Return the address of a player card's art, by its id and kind."""
+def player_card(card_id: str | None) -> str | None:
+    """Return the address of a player card's wide art, by its id."""
     if not card_id:
         return None
-    return f"https://media.valorant-api.com/playercards/{card_id}/{kind}art.png"
+    return f"https://media.valorant-api.com/playercards/{card_id}/wideart.png"
 
 
 def map_by_url(map_url: str) -> str | None:

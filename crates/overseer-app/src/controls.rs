@@ -1,7 +1,7 @@
 //! Buttons, chips and text boxes in the board's slant, for the screens that
 //! take input. egui's own look like a web form next to everything else.
 
-use egui::{Align2, Color32, Rect, Response, RichText, Sense, Ui, pos2, vec2};
+use egui::{Align2, Rect, Response, RichText, Sense, Ui, pos2, vec2};
 use overseer_ui::{Face, caps_text, caps_width, colour, size, space};
 
 use crate::board::paint;
@@ -67,14 +67,11 @@ pub(crate) fn button_wide(
     if ui.is_rect_visible(rect) {
         painter.add(paint::slant(rect, true, true, fill));
         if enabled && tone == Tone::Primary {
-            let mut edge = paint::slanted(rect.shrink(0.75), true, true);
-            if let Some(first) = edge.first().copied() {
-                edge.push(first);
-            }
-            painter.add(egui::Shape::line(
-                edge,
-                egui::Stroke::new(1.5, colour::TEXT_STRONG),
-            ));
+            paint::outline(
+                &painter,
+                paint::slanted(rect.shrink(0.75), true, true),
+                (1.5, colour::TEXT_STRONG),
+            );
         }
         let _drawn = caps_text(
             &painter,
@@ -194,7 +191,7 @@ pub(crate) fn chip_width(ui: &Ui, text: &str) -> f32 {
 /// One choice of several, lit when it is the one chosen.
 pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     let painter = ui.painter().clone();
-    let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label()));
+    let wide = chip_width(ui, text);
     let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if on {
@@ -225,7 +222,7 @@ pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
 /// faint with a line through it while it's off.
 pub(crate) fn word_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     let painter = ui.painter().clone();
-    let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label()));
+    let wide = chip_width(ui, text);
     let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if response.hovered() {
@@ -266,7 +263,7 @@ pub(crate) fn chip_with(
     } else {
         0.0
     };
-    let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label())) + room;
+    let wide = chip_width(ui, text) + room;
     let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if on {
@@ -324,11 +321,6 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
 
 /// A one-line text box `width` wide, set into the board's slant.
 pub(crate) fn field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
-    hinted(ui, text, hint_text(hint, colour::HINT), width)
-}
-
-/// A one-line box with its hint already set.
-fn hinted(ui: &mut Ui, text: &mut String, hint: RichText, width: f32) -> Response {
     let (rect, _response) = ui.allocate_exact_size(vec2(width, HEIGHT + 2.0), Sense::hover());
     ui.painter()
         .add(paint::slant(rect, false, true, colour::BG_INSET));
@@ -338,14 +330,13 @@ fn hinted(ui: &mut Ui, text: &mut String, hint: RichText, width: f32) -> Respons
             .frame(egui::Frame::NONE)
             .vertical_align(egui::Align::Center)
             .font(Face::Body.at(size::BODY))
-            .hint_text(hint),
+            .hint_text(hint_text(hint)),
     );
     underline(ui, rect, &response);
     response
 }
 
-/// A text box a few lines tall, for notes. With `caps`, whatever is typed or
-/// pasted goes in as capitals.
+/// A text box a few lines tall, for notes.
 pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT * 3.0), Sense::hover());
@@ -358,7 +349,7 @@ pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
             .id(id)
             .frame(egui::Frame::NONE)
             .font(Face::Body.at(size::BODY))
-            .hint_text(hint_text(hint, colour::HINT)),
+            .hint_text(hint_text(hint)),
     );
     underline(ui, rect, &response);
     response
@@ -378,9 +369,9 @@ fn underline(ui: &Ui, rect: Rect, response: &Response) {
     }
 }
 
-/// A hint in the text box's own face, in `tint`.
-fn hint_text(hint: &str, tint: Color32) -> RichText {
+/// A hint in the text box's own face.
+fn hint_text(hint: &str) -> RichText {
     RichText::new(hint)
-        .color(tint)
+        .color(colour::HINT)
         .font(Face::Body.at(size::BODY))
 }

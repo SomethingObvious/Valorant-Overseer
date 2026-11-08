@@ -886,8 +886,7 @@ impl Lineups {
             self.load = match read {
                 Ok(mut atlas) => {
                     if let Some(saved) = self.view.late.take() {
-                        atlas.lineups.retain(|l| l.id != saved.id);
-                        atlas.lineups.push(saved);
+                        replace(&mut atlas.lineups, saved);
                     }
                     self.view.settle(&atlas);
                     Load::Have(Box::new(atlas))
@@ -960,8 +959,9 @@ impl Lineups {
 
     /// A screen already holding `atlas` on its first map, for the snapshots:
     /// `browse` with `picked` selected, `write` a new lineup, `any` the same
-    /// for any agent, `add` one with nothing placed, `draw`, `text` with a
-    /// label picked, or `sandbox` with Viper out and two things put down.
+    /// for any agent, `add` one with nothing placed, `draw`, `erase`, `text`
+    /// with a label picked, or `sandbox` with Viper out and two things put
+    /// down.
     #[cfg(test)]
     pub(crate) fn showing(atlas: serde_json::Value, picked: Option<&str>, mode: &str) -> Self {
         let atlas: Atlas = serde_json::from_value(atlas).unwrap_or_default();
@@ -1157,8 +1157,7 @@ impl Lineups {
         match job {
             Job::Save | Job::Confirm => {
                 if let Some(saved) = saved {
-                    atlas.lineups.retain(|l| l.id != saved.id);
-                    atlas.lineups.push(saved);
+                    replace(&mut atlas.lineups, saved);
                 }
             }
             Job::Delete => {
@@ -1176,8 +1175,7 @@ impl Lineups {
             }
             Job::Import => {
                 for lineup in added {
-                    atlas.lineups.retain(|l| l.id != lineup.id);
-                    atlas.lineups.push(lineup);
+                    replace(&mut atlas.lineups, lineup);
                 }
             }
             Job::Share => {}
@@ -1200,15 +1198,14 @@ impl Lineups {
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
         }
         self.dropped(ui);
-        // T shows or hides every lineup's name, unless a box is being typed in.
-        let typing = ui.memory(|m| m.focused().is_some());
-        if !typing && ui.input(|i| i.key_pressed(egui::Key::T)) {
-            self.view.names = Some(!self.view.naming());
-        }
-        if !typing && ui.input(|i| i.key_pressed(egui::Key::R)) {
-            self.view.turned = (self.view.turned + 1) % 4;
-        }
-        if !typing {
+        // The keys are the text's while a box is being typed in.
+        if ui.memory(|m| m.focused().is_none()) {
+            if ui.input(|i| i.key_pressed(egui::Key::T)) {
+                self.view.names = Some(!self.view.naming());
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::R)) {
+                self.view.turned = (self.view.turned + 1) % 4;
+            }
             self.arrows(ui);
         }
         self.poll(ui, bridge, live);
@@ -1851,6 +1848,12 @@ fn from_before(atlas: &Atlas, lineup: &Lineup) -> bool {
         .find(|m| m.name == lineup.map)
         .and_then(|m| m.changed);
     changed.is_some_and(|at| lineup.saved.is_some_and(|saved| saved < at))
+}
+
+/// Puts `lineup` in `lineups`, in place of the one with its id.
+fn replace(lineups: &mut Vec<Lineup>, lineup: Lineup) {
+    lineups.retain(|l| l.id != lineup.id);
+    lineups.push(lineup);
 }
 
 /// Whether the backend is still to cut `clip`: it has no file, and no

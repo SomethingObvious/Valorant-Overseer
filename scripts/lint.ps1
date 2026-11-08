@@ -14,9 +14,9 @@
 # failure rather than a silent skip. A check that quietly disappears is worse
 # than no check, because the green tick still appears.
 #
-# There is no hosted CI. Every check here needs Windows, three of them need the
-# repository's own .venv, and all of them finish in seconds on the machine that
-# made the change, so they run there, before it leaves.
+# There is no hosted CI. Every check here needs Windows and some need the
+# repository's own .venv, so they run on the machine that made the change,
+# before it leaves.
 #
 # PowerShell 5.1 compatible: install.bat and start.bat launch `powershell`, not
 # `pwsh`, and a developer tool that needs a newer shell than the product does is
@@ -26,7 +26,6 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "common.ps1")
 
-# Script scope, so every function below reads the same two flags.
 $Script:AutoFix = [bool]$Fix
 $Script:StagedOnly = [bool]$Staged
 
@@ -201,13 +200,11 @@ function Test-NoMail {
     return $false
 }
 
-# This tree came from another project. It is not coupled to it, must not
-# become coupled to it, and this is the check that says so.
-#
-# The names below are the ones that would do the coupling: the old product
-# name, the old env-var prefix, the old state directory, the upstream owner.
-# A rename that reintroduces any of them is how a helpful pass at 'restoring
-# compatibility' quietly puts a remote, an updater or a host back.
+# This tree came from another project, and these are the names that would tie
+# it back to it: the old product name, the old env-var prefix, the old state
+# directory, the upstream owner. A rename that reintroduces any of them is how
+# a helpful pass at 'restoring compatibility' quietly puts a remote, an updater
+# or a host back.
 #
 # README.md and this file are exempt, because they name the origin
 # only to warn about it. The build is private and never distributed, so no
@@ -252,8 +249,7 @@ function Test-NoUpstreamCoupling {
 }
 
 # Every host this program may talk to, and why. Anything else is a new trust
-# relationship, and the whole point of this build is that there are no
-# surprises in that list.
+# relationship.
 #
 # There is deliberately no update server, telemetry endpoint or hosted
 # dashboard in it. This build does not update itself and does not report
@@ -460,9 +456,8 @@ function Invoke-Markdownlint {
     try { return (Invoke-Native "markdownlint-cli2" @()) } finally { Pop-Location }
 }
 
-# The type checker. Rust gets this from the compiler and Python has to opt in.
-# pyproject.toml explains how far it is turned up and why. It reads its own config,
-# so there is no file list to keep in step with this script.
+# pyproject.toml says how far mypy is turned up and why. It reads that config
+# itself, so there is no file list to keep in step with this script.
 function Invoke-Mypy {
     if (-not (Test-Tool "mypy")) { return $false }
     Push-Location $Root
@@ -663,12 +658,8 @@ function Invoke-Verifier([string]$Script) {
 }
 
 # --- the window ----------------------------------------------------------------
-#
-# One gate, so the Rust half is checked the same way and at the same time as
-# everything else. Cargo is not on PATH in every shell that runs this, and a
-# missing tool is a failure here rather than a skipped check: a green tick that
-# skipped the linter is worse than no tick.
 
+# Cargo is not on PATH in every shell that runs this.
 function Get-Cargo {
     $onPath = Get-Command cargo -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }

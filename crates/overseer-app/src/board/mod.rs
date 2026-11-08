@@ -117,16 +117,15 @@ pub(crate) enum Asked {
 ///
 /// Enemies come first by default, unlike the game's own scoreboard, because
 /// the other five are why the app is open.
-pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, String); 2] {
-    let ours = board.self_team.as_deref().unwrap_or("Blue").to_owned();
+pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, &str); 2] {
+    let ours = board.self_team.as_deref().unwrap_or("Blue");
     let theirs = if free_for_all(board) {
         EVERYONE
     } else if ours == "Blue" {
         "Red"
     } else {
         "Blue"
-    }
-    .to_owned();
+    };
     if enemies_first {
         [(Side::Enemy, theirs), (Side::Ally, ours)]
     } else {
@@ -265,7 +264,7 @@ pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
 }
 
 /// Everything inside the margins.
-fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched: &mut Touched) {
+fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2], touched: &mut Touched) {
     ui.add_space(space::LG);
     // A window too small for the full row gets the smaller face, and a
     // name column that gives up its last forty points before the numbers
@@ -296,8 +295,8 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2], touched:
         }
         shown += players.len();
         ui.push_id(team, |ui| {
-            if heads::team(ui, scene.board, *side, team).worth {
-                touched.worth = Some(team.clone());
+            if heads::team(ui, scene.board, *side, team) {
+                touched.worth = Some((*team).to_owned());
             }
             if !headed {
                 headed = true;

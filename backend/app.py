@@ -59,9 +59,6 @@ LOG = overseerlog.get_logger("backend")
 
 client = RiotClient()
 
-_ENCOUNTER_BACKFILL_AT: dict[str, float] = {}
-_ENCOUNTER_BACKFILL_LOCK = threading.Lock()
-
 
 def _live_enabled() -> bool:
     return client.source_pref != "demo" and LocalAuth.available()
@@ -76,7 +73,8 @@ def _attach_encounters(board: dict[str, Any]) -> dict[str, Any]:
         enc = (
             encounter_log.encounter_for(board.get("selfPuuid"), p.get("puuid")) if is_live else None
         )
-
+        # record_board has already counted this lobby, and the row shows the
+        # times before it.
         if enc:
             if self_team is not None and p.get("team") == self_team:
                 enc["withCount"] = max(0, enc["withCount"] - 1)
@@ -338,17 +336,13 @@ def _current_puuid() -> str | None:
 
 def _board_player(puuid: str) -> dict[str, Any]:
     try:
-        board = build_live(7, None)
+        board = build_live()
         for p in board.get("players") or []:
             if p.get("puuid") == puuid:
                 return p
     except Exception as e:
         LOG.warning("could not read the board to find %s: %r", puuid, e)
     return {}
-
-
-def _current_weapons(puuid: str) -> list[Any]:
-    return _board_player(puuid).get("weapons") or []
 
 
 def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -424,7 +418,7 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                 now = _board_player(puuid)
                 data = sample_match.career(puuid, now.get("rankTier"), now.get("rr"))
             out = dict(data)
-            out["weapons"] = _current_weapons(puuid)
+            out["weapons"] = _board_player(puuid).get("weapons") or []
             # Your own career reads who you play with from every lobby on
             # record. Its last eight matches would miss most of a stack.
             owner = _current_puuid()
@@ -515,7 +509,7 @@ def _start_ws_bridge() -> int:
     ws_port = int(os.getenv("WS_PORT", "7878"))
 
     def ws_state_provider() -> dict[str, Any]:
-        board = dict(build_live(7, None))
+        board = dict(build_live())
         board["agents"] = AGENTS
         return board
 
@@ -620,7 +614,7 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     check(handle_data_request("nope", None) == {"error": "The backend has no 'nope' request."})
     check(handle_data_request("newest", None) == {"newest": None}, "demo asks nobody")
 
-    _board = build_live(7, None)
+    _board = build_live()
     check(_board.get("players"), "demo board must have players")
 
     for _req, _params in (

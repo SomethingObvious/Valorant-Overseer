@@ -12,7 +12,7 @@ use crate::board::{self, Side, paint};
 use crate::{header, view};
 
 /// How many games the screen can be set to show.
-pub(crate) const COUNTS: [u32; 3] = [5, 10, 20];
+const COUNTS: [u32; 3] = [5, 10, 20];
 
 /// How tall a match's strip is.
 const STRIP: f32 = 60.0;
@@ -127,6 +127,26 @@ enum Past {
     },
 }
 
+impl Past {
+    /// The games on screen, whatever the question is doing.
+    fn shown(&self) -> Option<&Recent> {
+        match self {
+            Self::Have(games) => Some(games),
+            Self::Asking { kept, .. } | Self::Refused { kept, .. } => kept.as_deref(),
+            Self::Idle => None,
+        }
+    }
+
+    /// [`Past::shown`], taken.
+    fn into_kept(self) -> Option<Box<Recent>> {
+        match self {
+            Self::Have(games) => Some(games),
+            Self::Asking { kept, .. } | Self::Refused { kept, .. } => kept,
+            Self::Idle => None,
+        }
+    }
+}
+
 /// The screen's state: the games, and which of them are open.
 #[derive(Debug, Default)]
 pub(crate) struct History {
@@ -145,11 +165,7 @@ impl History {
         if !live {
             return;
         }
-        let kept = match std::mem::take(&mut self.past) {
-            Past::Have(games) => Some(games),
-            Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept,
-            Past::Idle => None,
-        };
+        let kept = std::mem::take(&mut self.past).into_kept();
         let id = bridge.ask("history", serde_json::json!({ "count": count }));
         self.past = Past::Asking { id, kept };
     }
@@ -166,11 +182,7 @@ impl History {
             serde_json::from_value::<Recent>(value)
                 .map_err(|_| "Your games came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned())
         });
-        let kept = match std::mem::take(&mut self.past) {
-            Past::Have(games) => Some(games),
-            Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept,
-            Past::Idle => None,
-        };
+        let kept = std::mem::take(&mut self.past).into_kept();
         self.past = match read {
             Ok(games) => {
                 if self.open.is_empty()
@@ -216,12 +228,12 @@ impl History {
                 if let Some(words) = self.status(count, live, now_ms) {
                     view::note(ui, &words);
                 }
-                let games = match &self.past {
-                    Past::Have(games) => Some(games),
-                    Past::Asking { kept, .. } | Past::Refused { kept, .. } => kept.as_ref(),
-                    Past::Idle => None,
-                };
-                let all: Vec<&Game> = games.iter().flat_map(|g| g.games.iter()).collect();
+                let all: Vec<&Game> = self
+                    .past
+                    .shown()
+                    .iter()
+                    .flat_map(|g| g.games.iter())
+                    .collect();
                 for (at, game) in all.iter().enumerate() {
                     let id = egui::Id::new(("history-strip", at));
                     motion::arrive(ui, id, motion::stagger(at, all.len()), |ui| {
@@ -314,11 +326,11 @@ fn strip(ui: &mut Ui, game: &Game, open: &mut HashSet<String>, now_ms: i64) {
     let (outer, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), STRIP), Sense::click());
     let rect = outer.shrink2(vec2(space::XL, 0.0));
-    let id = game.match_id.clone().unwrap_or_default();
-    if response.clicked() && !open.remove(&id) {
-        open.insert(id.clone());
+    let id = game.match_id.as_deref().unwrap_or_default();
+    if response.clicked() && !open.remove(id) {
+        open.insert(id.to_owned());
     }
-    let is_open = open.contains(&id);
+    let is_open = open.contains(id);
     let map = game.map.as_deref().unwrap_or("Unknown Map");
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)

@@ -215,7 +215,7 @@ fn broken(root: &Path) -> Option<String> {
     (!home.join("python.exe").is_file()).then(|| {
         let name = home.file_name().map_or_else(|| home.display().to_string(), |n| n.to_string_lossy().into_owned());
         format!(
-            "Its Python ({name}) is gone, which happens when Python is updated or removed. Run              install.bat in Overseer's folder to repair it. Your settings and lineups are kept."
+            "Its Python ({name}) is gone, which happens when Python is updated or removed. Run install.bat in Overseer's folder to repair it. Your settings and lineups are kept."
         )
     })
 }

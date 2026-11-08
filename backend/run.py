@@ -97,18 +97,13 @@ def _fatal_dialog(message: str) -> None:
         LOG.warning("could not show the fatal dialog: %r", e)
 
 
-def venv_python() -> Path:
-    """Return where this install's own Python would be."""
-    return ROOT / ".venv" / "Scripts" / "python.exe"
-
-
 def resolve_python() -> str:
     """Return the Python to run the backend with.
 
     This install's own, or the one running this script when it has the backend's
     packages, or else stop with how to fix it.
     """
-    py = venv_python()
+    py = ROOT / ".venv" / "Scripts" / "python.exe"
     if py.exists():
         return str(py)
     if (
@@ -233,7 +228,7 @@ def _my_process_tree() -> set[int]:
     mine = {os.getpid()}
     pid = os.getpid()
     for _ in range(4):
-        _, _, ppid = _proc_info(pid)
+        ppid = _parent_pid(pid)
         if not ppid:
             break
         mine.add(ppid)
@@ -378,31 +373,27 @@ def _pid_exe(pid: int) -> str:
         return ""
 
 
-def _proc_info(pid: int) -> tuple[str, str, int]:
+def _parent_pid(pid: int) -> int:
     try:
         lines = subprocess.run(
             [
                 POWERSHELL,
                 "-NoProfile",
                 "-Command",
-                (
-                    f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId={pid}'; "
-                    "$p.ExecutablePath; $p.CommandLine; $p.ParentProcessId"
-                ),
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId",
             ],
             capture_output=True,
             text=True,
             timeout=20,
             check=False,
         ).stdout.splitlines()
-        lines += ["", "", ""]
-        exe, cmd, ppid = lines[0].strip(), lines[1].strip(), lines[2].strip()
-        return exe, cmd, int(ppid) if ppid.isdigit() else 0
+        ppid = lines[0].strip() if lines else ""
+        return int(ppid) if ppid.isdigit() else 0
     # text=True decodes with the console code page, and output it can't
     # decode leaves stdout as None, which the parsing below trips on.
     except (OSError, subprocess.SubprocessError, AttributeError, TypeError) as e:
         LOG.warning("could not look up pid %s: %r", pid, e)
-        return "", "", 0
+        return 0
 
 
 def _is_ours(pid: int) -> bool:
@@ -676,8 +667,8 @@ def serves_here(py: str) -> bool:
 def serve_here(py: str, ws_port: int, launch_id: str, log: IO[str] | None) -> None:
     """Start the backend in this process, or stop with why it didn't start.
 
-    A second interpreter for app.py cost 17 MB and a start of its own, for a
-    launcher that only sat and waited on it.
+    A second interpreter for app.py costs 17 MB and a start of its own, for a
+    launcher that only sits and waits on it.
     """
     os.environ["WS_PORT"] = str(ws_port)
     os.environ["OVERSEER_LAUNCH_ID"] = launch_id

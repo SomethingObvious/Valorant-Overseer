@@ -285,7 +285,7 @@ def record_games(owner: str | None, games: list[dict[str, Any]] | None) -> int:
     return changed
 
 
-def teammates(owner: str | None, limit: int = 5) -> list[dict[str, Any]]:
+def teammates(owner: str | None) -> list[dict[str, Any]]:
     """Return the accounts most often on your side, for a career's Played With.
 
     Every lobby on record counts, at two lobbies or more, since one is a random.
@@ -312,7 +312,7 @@ def teammates(owner: str | None, limit: int = 5) -> list[dict[str, Any]]:
             if int(entry.get("withCount") or 0) >= 2 and entry.get("name")
         ]
     rows.sort(key=lambda row: -row["sharedMatches"])
-    return rows[:limit]
+    return rows[:5]
 
 
 def get_one(owner: str | None, puuid: str | None) -> dict[str, Any] | None:
@@ -342,10 +342,6 @@ def encounter_for(owner: str | None, puuid: str | None) -> dict[str, Any] | None
     return {key: int(entry.get(key) or 0) for key in keys}
 
 
-def _no_save() -> None:
-    """Stand in for _save while the self-check runs, so nothing reaches disk."""
-
-
 def _self_check() -> None:
     # The "seen before" number is the one thing this file exists to get right,
     # and it is easy to get wrong in two directions: counting the same lobby
@@ -357,7 +353,7 @@ def _self_check() -> None:
     from unittest import mock
 
     mock.patch(f"{__name__}._STORE", _empty_store()).start()
-    mock.patch(f"{__name__}._save", _no_save).start()
+    mock.patch(f"{__name__}._save").start()
     try:
         # A store that will not parse goes aside under a new name, and the
         # load starts empty, so the next save cannot write over it.
@@ -391,19 +387,16 @@ def _self_check() -> None:
         record_board(first)
         record_board(first)
 
-        seen = encounter_for(me, mate)
-        seen = present(seen)
+        seen = present(encounter_for(me, mate))
         check(seen["withCount"] == 1, seen)
         check(seen["againstCount"] == 0, seen)
 
         record_result(first, "Victory")
         record_result(first, "Victory")
-        after_win = encounter_for(me, mate)
-        after_win = present(after_win)
+        after_win = present(encounter_for(me, mate))
         check(after_win["winsWith"] == 1, after_win)
 
-        foe_seen = encounter_for(me, foe)
-        foe_seen = present(foe_seen)
+        foe_seen = present(encounter_for(me, foe))
         check(foe_seen["againstCount"] == 1, foe_seen)
         check(foe_seen["winsAgainst"] == 1, foe_seen)
         check(foe_seen["withCount"] == 0, foe_seen)
@@ -412,16 +405,14 @@ def _self_check() -> None:
         drawn = board("m3", "Blue")
         record_board(drawn)
         record_result(drawn, "Draw")
-        after_draw = encounter_for(me, mate)
-        after_draw = present(after_draw)
+        after_draw = present(encounter_for(me, mate))
         check(after_draw["drawsWith"] == 1, after_draw)
         check(after_draw["winsWith"] == 1, after_draw)
 
         # Same account, other side of the map. The two tallies are separate:
         # two lobbies alongside by now, and this one against.
         record_board(board("m4", "Red"))
-        swapped = encounter_for(me, mate)
-        swapped = present(swapped)
+        swapped = present(encounter_for(me, mate))
         check(swapped["withCount"] == 2, swapped)
         check(swapped["againstCount"] == 1, swapped)
 

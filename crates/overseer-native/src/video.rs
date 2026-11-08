@@ -48,7 +48,7 @@ const SETTLE: Duration = Duration::from_millis(150);
 thread_local! {
     /// The low-power GPU's device and the manager that shares it with the
     /// engine, made for the first clip and kept for every one after, since
-    /// making them took a moment on the window's thread each time.
+    /// making them takes a moment on the window's thread.
     static DEVICE: RefCell<Option<IMFDXGIDeviceManager>> = const { RefCell::new(None) };
 }
 

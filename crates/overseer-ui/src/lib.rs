@@ -161,7 +161,7 @@ pub mod motion {
     }
 }
 
-/// Colour by the job it does, with the same values as `tui/src/theme.ts`.
+/// Colour by the job it does.
 pub mod colour {
     use egui::Color32;
 
@@ -317,14 +317,6 @@ pub mod shape {
         Shape::convex_polygon(cut_corners(rect, cut), fill, Stroke::NONE)
     }
 
-    /// Triangulates the first `corners` vertices of `mesh`. A fan from the
-    /// first vertex is enough because the cut rectangle is convex.
-    fn fan(mesh: &mut egui::Mesh, corners: usize) {
-        for i in 1..corners.saturating_sub(1) {
-            mesh.add_triangle(0, i as u32, i as u32 + 1);
-        }
-    }
-
     /// Mixes two premultiplied colours, so a fade out has to end at
     /// [`Color32::TRANSPARENT`] and not the same colour with no alpha.
     #[must_use]
@@ -364,42 +356,6 @@ pub mod shape {
                 tint.gamma_multiply(0.78),
             ],
         )
-    }
-
-    /// A chamfered surface with a wash down its face, a light hairline along
-    /// the top and a dark one along the bottom, which is what makes it read as
-    /// raised.
-    pub fn lit(rect: Rect, cut: f32, top: Color32, bottom: Color32) -> Shape {
-        let points = cut_corners(rect, cut);
-        let mut mesh = egui::Mesh::default();
-        for point in &points {
-            let t = ((point.y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
-            mesh.colored_vertex(*point, blend(top, bottom, t));
-        }
-        fan(&mut mesh, points.len());
-        let inset = cut.min(rect.width() * 0.5).min(rect.height() * 0.5);
-        Shape::Vec(vec![
-            Shape::mesh(mesh),
-            Shape::line_segment(
-                [
-                    pos2(rect.left() + inset, rect.top() + 0.5),
-                    pos2(rect.right() - 0.5, rect.top() + 0.5),
-                ],
-                Stroke::new(1.0, super::colour::TEXT_STRONG.gamma_multiply(0.11)),
-            ),
-            Shape::line_segment(
-                [
-                    pos2(rect.left() + 0.5, rect.bottom() - 0.5),
-                    pos2(rect.right() - inset, rect.bottom() - 0.5),
-                ],
-                Stroke::new(1.0, super::colour::VOID.gamma_multiply(0.55)),
-            ),
-        ])
-    }
-
-    /// The upright bar before a section heading, two points wide.
-    pub fn tick(at: Pos2, height: f32, tint: Color32) -> Shape {
-        Shape::rect_filled(Rect::from_min_size(at, egui::vec2(2.0, height)), 0, tint)
     }
 }
 
@@ -655,7 +611,7 @@ pub fn hex(text: Option<&str>) -> Option<Color32> {
     Some(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
 }
 
-/// The four faces, by the job each one does.
+/// The five faces, by the job each one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
     /// Barlow Condensed Bold, for names, labels and headings set in caps.

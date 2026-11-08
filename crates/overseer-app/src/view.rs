@@ -693,15 +693,7 @@ fn overlay_key(ui: &mut Ui, label: &str, failed: Option<&str>) {
     ui.horizontal(|ui| {
         ui.set_height(space::ROW + space::SM);
         ui.add_space(space::XL);
-        let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
-        let _drawn = caps_text(
-            ui.painter(),
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            "Key",
-            Face::Heavy.at(size::BODY),
-            colour::TEXT,
-        );
+        row_name(ui, "Key");
         let (text, tone) = if catching {
             ("Press a Key or Button", controls::Tone::Primary)
         } else {
@@ -908,15 +900,7 @@ fn area_colour(ui: &mut Ui, settings: &mut Settings) -> bool {
     ui.horizontal_wrapped(|ui| {
         ui.set_min_height(space::ROW + space::SM);
         ui.add_space(space::XL);
-        let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
-        let _drawn = caps_text(
-            ui.painter(),
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            "Area Colour",
-            Face::Heavy.at(size::BODY),
-            colour::TEXT,
-        );
+        row_name(ui, "Area Colour");
         if controls::chip(ui, "By Side", settings.lineups.area_colour.is_none()).clicked() {
             settings.lineups.area_colour = None;
             changed = true;
@@ -944,15 +928,7 @@ fn choice(ui: &mut Ui, name: &str, options: &[(f32, String)], value: &mut f32) -
     ui.horizontal(|ui| {
         ui.set_height(space::ROW + space::SM);
         ui.add_space(space::XL);
-        let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
-        let _drawn = caps_text(
-            ui.painter(),
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            name,
-            Face::Heavy.at(size::BODY),
-            colour::TEXT,
-        );
+        row_name(ui, name);
         for (option, label) in options {
             if controls::chip(ui, label, (*value - option).abs() < 0.001).clicked() {
                 *value = *option;
@@ -961,6 +937,19 @@ fn choice(ui: &mut Ui, name: &str, options: &[(f32, String)], value: &mut f32) -
         }
     });
     changed
+}
+
+/// The name at the left of a row of chips or a button.
+fn row_name(ui: &mut Ui, name: &str) {
+    let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
+    let _drawn = caps_text(
+        ui.painter(),
+        pos2(rect.left(), rect.center().y),
+        Align2::LEFT_CENTER,
+        name,
+        Face::Heavy.at(size::BODY),
+        colour::TEXT,
+    );
 }
 
 /// How much the window may spend on looking good. True when it changed.
@@ -1100,8 +1089,7 @@ fn jumps(ui: &mut Ui) {
                     );
                     for &name in names {
                         if controls::chip(ui, name, false).clicked() {
-                            ui.ctx()
-                                .data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
+                            open_at(ui.ctx(), name);
                         }
                     }
                 });

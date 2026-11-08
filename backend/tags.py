@@ -102,7 +102,7 @@ LEADERBOARD_MEANS = "Their place on the regional leaderboard."
 def tags_for(p: dict[str, Any], map_name: str | None) -> list[dict[str, str]]:
     """Every tag this player has earned, most useful first.
 
-    None until their games have all loaded, so a tag never comes from a
+    Nothing until their games have all loaded, so a tag never comes from a
     thinner read than the one it ends up on.
     """
     out: list[dict[str, str]] = []

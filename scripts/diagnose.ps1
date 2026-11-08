@@ -183,7 +183,8 @@ else {
 
 RSection "Recent Errors (Redacted)"
 $any = $false
-foreach ($log in @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")) {
+$logs = @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")
+foreach ($log in $logs) {
     $f = Join-Path $OverseerDir "$log.log"
     if (-not (Test-Path $f)) { continue }
     $errs = Get-Content $f -Encoding UTF8 -ErrorAction SilentlyContinue |
@@ -214,7 +215,7 @@ if ($Bundle) {
                 Write-FileNoBom (Join-Path $work $name) (Protect-OverseerText (Get-Content $p -Raw -Encoding UTF8))
             }
         }
-        foreach ($log in @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")) {
+        foreach ($log in $logs) {
             $f = Join-Path $OverseerDir "$log.log"
             if (Test-Path $f) {
                 $lines = Get-Content $f -Encoding UTF8 | Select-Object -Last 400 | ForEach-Object { Protect-OverseerText $_ }

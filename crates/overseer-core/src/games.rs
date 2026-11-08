@@ -55,8 +55,6 @@ pub struct Game {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Line {
-    /// Their account id.
-    pub puuid: Option<String>,
     /// Their name and tag.
     pub name: Option<String>,
     /// Which side they were on.

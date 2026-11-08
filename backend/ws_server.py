@@ -54,15 +54,11 @@ _log = console_logger("ws", quiet_aware=False, also=LOG)
 
 @dataclass
 class _State:
-    """The bridge's state for this launch."""
-
     # The token a client must send first, made when the bridge starts.
     session_token: str = ""
 
 
 _STATE = _State()
-
-
 _CLIENTS: set[Any] = set()
 
 
@@ -153,9 +149,8 @@ def start(
     *,
     board_provider: Callable[[], dict[str, Any]],
     ws_port: int,
-    request_handler: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
-    poll_interval: float | None = None,
-    pace: Callable[[float], float] | None = None,
+    request_handler: Callable[[str, dict[str, Any]], dict[str, Any]],
+    pace: Callable[[float], float],
 ) -> str:
     """Start the WebSocket bridge on a thread and return once it answers.
 
@@ -163,9 +158,7 @@ def start(
     loop can poll slower in states where little changes, like a match in play.
     """
     _STATE.session_token = secrets.token_urlsafe(32)
-    interval = float(
-        poll_interval if poll_interval is not None else os.getenv("WS_STATE_POLL", "4.0")
-    )
+    interval = float(os.getenv("WS_STATE_POLL", "4.0"))
 
     ready = threading.Event()
     boot_error: list[BaseException] = []
@@ -253,15 +246,13 @@ def start(
 
             answering: set[asyncio.Task[None]] = set()
 
-            async def _answer(
-                websocket: Any, m: dict[str, Any], handler: Callable[[str, dict[str, Any]], Any]
-            ) -> None:
+            async def _answer(m: dict[str, Any]) -> None:
                 rtype = str(m.get("request") or "")
                 params = m.get("params") or {}
                 rid = m.get("id")
                 try:
                     data = await loop.run_in_executor(
-                        None, functools.partial(handler, rtype, params)
+                        None, functools.partial(request_handler, rtype, params)
                     )
                     await _safe_send(
                         websocket, {"type": "response", "id": rid, "ok": True, "data": data}
@@ -277,20 +268,16 @@ def start(
                 async for raw in websocket:
                     m = _parse(raw)
                     mtype = m.get("type")
-                    if mtype == "pong":
-                        continue
                     if mtype == "ping":
                         await _safe_send(websocket, {"type": "pong"})
-                        continue
-                    if mtype == "request" and request_handler is not None:
+                    elif mtype == "request":
                         # Each on its own task, so a clip download that takes
                         # minutes doesn't hold History or a profile behind it.
                         # Every answer carries its id, so the order they land
                         # in doesn't matter.
-                        task = asyncio.create_task(_answer(websocket, m, request_handler))
+                        task = asyncio.create_task(_answer(m))
                         answering.add(task)
                         task.add_done_callback(answering.discard)
-                        continue
             except ConnectionClosed:
                 pass
             finally:
@@ -316,13 +303,10 @@ def start(
                     if repr(e) != failing:
                         failing = repr(e)
                         LOG.exception("board broadcast failed")
-                # Sooner when something on the board changed. A moment's wait
-                # after the first ask lets the rest of a burst ride along, so
-                # ten players' K/D landing together is one board, not ten.
-                # `pace` may stretch the wait when little changes, like a match
-                # in play, where _watch_state still wakes it the moment it ends.
-                wait_for = pace(interval) if pace is not None else interval
-                if await loop.run_in_executor(None, refresh.wait, wait_for):
+                # A moment's wait after an early wake lets the rest of a burst
+                # ride along, so ten players' K/D landing together is one
+                # board, not ten.
+                if await loop.run_in_executor(None, refresh.wait, pace(interval)):
                     await asyncio.sleep(_SETTLE)
                 refresh.clear()
 

@@ -66,7 +66,7 @@ _NAME_PARTS_B = [
     "Op",
     "Ent",
 ]
-TAGS = ["NA1", "EUW", "APAC", "1337", "GG", "VAL", "KR", "OCE", "000", "RR"]
+_TAGS = ["NA1", "EUW", "APAC", "1337", "GG", "VAL", "KR", "OCE", "000", "RR"]
 
 
 def _seed_int(puuid: str) -> int:
@@ -75,7 +75,7 @@ def _seed_int(puuid: str) -> int:
 
 def make_name(rng: random.Random) -> str:
     """Return a made-up Riot ID."""
-    return f"{rng.choice(_NAME_PARTS_A)}{rng.choice(_NAME_PARTS_B)}#{rng.choice(TAGS)}"
+    return f"{rng.choice(_NAME_PARTS_A)}{rng.choice(_NAME_PARTS_B)}#{rng.choice(_TAGS)}"
 
 
 def fake_puuid(rng: random.Random) -> str:

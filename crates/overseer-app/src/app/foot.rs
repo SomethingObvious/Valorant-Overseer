@@ -98,45 +98,31 @@ impl Overseer {
     fn status(&self, ui: &Ui, painter: &egui::Painter, rect: Rect, right: f32) -> f32 {
         // Drawn before the hints, which stop where this starts, so a narrow
         // window drops hints instead of printing them over this.
-        let (bad, _why) = &self.unreadable;
+        let bad = self.unreadable.0;
         let mut right = right;
         // The tier only when it is efficient, the one state worth telling.
-        let tier = if self.quality() == Quality::Efficient {
-            "Efficient".to_owned()
-        } else {
-            String::new()
-        };
+        let tier = (self.quality() == Quality::Efficient).then_some("Efficient");
         let now = ui.input(|i| i.time);
-        let copied = panel::copied(ui.ctx())
-            .map(|name| format!("Copied {name}"))
-            .unwrap_or_default();
+        let copied = panel::copied(ui.ctx()).map(|name| format!("Copied {name}"));
         let said = self
             .said
             .as_ref()
             .filter(|(_, at)| now - at < SAID)
-            .map(|(words, _)| words.clone())
-            .unwrap_or_default();
+            .map(|(words, _)| words.as_str());
         for (text, tint) in [
             (said, colour::TEXT),
-            (copied, colour::ALLY),
+            (copied.as_deref(), colour::ALLY),
             (tier, colour::TEXT_FAINT),
-            (
-                if *bad == 0 {
-                    String::new()
-                } else {
-                    "May Need a Repair".to_owned()
-                },
-                colour::WARN,
-            ),
+            ((bad > 0).then_some("May Need a Repair"), colour::WARN),
         ] {
-            if text.is_empty() {
+            let Some(text) = text.filter(|t| !t.is_empty()) else {
                 continue;
-            }
+            };
             let drawn = caps_text(
                 painter,
                 pos2(right, rect.center().y),
                 Align2::RIGHT_CENTER,
-                &text,
+                text,
                 Face::Display.at(size::MICRO),
                 tint,
             );

@@ -85,8 +85,6 @@ impl Overseer {
 
     /// Every switch there is, and what could not be switched on.
     fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
-        // Read out before the screen borrows the settings. The screen shows
-        // why the hotkey or tray failed, or a dead key would give no clue.
         let quality = self.quality();
         // Why it's on Efficient, when that wasn't what was picked.
         let why = if self.budget.calm == super::Calm::Software {
@@ -106,11 +104,14 @@ impl Overseer {
         } else {
             None
         };
-        let no_hotkey = self.hotkey.as_ref().and_then(|k| k.as_ref().err()).cloned();
-        let no_tray = self.tray.as_ref().err().cloned();
+        // Shown on the screen, or a dead key would give no clue.
         let trouble = view::Trouble {
-            hotkey: no_hotkey.as_deref(),
-            tray: no_tray.as_deref(),
+            hotkey: self
+                .hotkey
+                .as_ref()
+                .and_then(|k| k.as_ref().err())
+                .map(String::as_str),
+            tray: self.tray.as_ref().err().map(String::as_str),
         };
         let mut changed = false;
         self.offline.playing = matches!(self.board.state.as_deref(), Some("PREGAME" | "INGAME"));

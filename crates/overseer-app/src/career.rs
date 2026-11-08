@@ -224,15 +224,15 @@ fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
         rating_chart(ui, &run, &points);
     }
 
-    let first = run.first().and_then(|m| m.rank_after.clone());
-    let last = run.last().and_then(|m| m.rank_after.clone());
+    let first = run.first().and_then(|m| m.rank_after.as_deref());
+    let last = run.last().and_then(|m| m.rank_after.as_deref());
     let moved = points
         .last()
         .zip(points.first())
         .map_or(0.0, |(end, start)| end - start);
     let path = match (first, last) {
         (Some(a), Some(b)) if a != b => format!("{a} to {b}"),
-        (_, Some(b)) => b,
+        (_, Some(b)) => b.to_owned(),
         _ => String::new(),
     };
     let change = if flat {
@@ -459,7 +459,6 @@ fn readout(painter: &egui::Painter, inner: Rect, spot: egui::Pos2, m: &CareerMat
     );
 }
 
-/// A tier's name the way the game writes it: "Gold 2", "Radiant".
 /// A band on the rating chart. Past Immortal 1 a band is another 100 RR, not
 /// another tier.
 fn band_name(band: u32) -> String {
@@ -470,6 +469,7 @@ fn band_name(band: u32) -> String {
     }
 }
 
+/// A tier's name the way the game writes it: "Gold 2", "Radiant".
 fn tier_name(tier: u32) -> String {
     if tier < 3 {
         return "Unranked".to_owned();
@@ -517,7 +517,7 @@ fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
     }
     values.reverse();
     panel::subheading(ui, "K/D per Match", colour::TEXT_DIM);
-    let _read = plot(ui, &values, Some(1.0), board::paint::win(side))
+    let _read = plot(ui, &values, 1.0, board::paint::win(side))
         .on_hover_text("Oldest first. The line marks a K/D of 1.");
 }
 
@@ -720,73 +720,37 @@ fn habits(ui: &mut Ui, profile: &Profile) {
     }
 }
 
-/// Draws a series as a line, or as bars measured from `baseline` when there
-/// is one.
-fn plot(ui: &mut Ui, values: &[f32], baseline: Option<f32>, hot: egui::Color32) -> egui::Response {
+/// Draws a series as bars measured from `rule`.
+fn plot(ui: &mut Ui, values: &[f32], rule: f32, hot: egui::Color32) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), CHART), Sense::hover());
     if !ui.is_rect_visible(rect) || values.len() < 2 {
         return response;
     }
-    let inner = inside(rect);
-    let (low, high) = bounds(values, baseline);
-    let n = values.len() as f32;
-    let height_of = |v: f32| inner.bottom() - inner.height() * (v - low) / (high - low);
-    let painter = ui.painter().clone();
-
-    if let Some(rule) = baseline {
-        // Bars sit centred in equal slots. On the line's endpoints the first
-        // and last bars would hang half outside the box.
-        let slot = inner.width() / n;
-        let y = height_of(rule);
-        painter.hline(inner.x_range(), y, (1.0, colour::LINE));
-        for (i, &v) in values.iter().enumerate() {
-            let middle = slot.mul_add(i as f32 + 0.5, inner.left());
-            let top = height_of(v);
-            let half = slot * 0.275;
-            let bar = Rect::from_min_max(
-                pos2(middle - half, top.min(y)),
-                pos2(middle + half, top.max(y)),
-            );
-            let tint = if v >= rule { hot } else { colour::TEXT_FAINT };
-            painter.rect_filled(bar, 0, tint);
-        }
-        return response;
-    }
-    let at = |i: usize, v: f32| {
-        pos2(
-            inner.left() + inner.width() * (i as f32) / (n - 1.0),
-            height_of(v),
-        )
-    };
-
-    let points: Vec<egui::Pos2> = values.iter().enumerate().map(|(i, &v)| at(i, v)).collect();
-    painter.add(egui::Shape::line(
-        points.clone(),
-        egui::Stroke::new(2.0, hot),
-    ));
-    // Dots only where it started and where it got to. A dot on every point
-    // turns the line into a row of beads.
-    for point in [points.first(), points.last()].into_iter().flatten() {
-        painter.circle_filled(*point, 3.0, hot);
-    }
-    // Ring the point under the pointer so the hover text has something to
-    // refer to.
-    if let Some(pointer) = response.hover_pos() {
-        let i = nearest(inner, values.len(), pointer.x);
-        if let Some(point) = points.get(i) {
-            painter.circle_stroke(*point, 4.5, egui::Stroke::new(1.5, colour::TEXT_STRONG));
-        }
-    }
-    response
-}
-
-/// The box the points are drawn in.
-fn inside(rect: Rect) -> Rect {
-    Rect::from_min_max(
+    let inner = Rect::from_min_max(
         pos2(rect.left() + space::LG, rect.top() + space::SM),
         pos2(rect.right() - space::LG, rect.bottom() - space::SM),
-    )
+    );
+    let (low, high) = bounds(values, rule);
+    let height_of = |v: f32| inner.bottom() - inner.height() * (v - low) / (high - low);
+    let painter = ui.painter();
+    // Bars sit centred in equal slots, since on evenly spaced points the
+    // first and last would hang half outside the box.
+    let slot = inner.width() / values.len() as f32;
+    let y = height_of(rule);
+    painter.hline(inner.x_range(), y, (1.0, colour::LINE));
+    for (i, &v) in values.iter().enumerate() {
+        let middle = slot.mul_add(i as f32 + 0.5, inner.left());
+        let top = height_of(v);
+        let half = slot * 0.275;
+        let bar = Rect::from_min_max(
+            pos2(middle - half, top.min(y)),
+            pos2(middle + half, top.max(y)),
+        );
+        let tint = if v >= rule { hot } else { colour::TEXT_FAINT };
+        painter.rect_filled(bar, 0, tint);
+    }
+    response
 }
 
 /// Which of `n` points evenly across `inner` is nearest to `x`.
@@ -798,10 +762,10 @@ fn nearest(inner: Rect, n: usize, x: f32) -> usize {
 
 /// The range to draw over, padded so it is never zero wide and a flat series
 /// sits through the middle.
-fn bounds(values: &[f32], baseline: Option<f32>) -> (f32, f32) {
+fn bounds(values: &[f32], rule: f32) -> (f32, f32) {
     let mut low = f32::INFINITY;
     let mut high = f32::NEG_INFINITY;
-    for &v in values.iter().chain(baseline.iter()) {
+    for &v in values.iter().chain([&rule]) {
         low = low.min(v);
         high = high.max(v);
     }

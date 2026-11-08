@@ -9,11 +9,11 @@ pub mod lineups;
 pub mod profile;
 
 pub use board::{
-    AutoTag, Board, BriefLine, Encounter, Evidence, LockProgress, MapWinRate, Notice, Party,
-    Player, Reading, Saved, Score, Scout, ScoutBuy, ScoutFinding, ScoutGun, Session, SessionPoint,
-    Skin, StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
+    AutoTag, Board, BriefLine, Encounter, Evidence, LockProgress, MapWinRate, Party, Player,
+    Reading, Saved, Score, Scout, ScoutBuy, ScoutFinding, ScoutGun, Session, SessionPoint, Skin,
+    StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
 };
 pub use bridge::{Bridge, Event, Status};
 pub use games::{Game, Line, Recent};
-pub use lineups::{Ability, Atlas, Callout, Clip, Drawing, Kit, Lineup, Plan, Tools};
-pub use profile::{Averages, BonusBuy, CareerMatch, CoPlayer, ForceHabit, Gun, Profile};
+pub use lineups::{Ability, Atlas, Clip, Drawing, Kit, Lineup, Plan, Tools};
+pub use profile::{CareerMatch, CoPlayer, Profile};

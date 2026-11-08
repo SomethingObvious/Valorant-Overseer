@@ -61,7 +61,7 @@ pub(crate) fn show(
 }
 
 /// Past this width the panel is two columns.
-pub(crate) const TWO_COLUMNS: f32 = 560.0;
+const TWO_COLUMNS: f32 = 560.0;
 
 /// Who they are: everything that came with the board.
 fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: bool) -> bool {
@@ -417,12 +417,7 @@ fn card(ui: &mut Ui, player: &Player) {
             Color32::WHITE,
         );
         painter.add(egui::Shape::mesh(mesh));
-    } else if let Some(banner) = player
-        .card_art
-        .as_deref()
-        .and_then(|path| art::file(ui.ctx(), path))
-        .or_else(|| art::default_card(ui.ctx()))
-    {
+    } else if let Some(banner) = board::paint::banner(ui.ctx(), player) {
         // No agent yet: their player card, cut to the card's shape from the
         // middle of the banner, the way the row has it behind the name.
         let texture = banner.size_vec2();
@@ -745,12 +740,12 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side, still: bool) {
         );
     }
     let x = rect.left() + space::LG + if tier >= 3 { EMBLEM + space::LG } else { 0.0 };
-    let name = player.rank.clone().unwrap_or_else(|| "Unranked".to_owned());
+    let name = player.rank.as_deref().unwrap_or("Unranked");
     let _tier = caps_text(
         &painter,
         pos2(x, rect.center().y - 12.0),
         Align2::LEFT_CENTER,
-        &name,
+        name,
         Face::Heavy.at(24.0),
         if tier >= 3 {
             colour::TEXT_STRONG
@@ -1995,9 +1990,28 @@ fn named(ui: &mut Ui, label: &str, value: &str) {
 /// How tall a heading's line is.
 const HEADING: f32 = 22.0;
 
-/// A section heading: the word in caps with a hairline to the edge.
+/// A section heading: the word in caps with a double rule to the edge.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
-    heading_tinted(ui, text, colour::TEXT);
+    ui.add_space(space::LG);
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), HEADING), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let drawn = caps_text(
+        painter,
+        pos2(rect.left() + space::LG, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        Face::Heavy.at(size::TITLE),
+        colour::TEXT,
+    );
+    board::paint::double_rule(
+        painter,
+        drawn.right() + space::MD..=rect.right() - space::LG,
+        rect.center().y + 1.0,
+    );
 }
 
 /// A heading for a part of a section: smaller and without the rule, so the
@@ -2016,30 +2030,6 @@ pub(crate) fn subheading(ui: &mut Ui, text: &str, tint: Color32) {
         text,
         Face::Display.at(size::LABEL),
         tint,
-    );
-}
-
-/// A section heading in a colour, for the sections that are claims.
-fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
-    ui.add_space(space::LG);
-    let (rect, _response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), HEADING), Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let painter = ui.painter();
-    let drawn = caps_text(
-        painter,
-        pos2(rect.left() + space::LG, rect.center().y),
-        Align2::LEFT_CENTER,
-        text,
-        Face::Heavy.at(size::TITLE),
-        tint,
-    );
-    board::paint::double_rule(
-        painter,
-        drawn.right() + space::MD..=rect.right() - space::LG,
-        rect.center().y + 1.0,
     );
 }
 

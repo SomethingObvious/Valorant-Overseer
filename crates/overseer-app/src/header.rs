@@ -38,13 +38,9 @@ pub(crate) use overseer_ui::chrome::Button as Chrome;
 /// empty while all is well, and the exact reason, said on its hover.
 #[derive(Debug)]
 pub(crate) struct Light {
-    /// How big the dot is.
     pub(crate) radius: f32,
-    /// What colour it is.
     pub(crate) tint: Color32,
-    /// The word beside it.
     pub(crate) word: &'static str,
-    /// The exact reason, for its hover.
     pub(crate) why: String,
 }
 
@@ -86,12 +82,14 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> Option<Chrome> {
         ui.id().with("connection"),
         Sense::hover(),
     );
-    let said = match (head.light.word, head.light.why.as_str()) {
-        ("", _) => "Connected".to_owned(),
-        (word, "") => word.to_owned(),
-        (word, why) => format!("{word}. {why}"),
-    };
-    spoken.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &said));
+    spoken.widget_info(|| {
+        let said = match (head.light.word, head.light.why.as_str()) {
+            ("", _) => "Connected".to_owned(),
+            (word, "") => word.to_owned(),
+            (word, why) => format!("{word}. {why}"),
+        };
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said)
+    });
     if !head.light.why.is_empty() {
         let _why = spoken.on_hover_text(&head.light.why);
     }
@@ -218,7 +216,7 @@ fn title(painter: &egui::Painter, board: &Board, start: f32, middle: f32, limit:
         ),
     ] {
         let Some(text) = text else { continue };
-        let width = space::XL.mul_add(2.0, overseer_ui::caps_width(painter, text, paint::label()));
+        let width = plate_width(painter, text);
         if x + width > limit {
             break;
         }
@@ -237,7 +235,7 @@ pub(crate) fn plate(
     tint: Color32,
     solid: bool,
 ) -> Rect {
-    let width = space::XL.mul_add(2.0, overseer_ui::caps_width(painter, text, paint::label()));
+    let width = plate_width(painter, text);
     let rect = Rect::from_min_size(pos2(x, bottom - 22.0), vec2(width, 22.0));
     let (fill, ink) = if solid {
         (tint, colour::BG)
@@ -254,6 +252,11 @@ pub(crate) fn plate(
         ink,
     );
     rect
+}
+
+/// How wide [`plate`] draws `text`.
+fn plate_width(painter: &egui::Painter, text: &str) -> f32 {
+    space::XL.mul_add(2.0, overseer_ui::caps_width(painter, text, paint::label()))
 }
 
 /// The score in the middle, or the lock count during agent select, if there
@@ -310,7 +313,7 @@ fn score(painter: &egui::Painter, head: &Masthead<'_>, centre: f32, middle: f32,
             lock.locked.unwrap_or(0),
             lock.total.unwrap_or(0)
         );
-        let width = space::XL.mul_add(2.0, overseer_ui::caps_width(painter, &text, paint::label()));
+        let width = plate_width(painter, &text);
         if centre - width / 2.0 > left && centre + width / 2.0 < right {
             let _plate = plate(
                 painter,

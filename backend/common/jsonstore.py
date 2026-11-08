@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-DATA_DIR = str(Path(__file__).resolve().parent.parent / "data")
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def _warn(msg: str) -> None:
@@ -26,7 +26,7 @@ def _warn(msg: str) -> None:
 
 def data_path(name: str) -> str:
     """Path to a file in backend/data. The directory may not exist yet."""
-    return str(Path(DATA_DIR) / name)
+    return str(_DATA_DIR / name)
 
 
 def read_json(path: str, default: Any) -> Any:
@@ -67,7 +67,7 @@ def _set_aside(path: str, default: Any, e: Exception) -> Any:
     return default
 
 
-def write_atomic(path: str, data: Any, *, prefix: str, ensure_ascii: bool = False) -> bool:
+def write_atomic(path: str, data: Any, *, prefix: str) -> bool:
     """Write `data` as JSON to `path` through a temp file, and return False if that fails."""
     # The temp file sits in the same directory so the replace is a rename,
     # which is what makes it atomic. Every caller is a best-effort save, so
@@ -77,7 +77,7 @@ def write_atomic(path: str, data: Any, *, prefix: str, ensure_ascii: bool = Fals
         fd, tmp = tempfile.mkstemp(dir=str(Path(path).parent), prefix=prefix, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=ensure_ascii, separators=(",", ":"))
+                json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
             Path(tmp).replace(path)
             return True
         finally:

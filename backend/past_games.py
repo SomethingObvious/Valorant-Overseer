@@ -237,8 +237,7 @@ def _self_check() -> None:
 
     # The scoreboard reads per round, so the ACS is over the two rounds played
     # and the headshot rate is one in four.
-    board = scoreboard(md("00000000-0000-0000-0000-000000000001", blue_won=True))
-    board = present(board)
+    board = present(scoreboard(md("00000000-0000-0000-0000-000000000001", blue_won=True)))
     me = next(p for p in board["players"] if p["puuid"] == "me")
     check((me["name"], me["acs"], me["hsPct"], me["adr"]) == ("Me#1", 400, 25, 150), me)
 

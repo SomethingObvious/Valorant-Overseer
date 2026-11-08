@@ -20,7 +20,6 @@ const CARD: Metrics = Metrics {
     kd: 25.0,
     stat: 13.0,
     pip: 8.0,
-    agent_line: true,
     tags_first: true,
 };
 
@@ -57,7 +56,7 @@ pub(crate) const HEIGHT: f32 = GUTTER
     + (CARD.height + ITEM + rows::GAP) * 5.0
     + GUTTER;
 
-/// Where the zones of a card or a line sit across it.
+/// Where the zones of a card sit across it.
 #[derive(Debug, Clone, Copy)]
 struct Zones {
     /// Where the name has to stop.
@@ -88,7 +87,7 @@ impl Zones {
 }
 
 /// Draws the overlay inside its gutters, and says how tall it came out.
-pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2]) -> Touched {
+pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2]) -> Touched {
     let top = ui.cursor().top();
     ui.add_space(GUTTER);
     strip(ui, scene.board);
@@ -105,7 +104,7 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, String); 2
             continue;
         }
         ui.add_space(BETWEEN);
-        let _clicked = heads::team(ui, scene.board, *side, team);
+        let _worth = heads::team(ui, scene.board, *side, team);
         let mut placed = Vec::with_capacity(players.len());
         for player in &players {
             let look = look(scene, player, *side);
@@ -248,7 +247,7 @@ fn hint(painter: &egui::Painter, board: &Board, (x, right): (f32, f32), y: f32) 
     }
 }
 
-/// One player: an enemy's card or one of your team's lines.
+/// One player's card.
 fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
     let m = look.metrics;
     let (rect, response) =
@@ -289,15 +288,11 @@ fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
     if !rows::known(player) {
         return rect;
     }
-    if m.agent_line {
-        card(&inside, player, rect, zones, look);
-    } else {
-        line(&inside, player, rect, zones, look);
-    }
+    card(&inside, player, rect, zones, look);
     rect
 }
 
-/// An enemy's zones, two lines each.
+/// A card's zones, two lines each.
 fn card(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look: &Look<'_>) {
     let m = look.metrics;
     let upper = rect.height().mul_add(0.34, rect.top());
@@ -336,9 +331,8 @@ fn card(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look
         m.pip,
         paint::win(look.side),
     );
-    let mut end = right;
     let (level, tint) = rows::level_of(player);
-    end = pair(painter, (end, upper), "Lvl", &level, tint) - space::LG;
+    let end = pair(painter, (right, upper), "Lvl", &level, tint) - space::LG;
     if player.met() > 0 {
         let _met = pair(
             painter,
@@ -364,48 +358,14 @@ fn card(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look
             "Win",
             rows::rate(look.side, player.win_rate, player.games, rows::FEW_GAMES),
         ),
-        ("HS", hs(look.side, player.hs_pct)),
+        ("HS", rows::hs(look.side, player.hs_pct)),
     ] {
         end = pair(painter, (end, lower), name, &text, tint) - space::LG;
     }
 }
 
-/// One of your team's zones, on one line: the rank, the K/D, the results,
-/// the headshots and the win rate.
-fn line(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look: &Look<'_>) {
-    let m = look.metrics;
-    let y = rect.center().y;
-    rank(painter, player, zones.rank, (y, y), look);
-    if let Some(kd) = player.kd {
-        let _kd = paint::numeral(
-            painter,
-            &format!("{:.2}", kd * f64::from(look.counted)),
-            pos2(zones.kd, y),
-            &Face::Heavy.at(m.kd),
-            if rows::few_games(player) {
-                colour::TEXT_FAINT
-            } else {
-                paint::kd_heat(look.side, Some(kd))
-            },
-        );
-    }
-    let (left, right) = zones.more;
-    paint::pips(
-        painter,
-        &player.form,
-        pos2(left, y),
-        m.pip,
-        paint::win(look.side),
-    );
-    let (text, tint) = rows::rate(look.side, player.win_rate, player.games, rows::FEW_GAMES);
-    let end = pair(painter, (right, y), "Win", &text, tint) - space::LG;
-    let (text, tint) = hs(look.side, player.hs_pct);
-    let _hs = pair(painter, (end, y), "HS", &text, tint);
-}
-
-/// The rank: its emblem, its tier, and under it on a card the peak when it
-/// was higher, else the RR. On a line `upper` and `lower` are the same, and
-/// only the tier is said.
+/// The rank: its emblem, its tier, and under it the peak when it was
+/// higher, else the RR.
 fn rank(
     painter: &egui::Painter,
     player: &Player,
@@ -443,9 +403,6 @@ fn rank(
             colour::TEXT_DIM
         },
     );
-    if !m.agent_line {
-        return;
-    }
     let under = rows::peak_line(player, tier).map_or_else(
         || player.rr.map(|rr| (format!("{rr} RR"), colour::TEXT_FAINT)),
         |peak| Some((peak, colour::TEXT_DIM)),
@@ -460,19 +417,6 @@ fn rank(
             tint,
         );
     }
-}
-
-/// The headshot rate and its colour, faint when there is none.
-fn hs(side: Side, hs: Option<f64>) -> (String, Color32) {
-    hs.map_or_else(
-        || ("-".to_owned(), colour::TEXT_FAINT),
-        |v| {
-            (
-                format!("{v:.0}%"),
-                paint::heat(side, (v as f32 - 16.0) / 16.0),
-            )
-        },
-    )
 }
 
 /// A value with its name before it, set right against `right` on `y`, and

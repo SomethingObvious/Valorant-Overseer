@@ -28,7 +28,7 @@ foreach ($file in (Get-ChildItem -LiteralPath $Root -Recurse -File |
     if ($Check -and $comments.Count -gt 0) {
         throw "PowerShell comments remain: $($file.FullName)"
     }
-    if (-not $Check -and $comments.Count -gt 0) {
+    if ($comments.Count -gt 0) {
         foreach ($token in $comments) {
             $start = $token.Extent.StartOffset
             $length = $token.Extent.EndOffset - $start
@@ -50,7 +50,7 @@ foreach ($file in (Get-ChildItem -LiteralPath $Root -Recurse -File |
     if ($Check -and $commentLines.Count -gt 0) {
         throw "Batch comments remain: $($file.FullName)"
     }
-    if (-not $Check -and $commentLines.Count -gt 0) {
+    if ($commentLines.Count -gt 0) {
         $kept = @($lines | Where-Object { $_ -notmatch '^\s*(?i:rem(?:\s|$)|::)' })
         $text = (($kept -join "`r`n").TrimEnd() + "`r`n")
         [System.IO.File]::WriteAllText($file.FullName, $text, $utf8NoBom)

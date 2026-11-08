@@ -69,7 +69,7 @@ impl Corner {
 
 /// Where a window of `size` sits in `corner`, clamped so it never starts off
 /// the edge of a monitor smaller than it.
-pub(crate) fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
+fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
     let right = (monitor.x - size.x - MARGIN).max(MARGIN);
     let bottom = (monitor.y - size.y - MARGIN - TASKBAR).max(MARGIN);
     match corner {

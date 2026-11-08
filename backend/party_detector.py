@@ -8,8 +8,6 @@ from typing import Any
 
 from common.check import check
 
-# --- guessing a stack from history -----------------------------------------
-#
 # Riot tells you the party of anyone whose presence you can see, which means
 # yourself and your friends. For everyone else the lobby says nothing, so the
 # only evidence is how often two accounts have turned up on the same side.

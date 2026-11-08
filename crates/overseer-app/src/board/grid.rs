@@ -234,7 +234,7 @@ impl Grid {
 const GAP: f32 = space::LG;
 
 /// The rank when room is tight: the emblem alone.
-pub(crate) const RANK_EMBLEM: f32 = 44.0;
+const RANK_EMBLEM: f32 = 44.0;
 
 /// The peak column: the same emblem and name as the rank, and its act.
 const PEAK: f32 = 164.0;
@@ -259,7 +259,7 @@ fn width_of(keep: &[&Column], tight: bool) -> f32 {
 /// save a few points leaves room nothing is ever offered. The first pass
 /// ignores `hidden`, so switching one column off can never take a different
 /// one away with it.
-pub(crate) fn columns_for(room: f32, hidden: &[String], tight: bool) -> Vec<&'static Column> {
+fn columns_for(room: f32, hidden: &[String], tight: bool) -> Vec<&'static Column> {
     let shown = fill(room, &[], &[], tight);
     let kept: Vec<&Column> = shown
         .into_iter()

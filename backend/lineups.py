@@ -111,15 +111,6 @@ def _which(exe: str) -> str | None:
     return shutil.which(exe)
 
 
-def _download_failed(said: list[str]) -> str:
-    """Return why yt-dlp failed, and the usual fix, since sites change faster than it does."""
-    why = said[-1] if said else "no reason given"
-    return (
-        f"yt-dlp couldn't download that video: {why}. If this keeps happening, yt-dlp is "
-        "probably out of date, and Update Clip Tools in the window's settings updates it."
-    )
-
-
 def _tool(name: str) -> str:
     found = _which(_TOOLS[name])
     if not found:
@@ -332,7 +323,7 @@ def _shape(raw: Any) -> dict[str, Any]:
     except (TypeError, ValueError) as e:
         msg = "A cone's width is in degrees, like 60."
         raise LineupError(msg) from e
-    # A shape kept before shapes had an opacity is a solid one.
+    # A shape saved without an opacity is solid.
     solid = raw.get("opacity")
     try:
         opacity = 1.0 if solid is None else round(min(1.0, max(0.1, float(solid))), 2)
@@ -459,17 +450,23 @@ def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
         return Path(source), 0.0
     # The whole video, if it was downloaded to trim. Cutting from it is a
     # couple of seconds, where downloading the clip's part again took ten or so.
-    whole = ROOT / ".cache" / f"{_key(source)}-watch-hd.mp4"
+    key = _key(source)
+    whole = ROOT / ".cache" / f"{key}-watch-hd.mp4"
     if whole.exists():
         return whole, 0.0
     hit = _cached(source, start, end)
     if hit:
         return hit
     begins, ends = max(0.0, start - PAD), end + PAD
-    key = _key(source)
     out = ROOT / ".cache" / f"{key}-hd-{round(begins * 10)}-{round(ends * 10)}.mp4"
+    # Cut on the exact second, so the clip's times line up with the link's.
+    sections = ["--download-sections", f"*{begins:.2f}-{ends:.2f}", "--force-keyframes-at-cuts"]
+    _download(source, out, 600, sections)
+    return out, begins
+
+
+def _download(source: str, out: Path, timeout: int, extra: list[str]) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    ffmpeg = _tool("ffmpeg")
     command = [
         _tool("ytdlp"),
         "--no-playlist",
@@ -477,26 +474,38 @@ def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
         "--no-warnings",
         "--no-progress",
         "--ffmpeg-location",
-        str(Path(ffmpeg).parent),
+        str(Path(_tool("ffmpeg")).parent),
         "-f",
         _BEST,
         "--merge-output-format",
         "mp4",
-        # Cut on the exact second, so the clip's times line up with the link's.
-        "--download-sections",
-        f"*{begins:.2f}-{ends:.2f}",
-        "--force-keyframes-at-cuts",
+        *extra,
         "-o",
         str(out),
         "--",
         source,
     ]
-    done = _run(command, 600)
+    done = _run(command, timeout)
     if done.returncode != 0 or not out.exists():
         said = (done.stderr or "").strip().splitlines()
-        msg = _download_failed(said)
+        # Sites change faster than yt-dlp does, so an old copy is the usual cause.
+        msg = (
+            f"yt-dlp couldn't download that video: {said[-1] if said else 'no reason given'}. "
+            "If this keeps happening, yt-dlp is probably out of date, and Update Clip Tools "
+            "in the window's settings updates it."
+        )
         raise LineupError(msg)
-    return out, begins
+
+
+def _local(source: str) -> bool:
+    """Return whether `source` is a video file on this PC, and raise when it isn't a link either."""
+    if source and not source.startswith(("http://", "https://")) and Path(source).is_file():
+        return True
+    parsed = urlparse(source)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        msg = "Paste a link to the video, or the path of a video file on this PC."
+        raise LineupError(msg)
+    return False
 
 
 def _cuttable(source: str) -> bool:
@@ -506,12 +515,8 @@ def _cuttable(source: str) -> bool:
     waits on a cut that can't work.
     """
     _tool("ffmpeg")
-    if source and not source.startswith(("http://", "https://")) and Path(source).is_file():
+    if _local(source):
         return True
-    parsed = urlparse(source)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        msg = "Paste a link to the video, or the path of a video file on this PC."
-        raise LineupError(msg)
     _tool("ytdlp")
     return False
 
@@ -554,16 +559,11 @@ def length(source: Any) -> float:
     source = str(source or "").strip()
     if source in _LENGTHS:
         return _LENGTHS[source]
-    local = Path(source)
-    if source and not source.startswith(("http://", "https://")) and local.is_file():
+    if _local(source):
         probe = _which("ffprobe") or str(Path(_tool("ffmpeg")).with_name("ffprobe.exe"))
         command = [probe, "-v", "error", "-show_entries", "format=duration"]
-        done = _run([*command, "-of", "default=nw=1:nk=1", str(local)], 30)
+        done = _run([*command, "-of", "default=nw=1:nk=1", str(Path(source))], 30)
     else:
-        parsed = urlparse(source)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            msg = "Paste a link to the video, or the path of a video file on this PC."
-            raise LineupError(msg)
         command = [_tool("ytdlp"), "--no-playlist", "--quiet", "--no-warnings"]
         done = _run([*command, "--skip-download", "--print", "duration", "--", source], 60)
     try:
@@ -643,8 +643,8 @@ def cut(clip: dict[str, Any], out: Path, *, small: bool = False) -> None:
             if small
             else []
         ),
-        # The window shows 30 frames a second, so a 60 fps clip only doubled
-        # what it decoded. Slowed to a quarter, it shows 7.5 a second.
+        # The window shows 30 frames a second, so a 60 fps clip only doubles
+        # what it decodes. Slowed to a quarter, it shows 7.5 a second.
         "-fpsmax",
         "30",
         *sound,
@@ -708,9 +708,10 @@ def _pictures(raw: Any, folder: Path, lineup_id: str, kept: list[str]) -> list[s
         name = f"{lineup_id}-pic-{secrets.token_hex(3)}.png"
         out = folder / name
         folder.mkdir(parents=True, exist_ok=True)
-        if _which(_TOOLS["ffmpeg"]):
+        ffmpeg = _which("ffmpeg")
+        if ffmpeg:
             command = [
-                _tool("ffmpeg"),
+                ffmpeg,
                 "-y",
                 "-v",
                 "error",
@@ -796,8 +797,8 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
         "points": _points(raw.get("points"))[:8],
     }
     path = folder / f"{lineup_id}.json"
-    kept = read_json(str(path), None) if path.exists() else None
-    old_clip = (kept or {}).get("clip") if isinstance(kept, dict) else None
+    kept = read_json(str(path), None)
+    old_clip = kept.get("clip") if isinstance(kept, dict) else None
     video = path.with_suffix(".mp4")
     later = None
     if isinstance(clip, dict) and str(clip.get("source") or "").strip():
@@ -820,7 +821,7 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
         _patiently(lambda: video.unlink(missing_ok=True))
     elif old_clip:
         lineup["clip"] = old_clip
-    old_pictures = (kept or {}).get("images") if isinstance(kept, dict) else None
+    old_pictures = kept.get("images") if isinstance(kept, dict) else None
     lineup["images"] = _pictures(raw.get("images"), folder, lineup_id, list(old_pictures or []))
     folder.mkdir(parents=True, exist_ok=True)
     if not write_atomic(str(path), lineup, prefix=".lineup-"):
@@ -1049,7 +1050,7 @@ def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
     video, failed = path.with_suffix(".mp4"), path.with_suffix(".failed")
 
     def wanted_still() -> bool:
-        kept = read_json(str(path), None) if path.exists() else None
+        kept = read_json(str(path), None)
         return isinstance(kept, dict) and kept.get("clip") == wanted
 
     def run() -> None:
@@ -1147,40 +1148,13 @@ def watch(source: Any) -> dict[str, str]:
     second of it straight away.
     """
     source = str(source or "").strip()
-    local = Path(source)
-    if source and not source.startswith(("http://", "https://")) and local.is_file():
-        return {"source": source, "file": str(local.resolve())}
-    parsed = urlparse(source)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        msg = "Paste a link to the video, or the path of a video file on this PC."
-        raise LineupError(msg)
+    if _local(source):
+        return {"source": source, "file": str(Path(source).resolve())}
     # The whole video at up to 1080p, so an hour-long one is a few GB. A
     # window around the trim would do if long sources turn up.
     out = ROOT / ".cache" / f"{_key(source)}-watch-hd.mp4"
     if not out.exists():
-        out.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            _tool("ytdlp"),
-            "--no-playlist",
-            "--quiet",
-            "--no-warnings",
-            "--no-progress",
-            "--ffmpeg-location",
-            str(Path(_tool("ffmpeg")).parent),
-            "-f",
-            _BEST,
-            "--merge-output-format",
-            "mp4",
-            "-o",
-            str(out),
-            "--",
-            source,
-        ]
-        done = _run(command, 900)
-        if done.returncode != 0 or not out.exists():
-            said = (done.stderr or "").strip().splitlines()
-            msg = _download_failed(said)
-            raise LineupError(msg)
+        _download(source, out, 900, [])
     return {"source": source, "file": str(out)}
 
 

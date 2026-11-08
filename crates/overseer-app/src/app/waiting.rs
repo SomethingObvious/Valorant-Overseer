@@ -356,11 +356,10 @@ fn chain(
             let (from, to) = (middle(at - 1) + 12.0, x - 12.0);
             // Green once the step it leads to is done, so the line into the
             // one being waited on stays grey under its moving light.
-            let reached = (lit - at as f32).clamp(0.0, 1.0);
             painter.hline(
                 from..=to,
                 pips,
-                (1.5, colour::LINE.lerp_to_gamma(colour::ALLY, reached * 0.6)),
+                (1.5, colour::LINE.lerp_to_gamma(colour::ALLY, done * 0.6)),
             );
             if waited_on
                 && !failed

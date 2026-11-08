@@ -10,8 +10,6 @@ use crate::board::number;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CoPlayer {
-    /// Their account id.
-    pub puuid: Option<String>,
     /// Their name and tag.
     pub name: Option<String>,
     /// How many of these matches you both appeared in.
@@ -20,8 +18,6 @@ pub struct CoPlayer {
     /// How many of the finished ones you won together, as a percentage.
     #[serde(deserialize_with = "number::whole")]
     pub win_rate: Option<u32>,
-    /// What they played across them.
-    pub agents: Vec<String>,
 }
 
 /// One weapon and how much of their killing it did.
@@ -46,7 +42,7 @@ pub struct ForceHabit {
     /// How many times they could have.
     #[serde(deserialize_with = "number::whole")]
     pub chances: Option<u32>,
-    /// The first over the second, as a percentage.
+    /// How many of those they forced, as a percentage.
     #[serde(deserialize_with = "number::whole")]
     pub pct: Option<u32>,
 }
@@ -57,9 +53,6 @@ pub struct ForceHabit {
 pub struct BonusBuy {
     /// The weapon.
     pub name: Option<String>,
-    /// How many bonus rounds they took it into.
-    #[serde(deserialize_with = "number::whole")]
-    pub rounds: Option<u32>,
     /// What share of their bonus rounds that is.
     #[serde(deserialize_with = "number::whole")]
     pub share: Option<u32>,
@@ -73,43 +66,26 @@ pub struct Averages {
     /// How many matches these numbers cover, which says how far to trust them.
     #[serde(deserialize_with = "number::whole")]
     pub games: Option<u32>,
-    /// How many of them were won.
-    #[serde(deserialize_with = "number::whole")]
-    pub wins: Option<u32>,
-    /// The second over the first, as a percentage.
-    pub win_rate: Option<f64>,
     /// Kills per match.
     pub kills: Option<f64>,
     /// Deaths per match.
     pub deaths: Option<f64>,
     /// Assists per match.
     pub assists: Option<f64>,
-    /// Total kills over total deaths, which is not the mean of the per match
-    /// ratios.
-    pub kd: Option<f64>,
-    /// Headshot percentage.
-    pub hs_pct: Option<f64>,
 }
 
 /// One match out of the history.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CareerMatch {
-    /// Riot's own id for it.
-    pub match_id: Option<String>,
     /// Where it was played.
     pub map: Option<String>,
     /// Competitive, Unrated, Swiftplay.
     pub mode: Option<String>,
     /// Victory, Defeat, Draw.
     pub result: Option<String>,
-    /// Rounds won.
-    #[serde(deserialize_with = "number::whole")]
-    pub score: Option<u32>,
     /// Who they played.
     pub agent: Option<String>,
-    /// The agent's own colour, for the rail beside the row.
-    pub agent_color: Option<String>,
     /// Kills.
     #[serde(deserialize_with = "number::whole")]
     pub kills: Option<u32>,
@@ -121,10 +97,6 @@ pub struct CareerMatch {
     pub assists: Option<u32>,
     /// Kills over deaths for this match alone.
     pub kd: Option<f64>,
-    /// Average combat score.
-    pub acs: Option<f64>,
-    /// Headshot percentage in this match.
-    pub hs_pct: Option<f64>,
     /// What the match did to their rating. Absent outside competitive.
     #[serde(deserialize_with = "number::signed")]
     pub rr_delta: Option<i64>,
@@ -159,11 +131,6 @@ impl CareerMatch {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Profile {
-    /// Whose it is, so a late answer to an abandoned question is caught by
-    /// more than its id.
-    pub puuid: Option<String>,
-    /// `live` or `demo`, which decides whether any of this is real.
-    pub source: Option<String>,
     /// Newest first, which is the order everything below assumes.
     pub matches: Vec<CareerMatch>,
     /// Their last twenty ranked games, newest first, since `matches` mixes in
@@ -272,7 +239,7 @@ mod tests {
         );
         assert_eq!(profile.top_guns.first().and_then(|g| g.share), Some(62));
         assert_eq!(profile.force_habit.pct, Some(63));
-        assert_eq!(profile.bonus_buys.first().and_then(|b| b.rounds), Some(4));
+        assert_eq!(profile.bonus_buys.first().and_then(|b| b.share), Some(57));
         assert_eq!(profile.bonus_rounds, Some(7));
     }
 }

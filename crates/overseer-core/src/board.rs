@@ -294,7 +294,7 @@ pub struct Scout {
     pub buy: Option<ScoutBuy>,
     /// Their spacing against peers, as a secondary line.
     pub style: Option<ScoutFinding>,
-    /// What to say when nothing earned a place; empty otherwise.
+    /// What to say when nothing earned a place, and empty otherwise.
     pub empty: Option<String>,
     /// The sample and how much of it was on this lobby's agent.
     pub footer: Option<String>,
@@ -308,7 +308,7 @@ pub struct ScoutFinding {
     pub headline: Option<String>,
     /// The figures behind it, in a sentence.
     pub evidence: Option<String>,
-    /// What to do about it, when there is something; empty otherwise.
+    /// What to do about it, when there is something to do.
     pub suggest: Option<String>,
     /// The share of peers below them, for the curve.
     pub pct: Option<f32>,
@@ -318,16 +318,16 @@ pub struct ScoutFinding {
     pub left: Option<String>,
     /// What the right end of the curve means.
     pub right: Option<String>,
-    /// The real shape of peers, as a density per bin from `lo` to `hi`;
+    /// The real shape of peers, as a density per bin from `lo` to `hi`, or
     /// empty for a normal curve.
     pub curve: Vec<f32>,
     /// The value at the curve's left end.
     pub lo: Option<f32>,
     /// The value at the curve's right end.
     pub hi: Option<f32>,
-    /// Their figure, for the chart; empty when the chart prints none.
+    /// Their figure, for the chart, empty when the chart prints none.
     pub own: Option<String>,
-    /// The peers' figure, for the chart; empty when the chart prints none.
+    /// The peers' figure, for the chart, empty when the chart prints none.
     pub peers: Option<String>,
     /// The percentile at the mark, read left to right.
     pub share: Option<String>,
@@ -363,37 +363,17 @@ pub struct ScoutGun {
 pub struct BriefLine {
     /// What sort of line: tendency, positional, buy or record.
     pub kind: Option<String>,
-    /// The read it came from, as the research names it.
-    pub read: Option<String>,
     /// The line itself, with its figures and counts.
     pub text: Option<String>,
     /// The line in a few words, for the panel.
     pub headline: Option<String>,
     /// The figures behind the headline, in small print.
     pub evidence: Option<String>,
-    /// How far from their peers, in the norm's standard deviations.
-    pub strength: Option<f64>,
     /// The share of peers below them, from 0 to 1, for a line measured
     /// against peers.
     pub pct: Option<f32>,
-    /// Whether the line earned a place on the panel: at most two do.
-    pub show: bool,
-    /// The line as the panel says it, the measurement with its direction.
-    pub shown: Option<String>,
-    /// The plain count behind it: in how many matches, against what.
-    pub shown_evidence: Option<String>,
-    /// Which agents the history covers, when that is not the lobby's.
-    pub scope: Option<String>,
-    /// Whether this buy family is the one for the round coming.
-    pub now: bool,
-    /// What the line allows, for a teammate or an opponent; empty unless
-    /// the line cleared the bar.
-    pub suggest: Option<String>,
     /// Whether the read stands out from the player's peers.
     pub flag: bool,
-    /// How many matches the line rests on.
-    #[serde(deserialize_with = "number::whole")]
-    pub matches: Option<u32>,
 }
 
 /// One line of why an account is worth a look, as the panel draws it.
@@ -563,8 +543,6 @@ pub struct Reading {
 pub struct Notice {
     /// How loudly to say it.
     pub level: Option<String>,
-    /// What to do about it.
-    pub action: Option<String>,
     /// The thing itself.
     pub message: Option<String>,
 }
@@ -624,21 +602,6 @@ pub struct Saved {
 }
 
 impl Board {
-    /// The players on one side, in the order the backend sent them.
-    #[must_use]
-    pub fn team<'a>(&'a self, team: &str) -> Vec<&'a Player> {
-        self.players
-            .iter()
-            .filter(|p| p.team.as_deref() == Some(team))
-            .collect()
-    }
-
-    /// How many accounts on the board came back flagged.
-    #[must_use]
-    pub fn flagged(&self) -> usize {
-        self.players.iter().filter(|p| p.smurf).count()
-    }
-
     /// The numbers for one side, if the backend sent them.
     #[must_use]
     pub fn stats(&self, team: &str) -> Option<&TeamStats> {
@@ -664,7 +627,6 @@ mod tests {
     fn empty_frame_parses() {
         let board: Board = serde_json::from_str("{}").expect("an empty object is a valid board");
         assert!(board.players.is_empty());
-        assert_eq!(board.flagged(), 0);
     }
 
     /// An unknown field is Riot adding something, and a player with only a
@@ -681,11 +643,9 @@ mod tests {
         }"#;
         let board: Board = serde_json::from_str(json).expect("a partial board is still a board");
         assert_eq!(board.state.as_deref(), Some("INGAME"));
-        assert_eq!(board.team("Blue").len(), 1);
-        assert_eq!(board.team("Red").len(), 1);
-        assert_eq!(board.flagged(), 1);
         let first = board.players.first().expect("two players were sent");
         assert_eq!(first.kd, Some(1.5));
+        assert!(first.smurf);
         let second = board.players.get(1).expect("two players were sent");
         assert_eq!(second.kd, None);
         assert!(!second.smurf);

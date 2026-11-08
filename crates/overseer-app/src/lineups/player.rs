@@ -340,7 +340,7 @@ impl Player {
     }
 
     /// Whether it is playing, counting one held while it can't be seen.
-    pub(super) fn playing(&self) -> bool {
+    fn playing(&self) -> bool {
         self.rest.is_some()
             || self.run.as_ref().is_some_and(|r| r.clock.is_some())
             || matches!(&self.engine, Engine::Native { video, held } if *held || video.playing())
@@ -425,6 +425,11 @@ impl Player {
         // A still on its way would land after this one and cover it.
         self.stop();
         self.at = at;
+        self.put(ctx, image);
+    }
+
+    /// Puts `image` on screen in place of the frame there.
+    fn put(&mut self, ctx: &egui::Context, image: ColorImage) {
         match &mut self.texture {
             Some(texture) => texture.set(image, TextureOptions::LINEAR),
             None => {
@@ -559,7 +564,7 @@ impl Player {
     }
 
     /// Stops both programs, leaving the frame on screen.
-    pub(super) fn stop(&mut self) {
+    fn stop(&mut self) {
         for mut run in [self.run.take(), self.ahead.take()].into_iter().flatten() {
             end(&mut run.child);
         }
@@ -658,14 +663,7 @@ impl Player {
         let played = run.clock.is_some() && run.taken > 0;
         if let Some((size, pixels)) = newest {
             self.at = run.from + f64::from(run.taken.saturating_sub(1)) / FPS;
-            let image = ColorImage::from_rgb(size, &pixels);
-            match &mut self.texture {
-                Some(texture) => texture.set(image, TextureOptions::LINEAR),
-                None => {
-                    self.texture =
-                        Some(ctx.load_texture("lineup-video", image, TextureOptions::LINEAR));
-                }
-            }
+            self.put(ctx, ColorImage::from_rgb(size, &pixels));
         }
         let (from, to) = self.span;
         if played && self.prefs.looping && self.ahead.is_none() && to - self.at < 1.0 {
@@ -1043,12 +1041,7 @@ impl Player {
             id.with("mute"),
             if quiet { "Unmute" } else { "Mute" },
         );
-        speaker_mark(
-            &painter,
-            spot,
-            self.muted || self.prefs.volume <= 0.0,
-            ink(speaker.hovered()),
-        );
+        speaker_mark(&painter, spot, quiet, ink(speaker.hovered()));
         if speaker.clicked() {
             self.muted = !self.muted;
             self.sound();
@@ -1464,8 +1457,8 @@ fn looping(painter: &egui::Painter, rect: Rect, ink: Color32) {
     ));
 }
 
-/// The X that leaves full screen: a dark disc with a cross, brighter under
-/// the pointer.
+/// An X to close something: a dark disc with a cross, brighter under the
+/// pointer.
 pub(super) fn cross(painter: &egui::Painter, rect: Rect, hot: bool) {
     painter.circle_filled(
         rect.center(),
@@ -1509,8 +1502,6 @@ fn speaker_mark(painter: &egui::Painter, rect: Rect, silent: bool, ink: Color32)
     }
 }
 
-/// Starts ffmpeg on `file` at `from`, for `length` seconds or else one frame,
-/// with a thread reading its frames into a channel a few frames deep. Each
 /// Where `name`, like `ffmpeg`, is: winget's copy when it has one, the same
 /// one the backend picks, or else whichever is first on PATH. winget keeps a
 /// link to it, or without Developer Mode leaves it in its package folder,

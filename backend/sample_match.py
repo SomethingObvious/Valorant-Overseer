@@ -71,22 +71,17 @@ _CARDS = [
     "e8787c31-4a39-9636-94a5-77b298d26ba7",
 ]
 
-_DEMO_QUEUE: dict[str, Any] = {"queueId": "competitive", "inQueue": False, "queuedAt": None}
-_DEMO_ELIGIBLE = [q for q in GAMEMODES if q != "custom"]
 
-
-def demo_queue_state() -> dict[str, Any]:
-    """Return the demo party's queue state."""
-    qid = _DEMO_QUEUE["queueId"]
+def _queue_state() -> dict[str, Any]:
     return {
         "available": True,
         "partyId": "demo-party",
-        "queueId": qid,
-        "queueName": GAMEMODES[qid],
-        "eligible": [{"id": q, "name": GAMEMODES[q]} for q in _DEMO_ELIGIBLE],
-        "state": "MATCHMAKING" if _DEMO_QUEUE["inQueue"] else "DEFAULT",
-        "inQueue": _DEMO_QUEUE["inQueue"],
-        "queuedAt": _DEMO_QUEUE["queuedAt"],
+        "queueId": "competitive",
+        "queueName": GAMEMODES["competitive"],
+        "eligible": [{"id": q, "name": n} for q, n in GAMEMODES.items() if q != "custom"],
+        "state": "DEFAULT",
+        "inQueue": False,
+        "queuedAt": None,
         "partySize": 1,
         "isOwner": True,
         "allReady": True,
@@ -185,10 +180,8 @@ def generate(seed: int = 7) -> dict[str, Any]:
 
     self_puuid = raw["Blue"][0]["puuid"]
 
-    seen_on: dict[str, int] = {}
     for idx, (team, members) in enumerate(party_specs):
-        color = party_color(seen_on.get(team, 0), ours=team == "Blue")
-        seen_on[team] = seen_on.get(team, 0) + 1
+        color = party_color(0, ours=team == "Blue")
         pid = sample_data.fake_puuid(rng)
         puuids = [raw[team][i]["puuid"] for i in members]
         parties_out.append(
@@ -215,7 +208,6 @@ def generate(seed: int = 7) -> dict[str, Any]:
                 tier = max(tier, 20)
                 kd = round(rng.uniform(1.4, 2.1), 2)
                 win_rate = max(win_rate, 64)
-                games = max(games, 20)
                 level = rng.randint(18, 55)
                 hs = rng.randint(30, 38)
             weapons = _weapons(rng)
@@ -273,8 +265,7 @@ def generate(seed: int = 7) -> dict[str, Any]:
         score={"ally": ally, "enemy": enemy, "round": ally + enemy + 1},
     )
     board["sourceDetail"] = "Demo lobby (open VALORANT for live data)"
-
-    board["queue"] = demo_queue_state()
+    board["queue"] = _queue_state()
     board["session"] = session(seed)
     return board
 
@@ -376,7 +367,7 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
         match_id=f"demo-lobby-{seed}",
     )
     board["sourceDetail"] = "Demo lobby (open VALORANT for live data)"
-    board["queue"] = demo_queue_state()
+    board["queue"] = _queue_state()
     board["session"] = session(seed)
     return board
 

@@ -31,16 +31,6 @@ from vconstants import GAMEMODES, map_name_from_path
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-REGION_MAP = {
-    "na": ("na", "na-1", "na"),
-    "eu": ("eu", "eu-1", "eu"),
-    "ap": ("ap", "ap-1", "ap"),
-    "kr": ("kr", "kr-1", "kr"),
-    "latam": ("latam", "na-1", "latam"),
-    "br": ("br", "na-1", "br"),
-}
-
-
 @dataclass
 class _State:
     """What the client has said once, kept for every later ask."""
@@ -57,9 +47,8 @@ _STATE = _State()
 
 _SESSIONS = threading.local()
 # Windows drops a DNS answer for Riot's hosts now and then even on a steady
-# line, and every lookup that hit one failed outright. A resolve or connect
-# that fails is tried twice more, a second or so apart. A slow answer isn't,
-# as that would double an 8 second wait.
+# line, so a resolve or connect that fails is tried twice more, a second or so
+# apart. A slow answer isn't, as that would double an 8 second wait.
 # A 429 has to come back as a response, since urllib3 otherwise raises on
 # its Retry-After, and the hold and the lockout below never see it.
 _RETRY = Retry(
@@ -72,8 +61,8 @@ _RETRY = Retry(
     respect_retry_after_header=False,
 )
 # The client's token, by the lockfile it came through: the headers, whose
-# they are and when they were fetched. Every tick made a new LocalAuth and
-# fetched them again, and a token lasts about an hour.
+# they are and when they were fetched. Every tick makes a new LocalAuth, and
+# a token lasts about an hour.
 _TOKENS: dict[tuple[str, str], tuple[dict[str, Any], str, float]] = {}
 _TOKEN_SECS = 300.0
 
@@ -81,8 +70,8 @@ _TOKEN_SECS = 300.0
 def _session() -> requests.Session:
     """Return this thread's session, which keeps its connections open.
 
-    A new one per call built a TLS context and read the Windows certificate
-    store every time, which was nine tenths of what the backend did while idle.
+    A session per call builds a TLS context and reads the Windows certificate
+    store every time, which measured as nine tenths of the backend's idle work.
     """
     session: requests.Session | None = getattr(_SESSIONS, "session", None)
     if session is None:
@@ -95,20 +84,7 @@ def _session() -> requests.Session:
     return session
 
 
-_QUEUE_NAMES = {
-    "competitive": "Competitive",
-    "unrated": "Unrated",
-    "swiftplay": "Swiftplay",
-    "spikerush": "Spike Rush",
-    "deathmatch": "Deathmatch",
-    "ggteam": "Escalation",
-    "hurm": "Team Deathmatch",
-    "": "Custom",
-}
-
-
 _log = console_logger("riot_client")
-
 
 _RIOT_RATE_LOCK = threading.Lock()
 try:
@@ -254,10 +230,10 @@ def _budget_take(*, background: bool, urgent: bool = False) -> float:
         return wait
 
 
-def budget_wait(*, background: bool = False) -> float:
-    """Return how many seconds until a lookup could go out, 0 if one can now."""
+def budget_wait() -> float:
+    """Return how many seconds until a deeper read could go out, 0 if one can now."""
     with _RIOT_RATE_LOCK:
-        room = _budget_room(time.time(), background=background)
+        room = _budget_room(time.time(), background=True)
     return max(room, held_secs("/match-details/"))
 
 
@@ -289,7 +265,7 @@ def _budget_lockout(retry_after: float) -> None:
     # Riot counted more than this side did, so the limit drops to a little
     # under what got through, by 2 at least and 8 at most, and is kept for
     # next time. The game itself spends the same allowance, so what this side
-    # counted can be well short of Riot's limit, and a deep cut on that took
+    # counted can be well short of Riot's limit, and a deep cut on that takes
     # hours to climb back. The lookups in flight all come back 429 together,
     # and that is one lockout.
     with _RIOT_RATE_LOCK:
@@ -308,7 +284,7 @@ def _budget_lockout(retry_after: float) -> None:
     _log(f"locked out after {got} lookups in a minute, keeping to {new} from now on")
 
 
-def _riot_throttle(endpoint: str = "", *, budget: bool = False, urgent: bool = False) -> None:
+def _riot_throttle(endpoint: str, *, budget: bool = False, urgent: bool = False) -> None:
     if _RIOT_MAX_RPS <= 0:
         return
     while True:
@@ -355,19 +331,13 @@ def _shooter_log_path() -> Path:
 class LocalAuth:
     """The VALORANT client on this PC, and Riot's servers reached with its tokens."""
 
-    def __init__(self, region: str | None = None) -> None:
-        """Read the lockfile, and the region from `region` or the client's log."""
+    def __init__(self) -> None:
+        """Read the lockfile, and the region from the client's log."""
         self.lockfile = self._get_lockfile()
-
-        region = (region or "").strip().lower()
-        if region in REGION_MAP:
-            shard, ga, gb = REGION_MAP[region]
-            self.region: list[Any] = [shard, [ga, gb]]
-        else:
-            self.region = self._get_region()
-        self.pd_url = f"https://pd.{self.region[0]}.a.pvp.net"
-        self.glz_url = f"https://glz-{self.region[1][0]}.{self.region[1][1]}.a.pvp.net"
-        self.shard = self.region[0]
+        shard, glz = self._get_region()
+        self.pd_url = f"https://pd.{shard}.a.pvp.net"
+        self.glz_url = f"https://glz-{glz[0]}.{glz[1]}.a.pvp.net"
+        self.shard = shard
         self.kept_headers: dict[str, Any] | None = None
         self.puuid = ""
         self.req_count = 0
@@ -517,7 +487,6 @@ class LocalAuth:
         self,
         endpoint: str,
         *,
-        refresh: bool = False,
         retries: int = 0,
         background: bool = False,
         urgent: bool = False,
@@ -539,9 +508,7 @@ class LocalAuth:
             else:
                 _riot_throttle(endpoint, budget=budgeted, urgent=urgent)
             self.req_count += 1
-            resp = _session().get(
-                self.pd_url + endpoint, headers=self.headers(refresh=refresh), timeout=8
-            )
+            resp = _session().get(self.pd_url + endpoint, headers=self.headers(), timeout=8)
             if resp.status_code == 429:
                 try:
                     ra = float(resp.headers.get("Retry-After") or 0)
@@ -756,10 +723,10 @@ def _self_check() -> None:
         check(_budget_take(background=True) > 0)
         check(_budget_take(background=False) == 0)
         # It frees up as the oldest leave the minute, not all at once.
-        check(9 < budget_wait(background=True) < 11, budget_wait(background=True))
+        check(9 < budget_wait() < 11, budget_wait())
         # With everybody here, a deeper read can use the whole minute.
         keep_for_first_reads(0)
-        check(budget_wait(background=True) == 0)
+        check(budget_wait() == 0)
         keep_for_first_reads(5)
         # A first read waiting puts every deeper one aside.
         _SENT.clear()

@@ -116,8 +116,8 @@ pub(super) fn words(ui: &mut Ui, text: &str, tint: Color32) {
     ui.painter().galley(rect.min, galley, tint);
 }
 
-/// A status line: a short rail in `tint`, whose colour says what kind it
-/// is, beside the words in the panel's own colour so they stay easy to read.
+/// A status line in `tint`, the full width of the panel with a little room
+/// above and below.
 pub(super) fn notice(ui: &mut Ui, text: &str, tint: Color32) {
     let galley = ui.painter().layout(
         text.to_owned(),
@@ -159,17 +159,18 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
     };
     title(ui, &map, &count);
     // One row of three, the width split evenly.
-    let shared = ui.horizontal(|ui| {
-        let gap = ui.spacing().item_spacing.x;
-        let wide = gap.mul_add(-2.0, ui.available_width()) / 3.0;
-        if controls::button_wide(ui, "Add Lineup", (Tone::Primary, true), wide).clicked() {
-            view.mode = Mode::Edit(Box::new(view.draft()));
-            view.said = None;
-        }
-        draw_menu(ui, atlas, view, wide);
-        exports(ui, view, wide)
-    });
-    let shared = shared.inner;
+    let shared = ui
+        .horizontal(|ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let wide = gap.mul_add(-2.0, ui.available_width()) / 3.0;
+            if controls::button_wide(ui, "Add Lineup", (Tone::Primary, true), wide).clicked() {
+                view.mode = Mode::Edit(Box::new(view.draft()));
+                view.said = None;
+            }
+            draw_menu(ui, atlas, view, wide);
+            exports(ui, view, wide)
+        })
+        .inner;
     // Add Lineup or Draw just left Browse, and the sandbox shows no lineups,
     // so the pick check below would drop the pick for good.
     if !matches!(view.mode, Mode::Browse) {
@@ -274,7 +275,7 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
                 view.said = None;
                 ui.close();
             }
-            if let Some(folder) = view.saved_to.clone()
+            if let Some(folder) = view.saved_to.as_ref()
                 && controls::menu_row(ui, "Open Folder", false, 150.0).clicked()
             {
                 // Explorer opens the folder by itself, and nothing waits on it.
@@ -407,7 +408,7 @@ fn filter(ui: &mut Ui, here: &[&Lineup], view: &mut View) {
 }
 
 /// One lineup in the list: the agent, the title, and what it is for.
-pub(super) fn row(
+fn row(
     ui: &mut Ui,
     atlas: &Atlas,
     lineup: &Lineup,
@@ -627,7 +628,6 @@ fn under_clip(
     shape: Option<f32>,
     (deleting, quiet): (bool, bool),
 ) {
-    // Not before the clip's shape is known.
     if let Some(shape) = shape {
         make_room(ui, lineup, view, shape);
     }

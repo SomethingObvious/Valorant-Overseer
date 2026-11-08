@@ -106,8 +106,8 @@ fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
                 .lineup
                 .ability
                 .as_deref()
-                .and_then(|a| owner(atlas, a))
-                .is_some_and(|k| k.name == name);
+                .and_then(|a| owner_of(atlas, a))
+                .is_some_and(|(k, _)| k.name == name);
         if !keeps {
             draft.lineup.ability = None;
         }
@@ -212,15 +212,6 @@ fn every(atlas: &Atlas) -> impl Iterator<Item = (&Kit, &Ability)> {
         .agents
         .iter()
         .flat_map(|k| k.abilities.iter().map(move |a| (k, a)))
-}
-
-/// The agent whose kit an ability is in.
-fn owner<'a>(atlas: &'a Atlas, ability: &str) -> Option<&'a Kit> {
-    atlas.agents.iter().find(|k| {
-        k.abilities
-            .iter()
-            .any(|a| a.name.as_deref() == Some(ability))
-    })
 }
 
 /// An ability with the agent it belongs to.

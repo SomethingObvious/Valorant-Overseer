@@ -1,8 +1,8 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
 """Wakes the board loop early, when something on the board has changed.
 
-The loop builds a board every few seconds, which left a player's K/D, or the
-start of a match, waiting up to that long after the backend knew it.
+The loop builds a board every few seconds, and without this a player's K/D, or
+the start of a match, would wait up to that long after the backend knew it.
 """
 
 from __future__ import annotations

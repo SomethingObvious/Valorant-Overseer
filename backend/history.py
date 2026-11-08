@@ -22,10 +22,7 @@ _PATH = data_path("rr_history.json")
 _LOCK = threading.RLock()
 _MAX_POINTS = 2000
 _REFRESH_TTL = 600.0
-_MIN_TOTAL = 20
-_MIN_BUCKET = 8
 _refresh_at: dict[str, float] = {}
-_enrich_at: dict[str, float] = {}
 
 
 def _empty_store() -> dict[str, Any]:
@@ -141,9 +138,7 @@ def _ensure_account(puuid: str) -> dict[str, Any]:
     return account
 
 
-def record(
-    point: dict[str, Any],
-) -> None:
+def record(point: dict[str, Any]) -> None:
     """Record one rating point for its account, keeping the best copy of each match."""
     owner = point.get("puuid")
     if not owner or str(owner).startswith("demo"):
@@ -154,23 +149,23 @@ def record(
         _save()
 
 
-def refresh(auth: Any) -> str | None:
-    """Backfill the signed-in account's rating from Riot, and return its puuid."""
+def refresh(auth: Any) -> None:
+    """Backfill the signed-in account's rating from Riot."""
     try:
         auth.headers()
         puuid = auth.puuid
     except Exception as e:
         LOG.warning("rr refresh could not reach the client: %r", e)
-        return None
+        return
     if not puuid:
-        return None
+        return
 
     now = time.time()
     with _LOCK:
-        account = _ensure_account(puuid)
+        _ensure_account(puuid)
         if now - _refresh_at.get(puuid, 0) < _REFRESH_TTL:
             _save()
-            return puuid
+            return
         _refresh_at[puuid] = now
     try:
         matches = _competitive_updates(auth, puuid)
@@ -202,7 +197,6 @@ def refresh(auth: Any) -> str | None:
         LOG.warning("rr backfill failed: %r", e)
         with _LOCK:
             _refresh_at.pop(puuid, None)
-    return puuid
 
 
 def _competitive_updates(auth: Any, puuid: str) -> list[dict[str, Any]]:
@@ -255,22 +249,16 @@ def _last_played(account: dict[str, Any]) -> int:
     return max((int(p.get("ts") or 0) for p in account.get("points") or []), default=0)
 
 
-def main_agent(puuid: str | None = None) -> str | None:
-    """Return the agent `puuid` plays most.
+def main_agent() -> str | None:
+    """Return the agent the most recently played account plays most.
 
-    With none given, the most recently played account's, so it answers while
-    the Riot client is closed too.
+    It goes by the newest account rather than the signed-in one, so it answers
+    while the Riot client is closed too.
     """
     with _LOCK:
-        accounts = list((_STORE.get("accounts") or {}).items())
-        if puuid:
-            account = dict(accounts).get(puuid) or {}
-        else:
-            account = max((a for _, a in accounts), key=_last_played, default={})
+        accounts = (_STORE.get("accounts") or {}).values()
+        account: dict[str, Any] = max(accounts, key=_last_played, default={})
         return _main(list(account.get("points") or []))
-
-
-_DAYPARTS = (("morning", 5, 12), ("afternoon", 12, 17), ("evening", 17, 22), ("night", 22, 29))
 
 
 if __name__ == "__main__":

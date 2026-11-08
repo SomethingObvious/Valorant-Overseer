@@ -1461,9 +1461,26 @@ impl App for Overseer {
         self.place.keep(storage);
     }
 
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+        survive(|| self.tick(ctx, frame));
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+        survive(|| self.draw(ui));
+    }
+}
+
+/// Runs a frame's work so a panic in it costs that frame and not the window.
+/// The panic is still written down by the hook `main` sets, and egui's locks
+/// don't poison, so the next frame starts clean.
+fn survive(work: impl FnOnce()) {
+    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)));
+}
+
+impl Overseer {
     /// Everything that has to run while the window is minimised, when eframe
     /// skips `ui`: the bridge, the hotkey, the tray and the close button.
-    fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) {
+    fn tick(&mut self, ctx: &egui::Context, frame: &Frame) {
         self.place.minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         // The second pass, once the first frame is on screen.
         if self.place.maximize {
@@ -1509,7 +1526,8 @@ impl App for Overseer {
         }
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+    /// The whole window, a frame at a time.
+    fn draw(&mut self, ui: &mut Ui) {
         motion::set_still(ui.ctx(), self.quality() == Quality::Efficient);
         // A press on the window's edge resizes it, before anything under the
         // pointer takes the press.

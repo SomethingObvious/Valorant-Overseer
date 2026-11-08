@@ -530,7 +530,7 @@ impl Player {
     /// Goes to `at` within its part, playing on from there if it was playing.
     fn seek(&mut self, at: f64) {
         let (from, to) = self.span;
-        let at = at.clamp(from, to);
+        let at = at.min(to).max(from);
         if self.playing() {
             self.play(at, to);
         } else {

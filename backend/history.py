@@ -214,7 +214,8 @@ def _competitive_updates(auth: Any, puuid: str) -> list[dict[str, Any]]:
     for start in (0, 20):
         cu = auth.pd_get(
             f"/mmr/v1/players/{puuid}/competitiveupdates"
-            f"?startIndex={start}&endIndex={start + 20}&queue=competitive"
+            f"?startIndex={start}&endIndex={start + 20}&queue=competitive",
+            urgent=True,
         )
         if not isinstance(cu, dict) or cu.get("errorCode"):
             code = (

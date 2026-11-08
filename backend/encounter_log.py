@@ -262,7 +262,7 @@ def record_games(owner: str | None, games: list[dict[str, Any]] | None) -> int:
                     entry[key] = int(entry.get(key) or 0) + 1
                     entry.setdefault("resultMatchIds", []).append(match_id)
                     entry["resultMatchIds"] = entry["resultMatchIds"][-80:]
-                if player.get("name") and not str(player["name"]).startswith("Player-"):
+                if "#" in str(player.get("name") or ""):
                     entry["name"] = player["name"]
                 agent = player.get("agent")
                 if agent and agent not in entry.setdefault("agents", []):

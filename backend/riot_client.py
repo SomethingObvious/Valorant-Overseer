@@ -60,7 +60,17 @@ _SESSIONS = threading.local()
 # line, and every lookup that hit one failed outright. A resolve or connect
 # that fails is tried twice more, a second or so apart. A slow answer isn't,
 # as that would double an 8 second wait.
-_RETRY = Retry(total=2, connect=2, read=0, status=0, other=0, backoff_factor=0.5)
+# A 429 has to come back as a response, since urllib3 otherwise raises on
+# its Retry-After, and the hold and the lockout below never see it.
+_RETRY = Retry(
+    total=2,
+    connect=2,
+    read=0,
+    status=0,
+    other=0,
+    backoff_factor=0.5,
+    respect_retry_after_header=False,
+)
 # The client's token, by the lockfile it came through: the headers, whose
 # they are and when they were fetched. Every tick made a new LocalAuth and
 # fetched them again, and a token lasts about an hour.
@@ -168,6 +178,7 @@ _BUDGET_SEEN: dict[str, Any] = {
     "clean": 0,
     "counted_at": 0.0,
     "waiting": 0,
+    "urgent": 0,
     "reserve": 5,
     "locked_at": 0.0,
 }
@@ -198,7 +209,7 @@ def keep_for_first_reads(players: int) -> None:
         _BUDGET_SEEN["reserve"] = max(0, players)
 
 
-def _budget_room(now: float, *, background: bool) -> float:
+def _budget_room(now: float, *, background: bool, urgent: bool = False) -> float:
     # Seconds until a lookup can go out, under the lock. A deeper read leaves
     # room for five players' first reads while more can still arrive, and
     # stands aside for one that is waiting, so a new player's first five never
@@ -209,6 +220,9 @@ def _budget_room(now: float, *, background: bool) -> float:
         _SENT.popleft()
     limit = int(_BUDGET["limit"])
     if background and _BUDGET_SEEN["waiting"]:
+        return 1.0
+    # Something you opened goes ahead of the fills still reading the lobby.
+    if not urgent and _BUDGET_SEEN["urgent"]:
         return 1.0
     held = min(_FIRST_READ * _BUDGET_SEEN["reserve"], limit // 2) if background else 0
     cap = limit - held
@@ -226,12 +240,12 @@ def _budget_room(now: float, *, background: bool) -> float:
     return max(0.05, _SENT[over] + window - now)
 
 
-def _budget_take(*, background: bool) -> float:
+def _budget_take(*, background: bool, urgent: bool = False) -> float:
     # Takes a lookup's place in the minute and returns 0, or says how long
     # until there is one.
     with _RIOT_RATE_LOCK:
         now = time.time()
-        wait = _budget_room(now, background=background)
+        wait = _budget_room(now, background=background, urgent=urgent)
         if wait <= 0:
             _SENT.append(now)
         return wait
@@ -288,7 +302,7 @@ def _budget_lockout(retry_after: float) -> None:
     _log(f"locked out after {got} lookups in a minute, keeping to {new} from now on")
 
 
-def _riot_throttle(endpoint: str = "", *, budget: bool = False) -> None:
+def _riot_throttle(endpoint: str = "", *, budget: bool = False, urgent: bool = False) -> None:
     if _RIOT_MAX_RPS <= 0:
         return
     while True:
@@ -297,14 +311,16 @@ def _riot_throttle(endpoint: str = "", *, budget: bool = False) -> None:
             break
         time.sleep(wait)
     if budget:
-        while (wait := _budget_take(background=False)) > 0:
+        while (wait := _budget_take(background=False, urgent=urgent)) > 0:
             with _RIOT_RATE_LOCK:
                 _BUDGET_SEEN["waiting"] += 1
+                _BUDGET_SEEN["urgent"] += urgent
             try:
                 time.sleep(wait)
             finally:
                 with _RIOT_RATE_LOCK:
                     _BUDGET_SEEN["waiting"] -= 1
+                    _BUDGET_SEEN["urgent"] -= urgent
         # Riot can ask for a pause while this waited on the budget, and a
         # call sent into it only makes the pause longer.
         while (wait := held_secs(endpoint)) > 0:
@@ -492,13 +508,20 @@ class LocalAuth:
         return self._json(resp)
 
     def pd_get(
-        self, endpoint: str, *, refresh: bool = False, retries: int = 0, background: bool = False
+        self,
+        endpoint: str,
+        *,
+        refresh: bool = False,
+        retries: int = 0,
+        background: bool = False,
+        urgent: bool = False,
     ) -> dict[str, Any]:
         """Return a GET from the pd server, retrying a 429 `retries` times with backoff.
 
         A `background` one never waits: with no room in the minute it comes
         back throttled without being sent, so a deeper read cannot hold a
-        thread a first read needs.
+        thread a first read needs. An `urgent` one is something you opened,
+        and the lobby's fills wait while it does.
         """
         backoff = 3.0
         budgeted = _family(endpoint) == "other"
@@ -508,7 +531,7 @@ class LocalAuth:
                     return {"errorCode": "RATE_LIMITED", "status": 429}
                 _riot_throttle(endpoint)
             else:
-                _riot_throttle(endpoint, budget=budgeted)
+                _riot_throttle(endpoint, budget=budgeted, urgent=urgent)
             self.req_count += 1
             resp = _session().get(
                 self.pd_url + endpoint, headers=self.headers(refresh=refresh), timeout=8
@@ -533,7 +556,7 @@ class LocalAuth:
         _riot_throttle(endpoint)
         self.req_count += 1
         return self._json(
-            requests.put(
+            _session().put(
                 self.pd_url + endpoint,
                 headers=self.headers(refresh=refresh),
                 json=payload,
@@ -737,6 +760,12 @@ def _self_check() -> None:
         _BUDGET_SEEN["waiting"] = 1
         check(_budget_take(background=True) > 0)
         _BUDGET_SEEN["waiting"] = 0
+        # Something you opened waiting puts the fills aside, but not itself.
+        _BUDGET_SEEN["urgent"] = 1
+        check(_budget_take(background=False) > 0)
+        check(_budget_take(background=False, urgent=True) == 0)
+        _BUDGET_SEEN["urgent"] = 0
+        _SENT.clear()
         # A lockout after 18 lowers the limit to 13 and keeps it.
         _SENT.extend([now] * 18)
         _budget_lockout(60.0)
@@ -768,6 +797,8 @@ def _self_check() -> None:
     local = _session().get_adapter("https://127.0.0.1:1234/")
     check(isinstance(riot, HTTPAdapter) and riot.max_retries.connect == 2, riot)
     check(isinstance(local, HTTPAdapter) and not local.max_retries.total, local)
+    # A 429 must reach pd_get rather than end as urllib3's RetryError.
+    check(not riot.max_retries.is_retry("GET", 429, has_retry_after=True), riot.max_retries)
     print(
         "riot_client self-check OK (a minute's budget, first reads ahead, learned limit, "
         "lookups retried)"

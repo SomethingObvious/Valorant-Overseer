@@ -52,7 +52,7 @@ fn span(lowest: u32, highest: u32) -> (u32, u32) {
 /// mark never jumps past its neighbour. When there is not room for them all,
 /// they are spaced evenly from the near end.
 pub(crate) fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> {
-    let mut at: Vec<f32> = wanted.iter().map(|w| w.clamp(low, high)).collect();
+    let mut at: Vec<f32> = wanted.iter().map(|w| w.min(high).max(low)).collect();
     for i in 1..at.len() {
         let before = at.get(i - 1).copied().unwrap_or(low);
         if let Some(here) = at.get_mut(i) {

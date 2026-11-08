@@ -30,6 +30,7 @@ import logging
 import math
 from bisect import bisect_right
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 from statistics import median
 from typing import TYPE_CHECKING, Any
@@ -612,7 +613,43 @@ def _shape(read: str, band_name: str | None) -> dict[str, Any]:
     found = curve_for(read, band_name)
     if not found:
         return {"curve": [], "lo": -2.6, "hi": 2.6}
-    return {"curve": list(found["density"]), "lo": float(found["lo"]), "hi": float(found["hi"])}
+    return {"curve": _smooth(found["density"]), "lo": float(found["lo"]), "hi": float(found["hi"])}
+
+
+def _blur(bins: list[float], width: float, points: int) -> list[float]:
+    """Spread each bin over a normal `width` bins wide, read at `points` even steps."""
+    last = len(bins) - 1
+    out = []
+    for j in range(points):
+        x = j * last / (points - 1)
+        out.append(sum(b * math.exp(-(((x - i) / width) ** 2) / 2) for i, b in enumerate(bins)))
+    return out
+
+
+def _one_hump(curve: list[float]) -> bool:
+    top = curve.index(max(curve))
+    return all(a <= b for a, b in pairwise(curve[: top + 1])) and all(
+        a >= b for a, b in pairwise(curve[top:])
+    )
+
+
+def _smooth(density: list[float], points: int = 49) -> list[float]:
+    """Smooth a peer histogram into one hump.
+
+    The bundled histograms are 24 bins from a few thousand players, so their
+    wiggles are sampling noise, not a second kind of player. The blur widens
+    until the curve has a single peak.
+    """
+    bins = [max(0.0, float(v)) for v in density]
+    if len(bins) < 2 or max(bins) <= 0:
+        return bins
+    width = 2.0
+    curve = _blur(bins, width, points)
+    while not _one_hump(curve) and width < 6:
+        width += 0.5
+        curve = _blur(bins, width, points)
+    peak = max(curve)
+    return [round(v / peak, 4) for v in curve]
 
 
 def _key(read: str) -> str:
@@ -1459,6 +1496,7 @@ def _present(
             row["headline"] = _label(read)
             unit = _UNITS.get(read, "rounds")
             row["evidence"] = f"{_figure(read, float(row['value']))} · {row['count']} {unit}"
+        row["evidence"] = row["evidence"][:1].upper() + row["evidence"][1:]
     order = {"tendency": 0, "positional": 0, "style": 1, "buy": 2, "record": 3}
     rows.sort(
         key=lambda row: (
@@ -2043,7 +2081,7 @@ def _beyond(row: dict[str, Any]) -> float:
 def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str, Any]:
     """Word one habit plainly, with where they sit among peers as the evidence.
 
-    "Plays apart from the team on defense", and under it "further from
+    "Plays apart from the team on defense", and under it "Further from
     the team than 80% of peers on defense · 5/7 games": the percentile is
     the share of same-agent, same-rank players their mean sits beyond.
     Beyond three quarters the label stands; beyond six tenths it is
@@ -2063,7 +2101,7 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
     words = forms4[(0 if strong else 2) + (0 if z > 0 else 1)].format(side=side)
     forms = PCT_WORDS.get(key)
     evidence = (
-        forms[0 if z > 0 else 1].format(p=share, side=side).lower()
+        forms[0 if z > 0 else 1].format(p=share, side=side)
         if forms
         else f"{share} of peers {'below' if z > 0 else 'above'}"
     )
@@ -2084,7 +2122,7 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         # so a mark on the left is a low percentile whatever the read.
         "own": "",
         "peers": "",
-        "share": f"{_ordinal(float(row.get('pct') or 0.5))} pct",
+        "share": _ordinal(float(row.get("pct") or 0.5)),
         # Where they sit among peers, for the curve: the share below and
         # the position in standard deviations of peers' means.
         "pct": float(row.get("pct") or 0.5),
@@ -2110,15 +2148,15 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     pct = float(pace.get("pct") or 0.5)
     n = int(pace["count"])
     if pct >= TAG_HI:
-        word, where = "Aggressive", f"more aggressive than {pct:.0%} of peers"
+        word, where = "Aggressive", f"More aggressive than {pct:.0%} of peers"
     elif pct <= TAG_LO:
-        word, where = "Passive", f"more passive than {1 - pct:.0%} of peers"
+        word, where = "Passive", f"More passive than {1 - pct:.0%} of peers"
     else:
         word = "Even pace"
         where = (
-            f"more aggressive than {pct:.0%} of peers"
+            f"More aggressive than {pct:.0%} of peers"
             if pct >= 0.5
-            else f"more passive than {1 - pct:.0%} of peers"
+            else f"More passive than {1 - pct:.0%} of peers"
         )
     return {
         "headline": word,
@@ -2126,7 +2164,7 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         "suggest": "",
         "own": "",
         "peers": "",
-        "share": f"{_ordinal(pct)} pct",
+        "share": _ordinal(pct),
         "pct": pct,
         "pos": float(pace.get("pos") or 0.0),
         "left": PACE_ENDS[0],
@@ -2694,13 +2732,17 @@ def _self_check() -> None:
     check(sc["buy"] is None and sc["empty"] == "Too little post-loss history.", sc)
     check(sc["main"] is None and sc["habits"], sc)
     check(all("of peers" in h["evidence"] for h in sc["habits"]), sc["habits"])
+    check(
+        all(_one_hump(_smooth(c["density"])) for c in (norms().get("curves") or {}).values()),
+        "every bundled curve draws as one hump",
+    )
     check(all(h["headline"] and "%" not in h["headline"] for h in sc["habits"]), sc["habits"])
     check(
         all(0 < h["pct"] < 1 and (h["pos"] > 0) == (h["pct"] > 0.5) for h in sc["habits"]), "curve"
     )
     check(all(h["left"] and h["right"] for h in sc["habits"]), "curve ends named")
     check(all(h["curve"] and h["lo"] <= h["pos"] <= h["hi"] for h in sc["habits"]), "real curves")
-    check(all(h["share"].endswith(" pct") for h in sc["habits"]), "the chart's number")
+    check(all(h["share"][-2:] in {"st", "nd", "rd", "th"} for h in sc["habits"]), "chart number")
     check(
         _ordinal(0.85) == "85th" and _ordinal(0.91) == "91st" and _ordinal(0.12) == "12th",
         "ordinal",

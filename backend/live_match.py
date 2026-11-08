@@ -70,6 +70,8 @@ _MATCH_META: dict[str, dict[str, Any]] = {}
 # stops, since it spends the same workers and Riot budget the next match's
 # board waits on.
 _ENDED: set[str] = set()
+# How long a board waits before asking Riot again for names it lacks.
+NAME_RETRY_SECS = 10.0
 
 _LOBBY_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "board": None}
 
@@ -365,7 +367,9 @@ def _deeper_at() -> float:
 def _note_state(state: str) -> None:
     # Back in menus from a match, every list in hand is a game short.
     if state == "MENUS" and _STATE_SEEN["state"] in ("INGAME", "PREGAME"):
-        _MIDS_CACHE.clear()
+        # A dodge ends the match but plays no game, so the lists still hold.
+        if _STATE_SEEN["state"] == "INGAME":
+            _MIDS_CACHE.clear()
         _ENDED.update(_MATCH_META)
     _STATE_SEEN["state"] = state
     # Room is held back for the players still to come: your team once a match
@@ -465,6 +469,33 @@ def _unplaced(md: dict[str, Any]) -> dict[str, Any]:
     if "roundResults" not in md:
         return md
     return {**md, "roundResults": [played(rr) for rr in md["roundResults"] or []]}
+
+
+def _history_parties(puuids: list[str], team_of: dict[str, Any]) -> dict[str, list[str]]:
+    """Group players who queued together in their last game and sit on one side now.
+
+    Presences only show friends' parties, but every match's details give
+    each player's party, and the K/D fill has already read everybody's
+    newest match. A duo that played their last game together is still one.
+    """
+    out: dict[str, list[str]] = {}
+    for puuid in puuids:
+        hit = _MIDS_CACHE.get(puuid)
+        md = _MATCH_DETAIL_CACHE.get(hit[0][0]) if hit and hit[0] else None
+        if not isinstance(md, dict):
+            continue
+        rows = {
+            p.get("subject"): p.get("partyId")
+            for p in md.get("players") or []
+            if isinstance(p, dict)
+        }
+        pid = rows.get(puuid)
+        mates = sorted(
+            m for m in puuids if pid and rows.get(m) == pid and team_of.get(m) == team_of.get(puuid)
+        )
+        if pid and len(mates) > 1:
+            out[str(pid)] = mates
+    return out
 
 
 def _remember(mid: str, md: dict[str, Any]) -> dict[str, Any]:
@@ -751,6 +782,8 @@ class LiveMatch:
             res = self.auth.pd_put("/name-service/v2/players", asked)
             if isinstance(res, dict) and res.get("errorCode"):
                 res = self.auth.pd_put("/name-service/v2/players", asked, refresh=True)
+            if isinstance(res, dict) and res.get("errorCode"):
+                _log(f"name service answered {res.get('errorCode')} for {len(asked)} players")
             _ingest(res)
         except Exception as e:
             _log(f"name lookup failed for {len(asked)} players: {type(e).__name__}: {e}")
@@ -942,7 +975,14 @@ class LiveMatch:
             if not isinstance(hist, dict) or not isinstance(hist.get("History"), list):
                 throttled = True
                 break
-            entries = hist["History"]
+            # A deathmatch or a custom game never counts toward a read, and
+            # its details cost a lookup like any other, so they're left out
+            # here, before anything is fetched.
+            entries = [
+                e
+                for e in hist["History"]
+                if str(e.get("QueueID", "competitive")).lower() in STANDARD_QUEUES
+            ]
             mids = [e["MatchID"] for e in entries if e.get("MatchID")]
             for e in entries:
                 if e.get("MatchID") and e.get("GameStartTime"):
@@ -1308,6 +1348,8 @@ class LiveMatch:
             if entry.get("deep", 5) > 5:
                 entry["kd_full"] = True
                 return
+            if match_id in _ENDED:
+                return
             kd, hs, _, _, intel = self.kd_hs(puuid, count=5)
             before = (entry.get("kd"), entry.get("hs"), entry.get("intel"))
             if kd is not None:
@@ -1424,10 +1466,13 @@ class LiveMatch:
 
         names = meta.get("names") or {}
         missing_names = [p for p in puuids if p not in names]
-        if missing_names and meta.get("name_tries", 0) < 8:
-            meta["name_tries"] = meta.get("name_tries", 0) + 1
+        # A cap on tries ran out in agent select, on a teammate the name
+        # service never answered for, before any enemy was even listed.
+        if missing_names and time.time() >= meta.get("name_retry_at", 0.0):
             names = {**names, **self.reveal_names(missing_names)}
             meta["names"] = names
+            if any(p not in names for p in puuids):
+                meta["name_retry_at"] = time.time() + NAME_RETRY_SECS
         # Agent select only has your team's loadouts, so the match asks again
         # for the enemy's.
         if not meta.get("loadouts") or meta.get("loadouts_for") != state:
@@ -1438,14 +1483,19 @@ class LiveMatch:
         else:
             weapons_by_puuid = meta["loadouts"]
 
+        team_of = {p["Subject"]: p.get("TeamID") for p in raw_players}
         pmap = self.party_map(puuids, presences)
+        taken = {m for ms in pmap.values() for m in ms}
+        for pid, ms in _history_parties(puuids, team_of).items():
+            if not taken & set(ms):
+                pmap[pid] = ms
+                taken.update(ms)
         if self.self_puuid:
             _PARTY.update(
                 next((ms for ms in pmap.values() if self.self_puuid in ms), [self.self_puuid])
             )
         party_lookup = {}
         parties_out = []
-        team_of = {p["Subject"]: p.get("TeamID") for p in raw_players}
         mine = team_of.get(self.self_puuid, "Blue")
         seen_on: dict[Any, int] = {}
         for idx, (pid, members) in enumerate(pmap.items()):
@@ -1537,7 +1587,8 @@ class LiveMatch:
             puuid = p["Subject"]
             ident = p.get("PlayerIdentity", {}) or {}
             cached, name, level, level_hidden = resolved[puuid]
-            if name == _fallback_name(puuid):
+            unnamed = name == _fallback_name(puuid)
+            if unnamed:
                 agent_meta = resolve_agent(p.get("CharacterID", "") or "") or {}
                 if state != "PREGAME" and agent_meta.get("name"):
                     name = agent_meta["name"]
@@ -1562,7 +1613,7 @@ class LiveMatch:
                 assemble_player(
                     puuid=puuid,
                     name=name,
-                    name_hidden=ident.get("Incognito", False),
+                    name_hidden=unnamed and bool(ident.get("Incognito", False)),
                     team=p.get("TeamID", "Blue"),
                     is_self=(puuid == self.self_puuid),
                     agent_id=p.get("CharacterID", ""),
@@ -1778,7 +1829,9 @@ class LiveMatch:
     def player_career(self, puuid: str, count: int = 20) -> dict[str, Any]:
         """Return a player's career: their recent matches and what they add up to."""
         try:
-            hist = self.auth.pd_get(f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=20")
+            hist = self.auth.pd_get(
+                f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=20", urgent=True
+            )
             entries = hist.get("History", []) or [] if isinstance(hist, dict) else []
         except requests.RequestException as e:
             _log(f"match history failed for {puuid[:8]}: {type(e).__name__}: {e}")
@@ -1796,8 +1849,10 @@ class LiveMatch:
                 # there is the difference between a career that opens and one
                 # you wait for.
                 md = _MATCH_DETAIL_CACHE.get(mid)
+                if md is None and (kept := _kept_detail(mid)):
+                    md = _remember(mid, kept)
                 if md is None:
-                    md = self.auth.pd_get(f"/match-details/v1/matches/{mid}")
+                    md = self.auth.pd_get(f"/match-details/v1/matches/{mid}", urgent=True)
                     if isinstance(md, dict) and "players" in md:
                         md = _remember(mid, _slim(md))
                         _DETAIL_READ.add(mid)
@@ -1828,7 +1883,8 @@ class LiveMatch:
         rated = False
         try:
             cu = self.auth.pd_get(
-                f"/mmr/v1/players/{puuid}/competitiveupdates?startIndex=0&endIndex=20&queue=competitive"
+                f"/mmr/v1/players/{puuid}/competitiveupdates?startIndex=0&endIndex=20&queue=competitive",
+                urgent=True,
             )
             rated = isinstance(cu, dict) and isinstance(cu.get("Matches"), list)
             for update in (cu or {}).get("Matches", []) or []:
@@ -1973,7 +2029,7 @@ class LiveMatch:
 
     def match_detail(self, match_id: str, subject: str | None = None) -> dict[str, Any]:
         """Return a match's full scoreboard and rounds, as `subject` saw it."""
-        md = self.auth.pd_get(f"/match-details/v1/matches/{match_id}")
+        md = self.auth.pd_get(f"/match-details/v1/matches/{match_id}", urgent=True)
         if not isinstance(md, dict) or "players" not in md:
             return {"error": "Match details unavailable."}
         info = md.get("matchInfo", {}) or {}
@@ -2369,6 +2425,7 @@ def _self_check() -> None:
     flaky.history = ["f1", "dm1", "f3"]
     read = shaky.kd_hs("me", count=3)
     check((read[0], read[3], len((read[4] or {})["form"])) == (2.0, "ok", 2), read)
+    check(not any(c.endswith("/dm1") for c in flaky.calls), "a deathmatch's details were fetched")
     flaky.history = ["dm1"]
     _MIDS_CACHE.clear()
     check(shaky.kd_hs("me", count=3)[3] == "empty")
@@ -2516,6 +2573,21 @@ def _self_check() -> None:
         _MIDS_CACHE.pop(key)
     for i in range(20):
         _MATCH_DETAIL_CACHE.pop(f"g{i}")
+    # Two strangers who queued together last game are a party on the same
+    # side now, and not once they are on opposite sides.
+    _MIDS_CACHE["x"] = (["last"], True, time.time())
+    _MATCH_DETAIL_CACHE["last"] = {
+        "players": [
+            {"subject": "x", "partyId": "d"},
+            {"subject": "y", "partyId": "d"},
+            {"subject": "z", "partyId": "e"},
+        ]
+    }
+    together = _history_parties(["x", "y", "z"], {"x": "Red", "y": "Red", "z": "Red"})
+    check(together == {"d": ["x", "y"]}, together)
+    check(_history_parties(["x", "y"], {"x": "Red", "y": "Blue"}) == {})
+    _MIDS_CACHE.pop("x")
+    _MATCH_DETAIL_CACHE.pop("last")
 
     # A five stack with one friend in it: presences show two of you, and the
     # party service shows all five, in the match and in the lobby.
@@ -2625,7 +2697,7 @@ def _self_check() -> None:
     # certificate is checked. Only 127.0.0.1 may skip that.
     local = object.__new__(riot_client.LocalAuth)
     local.pd_url, local.kept_headers, local.req_count = "https://pd.na.a.pvp.net", {"A": "b"}, 0
-    with mock.patch.object(requests, "put") as put:
+    with mock.patch.object(requests.Session, "put") as put:
         put.return_value.json.return_value = []
         local.pd_put("/name-service/v2/players", ["me"])
     check(put.call_args.kwargs.get("verify", True) is True, put.call_args)

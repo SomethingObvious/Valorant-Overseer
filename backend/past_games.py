@@ -44,7 +44,9 @@ def _match_ids(auth: Any, puuid: str, count: int) -> tuple[list[str], bool]:
     for start in range(0, count, _PAGE):
         end = min(count, start + _PAGE)
         page = auth.pd_get(
-            f"/match-history/v1/history/{puuid}?startIndex={start}&endIndex={end}", retries=2
+            f"/match-history/v1/history/{puuid}?startIndex={start}&endIndex={end}",
+            retries=2,
+            urgent=True,
         )
         if _is_throttled(page):
             return ids, True
@@ -149,7 +151,7 @@ def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
     kept = read_json(str(path), None)
     if isinstance(kept, dict) and kept.get("players"):
         return kept
-    md = auth.pd_get(f"/match-details/v1/matches/{match_id}", retries=2)
+    md = auth.pd_get(f"/match-details/v1/matches/{match_id}", retries=2, urgent=True)
     if _is_throttled(md) or not isinstance(md, dict):
         return None
     board = scoreboard(md)

@@ -369,6 +369,9 @@ pub struct BriefLine {
     pub evidence: Option<String>,
     /// How far from their peers, in the norm's standard deviations.
     pub strength: Option<f64>,
+    /// The share of peers below them, from 0 to 1, for a line measured
+    /// against peers.
+    pub pct: Option<f32>,
     /// Whether the line earned a place on the panel: at most two do.
     pub show: bool,
     /// The line as the panel says it, the measurement with its direction.
@@ -411,9 +414,13 @@ pub struct AutoTag {
     pub why: Option<String>,
     /// What the word means, for somebody meeting it for the first time.
     pub means: Option<String>,
-    /// What sort of thing it is: weapon, economy, duels, agent, form,
-    /// history, rank or map.
+    /// What sort of thing it is: weapon, economy, duels, agent, scout,
+    /// form, history, rank or map.
     pub kind: Option<String>,
+    /// Where Settings put it on a row, first to last. Without it the row
+    /// orders by kind.
+    #[serde(skip)]
+    pub order: Option<u8>,
 }
 
 impl Player {

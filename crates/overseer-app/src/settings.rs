@@ -163,6 +163,168 @@ pub(crate) struct Settings {
     pub(crate) updates: UpdateSettings,
     /// Whether the board still opens with the strip for a first look.
     pub(crate) welcome: Welcome,
+    /// Which tags the rows show, and in what order.
+    pub(crate) tags: TagSettings,
+}
+
+/// Every kind of tag the backend gives, in the order a row draws them until
+/// Settings says otherwise, and the words each kind can be. A leaderboard
+/// place is its own word, so it goes by "leaderboard" here.
+pub(crate) const TAG_KINDS: [(&str, &[&str]); 9] = [
+    (
+        "Weapon",
+        &[
+            "op", "outlaw", "marshal", "judge", "bucky", "odin", "ares", "spectre", "sheriff",
+        ],
+    ),
+    ("Economy", &["forces", "saves"]),
+    ("Agent", &["one-trick", "off main"]),
+    ("Rank", &["leaderboard", "deranked"]),
+    ("Duels", &["entry", "clutch", "aced", "planter"]),
+    (
+        "Scout",
+        &[
+            "aggressive",
+            "passive",
+            "fights first",
+            "waits",
+            "first bloods",
+            "few first bloods",
+            "dies first",
+            "rarely dies first",
+            "fast attack",
+            "slow attack",
+            "fast defense",
+            "slow defense",
+            "dies early",
+            "dies late",
+            "long range",
+            "close range",
+            "plays apart",
+            "plays close",
+            "plants",
+            "rarely plants",
+        ],
+    ),
+    ("Form", &["hot", "cold"]),
+    ("History", &["rival", "teammate"]),
+    ("Map", &["strong map"]),
+];
+
+/// Which tags the rows and the panel show, and which kind comes first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct TagSettings {
+    /// The kinds, first to last.
+    pub(crate) order: Vec<String>,
+    /// Kinds switched off whole.
+    pub(crate) hidden_kinds: Vec<String>,
+    /// Single words switched off.
+    pub(crate) hidden: Vec<String>,
+}
+
+impl Default for TagSettings {
+    fn default() -> Self {
+        Self {
+            order: TAG_KINDS
+                .iter()
+                .map(|(kind, _)| (*kind).to_owned())
+                .collect(),
+            hidden_kinds: Vec::new(),
+            hidden: Vec::new(),
+        }
+    }
+}
+
+impl TagSettings {
+    /// The kinds first to last, with any this file never named in their
+    /// default places after the rest.
+    pub(crate) fn kinds(&self) -> Vec<&'static str> {
+        let mut kinds: Vec<&'static str> = self
+            .order
+            .iter()
+            .filter_map(|o| {
+                TAG_KINDS
+                    .iter()
+                    .map(|(kind, _)| *kind)
+                    .find(|kind| kind.eq_ignore_ascii_case(o))
+            })
+            .fold(Vec::new(), |mut out, kind| {
+                if !out.contains(&kind) {
+                    out.push(kind);
+                }
+                out
+            });
+        for (kind, _) in TAG_KINDS {
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        kinds
+    }
+
+    /// Moves `kind` one place earlier, or later when `later`.
+    pub(crate) fn shift(&mut self, kind: &str, later: bool) {
+        let mut kinds = self.kinds();
+        if let Some(at) = kinds.iter().position(|k| *k == kind) {
+            let to = if later { at + 1 } else { at.wrapping_sub(1) };
+            if to < kinds.len() {
+                kinds.swap(at, to);
+            }
+        }
+        self.order = kinds.into_iter().map(str::to_owned).collect();
+    }
+
+    /// Whether `kind` is switched off whole.
+    pub(crate) fn hides_kind(&self, kind: &str) -> bool {
+        self.hidden_kinds
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(kind))
+    }
+
+    /// Whether the word `word` is switched off on its own.
+    pub(crate) fn hides_word(&self, word: &str) -> bool {
+        let word = if word.starts_with('#') {
+            "leaderboard"
+        } else {
+            word
+        };
+        self.hidden.iter().any(|w| w.eq_ignore_ascii_case(word))
+    }
+
+    /// Switches a kind or a word on when it was off, and off when it was on.
+    pub(crate) fn flip(list: &mut Vec<String>, name: &str) {
+        if list.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+            list.retain(|n| !n.eq_ignore_ascii_case(name));
+        } else {
+            list.push(name.to_owned());
+        }
+    }
+
+    /// `tags` without the ones switched off, in the kinds' order, each
+    /// carrying its place so the row keeps it.
+    pub(crate) fn applied(&self, tags: &[overseer_core::AutoTag]) -> Vec<overseer_core::AutoTag> {
+        let kinds = self.kinds();
+        let place = |kind: Option<&str>| {
+            let at = kind
+                .and_then(|kind| kinds.iter().position(|k| k.eq_ignore_ascii_case(kind)))
+                .unwrap_or(kinds.len());
+            u8::try_from(at).unwrap_or(u8::MAX)
+        };
+        let mut shown: Vec<overseer_core::AutoTag> = tags
+            .iter()
+            .filter(|t| {
+                !t.kind.as_deref().is_some_and(|k| self.hides_kind(k))
+                    && !t.tag.as_deref().is_some_and(|w| self.hides_word(w))
+            })
+            .map(|t| overseer_core::AutoTag {
+                order: Some(place(t.kind.as_deref())),
+                ..t.clone()
+            })
+            .collect();
+        shown.sort_by_key(|t| t.order);
+        shown
+    }
 }
 
 /// The daily look for a newer release, kept in the same file.
@@ -311,6 +473,7 @@ impl Default for Settings {
             lineups: LineupSettings::default(),
             updates: UpdateSettings::default(),
             welcome: Welcome::Due,
+            tags: TagSettings::default(),
         }
     }
 }
@@ -447,6 +610,58 @@ mod tests {
         assert_eq!(load(&root).quality, Quality::Efficient);
         assert!(load(&root).panel, "a saved file lost a field it never set");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A tag switched off goes, alone or with its kind, and the rest come in
+    /// the kinds' order with the board's order kept inside each kind.
+    #[test]
+    fn tags_follow_the_settings() {
+        let tag = |word: &str, kind: &str| overseer_core::AutoTag {
+            tag: Some(word.to_owned()),
+            kind: Some(kind.to_owned()),
+            ..overseer_core::AutoTag::default()
+        };
+        let board = [
+            tag("hot", "Form"),
+            tag("op", "Weapon"),
+            tag("aggressive", "Scout"),
+            tag("#12", "Rank"),
+            tag("forces", "Economy"),
+            tag("marshal", "Weapon"),
+        ];
+        let words = |tags: &[overseer_core::AutoTag]| -> Vec<String> {
+            tags.iter().filter_map(|t| t.tag.clone()).collect()
+        };
+        let mut settings = super::TagSettings::default();
+        assert_eq!(
+            words(&settings.applied(&board)),
+            ["op", "marshal", "forces", "#12", "aggressive", "hot"]
+        );
+        settings.shift("Scout", false);
+        settings.shift("Scout", false);
+        settings.shift("Weapon", true);
+        assert_eq!(
+            settings.kinds().get(..4),
+            Some(&["Economy", "Weapon", "Agent", "Scout"][..])
+        );
+        super::TagSettings::flip(&mut settings.hidden_kinds, "economy");
+        super::TagSettings::flip(&mut settings.hidden, "leaderboard");
+        super::TagSettings::flip(&mut settings.hidden, "op");
+        assert_eq!(
+            words(&settings.applied(&board)),
+            ["marshal", "aggressive", "hot"]
+        );
+        super::TagSettings::flip(&mut settings.hidden, "op");
+        assert_eq!(
+            words(&settings.applied(&board)),
+            ["op", "marshal", "aggressive", "hot"]
+        );
+        // A file that names a kind twice, or one there isn't, still lists
+        // every kind once.
+        settings.order = vec!["Map".into(), "map".into(), "Nope".into()];
+        let kinds = settings.kinds();
+        assert_eq!(kinds.len(), super::TAG_KINDS.len());
+        assert_eq!(kinds.first(), Some(&"Map"));
     }
 
     /// The groups are kept under the names the file always had, so a file

@@ -1851,10 +1851,22 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
             )
             for row in p["brief"]:
                 row["scope"] = scope
+            p["autoTags"] = list(p.get("autoTags") or []) + card_tags(p["scout"])
         except Exception as e:
             LOG.warning("brief not composed for %s: %r", puuid[:8], e)
             p["brief"] = []
     return board
+
+
+def card_tags(card: dict[str, Any]) -> list[dict[str, str]]:
+    """Return a row tag for each strong read on a Scout card, once per word."""
+    out: list[dict[str, str]] = []
+    for found in [card.get("tag"), *(card.get("habits") or [])]:
+        word = str((found or {}).get("word") or "")
+        if word and all(t["tag"] != word for t in out):
+            evidence = str(found.get("evidence") or "") if found else ""
+            out.append({"tag": word, "why": evidence, "means": HABIT_TAG_MEANS, "kind": "Scout"})
+    return out
 
 
 # The equipment tiers, in the order the bundled odds use.
@@ -2062,6 +2074,21 @@ AXIS_ENDS = {
     "open_death_rate": ("fewer", "more first deaths"),
 }
 PACE_ENDS = ("passive", "aggressive")
+# The row's word for a strong habit, above peers and below. Each says what
+# they do, never a role the measurement doesn't establish.
+HABIT_TAGS = {
+    "pace": ("aggressive", "passive"),
+    "open_all": ("fights first", "waits"),
+    "first_lethal_attack": ("slow attack", "fast attack"),
+    "first_lethal_defense": ("slow defense", "fast defense"),
+    "death_t": ("dies late", "dies early"),
+    "plant_rate": ("plants", "rarely plants"),
+    "kill_dist_mean": ("long range", "close range"),
+    "separation": ("plays apart", "plays close"),
+    "open_kill_rate": ("first bloods", "few first bloods"),
+    "open_death_rate": ("dies first", "rarely dies first"),
+}
+HABIT_TAG_MEANS = "Scout puts them past three in four players on the same agent at the same rank."
 
 
 def _ordinal(share: float) -> str:
@@ -2114,6 +2141,7 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         evidence += f" · {same}/{n} games"
     suggest = str(row.get("suggest") or "") if row.get("flag") and not other and not is_self else ""
     return {
+        "word": HABIT_TAGS.get(key, ("", ""))[0 if z > 0 else 1] if strong else "",
         "headline": words,
         "evidence": evidence,
         "suggest": suggest,
@@ -2159,6 +2187,7 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             else f"More passive than {1 - pct:.0%} of peers"
         )
     return {
+        "word": word.lower() if word != "Even pace" else "",
         "headline": word,
         "evidence": f"{where} · {n} games",
         "suggest": "",
@@ -2420,6 +2449,19 @@ def _self_check() -> None:
         elif isinstance(value, list):
             pending.extend(value)
     check(n["bands"][0][2] == "iron-bronze", n["bands"])
+    # A strong read is a row tag, once per word. A mild one and an even pace aren't.
+    card = {
+        "tag": {"word": "aggressive", "evidence": "More aggressive than 86% of peers"},
+        "habits": [
+            {"word": "long range", "evidence": "Kills from further than 81% of peers"},
+            {"word": "", "evidence": "Tends to plant"},
+            {"word": "long range", "evidence": "again"},
+        ],
+    }
+    tagged = card_tags(card)
+    check([t["tag"] for t in tagged] == ["aggressive", "long range"], tagged)
+    check(all(t["kind"] == "Scout" and t["why"] and t["means"] for t in tagged), tagged)
+    check(card_tags({"tag": None, "habits": []}) == [])
     check(band(13) == "silver-gold" and band(27) == "asc+" and band(None) is None, "band")
     check(band(8.5) == "silver-gold" and band(14.5) == "plat-dia", "band between tiers rounds up")
     check(

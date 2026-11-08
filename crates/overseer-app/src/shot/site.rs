@@ -353,46 +353,59 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             true,
             "Opening kill/death involvement",
             "24% vs peers' 15% · 412 rounds",
+            Some(0.89),
         ),
         (
             "tendency",
             true,
             "Gun-kill range",
             "2,140 vs peers' 1,630 map units · 211 kills",
+            Some(0.81),
         ),
         (
             "tendency",
             true,
             "Rounds with Operator",
             "14% vs peers' 4% · 412 rounds",
+            Some(0.93),
         ),
         (
             "tendency",
             false,
             "Death timing",
             "31s vs peers' 38s · 284 deaths",
+            Some(0.27),
         ),
         (
             "tendency",
             false,
             "Spike plants",
             "19% vs peers' 21% · 206 attack rounds",
+            Some(0.42),
         ),
         (
             "buy",
             false,
             "Pistol: Ghost 22/36 · light armor 25/36",
             "Avg spend 780 vs 690",
+            None,
         ),
-        ("record", false, "Recent agents: Clove 15/18, Omen 3/18", ""),
+        (
+            "record",
+            false,
+            "Recent agents: Clove 15/18, Omen 3/18",
+            "",
+            None,
+        ),
     ]
     .into_iter()
     .map(
-        |(kind, flag, headline, evidence)| overseer_core::BriefLine {
+        |(kind, flag, headline, evidence, pct)| overseer_core::BriefLine {
             kind: Some(kind.to_owned()),
             flag,
             headline: Some(headline.to_owned()),
             evidence: Some(evidence.to_owned()),
+            pct,
             ..overseer_core::BriefLine::default()
         },
     )
@@ -411,7 +424,7 @@ fn scout() -> overseer_core::Scout {
             pos: Some(1.4 * (pct - 0.5) / 0.4),
             left: Some(ends.0.to_owned()),
             right: Some(ends.1.to_owned()),
-            share: Some(format!("{}th", (pct * 100.0).round())),
+            share: Some(crate::panel::ordinal(pct)),
             ..overseer_core::ScoutFinding::default()
         }
     };

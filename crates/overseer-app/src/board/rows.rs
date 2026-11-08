@@ -541,7 +541,7 @@ fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>
         .iter()
         .filter(|t| t.tag.is_some())
         .collect();
-    tags.sort_by_key(|t| tier(t));
+    tags.sort_by_key(|t| t.order.unwrap_or_else(|| tier(t)));
     let words = role
         .into_iter()
         .chain(agent)

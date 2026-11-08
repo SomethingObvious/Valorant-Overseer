@@ -52,6 +52,7 @@ pub(crate) fn settings(
 
             offline_chat(ui, offline, still);
             changed |= columns(ui, settings, still);
+            changed |= tags(ui, settings, still);
 
             section(ui, "Layout", "How the main window is arranged.");
             if switch(
@@ -429,6 +430,124 @@ fn columns(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
         changed
     };
     changed | games_read(ui, settings) | party_kept(ui, settings)
+}
+
+/// Which tags the rows show and which kind leads. True when one changed.
+fn tags(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
+    section(
+        ui,
+        "Tags",
+        "The short reads under each name. The arrows set which kind comes first.",
+    );
+    let kinds = settings.tags.kinds();
+    let mut changed = false;
+    for (at, &kind) in kinds.iter().enumerate() {
+        let words = crate::settings::TAG_KINDS
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map_or(&[][..], |(_, words)| *words);
+        let off = settings.tags.hides_kind(kind);
+        let shown = words
+            .iter()
+            .filter(|w| !settings.tags.hides_word(w))
+            .count();
+        let about = if off {
+            "Hidden".to_owned()
+        } else {
+            format!("{shown} of {} shown", words.len())
+        };
+        let mut flipped = false;
+        let mut moved = None;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(space::LG);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if mover(ui, true, at > 0, kind) {
+                    moved = Some(false);
+                }
+                if mover(ui, false, at + 1 < kinds.len(), kind) {
+                    moved = Some(true);
+                }
+            });
+            // A switch adds its gap below it, which a row would take as width.
+            ui.vertical(|ui| flipped = switch(ui, kind, &about, !off, false, still));
+        });
+        if let Some(later) = moved {
+            settings.tags.shift(kind, later);
+            changed = true;
+        }
+        if flipped {
+            crate::settings::TagSettings::flip(&mut settings.tags.hidden_kinds, kind);
+            changed = true;
+        }
+        if off {
+            continue;
+        }
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: (space::XL + MOVER + space::LG) as i8,
+                right: space::XL as i8,
+                top: 0,
+                bottom: space::MD as i8,
+            })
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
+                    for word in words {
+                        let on = !settings.tags.hides_word(word);
+                        if controls::word_chip(ui, word, on)
+                            .on_hover_text(if on {
+                                "Shown. A click hides it."
+                            } else {
+                                "Hidden. A click shows it."
+                            })
+                            .clicked()
+                        {
+                            crate::settings::TagSettings::flip(&mut settings.tags.hidden, word);
+                            changed = true;
+                        }
+                    }
+                });
+            });
+    }
+    changed
+}
+
+/// How wide the arrows beside each kind of tag are.
+const MOVER: f32 = 24.0;
+
+/// One of the two arrows that move a kind of tag, up or down. True when
+/// clicked. At the end of the list it can't move that way and is drawn dim.
+fn mover(ui: &mut Ui, up: bool, can: bool, kind: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(MOVER, 16.0),
+        if can { Sense::click() } else { Sense::hover() },
+    );
+    let said = format!("Move {kind} {}", if up { "up" } else { "down" });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, can, &said));
+    if ui.is_rect_visible(rect) {
+        let tint = if !can {
+            colour::TEXT_FAINT.gamma_multiply(0.4)
+        } else if response.hovered() {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT_DIM
+        };
+        let c = rect.center();
+        let tip = if up { -2.5 } else { 2.5 };
+        ui.painter().add(egui::Shape::line(
+            vec![
+                c + vec2(-5.0, -tip),
+                c + vec2(0.0, tip),
+                c + vec2(5.0, -tip),
+            ],
+            egui::Stroke::new(1.4, tint),
+        ));
+    }
+    can && response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 /// How many games each row's K/D and reads come from. True when it changed.
@@ -937,7 +1056,7 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
 /// The sections of Settings for the chips at its top to jump to, in four
 /// groups, since thirteen chips in a row read as one wall.
 const SECTIONS: [(&str, &[&str]); 4] = [
-    ("Board", &["Columns", "Layout"]),
+    ("Board", &["Columns", "Tags", "Layout"]),
     ("In Game", &["Offline Chat", "Overlay"]),
     ("Lineups", &["Lineup Clips", "Lineup Maps"]),
     (

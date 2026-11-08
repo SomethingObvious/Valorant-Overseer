@@ -221,6 +221,37 @@ pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A word that can be switched off: an outlined chip while it's on, and
+/// faint with a line through it while it's off.
+pub(crate) fn word_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
+    let painter = ui.painter().clone();
+    let wide = space::LG.mul_add(2.0, caps_width(&painter, text, paint::label()));
+    let (rect, response) = ui.allocate_exact_size(vec2(wide, HEIGHT), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() {
+            colour::BG_HOVER
+        } else {
+            colour::BG_INSET
+        };
+        painter.add(paint::slant(rect, true, true, fill));
+        paint::chip_edge(&painter, rect, if on { colour::EDGE } else { colour::LINE });
+        let ink = if on { colour::TEXT } else { colour::HINT };
+        let drawn = caps_text(
+            &painter,
+            rect.center(),
+            Align2::CENTER_CENTER,
+            text,
+            paint::label(),
+            ink,
+        );
+        if !on {
+            painter.hline(drawn.x_range(), drawn.center().y, (1.0, ink));
+        }
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, text));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A chip with a small white icon before its words, tinted like them, for
 /// an ability.
 pub(crate) fn chip_with(

@@ -307,32 +307,50 @@ fn invite(ui: &mut Ui) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A faint caps label after the history's arrow that opens what is under
-/// it, and says whether it is open. The state is kept under `id` for the session.
-fn disclosure(ui: &mut Ui, id: egui::Id, label: &str) -> bool {
+/// The bar that opens All Figures: its name, how many figures it holds and
+/// a chevron, across the panel so it reads as a control. True when open.
+fn figures_toggle(ui: &mut Ui, id: egui::Id, count: usize) -> bool {
     let open = ui.data(|store| store.get_temp::<bool>(id)).unwrap_or(false);
+    ui.add_space(space::MD);
     let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::click());
-    response
-        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, label));
+        ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, "All Figures")
+    });
     if ui.is_rect_visible(rect) {
-        let tint = if response.hovered() {
+        let painter = ui.painter();
+        let slab = rect.shrink2(vec2(space::LG, 0.0));
+        let ground = if response.hovered() {
+            colour::BG_HOVER
+        } else {
+            colour::BG_RAISED
+        };
+        painter.rect_filled(slab, 0, ground);
+        let tint = if response.hovered() || open {
             colour::TEXT_STRONG
         } else {
-            colour::TEXT_DIM
+            colour::TEXT
         };
-        crate::history::chevron(
-            ui.painter(),
-            pos2(rect.left() + space::LG + 5.0, rect.center().y),
-            open,
+        let drawn = caps_text(
+            painter,
+            pos2(slab.left() + space::LG, slab.center().y),
+            Align2::LEFT_CENTER,
+            "All Figures",
+            Face::Display.at(size::LABEL),
             tint,
         );
-        caps_at(
-            ui.painter(),
-            pos2(rect.left() + space::LG + space::XL, rect.center().y),
+        let _count = caps_text(
+            painter,
+            pos2(drawn.right() + space::MD, slab.center().y),
             Align2::LEFT_CENTER,
-            label,
-            Face::Display.at(size::LABEL),
+            &count.to_string(),
+            Face::Heavy.at(size::LABEL),
+            colour::TEXT_FAINT,
+        );
+        crate::history::chevron(
+            painter,
+            pos2(slab.right() - space::LG - 5.0, slab.center().y),
+            open,
             tint,
         );
     }
@@ -341,6 +359,9 @@ fn disclosure(ui: &mut Ui, id: egui::Id, label: &str) -> bool {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked();
     ui.data_mut(|store| store.insert_temp(id, open));
+    if open {
+        ui.add_space(space::SM);
+    }
     open
 }
 
@@ -925,7 +946,7 @@ fn brief(ui: &mut Ui, player: &Player) {
         let id = ui
             .id()
             .with(("all-figures", player.puuid.as_deref().unwrap_or("")));
-        if disclosure(ui, id, "All Figures") {
+        if figures_toggle(ui, id, player.brief.len()) {
             all_figures(ui, &player.brief);
         }
     }
@@ -960,28 +981,167 @@ fn all_figures(ui: &mut Ui, lines: &[overseer_core::BriefLine]) {
         _ => 2,
     };
     for (at, name) in GROUPS.iter().enumerate() {
-        let mut rows = lines.iter().filter(|l| group(l) == at).peekable();
-        if rows.peek().is_none() {
+        let rows: Vec<&overseer_core::BriefLine> =
+            lines.iter().filter(|l| group(l) == at).collect();
+        if rows.is_empty() {
             continue;
         }
         subheading(ui, name, colour::TEXT_FAINT);
+        if at == 0 {
+            figure_ladder(ui, &rows);
+            continue;
+        }
         for row in rows {
-            let words = row
-                .headline
-                .as_deref()
-                .or(row.text.as_deref())
-                .unwrap_or("");
             let tint = if row.flag {
                 colour::TEXT_STRONG
             } else {
                 colour::TEXT
             };
-            line(ui, words, tint, size::LABEL);
+            caps_line(ui, figure_words(row), Face::Display.at(size::LABEL), tint);
             if let Some(evidence) = row.evidence.as_deref().filter(|s| !s.is_empty()) {
-                line(ui, &held(evidence), colour::TEXT_DIM, size::MICRO);
+                caps_line(
+                    ui,
+                    &held(evidence),
+                    Face::Display.at(size::MICRO),
+                    colour::TEXT_DIM,
+                );
             }
         }
     }
+}
+
+/// The words of a figure: the headline, else the whole line.
+fn figure_words(row: &overseer_core::BriefLine) -> &str {
+    row.headline
+        .as_deref()
+        .or(row.text.as_deref())
+        .unwrap_or("")
+}
+
+/// Where a share of peers sits along `track`, from its left end.
+fn along(track: Rect, pct: f32) -> f32 {
+    pct.clamp(0.0, 1.0).mul_add(track.width(), track.left())
+}
+
+/// The scale behind a figure's place among peers: a thin rail with the
+/// median marked and the quartiles fainter.
+fn rail(painter: &egui::Painter, track: Rect) {
+    painter.rect_filled(track, 0, colour::BG_INSET);
+    for (quarter, tint) in [
+        (0.25, colour::LINE),
+        (0.5, colour::EDGE),
+        (0.75, colour::LINE),
+    ] {
+        let x = along(track, quarter);
+        painter.vline(x, track.y_range().expand(2.0), (1.0, tint));
+    }
+}
+
+/// Every figure measured against peers on one shared scale, a row each,
+/// so the ones far from the middle stand out at a glance. The figures
+/// behind each are on hover.
+fn figure_ladder(ui: &mut Ui, rows: &[&overseer_core::BriefLine]) {
+    let width = ui.available_width();
+    let left = ui.max_rect().left() + space::LG;
+    let right = ui.max_rect().right() - space::LG;
+    let words_end = (right - left).mul_add(0.56, left);
+    let number = 36.0;
+    let track_x = (words_end + space::MD)..=(right - number - space::SM);
+    let (head, _response) = ui.allocate_exact_size(vec2(width, space::LG), Sense::hover());
+    if ui.is_rect_visible(head) {
+        let painter = ui.painter();
+        let font = Face::Display.at(size::MICRO);
+        let ends = [
+            (*track_x.start(), Align2::LEFT_CENTER, "Lower"),
+            (*track_x.end(), Align2::RIGHT_CENTER, "Higher"),
+        ];
+        for (x, align, word) in ends {
+            let _drawn = caps_text(
+                painter,
+                pos2(x, head.center().y),
+                align,
+                word,
+                font.clone(),
+                colour::TEXT_FAINT,
+            );
+        }
+    }
+    for row in rows {
+        let (rect, response) = ui.allocate_exact_size(vec2(width, space::XL), Sense::hover());
+        let tint = if row.flag {
+            colour::TEXT_STRONG
+        } else {
+            colour::TEXT
+        };
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            if response.hovered() {
+                painter.rect_filled(rect.shrink2(vec2(space::SM, 0.0)), 0, colour::BG_HOVER);
+            }
+            let job = one_line(
+                figure_words(row),
+                Face::Display.at(size::LABEL),
+                tint,
+                words_end - left,
+            );
+            let galley = painter.layout_job(job);
+            painter.galley(
+                pos2(left, rect.center().y - galley.size().y / 2.0),
+                galley,
+                tint,
+            );
+            if let Some(pct) = row.pct {
+                let track = Rect::from_x_y_ranges(
+                    track_x.clone(),
+                    (rect.center().y - 1.0)..=(rect.center().y + 1.0),
+                );
+                rail(painter, track);
+                let at = pos2(along(track, pct), rect.center().y);
+                if row.flag {
+                    painter.circle_filled(at, 4.5, colour::TEXT_STRONG);
+                } else {
+                    painter.circle_stroke(at, 3.5, (1.5, colour::TEXT_DIM));
+                }
+                let _place = painter.text(
+                    pos2(right, rect.center().y),
+                    Align2::RIGHT_CENTER,
+                    ordinal(pct),
+                    Face::Heavy.at(size::MICRO + 1.0),
+                    tint,
+                );
+            }
+        }
+        if let Some(evidence) = row.evidence.as_deref().filter(|s| !s.is_empty()) {
+            let _shown = response.on_hover_text(evidence);
+        }
+    }
+}
+
+/// A caps line cut to `width` with an ellipsis, so a long name never pushes
+/// into the figures beside it.
+fn one_line(text: &str, font: egui::FontId, tint: Color32, width: f32) -> egui::text::LayoutJob {
+    let mut job = caps(text, font, tint);
+    job.wrap.max_width = width.max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job
+}
+
+/// 86th, 81st, 12th: the share of peers below them as an ordinal.
+pub(crate) fn ordinal(pct: f32) -> String {
+    let n = format!("{:.0}", pct.clamp(0.0, 1.0) * 100.0);
+    let suffix = if ["11", "12", "13"].iter().any(|teen| n.ends_with(teen)) {
+        "th"
+    } else if n.ends_with('1') {
+        "st"
+    } else if n.ends_with('2') {
+        "nd"
+    } else if n.ends_with('3') {
+        "rd"
+    } else {
+        "th"
+    };
+    format!("{n}{suffix}")
 }
 
 /// The curve of peers with the player's mark on it and the number printed

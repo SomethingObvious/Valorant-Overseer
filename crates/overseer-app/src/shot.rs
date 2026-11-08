@@ -449,6 +449,7 @@ fn smurf_enemy() -> Player {
                 ),
                 means: Some("Plays the Operator a lot. Expect it on long angles.".to_owned()),
                 kind: Some("weapon".to_owned()),
+                order: None,
             },
             overseer_core::AutoTag {
                 tag: Some("entry".to_owned()),

@@ -142,6 +142,7 @@ impl Overseer {
         }
         if changed {
             settings::save(&self.root, &self.settings);
+            self.retag();
             self.tell_games_read();
         }
         let now = ui.input(|i| i.time);

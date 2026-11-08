@@ -106,6 +106,8 @@ pub(crate) struct Overseer {
     root: PathBuf,
     settings: Settings,
     board: Board,
+    /// Each row's tags as the backend gave them, before Settings hid any.
+    tags_given: Vec<Vec<overseer_core::AutoTag>>,
     status: Status,
     /// Why the bridge gave up, if it has. Unlike a disconnect, a bad token
     /// never fixes itself, so the window says so.
@@ -472,6 +474,21 @@ impl std::fmt::Debug for Overseer {
 }
 
 impl Overseer {
+    /// Takes a board from the backend, its tags through Settings.
+    fn take(&mut self, board: Board) {
+        self.tags_given = board.players.iter().map(|p| p.auto_tags.clone()).collect();
+        self.board = board;
+        self.retag();
+    }
+
+    /// Puts each row's tags through Settings again, from what the backend
+    /// gave, so a tag switched back on comes back without a new board.
+    fn retag(&mut self) {
+        for (player, given) in self.board.players.iter_mut().zip(&self.tags_given) {
+            player.auto_tags = self.settings.tags.applied(given);
+        }
+    }
+
     /// Fonts, art, style and zoom for the window, and its handle for the
     /// clips that play inside it. Says whether the window is drawn in
     /// software.
@@ -544,6 +561,7 @@ impl Overseer {
                 you: waiting::kept(root),
                 ..Board::default()
             },
+            tags_given: Vec::new(),
             status: Status::Connecting(String::new()),
             // It never fixes itself, so the light shows it from the start.
             stopped: broken.clone(),
@@ -667,7 +685,7 @@ impl Overseer {
                 Event::Board(board) => {
                     let was = self.board.state.take();
                     let was_on = self.board.map.take();
-                    self.board = *board;
+                    self.take(*board);
                     // A match that starts with Lineups open moves it to the
                     // match's map. Only on a change, so a map picked by hand
                     // stays picked.
@@ -1606,6 +1624,7 @@ pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overse
         root: PathBuf::new(),
         settings: settings.clone(),
         board: board.clone(),
+        tags_given: Vec::new(),
         status: Status::Live,
         stopped: None,
         broken: None,
@@ -1693,6 +1712,7 @@ mod tests {
                     why: Some("Carried the Odin in 9 of 60 rounds".to_owned()),
                     means: Some("Carried the Odin in at least 15% of their rounds.".to_owned()),
                     kind: Some("Weapon".to_owned()),
+                    order: None,
                 });
             }
         }

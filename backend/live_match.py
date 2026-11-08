@@ -558,6 +558,21 @@ def _unplaced(md: dict[str, Any]) -> dict[str, Any]:
     return {**md, "roundResults": [played(rr) for rr in md["roundResults"] or []]}
 
 
+def _tier_from_games(puuid: str, season: str | None) -> int:
+    # Their tier in their newest ranked game this act, from details already
+    # in hand. It stands in while Riot's rank service won't answer.
+    hit = _MIDS_CACHE.get(puuid)
+    if not season or not hit or not hit[1]:
+        return 0
+    for mid in hit[0][:5]:
+        md = _MATCH_DETAIL_CACHE.get(mid) or {}
+        if (md.get("matchInfo") or {}).get("seasonId") != season:
+            continue
+        me = next((p for p in md.get("players") or [] if p.get("subject") == puuid), None)
+        return int((me or {}).get("competitiveTier") or 0)
+    return 0
+
+
 def _history_parties(puuids: list[str], team_of: dict[str, Any]) -> dict[str, list[str]]:
     """Group players who queued together in their last game and sit on one side now.
 
@@ -1148,10 +1163,10 @@ class LiveMatch:
             # Without the act there is no rank to read, and one read as tier 0
             # would be kept as Unranked until their next ranked game.
             if not season or riot_client.held_secs("/mmr/") > 0:
-                return hit[0] if hit else out
+                return hit[0] if hit else {**out, "tier": _tier_from_games(puuid, season)}
             r = self.auth.pd_get(f"/mmr/v1/players/{puuid}")
             if not isinstance(r, dict) or "QueueSkills" not in r:
-                return hit[0] if hit else out
+                return hit[0] if hit else {**out, "tier": _tier_from_games(puuid, season)}
             out["ok"] = True
             si = (
                 ((r.get("QueueSkills") or {}).get("competitive") or {}).get(
@@ -1162,6 +1177,12 @@ class LiveMatch:
             out["tier"] = cur.get("CompetitiveTier", 0) or 0
             out["rr"] = cur.get("RankedRating", 0) or 0
             out["lb"] = cur.get("LeaderboardRank", 0) or 0
+            # The act's entry can be missing for somebody who has played in
+            # it, and their latest ranked game still carries where it left them.
+            latest = r.get("LatestCompetitiveUpdate") or {}
+            if not out["tier"] and latest.get("SeasonID") == season:
+                out["tier"] = int(latest.get("TierAfterUpdate") or 0)
+                out["rr"] = int(latest.get("RankedRatingAfterUpdate") or 0)
 
             if prev_season:
                 out["prev"] = (si.get(prev_season, {}) or {}).get("CompetitiveTier", 0) or 0
@@ -1188,6 +1209,7 @@ class LiveMatch:
             # This runs per player in the pool, and an odd MMR answer has to
             # cost that player their rank, not the whole board.
             _log(f"rank lookup failed for {puuid[:8]}: {type(e).__name__}: {e}")
+            return {**out, "tier": _tier_from_games(puuid, season)}
         return out
 
     def act_episode(self, season_id: str | None) -> str | None:
@@ -1648,11 +1670,11 @@ class LiveMatch:
                 _cache_put(_CACHE, _KD_CACHE_MAX, cache_key, cached)
                 uncached_kd.append(puuid)
             else:
-                if not cached["rk"].get("ok") and time.time() - cached.get("rank_at", 0.0) > 20.0:
+                if not cached["rk"].get("ok") and time.time() - cached.get("rank_at", 0.0) > 10.0:
                     rk = self.rank_info(puuid, season, prev_season)
-                    if rk.get("ok"):
+                    if rk.get("ok") or rk["tier"]:
                         cached["rk"], cached["prev"] = rk, rk.get("prev", 0)
-                    else:
+                    if not rk.get("ok"):
                         cached["rank_at"] = time.time()
                 # The fill still owes them a K/D, the top up that comes after
                 # it, or a deeper read, unless Riot just held that back.
@@ -1741,6 +1763,9 @@ class LiveMatch:
                     smurf_reasons=smurf_reasons,
                 )
             )
+            # Riot not answering yet is no reason to call them Unranked.
+            if not rk.get("ok") and not rk["tier"]:
+                players[-1]["rank"] = ""
 
         map_name = map_name_from_path(map_id)
         score = self.match_score(presences) if state == "INGAME" else None
@@ -2762,6 +2787,34 @@ def _self_check() -> None:
             me = lm.build_lobby([])["players"][0]
             seen.append((me["rankTier"], me["kd"], me["name"], me["form"]))
     check(seen == [(12, 1.4, "Me#1", ["W", "L"])] * 3, seen)
+
+    # A rank the act's entry is missing comes from their latest ranked game,
+    # and one Riot won't give yet stands in from a game in hand.
+    ranker = object.__new__(LiveMatch)
+    ranker.auth = mock.Mock()
+    ranker.auth.pd_get.return_value = {
+        "QueueSkills": {"competitive": {"SeasonalInfoBySeasonID": {}}},
+        "LatestCompetitiveUpdate": {
+            "SeasonID": "s1",
+            "TierAfterUpdate": 15,
+            "RankedRatingAfterUpdate": 40,
+        },
+    }
+    _RANK_CACHE.clear()
+    got = ranker.rank_info("r1", "s1")
+    check((got["ok"], got["tier"], got["rr"]) == (True, 15, 40), got)
+    _RANK_CACHE.clear()
+    ranker.auth.pd_get.return_value = {"errorCode": "RATE_LIMITED", "status": 429}
+    _MIDS_CACHE["r2"] = (["rg"], True, time.time())
+    _MATCH_DETAIL_CACHE.put(
+        "rg",
+        {"matchInfo": {"seasonId": "s1"}, "players": [{"subject": "r2", "competitiveTier": 18}]},
+    )
+    got = ranker.rank_info("r2", "s1")
+    check((got["ok"], got["tier"]) == (False, 18), got)
+    check(ranker.rank_info("r2", "s0")["tier"] == 0, "a game from another act stood in")
+    _MIDS_CACHE.pop("r2")
+    _MATCH_DETAIL_CACHE.clear()
 
     # A name found once isn't asked for again, and one never found still is.
     _NAME_CACHE.clear()

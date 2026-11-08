@@ -33,7 +33,15 @@ from common.jsonstore import data_path, read_json, write_atomic
 from match_cache import MatchCache
 from rounds import buy_habits, habits_of, round_stats
 from smurf import compute_smurf, smurf_evidence
-from vconstants import GAMEMODES, ROUTING, STATES, map_name_from_path, party_color, rank_from_tier
+from vconstants import (
+    GAMEMODES,
+    ROUTING,
+    STATES,
+    map_name_from_path,
+    party_color,
+    rank_from_tier,
+    rr_moved,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -653,6 +661,7 @@ def assemble_player(
     skin: Any = None,
     peak_act: Any = None,
     rr_earned: Any = None,
+    rr_actual: Any = None,
     player_card: Any = None,
     title: Any = None,
     weapons: Any = None,
@@ -683,6 +692,7 @@ def assemble_player(
         "rank": rank["name"],
         "rr": rr,
         "rrEarned": rr_earned,
+        "rrActual": rr_actual,
         "leaderboard": leaderboard or 0,
         "peakRankTier": peak["tier"],
         "peakRank": peak["name"],
@@ -1440,7 +1450,7 @@ class LiveMatch:
                 rr_key = mids[0] if (mids and is_comp) else "nocomp"
                 hit = _RR_CACHE.get(puuid)
                 if hit and hit[1] == rr_key:
-                    entry["rr_earned"] = hit[0]
+                    entry["rr_earned"], entry["rr_actual"] = hit[0], hit[2]
                 else:
                     cu = self.auth.pd_get(
                         f"/mmr/v1/players/{puuid}/competitiveupdates"
@@ -1450,9 +1460,13 @@ class LiveMatch:
                     m = cu.get("Matches", []) if isinstance(cu, dict) else []
                     if m:
                         entry["rr_earned"] = m[0].get("RankedRatingEarned")
+                        entry["rr_actual"] = rr_moved(m[0])
                     if isinstance(cu, dict) and not _is_throttled(cu):
                         _cache_put(
-                            _RR_CACHE, _KD_CACHE_MAX, puuid, (entry.get("rr_earned"), rr_key)
+                            _RR_CACHE,
+                            _KD_CACHE_MAX,
+                            puuid,
+                            (entry.get("rr_earned"), rr_key, entry.get("rr_actual")),
                         )
             except Exception as e:
                 # kd_full stays unset, so the next board sends them back here.
@@ -1756,6 +1770,7 @@ class LiveMatch:
                     weapons=weapons,
                     peak_act=self.act_episode(rk.get("peak_season")),
                     rr_earned=cached.get("rr_earned"),
+                    rr_actual=cached.get("rr_actual"),
                     intel=cached.get("intel"),
                     player_card=valapi.player_card(ident.get("PlayerCardID")),
                     title=valapi.title_text(ident.get("PlayerTitleID")),

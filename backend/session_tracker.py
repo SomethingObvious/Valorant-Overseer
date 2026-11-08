@@ -16,6 +16,7 @@ import history
 import overseerlog
 from common import data_path, read_json, write_atomic
 from common.check import check
+from vconstants import rr_moved
 
 LOG = overseerlog.get_logger("backend")
 
@@ -72,6 +73,7 @@ def _self_rr(lm: Any, match_id: str) -> dict[str, Any]:
             if match.get("MatchID") == match_id:
                 return {
                     "delta": match.get("RankedRatingEarned"),
+                    "actual": rr_moved(match),
                     "tier": match.get("TierAfterUpdate"),
                     "rr": match.get("RankedRatingAfterUpdate"),
                 }
@@ -102,6 +104,7 @@ def _point(lm: Any, board: dict[str, Any]) -> dict[str, Any] | None:
         "result": detail.get("result"),
         "scores": detail.get("scores"),
         "delta": rr.get("delta"),
+        "actual": rr.get("actual"),
         "tier": rr.get("tier"),
         "rr": rr.get("rr"),
         **{k: you.get(k) for k in ("agent", "kills", "deaths", "assists")},
@@ -154,8 +157,16 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
     with _LOCK:
         points = today(_POINTS.get(str(board.get("selfPuuid")), []), time.time())
     deltas = [p["delta"] for p in points if isinstance(p.get("delta"), (int, float))]
-    board["session"] = {"net": sum(deltas), "points": points}
+    board["session"] = {"net": sum(deltas), "actual": actual(points), "points": points}
     return board
+
+
+def actual(points: list[dict[str, Any]]) -> int | None:
+    """How far the session really moved the rating, or None for one too old to say."""
+    moved = [m for p in points if isinstance(m := p.get("actual"), int)]
+    if not points or len(moved) < len(points):
+        return None
+    return sum(moved)
 
 
 if __name__ == "__main__":
@@ -164,4 +175,15 @@ if __name__ == "__main__":
     check(today(played, 14 * hour) == played[1:], today(played, 14 * hour))
     # Six hours on from the last match, the session has ended.
     check(today(played, 19 * hour) == [], today(played, 19 * hour))
+    # A rank up keeps the whole gain, derank protection keeps the rating
+    # where it was, and Immortal counts on without starting over.
+    up = {"TierBeforeUpdate": 12, "RankedRatingBeforeUpdate": 90}
+    check(rr_moved({**up, "TierAfterUpdate": 13, "RankedRatingAfterUpdate": 10}) == 20)
+    held = {"TierBeforeUpdate": 13, "RankedRatingBeforeUpdate": 0}
+    check(rr_moved({**held, "TierAfterUpdate": 13, "RankedRatingAfterUpdate": 0}) == 0)
+    top = {"TierBeforeUpdate": 24, "RankedRatingBeforeUpdate": 95}
+    check(rr_moved({**top, "TierAfterUpdate": 25, "RankedRatingAfterUpdate": 118}) == 23)
+    check(rr_moved({"TierAfterUpdate": 13, "RankedRatingAfterUpdate": 10}) is None)
+    check(actual([{"actual": 20}, {"actual": 0}]) == 20)
+    check(actual([{"actual": 20}, {"delta": -18}]) is None, "an older point can't say")
     print("session_tracker self-check OK")

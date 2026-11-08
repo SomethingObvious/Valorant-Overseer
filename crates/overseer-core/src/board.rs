@@ -211,6 +211,10 @@ pub struct Player {
     /// What the last match did to that rating.
     #[serde(deserialize_with = "number::signed")]
     pub rr_earned: Option<i64>,
+    /// How far the last match really moved them on the ladder, which a rank
+    /// up or derank protection can make differ from the match's figure.
+    #[serde(deserialize_with = "number::signed")]
+    pub rr_actual: Option<i64>,
     /// Their place on the leaderboard, for the ranks that have one.
     #[serde(deserialize_with = "number::whole")]
     pub leaderboard: Option<u32>,
@@ -491,6 +495,9 @@ pub struct SessionPoint {
     /// What it did to the rating.
     #[serde(deserialize_with = "number::signed")]
     pub delta: Option<i64>,
+    /// How far it really moved the rating.
+    #[serde(deserialize_with = "number::signed")]
+    pub actual: Option<i64>,
     /// The rating after it.
     #[serde(deserialize_with = "number::signed")]
     pub rr: Option<i64>,
@@ -503,6 +510,9 @@ pub struct Session {
     /// The sum of the deltas below.
     #[serde(deserialize_with = "number::signed")]
     pub net: Option<i64>,
+    /// How far the session really moved the rating, when every match says.
+    #[serde(deserialize_with = "number::signed")]
+    pub actual: Option<i64>,
     /// One entry per match, oldest first.
     pub points: Vec<SessionPoint>,
 }

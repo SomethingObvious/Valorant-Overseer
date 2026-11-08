@@ -53,11 +53,7 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
     let net = session
         .net
         .unwrap_or_else(|| session.points.iter().filter_map(|p| p.delta).sum());
-    let tint = match net.signum() {
-        1 => colour::GOOD,
-        -1 => colour::BAD,
-        _ => colour::TEXT_DIM,
-    };
+    let tint = signed(net);
     let net_at = caps_text(
         &painter,
         pos2(after.right() + space::LG, y),
@@ -74,6 +70,9 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
         paint::label(),
         colour::TEXT_FAINT,
     );
+    let rr = session.actual.map_or(rr, |moved| {
+        actual(&painter, rr.right() + space::XL, y, moved)
+    });
     let record = record(session);
     let record_at = caps_text(
         &painter,
@@ -90,6 +89,36 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
         record_at.left() - space::XL,
         y,
     );
+}
+
+/// Green for a gain, red for a loss.
+const fn signed(rr: i64) -> egui::Color32 {
+    match rr.signum() {
+        1 => colour::GOOD,
+        -1 => colour::BAD,
+        _ => colour::TEXT_DIM,
+    }
+}
+
+/// Where the ladder really moved over the session, beside the match
+/// figures, which leave out a rank up's bonus and derank protection.
+fn actual(painter: &egui::Painter, x: f32, y: f32, moved: i64) -> Rect {
+    let label = caps_text(
+        painter,
+        pos2(x, y + 2.0),
+        Align2::LEFT_CENTER,
+        "Actual",
+        paint::label(),
+        colour::TEXT_FAINT,
+    );
+    caps_text(
+        painter,
+        pos2(label.right() + space::SM, y),
+        Align2::LEFT_CENTER,
+        &format!("{moved:+}"),
+        Face::Heavy.at(overseer_ui::size::TITLE),
+        signed(moved),
+    )
 }
 
 /// One slanted block per match, oldest left, in the colour of what it did

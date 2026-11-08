@@ -1782,7 +1782,7 @@ mod tests {
         let spots = [
             ("NeonLock#VAL", (200.0, 186.0), "an enemy's row"),
             ("Day#9932", (191.0, 601.0), "your own row"),
-            ("Day#9932", (882.0, 257.0), "the panel's reads"),
+            ("Day#9932", (954.0, 257.0), "the panel's reads"),
             ("Day#9932", (880.0, 505.0), "a stat"),
         ];
         for (name, (x, y), what) in spots {

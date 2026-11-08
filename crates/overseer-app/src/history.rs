@@ -386,7 +386,12 @@ const SCORE_WIDE: f32 = 88.0;
 /// column from the strip's end, and left out when it would reach `limit`.
 fn right(painter: &egui::Painter, rect: Rect, game: &Game, (limit, is_open): (f32, bool)) {
     let end = rect.right() - space::LG;
-    chevron(painter, pos2(end - 5.0, rect.center().y), is_open);
+    chevron(
+        painter,
+        pos2(end - 5.0, rect.center().y),
+        is_open,
+        colour::TEXT_DIM,
+    );
     let rr = end - 10.0 - space::XXL;
     let acs = rr - RR_WIDE - space::XL;
     let line_at = acs - ACS_WIDE - space::XL;
@@ -505,8 +510,8 @@ fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
 }
 
 /// A small arrow that points down under an open strip and right otherwise.
-fn chevron(painter: &egui::Painter, c: Pos2, open: bool) {
-    let stroke = Stroke::new(1.4, colour::TEXT_DIM);
+pub(crate) fn chevron(painter: &egui::Painter, c: Pos2, open: bool, tint: Color32) {
+    let stroke = Stroke::new(1.4, tint);
     let points = if open {
         vec![
             c + vec2(-5.0, -2.5),

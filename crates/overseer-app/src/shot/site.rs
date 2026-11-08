@@ -342,19 +342,61 @@ fn vexlyn(p: &mut Player) {
         ),
     ];
     p.scout = Some(scout());
-    p.brief = [
-        "Opening kill/death involvement: 24% · 412 rounds · peers 15%",
-        "Gun-kill range: 2,140 map units · 211 kills · peers 1,630 map units",
-        "Rounds with Operator: 14% · 412 rounds · peers 4%",
-        "Death timing: 31s · 284 deaths · peers 38s",
-        "Spike plants: 19% · 206 attack rounds · peers 21%",
+    p.brief = all_figures();
+}
+
+/// The lines under All Figures, worded the way the backend words them.
+fn all_figures() -> Vec<overseer_core::BriefLine> {
+    [
+        (
+            "tendency",
+            true,
+            "Opening kill/death involvement",
+            "24% vs peers' 15% · 412 rounds",
+        ),
+        (
+            "tendency",
+            true,
+            "Gun-kill range",
+            "2,140 vs peers' 1,630 map units · 211 kills",
+        ),
+        (
+            "tendency",
+            true,
+            "Rounds with Operator",
+            "14% vs peers' 4% · 412 rounds",
+        ),
+        (
+            "tendency",
+            false,
+            "Death timing",
+            "31s vs peers' 38s · 284 deaths",
+        ),
+        (
+            "tendency",
+            false,
+            "Spike plants",
+            "19% vs peers' 21% · 206 attack rounds",
+        ),
+        (
+            "buy",
+            false,
+            "Pistol: Ghost 22/36 · light armor 25/36",
+            "Avg spend 780 vs 690",
+        ),
+        ("record", false, "Recent agents: Clove 15/18, Omen 3/18", ""),
     ]
     .into_iter()
-    .map(|text| overseer_core::BriefLine {
-        text: Some(text.to_owned()),
-        ..overseer_core::BriefLine::default()
-    })
-    .collect();
+    .map(
+        |(kind, flag, headline, evidence)| overseer_core::BriefLine {
+            kind: Some(kind.to_owned()),
+            flag,
+            headline: Some(headline.to_owned()),
+            evidence: Some(evidence.to_owned()),
+            ..overseer_core::BriefLine::default()
+        },
+    )
+    .collect()
 }
 
 /// The selected enemy's Scout section, worded the way the backend words it:
@@ -369,7 +411,7 @@ fn scout() -> overseer_core::Scout {
             pos: Some(1.4 * (pct - 0.5) / 0.4),
             left: Some(ends.0.to_owned()),
             right: Some(ends.1.to_owned()),
-            share: Some(format!("{}th pct", (pct * 100.0).round())),
+            share: Some(format!("{}th", (pct * 100.0).round())),
             ..overseer_core::ScoutFinding::default()
         }
     };
@@ -377,7 +419,7 @@ fn scout() -> overseer_core::Scout {
         title: Some("Scout".to_owned()),
         tag: Some(finding(
             "Aggressive",
-            "more aggressive than 86% of peers · 18 games",
+            "More aggressive than 86% of peers · 18 games",
             "",
             0.86,
             ("passive", "aggressive"),
@@ -385,14 +427,14 @@ fn scout() -> overseer_core::Scout {
         habits: vec![
             finding(
                 "Takes the first fight",
-                "in the opening fight more than 89% of peers · 24% vs 15% · 18 games",
+                "In the opening fight more than 89% of peers · 24% vs 15% · 18 games",
                 "Set up a trade for the opening.",
                 0.89,
                 ("stays out", "takes fights"),
             ),
             finding(
                 "Fights at long range",
-                "kills from further than 81% of peers · 16/18 games",
+                "Kills from further than 81% of peers · 16/18 games",
                 "Use utility before a long peek.",
                 0.81,
                 ("close", "long range"),

@@ -45,6 +45,39 @@ const INITIAL_SIZE: [f32; 2] = [1280.0, 800.0];
 /// Below this the board cannot draw a row without wrapping it.
 const MINIMUM_SIZE: [f32; 2] = [520.0, 360.0];
 
+/// How many panics a session writes down. A frame that panics every time
+/// would otherwise add a backtrace sixty times a second.
+const PANICS_KEPT: usize = 20;
+
+/// Writes a panic to `.overseer\window-crash.log`. The window has no
+/// console, so a panic otherwise closes it with nothing said anywhere.
+fn keep_panics(root: &Path) {
+    static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let log = root.join(".overseer").join("window-crash.log");
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= PANICS_KEPT {
+            return;
+        }
+        let when = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let entry = format!(
+            "{when} v{} {info}\n{}\n",
+            env!("CARGO_PKG_VERSION"),
+            std::backtrace::Backtrace::force_capture()
+        );
+        drop(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log)
+                .and_then(|mut file| std::io::Write::write_all(&mut file, entry.as_bytes())),
+        );
+        before(info);
+    }));
+}
+
 fn main() -> eframe::Result {
     // The video process, which plays lineup clips in the window named after
     // the flag, and nothing else.
@@ -53,6 +86,7 @@ fn main() -> eframe::Result {
         std::process::exit(overseer_native::serve(parent));
     }
     let root = install_root();
+    keep_panics(&root);
     if std::env::args().any(|a| a == "--probe") {
         probe::report(&root);
         return Ok(());

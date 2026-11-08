@@ -546,10 +546,14 @@ fn reach(draft: &Draft) -> Option<(f64, f64)> {
 /// No From is the start of the video and no To is its end.
 fn kept(draft: &Draft) -> Option<(f64, f64)> {
     let total = draft.measure.length?;
-    let start = super::seconds(&draft.from).unwrap_or(0.0).clamp(0.0, total);
+    let start = super::seconds(&draft.from)
+        .unwrap_or(0.0)
+        .min(total)
+        .max(0.0);
     let end = super::seconds(&draft.to)
         .unwrap_or(total)
-        .clamp(start, total);
+        .min(total)
+        .max(start);
     Some((start, end))
 }
 

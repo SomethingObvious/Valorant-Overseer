@@ -10,7 +10,7 @@ use crate::board::{self, Side};
 use crate::career::{self, Career};
 use crate::notes::{self, Notes};
 use overseer_ui::{
-    Face, art, caps_at, caps_text, caps_width, colour, hex, motion, rank, shape, size, space,
+    Face, art, caps, caps_at, caps_text, caps_width, colour, hex, motion, rank, shape, size, space,
 };
 
 /// Where a value starts, so labels and values have a spine down the middle.
@@ -307,8 +307,8 @@ fn invite(ui: &mut Ui) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A faint line like Write a Note's that opens what is under it, and says
-/// whether it is open. The state is kept under `id` for the session.
+/// A faint caps label after the history's arrow that opens what is under
+/// it, and says whether it is open. The state is kept under `id` for the session.
 fn disclosure(ui: &mut Ui, id: egui::Id, label: &str) -> bool {
     let open = ui.data(|store| store.get_temp::<bool>(id)).unwrap_or(false);
     let (rect, response) =
@@ -321,11 +321,18 @@ fn disclosure(ui: &mut Ui, id: egui::Id, label: &str) -> bool {
         } else {
             colour::TEXT_DIM
         };
-        ui.painter().text(
-            pos2(rect.left() + space::LG, rect.center().y),
+        crate::history::chevron(
+            ui.painter(),
+            pos2(rect.left() + space::LG + 5.0, rect.center().y),
+            open,
+            tint,
+        );
+        caps_at(
+            ui.painter(),
+            pos2(rect.left() + space::LG + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
-            format!("{} {label}", if open { "-" } else { "+" }),
-            Face::Body.at(size::MICRO),
+            label,
+            Face::Display.at(size::LABEL),
             tint,
         );
     }
@@ -865,7 +872,7 @@ fn brief(ui: &mut Ui, player: &Player) {
     // Their pace in a word, with where they sit among peers on the curve.
     if let Some(tag) = &scout.tag {
         if let Some(word) = tag.headline.as_deref() {
-            line(ui, word, colour::TEXT_STRONG, size::TITLE);
+            caps_line(ui, word, Face::Display.at(size::TITLE), colour::TEXT_STRONG);
         }
         placed(ui, tag);
         ui.add_space(space::MD);
@@ -874,7 +881,7 @@ fn brief(ui: &mut Ui, player: &Player) {
     // of the card, every readable player.
     for habit in &scout.habits {
         if let Some(words) = habit.headline.as_deref() {
-            line(ui, words, colour::TEXT_STRONG, size::BODY);
+            caps_line(ui, words, Face::Display.at(size::BODY), colour::TEXT_STRONG);
         }
         placed(ui, habit);
         if let Some(suggest) = habit.suggest.as_deref().filter(|s| !s.is_empty()) {
@@ -891,7 +898,7 @@ fn brief(ui: &mut Ui, player: &Player) {
     // the guns, the armor. History, never a forecast.
     if let Some(buy) = &scout.buy {
         if let Some(label) = buy.label.as_deref() {
-            line(ui, label, colour::TEXT_DIM, size::MICRO);
+            subheading(ui, label, colour::TEXT_DIM);
         }
         if buy.items.is_empty() {
             if let Some(guns) = buy.guns.as_deref() {
@@ -919,13 +926,61 @@ fn brief(ui: &mut Ui, player: &Player) {
             .id()
             .with(("all-figures", player.puuid.as_deref().unwrap_or("")));
         if disclosure(ui, id, "All Figures") {
-            for text in player.brief.iter().filter_map(|l| l.text.as_deref()) {
-                line(ui, text, colour::TEXT_DIM, size::MICRO);
-            }
+            all_figures(ui, &player.brief);
         }
     }
     if let Some(footer) = scout.footer.as_deref() {
         line(ui, footer, colour::TEXT_FAINT, size::MICRO);
+    }
+}
+
+/// Evidence with each short figure kept on one row, so "18 games" never
+/// splits and the dot stays with what it follows. A long phrase can still
+/// wrap between its words.
+fn held(text: &str) -> String {
+    text.split(" · ")
+        .map(|part| {
+            if part.chars().count() <= 20 {
+                part.replace(' ', "\u{a0}")
+            } else {
+                part.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\u{a0}· ")
+}
+
+/// Every line the brief composed, grouped by what it measures: each one's
+/// words, brighter when it stands out from peers, and its figures under it.
+fn all_figures(ui: &mut Ui, lines: &[overseer_core::BriefLine]) {
+    const GROUPS: [&str; 3] = ["Against Peers", "Buys", "On Record"];
+    let group = |line: &overseer_core::BriefLine| match line.kind.as_deref() {
+        Some("tendency" | "positional" | "style") => 0,
+        Some("buy" | "forecast") => 1,
+        _ => 2,
+    };
+    for (at, name) in GROUPS.iter().enumerate() {
+        let mut rows = lines.iter().filter(|l| group(l) == at).peekable();
+        if rows.peek().is_none() {
+            continue;
+        }
+        subheading(ui, name, colour::TEXT_FAINT);
+        for row in rows {
+            let words = row
+                .headline
+                .as_deref()
+                .or(row.text.as_deref())
+                .unwrap_or("");
+            let tint = if row.flag {
+                colour::TEXT_STRONG
+            } else {
+                colour::TEXT
+            };
+            line(ui, words, tint, size::LABEL);
+            if let Some(evidence) = row.evidence.as_deref().filter(|s| !s.is_empty()) {
+                line(ui, &held(evidence), colour::TEXT_DIM, size::MICRO);
+            }
+        }
     }
 }
 
@@ -968,10 +1023,10 @@ fn placed(ui: &mut Ui, found: &overseer_core::ScoutFinding) {
                 },
             );
             if !evidence.is_empty() {
-                line(ui, evidence, colour::TEXT_DIM, size::MICRO);
+                line(ui, &held(evidence), colour::TEXT_DIM, size::MICRO);
             }
         }
-        None if !evidence.is_empty() => line(ui, evidence, colour::TEXT_DIM, size::MICRO),
+        None if !evidence.is_empty() => line(ui, &held(evidence), colour::TEXT_DIM, size::MICRO),
         None => {}
     }
 }
@@ -1143,7 +1198,8 @@ fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32
         let half = galley.size().x / 2.0;
         let x = frame
             .x_at(mark)
-            .clamp(frame.left + half, frame.left + frame.width - half);
+            .min(frame.left + frame.width - half)
+            .max(frame.left + half);
         painter.galley(
             pos2(
                 x - half,
@@ -1243,10 +1299,10 @@ fn gun_row(ui: &mut Ui, items: &[overseer_core::ScoutGun]) {
 /// what it allows, when there is one.
 fn finding(ui: &mut Ui, found: &overseer_core::ScoutFinding, tint: Color32, points: f32) {
     if let Some(words) = found.headline.as_deref() {
-        line(ui, words, tint, points);
+        caps_line(ui, words, Face::Display.at(points), tint);
     }
     if let Some(evidence) = found.evidence.as_deref().filter(|s| !s.is_empty()) {
-        line(ui, evidence, colour::TEXT_DIM, size::MICRO);
+        line(ui, &held(evidence), colour::TEXT_DIM, size::MICRO);
     }
     if let Some(suggest) = found.suggest.as_deref().filter(|s| !s.is_empty()) {
         line(ui, suggest, colour::TEXT, size::LABEL);
@@ -1819,13 +1875,20 @@ fn heading_tinted(ui: &mut Ui, text: &str, tint: Color32) {
 /// One line of prose, at the panel's left margin. Text wider than the panel
 /// wraps, and every row past the first makes the line that much taller.
 pub(crate) fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
+    let job = egui::text::LayoutJob::simple(text.to_owned(), Face::Body.at(points), tint, 0.0);
+    laid(ui, job, tint);
+}
+
+/// A caps label that wraps like [`line()`], for headings too long for one row.
+fn caps_line(ui: &mut Ui, text: &str, font: egui::FontId, tint: Color32) {
+    laid(ui, caps(text, font, tint), tint);
+}
+
+/// Sets a laid-out line at the left margin, wrapped to the panel.
+fn laid(ui: &mut Ui, mut job: egui::text::LayoutJob, tint: Color32) {
     let width = ui.available_width();
-    let galley = ui.painter().layout(
-        text.to_owned(),
-        Face::Body.at(points),
-        tint,
-        2.0f32.mul_add(-space::LG, width),
-    );
+    job.wrap.max_width = 2.0f32.mul_add(-space::LG, width);
+    let galley = ui.painter().layout_job(job);
     let first = galley.rows.first().map_or(0.0, |row| row.rect().height());
     let (rect, _response) = ui.allocate_exact_size(
         vec2(width, space::XL + galley.size().y - first),
@@ -1891,8 +1954,17 @@ mod tests {
     use egui_kittest::kittest::Queryable as _;
     use overseer_core::Player;
 
-    use super::Notes;
+    use super::{Notes, held};
     use crate::notes::Note;
+
+    /// A count splitting from its word left "games" alone on a row.
+    #[test]
+    fn short_figures_stay_on_one_row() {
+        assert_eq!(
+            held("In the opening fight more than 89% of peers · 24% vs 15% · 18 games"),
+            "In the opening fight more than 89% of peers\u{a0}· 24%\u{a0}vs\u{a0}15%\u{a0}· 18\u{a0}games",
+        );
+    }
 
     /// The boxes are redrawn from the store every frame, so a keystroke not
     /// written back on the same frame vanishes.

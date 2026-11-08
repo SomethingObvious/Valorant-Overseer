@@ -18,7 +18,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import brief
 import refresh
@@ -34,6 +34,9 @@ from match_cache import MatchCache
 from rounds import buy_habits, habits_of, round_stats
 from smurf import compute_smurf, smurf_evidence
 from vconstants import GAMEMODES, ROUTING, STATES, map_name_from_path, party_color, rank_from_tier
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def _mode_label(queue: str) -> str:
@@ -361,8 +364,34 @@ def _reading(rows: list[tuple[str, int | None]]) -> dict[str, Any] | None:
 
 
 def _deeper_at() -> float:
-    # When a deeper read held back by Riot's budget is worth trying again.
-    return time.time() + max(1.0, riot_client.budget_wait(background=True))
+    # When a deeper read held back by Riot's budget, or by a lockout, is
+    # worth trying again.
+    wait = max(
+        riot_client.budget_wait(background=True),
+        riot_client.held_secs("/match-details/v1/matches/"),
+    )
+    return time.time() + max(1.0, wait)
+
+
+# Match details being fetched right now, so two rows reading a game they
+# played together ask Riot for it once.
+_FETCHING: dict[str, threading.Lock] = {}
+_FETCHING_LOCK = threading.Lock()
+# How many times a deeper read Riot held back goes again before the pass
+# moves on to the next row.
+_DEEP_TRIES = 5
+
+
+@contextlib.contextmanager
+def _fetching(mid: str) -> Iterator[None]:
+    with _FETCHING_LOCK:
+        lock = _FETCHING.setdefault(mid, threading.Lock())
+    with lock:
+        try:
+            yield
+        finally:
+            with _FETCHING_LOCK:
+                _FETCHING.pop(mid, None)
 
 
 def _note_state(state: str) -> None:
@@ -1178,6 +1207,10 @@ class LiveMatch:
                 return cached[0]
 
             def fetch_detail(mid: str) -> Any:
+                with _fetching(mid):
+                    return read_detail(mid)
+
+            def read_detail(mid: str) -> Any:
                 hit = _MATCH_DETAIL_CACHE.get(mid)
                 if hit is not None:
                     return hit
@@ -1364,8 +1397,8 @@ class LiveMatch:
                 refresh.soon()
 
         def _deepen(puuid: str) -> bool:
-            # One step toward the depth. True when Riot held it back, which
-            # ends the pass for now.
+            # One step toward the depth. True when Riot held it back, and the
+            # pass waits for room before it goes again.
             entry = _CACHE.get(f"{match_id}:{puuid}")
             if match_id in _ENDED:
                 return True
@@ -1395,10 +1428,17 @@ class LiveMatch:
                 # Once everybody has five, every row takes a step further
                 # back before any takes the next, one player at a time, so
                 # the rows fill out together without a burst Riot would
-                # throttle.
+                # throttle. A step held back waits for room here rather than
+                # for the board's next build, which is up to 15 seconds away
+                # in a match.
                 for _rung in GAMES_READ:
-                    if any(_deepen(puuid) for puuid in puuids):
-                        break
+                    for puuid in puuids:
+                        for _try in range(_DEEP_TRIES):
+                            if not _deepen(puuid):
+                                break
+                            if match_id in _ENDED:
+                                return
+                            time.sleep(max(0.0, _deeper_at() - time.time()))
             finally:
                 with _KD_FILL_LOCK:
                     _KD_FILLING.discard(match_id)

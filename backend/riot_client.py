@@ -165,14 +165,16 @@ def _take_token(bucket: dict[str, Any], burst: float, rps: float) -> None:
 # Riot lets about 60 match and history lookups through in any minute, then
 # locks them all out for a minute (measured October 2026: 60 to 66 at any
 # speed, then Retry-After 60). Staying under that never costs the lockout.
-# The limit is learned. A lockout lowers it to what got through and saves it,
-# and ten minutes spent held at it raise it by one, so a change on Riot's side
-# costs one lockout rather than one a minute.
+# The limit is learned. A lockout lowers it a little under what got through
+# and saves it. Below where it starts, each minute held at it without one
+# raises it by one, and above that it takes ten, since probing near the real
+# limit costs a lockout and a lockout costs a whole minute.
 _BUDGET_FILE = data_path("riot_budget.json")
 _BUDGET_MAX = 60
 _BUDGET_MIN = 10
+_BUDGET_START = 55
 _BUDGET_CLEAN = 10
-_BUDGET: dict[str, Any] = {"limit": 55, "window": 60.0}
+_BUDGET: dict[str, Any] = {"limit": _BUDGET_START, "window": 60.0}
 _BUDGET_SEEN: dict[str, Any] = {
     "loaded": False,
     "clean": 0,
@@ -233,7 +235,8 @@ def _budget_room(now: float, *, background: bool, urgent: bool = False) -> float
         # A minute held at the limit with no lockout says it may be low.
         _BUDGET_SEEN["counted_at"] = now
         _BUDGET_SEEN["clean"] += 1
-        if _BUDGET_SEEN["clean"] >= _BUDGET_CLEAN and limit < _BUDGET_MAX:
+        need = 1 if limit < _BUDGET_START else _BUDGET_CLEAN
+        if _BUDGET_SEEN["clean"] >= need and limit < _BUDGET_MAX:
             _BUDGET.update(limit=limit + 1)
             _BUDGET_SEEN["clean"] = 0
             write_atomic(_BUDGET_FILE, _BUDGET, prefix="riot_budget")
@@ -283,9 +286,12 @@ def budget_eta(lookups: int) -> float:
 
 
 def _budget_lockout(retry_after: float) -> None:
-    # Riot counted more than this side did, so the limit drops to what got
-    # through, by 5 at least and 15 at most, and is kept for next time. The
-    # lookups in flight all come back 429 together, and that is one lockout.
+    # Riot counted more than this side did, so the limit drops to a little
+    # under what got through, by 2 at least and 8 at most, and is kept for
+    # next time. The game itself spends the same allowance, so what this side
+    # counted can be well short of Riot's limit, and a deep cut on that took
+    # hours to climb back. The lookups in flight all come back 429 together,
+    # and that is one lockout.
     with _RIOT_RATE_LOCK:
         _budget_load()
         now = time.time()
@@ -294,7 +300,7 @@ def _budget_lockout(retry_after: float) -> None:
         _BUDGET_SEEN["locked_at"] = now
         limit = int(_BUDGET["limit"])
         got = len(_SENT)
-        new = max(_BUDGET_MIN, min(limit, max(got, limit - 10)) - 5)
+        new = max(_BUDGET_MIN, min(limit, max(got, limit - 6)) - 2)
         window = min(300.0, max(float(_BUDGET["window"]), retry_after))
         _BUDGET.update(limit=new, window=window)
         _BUDGET_SEEN["clean"] = 0
@@ -766,22 +772,37 @@ def _self_check() -> None:
         check(_budget_take(background=False, urgent=True) == 0)
         _BUDGET_SEEN["urgent"] = 0
         _SENT.clear()
-        # A lockout after 18 lowers the limit to 13 and keeps it.
+        # A lockout after 18 of 20 lowers the limit to 16 and keeps it, and
+        # one after only 5 lowers it by 8, not to 3.
         _SENT.extend([now] * 18)
         _budget_lockout(60.0)
         _budget_lockout(60.0)
-        check(_BUDGET["limit"] == 13, _BUDGET)
-        check(read_json(f"{tmp}/b.json", {}).get("limit") == 13)
+        check(_BUDGET["limit"] == 16, _BUDGET)
+        check(read_json(f"{tmp}/b.json", {}).get("limit") == 16)
         _BUDGET_SEEN["loaded"] = False
         _BUDGET.update(limit=50)
         _budget_load()
-        check(_BUDGET["limit"] == 13, "a saved limit wasn't read back")
-        # Ten minutes held at it without a lockout raise it by one.
+        check(_BUDGET["limit"] == 16, "a saved limit wasn't read back")
         _SENT.clear()
-        _SENT.extend([now] * 13)
-        _BUDGET_SEEN.update(clean=_BUDGET_CLEAN - 1, counted_at=0.0)
+        _SENT.extend([now] * 5)
+        _BUDGET_SEEN["locked_at"] = 0.0
+        _BUDGET.update(limit=30)
+        _budget_lockout(60.0)
+        check(_BUDGET["limit"] == 22, _BUDGET)
+        # Under where it started, a minute held at it without a lockout
+        # raises it by one. Above, it takes ten.
+        _SENT.clear()
+        _SENT.extend([now] * 22)
+        _BUDGET_SEEN.update(clean=0, counted_at=0.0)
         check(_budget_take(background=False) > 0)
-        check(_BUDGET["limit"] == 14, _BUDGET)
+        check(_BUDGET["limit"] == 23, _BUDGET)
+        _BUDGET.update(limit=_BUDGET_START)
+        _SENT.clear()
+        _SENT.extend([now] * _BUDGET_START)
+        _BUDGET_SEEN.update(clean=0, counted_at=0.0)
+        check(_budget_take(background=False) > 0)
+        check(_BUDGET["limit"] == _BUDGET_START, _BUDGET)
+        _BUDGET.update(limit=14)
         # The finish is read off the minute: what fits now is done in a
         # second, and the rest waits for places to free up, a minute apart.
         _SENT.clear()

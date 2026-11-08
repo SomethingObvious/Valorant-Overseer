@@ -185,7 +185,6 @@ fn parties() -> Board {
     let party = |number: u32, size: u32| Party {
         number: Some(number),
         size: Some(size),
-        ..Party::default()
     };
     let mut players = vec![
         player("p1", "Five#A", "Red", "Jett", 18),

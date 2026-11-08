@@ -16,7 +16,7 @@ import history
 import overseerlog
 from common import data_path, read_json, write_atomic
 from common.check import check
-from vconstants import rr_moved
+from vconstants import ladder_place, rr_moved
 
 LOG = overseerlog.get_logger("backend")
 
@@ -26,6 +26,11 @@ _GAP = 6 * 3600
 _MAX_POINTS = 40
 
 _STATE: dict[str, Any] = {"prev_state": None, "ingame_board": None, "recorded": set()}
+# Where each account stood on the ladder and when it was read. A dodge costs
+# rating without a match to show for it, so only a fresh read catches it.
+_STANDING: dict[str, tuple[int, float]] = {}
+# Riot takes a moment to charge a dodge.
+_DODGE_WAIT = 20
 
 
 def _load() -> dict[str, list[dict[str, Any]]]:
@@ -127,14 +132,46 @@ def _record(lm: Any, board: dict[str, Any]) -> None:
                 points.append(point)
                 del points[:-_MAX_POINTS]
                 _save()
+            at = ladder_place(point.get("tier"), point.get("rr"))
+            if at is not None:
+                _STANDING[str(point["puuid"])] = (at, time.time())
     except Exception:
         LOG.exception("recording match %s failed", board.get("matchId"))
+
+
+def _read_standing(lm: Any, wait: float = 0) -> None:
+    """Read where you stand on the ladder now, from your current act's rank."""
+    time.sleep(wait)
+    try:
+        season = lm.season_id()
+        r = lm.auth.pd_get(f"/mmr/v1/players/{lm.self_puuid}")
+        acts = (((r or {}).get("QueueSkills") or {}).get("competitive") or {}).get(
+            "SeasonalInfoBySeasonID"
+        ) or {}
+        cur = (acts.get(season) or {}) if season else {}
+        at = ladder_place(cur.get("CompetitiveTier"), cur.get("RankedRating"))
+        if at is not None:
+            with _LOCK:
+                _STANDING[str(lm.self_puuid)] = (at, time.time())
+    except Exception as e:
+        LOG.warning("standing lookup failed: %r", e)
 
 
 def observe(board: dict[str, Any], lm: Any) -> None:
     """Follow a board's state, and record a match's result once it ends."""
     state = board.get("state")
     prev, _STATE["prev_state"] = _STATE["prev_state"], state
+    me = str(getattr(lm, "self_puuid", None) or "")
+    # Once at the start, so a dodge made while the app was closed counts, and
+    # again after agent select ends without a match.
+    asked = _STATE.setdefault("asked", set())
+    dodged = prev == "PREGAME" and state == "MENUS"
+    if me and (dodged or me not in asked):
+        asked.add(me)
+        wait = _DODGE_WAIT if dodged else 0
+        threading.Thread(
+            target=_read_standing, args=(lm, wait), daemon=True, name="standing"
+        ).start()
     if state == "INGAME" and board.get("matchId"):
         _STATE["ingame_board"] = board
         return
@@ -153,19 +190,33 @@ def observe(board: dict[str, Any], lm: Any) -> None:
 
 def attach(board: dict[str, Any]) -> dict[str, Any]:
     """Add today's session to a board."""
+    me = str(board.get("selfPuuid"))
     with _LOCK:
-        points = today(_POINTS.get(str(board.get("selfPuuid")), []), time.time())
+        points = today(_POINTS.get(me, []), time.time())
+        standing = _STANDING.get(me)
     deltas = [p["delta"] for p in points if isinstance(p.get("delta"), (int, float))]
-    board["session"] = {"net": sum(deltas), "actual": actual(points), "points": points}
+    board["session"] = {"net": sum(deltas), "actual": actual(points, standing), "points": points}
     return board
 
 
-def actual(points: list[dict[str, Any]]) -> int | None:
-    """How far the session really moved the rating, or None for one too old to say."""
-    moved = [m for p in points if isinstance(m := p.get("actual"), int)]
-    if not points or len(moved) < len(points):
+def actual(points: list[dict[str, Any]], standing: tuple[int, float] | None = None) -> int | None:
+    """How far the session really moved the rating, or None for one too old to say.
+
+    It runs from where the first match started to where the rating stands
+    now, so a dodge between or after the matches counts too. A standing read
+    before the last match is older than that match's own result.
+    """
+    if not points:
         return None
-    return sum(moved)
+    first, last = points[0], points[-1]
+    after_first = ladder_place(first.get("tier"), first.get("rr"))
+    moved = first.get("actual")
+    if after_first is None or not isinstance(moved, int):
+        return None
+    end = ladder_place(last.get("tier"), last.get("rr"))
+    if standing and standing[1] >= float(last.get("ts") or 0):
+        end = standing[0]
+    return None if end is None else end - (after_first - moved)
 
 
 if __name__ == "__main__":
@@ -183,6 +234,13 @@ if __name__ == "__main__":
     top = {"TierBeforeUpdate": 24, "RankedRatingBeforeUpdate": 95}
     check(rr_moved({**top, "TierAfterUpdate": 25, "RankedRatingAfterUpdate": 118}) == 23)
     check(rr_moved({"TierAfterUpdate": 13, "RankedRatingAfterUpdate": 10}) is None)
-    check(actual([{"actual": 20}, {"actual": 0}]) == 20)
-    check(actual([{"actual": 20}, {"delta": -18}]) is None, "an older point can't say")
+    # Gold 1 at 50, won 20, dodged for 3, then lost 15 and dodged again.
+    won = {"ts": 100, "tier": 12, "rr": 70, "actual": 20}
+    lost = {"ts": 200, "tier": 12, "rr": 52, "actual": -15}
+    check(actual([won]) == 20)
+    check(actual([won, lost]) == 2, "a dodge between matches counts")
+    check(actual([won, lost], (1240, 150)) == 2, "a read older than the last match is ignored")
+    check(actual([won, lost], (1249, 300)) == -1, "a dodge after the last match counts")
+    check(actual([{"ts": 1, "delta": -18}]) is None, "an older point can't say")
+    check(actual([]) is None)
     print("session_tracker self-check OK")

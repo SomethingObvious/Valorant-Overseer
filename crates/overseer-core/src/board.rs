@@ -51,10 +51,6 @@ pub struct WeaponSkin {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Party {
-    /// Riot's own id for the group.
-    pub id: Option<String>,
-    /// Which of the coloured rails this party gets.
-    pub color: Option<String>,
     /// First party, second party, and so on down the board.
     #[serde(deserialize_with = "number::whole")]
     pub number: Option<u32>,
@@ -310,8 +306,6 @@ pub struct ScoutFinding {
     pub evidence: Option<String>,
     /// What to do about it, when there is something to do.
     pub suggest: Option<String>,
-    /// The share of peers below them, for the curve.
-    pub pct: Option<f32>,
     /// Their position in standard deviations of peers' means, for the curve.
     pub pos: Option<f32>,
     /// What the left end of the curve means.
@@ -468,19 +462,11 @@ pub struct TeamStats {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SessionPoint {
-    /// Which map it was on.
-    pub map: Option<String>,
     /// Victory, Defeat or Draw, in Riot's words.
     pub result: Option<String>,
     /// What it did to the rating.
     #[serde(deserialize_with = "number::signed")]
     pub delta: Option<i64>,
-    /// How far it really moved the rating.
-    #[serde(deserialize_with = "number::signed")]
-    pub actual: Option<i64>,
-    /// The rating after it.
-    #[serde(deserialize_with = "number::signed")]
-    pub rr: Option<i64>,
 }
 
 /// Today, in ranked rating.
@@ -490,7 +476,7 @@ pub struct Session {
     /// The sum of the deltas below.
     #[serde(deserialize_with = "number::signed")]
     pub net: Option<i64>,
-    /// How far the session really moved the rating, when every match says.
+    /// How far the session really moved the rating, dodges included.
     #[serde(deserialize_with = "number::signed")]
     pub actual: Option<i64>,
     /// One entry per match, oldest first.

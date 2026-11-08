@@ -141,13 +141,9 @@ pub(crate) fn sample() -> Board {
             actual: Some(53),
             points: ["W", "W", "L", "W", "L", "W"]
                 .iter()
-                .enumerate()
-                .map(|(i, result)| overseer_core::SessionPoint {
-                    map: Some("Icebox".to_owned()),
+                .map(|result| overseer_core::SessionPoint {
                     result: Some(if *result == "W" { "Victory" } else { "Defeat" }.to_owned()),
                     delta: Some(if *result == "W" { 19 } else { -16 }),
-                    actual: None,
-                    rr: Some(40 + i64::try_from(i).unwrap_or(0) * 6),
                 })
                 .collect(),
         }),
@@ -279,8 +275,6 @@ fn more_enemies() -> Vec<Player> {
 /// The party Riot says two enemy accounts queued in.
 fn duo() -> overseer_core::Party {
     overseer_core::Party {
-        id: Some("p1".to_owned()),
-        color: Some("#5A9FE1".to_owned()),
         number: Some(1),
         size: Some(2),
     }
@@ -344,7 +338,6 @@ fn smurf_ally() -> Player {
         party: Some(overseer_core::Party {
             number: Some(1),
             size: Some(2),
-            ..overseer_core::Party::default()
         }),
         weapons: vec![overseer_core::WeaponSkin {
             weapon: Some("Vandal".to_owned()),
@@ -494,7 +487,6 @@ fn plain() -> Vec<Player> {
             party: Some(overseer_core::Party {
                 number: Some(1),
                 size: Some(2),
-                ..overseer_core::Party::default()
             }),
             ..Player::default()
         },

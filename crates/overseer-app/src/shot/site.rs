@@ -420,7 +420,6 @@ fn scout() -> overseer_core::Scout {
             headline: Some(headline.to_owned()),
             evidence: Some(evidence.to_owned()),
             suggest: Some(suggest.to_owned()),
-            pct: Some(pct),
             pos: Some(1.4 * (pct - 0.5) / 0.4),
             left: Some(ends.0.to_owned()),
             right: Some(ends.1.to_owned()),

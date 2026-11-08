@@ -55,14 +55,18 @@ on the same agent in the same rank band. It names their pace, like Aggressive,
 and up to two habits that stand out, each on a curve of those peers with a tip
 for playing against it. It also guesses what they'll buy on this kind of round
 from the rounds like it they've played, and All Figures opens every line it
-worked out. Games and Within in Settings pick how many recent games each row
+worked out. A habit that stands out also shows as a tag on their row, and Tags
+in Settings sets which kind of tag comes first and hides any kind or word you
+don't want. Games and Within in Settings pick how many recent games each row
 reads (5, 10 or 20) and how old they can be.
 
 Under the board, the ladder lays the lobby's ranks out as a strip of plates
 that brighten toward the top of each rank. Your team sits below it and the
 other team above, each face framed in its team's colour, and faces that land
 close together overlap a little instead of hiding each other. Your session's
-RR keeps count of the night beneath it.
+RR keeps count of the night beneath it, and beside it how far your rating really
+moved, which can differ from the matches' own figures after a rank up, derank
+protection or a dodge.
 
 Your match history shows each game's score with a Victory or Defeat chip under
 it, your K/D/A, ACS and the RR you won or lost. Open one for the full

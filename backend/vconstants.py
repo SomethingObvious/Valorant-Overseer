@@ -111,15 +111,16 @@ def rr_moved(update: dict[str, Any]) -> int | None:
     is where they stood on the whole ladder after it less where they stood
     before. None when Riot left either end out.
     """
-
-    def place(tier: Any, rr: Any) -> int | None:
-        if not isinstance(tier, int) or not isinstance(rr, int) or tier < 3:
-            return None
-        return min(tier, IMMORTAL) * 100 + rr
-
-    before = place(update.get("TierBeforeUpdate"), update.get("RankedRatingBeforeUpdate"))
-    after = place(update.get("TierAfterUpdate"), update.get("RankedRatingAfterUpdate"))
+    before = ladder_place(update.get("TierBeforeUpdate"), update.get("RankedRatingBeforeUpdate"))
+    after = ladder_place(update.get("TierAfterUpdate"), update.get("RankedRatingAfterUpdate"))
     return None if before is None or after is None else after - before
+
+
+def ladder_place(tier: Any, rr: Any) -> int | None:
+    """Where a rank and rating sit on the whole ladder, or None for unranked."""
+    if not isinstance(tier, int) or not isinstance(rr, int) or tier < 3:
+        return None
+    return min(tier, IMMORTAL) * 100 + rr
 
 
 def map_name_from_path(map_id: str) -> str:

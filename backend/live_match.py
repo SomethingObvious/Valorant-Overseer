@@ -29,7 +29,7 @@ from agents import UUID_TO_NAME, resolve_agent
 from career import STANDARD_QUEUES, career_mids, career_summary, form_streak, rating_run
 from common import console_logger
 from common.check import check
-from common.jsonstore import data_path
+from common.jsonstore import data_path, read_json, write_atomic
 from match_cache import MatchCache
 from rounds import buy_habits, habits_of, round_stats
 from smurf import compute_smurf, smurf_evidence
@@ -392,6 +392,61 @@ def _fetching(mid: str) -> Iterator[None]:
         finally:
             with _FETCHING_LOCK:
                 _FETCHING.pop(mid, None)
+
+
+# The match being played, so a window closed and opened again in the middle
+# of it shows every row at once instead of reading the whole lobby again.
+_SAVED_FILE = data_path("current-match.json")
+_SAVED_SECS = 3 * 3600.0
+_SAVED_META = ("names", "loadouts", "loadouts_for", "parties")
+_SAVED_TEXT = {"text": ""}
+
+
+def _save_match(match_id: str, puuids: list[str]) -> None:
+    keys = {p: f"{match_id}:{p}" for p in puuids}
+    meta = _MATCH_META.get(match_id) or {}
+    snap = {
+        "match": match_id,
+        "meta": {k: meta[k] for k in _SAVED_META if k in meta},
+        "rows": {p: _CACHE[k] for p, k in keys.items() if k in _CACHE},
+        "levels": {p: _LEVEL_CACHE[p] for p in puuids if p in _LEVEL_CACHE},
+        "mids": {p: _MIDS_CACHE[p] for p in puuids if p in _MIDS_CACHE},
+    }
+    try:
+        text = json.dumps(snap, sort_keys=True)
+    except (TypeError, ValueError, RuntimeError) as e:
+        # A fill thread changing a row mid-dump is the RuntimeError, and the
+        # next board saves it.
+        _log(f"couldn't save the match: {type(e).__name__}: {e}")
+        return
+    if text == _SAVED_TEXT["text"]:
+        return
+    if write_atomic(_SAVED_FILE, {**json.loads(text), "at": time.time()}, prefix="match-"):
+        _SAVED_TEXT["text"] = text
+
+
+def _restore_match(match_id: str) -> dict[str, Any]:
+    # Returns the match's meta, after putting its rows back where the board
+    # looks for them.
+    saved = read_json(_SAVED_FILE, {})
+    if not isinstance(saved, dict) or saved.get("match") != match_id:
+        return {}
+    try:
+        if time.time() - float(saved.get("at") or 0) > _SAVED_SECS:
+            return {}
+        rows = {p: e for p, e in (saved.get("rows") or {}).items() if isinstance(e, dict)}
+        for puuid, entry in rows.items():
+            _cache_put(_CACHE, _KD_CACHE_MAX, f"{match_id}:{puuid}", entry)
+        for puuid, level in (saved.get("levels") or {}).items():
+            _cache_put(_LEVEL_CACHE, _KD_CACHE_MAX, puuid, int(level))
+        for puuid, (mids, comp, at) in (saved.get("mids") or {}).items():
+            _MIDS_CACHE.setdefault(puuid, (list(mids), bool(comp), float(at)))
+        meta = saved.get("meta") or {}
+    except (TypeError, ValueError, AttributeError) as e:
+        _log(f"couldn't read the saved match: {type(e).__name__}: {e}")
+        return {}
+    _log(f"picked up match {match_id[:8]} where it was left, {len(rows)} rows")
+    return {k: meta[k] for k in _SAVED_META if k in meta}
 
 
 def _note_state(state: str) -> None:
@@ -1502,7 +1557,7 @@ class LiveMatch:
         if match_id not in _MATCH_META:
             _ENDED.update(_MATCH_META)
             _MATCH_META.clear()
-            _MATCH_META[match_id] = {}
+            _MATCH_META[match_id] = _restore_match(match_id)
         # A state blip that looked like the end of it is not.
         _ENDED.discard(match_id)
         meta = _MATCH_META[match_id]
@@ -1529,7 +1584,9 @@ class LiveMatch:
         team_of = {p["Subject"]: p.get("TeamID") for p in raw_players}
         pmap = self.party_map(puuids, presences)
         taken = {m for ms in pmap.values() for m in ms}
-        for pid, ms in _history_parties(puuids, team_of).items():
+        # Kept in meta, since the games they come from aren't saved with it.
+        meta["parties"] = {**meta.get("parties", {}), **_history_parties(puuids, team_of)}
+        for pid, ms in meta["parties"].items():
             if not taken & set(ms):
                 pmap[pid] = ms
                 taken.update(ms)
@@ -1709,6 +1766,7 @@ class LiveMatch:
                 rows.append((puuid, None))
             # Otherwise Riot had nothing on them, and there is nothing to wait for.
         board["reading"] = _reading(rows)
+        _save_match(match_id, puuids)
 
         _LAST_BOARD["board"] = board
         _LAST_BOARD["at"] = time.time()
@@ -2821,9 +2879,10 @@ def _self_check() -> None:
 
     _check_kept_limits()
     _check_brief_positions()
+    _check_saved_match()
 
     print(
-        "live_match self-check OK (sides, career cached, party games kept, "
+        "live_match self-check OK (sides, career cached, party games kept, match picked up, "
         "failed lookups retried, name service over TLS)"
     )
 
@@ -2908,6 +2967,46 @@ def _check_brief_positions() -> None:
     check(_READS_CACHE[f"{mid}:p0"] == expected, "measured before the positions went")
     check(slimmed["roundResults"][0]["playerStats"][0]["kills"][0]["playerLocations"], "kept whole")
     _READS_CACHE.clear()
+
+
+def _check_saved_match() -> None:
+    """Check that a window opened again mid-match picks its rows up from disk."""
+    import tempfile
+    from unittest import mock
+
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        mock.patch(f"{__name__}._SAVED_FILE", f"{tmp}/m.json"),
+    ):
+        entry = {"rk": {"tier": 20}, "kd": 1.2, "kd_done": True, "kd_full": True, "deep": 20}
+        _CACHE["live:a"] = dict(entry)
+        _MATCH_META["live"] = {
+            "names": {"a": "A#1"},
+            "parties": {"d": ["a", "b"]},
+            "name_retry_at": 5,
+        }
+        _LEVEL_CACHE["a"] = 40
+        _MIDS_CACHE["a"] = (["g1"], True, 7.0)
+        _save_match("live", ["a", "b"])
+        check(Path(f"{tmp}/m.json").exists(), "the match wasn't saved")
+        stamp = read_json(f"{tmp}/m.json", {})["at"]
+        _save_match("live", ["a", "b"])
+        check(read_json(f"{tmp}/m.json", {})["at"] == stamp, "an unchanged match was written again")
+        _CACHE.pop("live:a")
+        _MATCH_META.pop("live")
+        _LEVEL_CACHE.pop("a")
+        _MIDS_CACHE.pop("a")
+        check(_restore_match("other") == {}, "another match's rows came back")
+        check("other:a" not in _CACHE)
+        meta = _restore_match("live")
+        check(meta == {"names": {"a": "A#1"}, "parties": {"d": ["a", "b"]}}, meta)
+        check(_CACHE.get("live:a") == entry, _CACHE.get("live:a"))
+        check(_LEVEL_CACHE.get("a") == 40 and _MIDS_CACHE.get("a") == (["g1"], True, 7.0))
+        Path(f"{tmp}/m.json").write_text("{not json", encoding="utf-8")
+        check(_restore_match("live") == {}, "a broken file is a fresh start")
+        _CACHE.pop("live:a")
+        _LEVEL_CACHE.pop("a")
+        _MIDS_CACHE.pop("a")
 
 
 def _check_kept_limits() -> None:

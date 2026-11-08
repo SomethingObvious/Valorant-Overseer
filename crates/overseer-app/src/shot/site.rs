@@ -330,16 +330,26 @@ fn vexlyn(p: &mut Player) {
             )
         },
         tag(
-            "entry",
-            "In the round's first fight 97 times in 412 rounds, won 61",
-            "Duels",
-        ),
-        tag("hot", "Won their last 4", "Form"),
-        tag(
             "forces",
             "Bought a gun after 6 of 8 lost pistol rounds",
             "Economy",
         ),
+        tag(
+            "entry",
+            "In the round's first fight 97 times in 412 rounds, won 61",
+            "Duels",
+        ),
+        tag(
+            "aggressive",
+            "Takes fights sooner than 89% of peers",
+            "Scout",
+        ),
+        tag(
+            "first bloods",
+            "Opens with a kill more than 93% of peers",
+            "Scout",
+        ),
+        tag("hot", "Won their last 4", "Form"),
     ];
     p.scout = Some(scout());
     p.brief = all_figures();
@@ -600,7 +610,7 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     vec![
         ("board", vec2(1600.0, 980.0), board()),
         // The same board, tall enough for the whole of Vexlyn's panel.
-        ("panel", vec2(1600.0, 1500.0), board()),
+        ("panel", vec2(1600.0, 1000.0), board()),
         (
             "pregame",
             vec2(1600.0, 955.0),

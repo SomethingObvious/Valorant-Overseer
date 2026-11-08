@@ -821,8 +821,8 @@ const COPIED: &str = "overseer-copied";
 /// How long the footer says a copy worked, in seconds.
 const SAID: f64 = 1.8;
 
-/// Every tag the backend worked out, as wrapping chips with the reason on
-/// hover.
+/// Every tag the backend worked out, a row per kind with its name on the
+/// left, so a long list reads in pieces. The reason shows on hover.
 fn reads(ui: &mut Ui, player: &Player, side: Side) {
     let tags: Vec<(&str, &overseer_core::AutoTag)> = player
         .auto_tags
@@ -833,32 +833,37 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
         return;
     }
     heading(ui, "Reads");
-    let font = Face::Display.at(size::MICRO + 1.0);
-    let left = ui.max_rect().left() + space::LG;
-    let right = ui.max_rect().right() - space::LG;
-    let mut spots = Vec::with_capacity(tags.len());
-    let (mut x, mut row) = (left, 0.0_f32);
-    for (tag, whole) in tags {
-        let wide = 2.0f32.mul_add(space::MD, caps_width(ui.painter(), tag, font.clone()));
-        if x + wide > right && x > left {
-            x = left;
-            row += 1.0;
-        }
-        spots.push((row, x, wide, tag, whole));
-        x += wide + space::SM;
-    }
-    let (rect, _response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), (row + 1.0) * CHIP_ROW),
-        Sense::hover(),
+    let laid = rows(
+        ui.painter(),
+        &kinds(&tags),
+        ui.available_width() - space::LG,
     );
+    let (rect, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), laid.height), Sense::hover());
+    let shift = vec2(rect.left() + space::LG, rect.top());
     let painter = ui.painter().clone();
-    let mut chips = Vec::with_capacity(spots.len());
-    let mut on = None;
-    for (row, x, wide, tag, whole) in spots {
-        let chip = Rect::from_min_size(
-            pos2(x, row.mul_add(CHIP_ROW, rect.top()) + 2.0),
-            vec2(wide, 18.0),
+    for y in &laid.rules {
+        painter.hline(
+            rect.left() + space::LG..=rect.right() - space::LG,
+            rect.top() + y,
+            egui::Stroke::new(1.0, colour::LINE),
         );
+    }
+    for (at, kind) in &laid.labels {
+        let _label = caps_text(
+            &painter,
+            *at + shift,
+            Align2::LEFT_CENTER,
+            kind,
+            Face::Display.at(size::MICRO),
+            colour::HINT,
+        );
+    }
+    let font = Face::Display.at(size::MICRO + 1.0);
+    let mut chips = Vec::with_capacity(laid.chips.len());
+    let mut on = None;
+    for (chip, tag, whole) in laid.chips {
+        let chip = chip.translate(shift);
         if ui
             .interact(chip, ui.id().with(("read", tag)), Sense::hover())
             .hovered()
@@ -885,6 +890,72 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
             board::tip::auto(ui, whole, board::paint::win(side));
         });
     }
+}
+
+/// One kind of tag and its words, in the order the row shows them.
+type Group<'a> = (&'a str, Vec<(&'a str, &'a overseer_core::AutoTag)>);
+
+/// The tags in runs of one kind each. They come sorted by kind, so a run
+/// ends where the kind changes, and a kind with no tags has no run.
+fn kinds<'a>(tags: &[(&'a str, &'a overseer_core::AutoTag)]) -> Vec<Group<'a>> {
+    let mut out: Vec<Group<'a>> = Vec::new();
+    for &(tag, whole) in tags {
+        let kind = whole.kind.as_deref().unwrap_or("Other");
+        match out.last_mut() {
+            Some((last, words)) if last.eq_ignore_ascii_case(kind) => words.push((tag, whole)),
+            _ => out.push((kind, vec![(tag, whole)])),
+        }
+    }
+    out
+}
+
+/// Where the Reads rows go, measured from their top left corner.
+#[derive(Default)]
+struct Laid<'a> {
+    /// Each chip, with its word and the tag behind it.
+    chips: Vec<(Rect, &'a str, &'a overseer_core::AutoTag)>,
+    /// Each kind's name, by its left middle.
+    labels: Vec<(egui::Pos2, &'a str)>,
+    /// The lines between kinds, by their height.
+    rules: Vec<f32>,
+    /// How tall the rows are.
+    height: f32,
+}
+
+/// How wide the kind names' column is.
+const KIND_COLUMN: f32 = 72.0;
+
+/// One row per kind: its name on the left, its words wrapping beside it and
+/// a line between kinds.
+fn rows<'a>(painter: &egui::Painter, groups: &[Group<'a>], right: f32) -> Laid<'a> {
+    let font = Face::Display.at(size::MICRO + 1.0);
+    let mut laid = Laid::default();
+    let mut y = 0.0;
+    for (at, (kind, words)) in groups.iter().enumerate() {
+        if at > 0 {
+            laid.rules.push(y + 3.0);
+            y += 6.0;
+        }
+        laid.labels.push((pos2(0.0, y + 11.0), kind));
+        let (mut x, mut row) = (KIND_COLUMN, 0.0_f32);
+        for &(tag, whole) in words {
+            let wide = 2.0f32.mul_add(space::MD, caps_width(painter, tag, font.clone()));
+            if x + wide > right && x > KIND_COLUMN {
+                x = KIND_COLUMN;
+                row += 1.0;
+            }
+            let top = row.mul_add(CHIP_ROW, y) + 2.0;
+            laid.chips.push((
+                Rect::from_min_size(pos2(x, top), vec2(wide, 18.0)),
+                tag,
+                whole,
+            ));
+            x += wide + space::SM;
+        }
+        y = (row + 1.0).mul_add(CHIP_ROW, y);
+    }
+    laid.height = y;
+    laid
 }
 
 /// The scouting brief: at most two lines that earned their place, each the
@@ -2117,6 +2188,23 @@ mod tests {
 
     use super::{Notes, held};
     use crate::notes::Note;
+
+    /// Each kind the player has gets one row, whatever case it comes in, and
+    /// a kind they have no tag of gets none.
+    #[test]
+    fn reads_take_a_row_per_kind_they_have() {
+        let tag = |kind: &str| overseer_core::AutoTag {
+            kind: Some(kind.to_owned()),
+            ..overseer_core::AutoTag::default()
+        };
+        let (op, marshal, hot) = (tag("weapon"), tag("Weapon"), tag("Form"));
+        let tags = [("op", &op), ("marshal", &marshal), ("hot", &hot)];
+        let rows: Vec<(&str, usize)> = super::kinds(&tags)
+            .iter()
+            .map(|(kind, words)| (*kind, words.len()))
+            .collect();
+        assert_eq!(rows, [("weapon", 2), ("Form", 1)]);
+    }
 
     /// A count splitting from its word left "games" alone on a row.
     #[test]

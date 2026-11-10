@@ -444,21 +444,17 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                     games = past_games.recent(LocalAuth(), owner, count)
                 except Exception:
                     # Riot didn't answer, which offline is the usual case.
-                    # The last games kept stand in, and say how old they are.
-                    kept = past_games.last_kept(owner)
+                    # The saved games stand in, and say how old they are.
+                    kept = past_games.saved(owner, count)
                     if kept is None:
                         raise
                     LOG.warning(
-                        "history: Riot didn't answer, sending the kept games", exc_info=True
+                        "history: Riot didn't answer, sending the saved games", exc_info=True
                     )
                     return kept
-                # Only a whole answer replaces the games kept for when Riot
-                # can't be asked.
-                if not games.get("partial"):
-                    past_games.keep_last(owner, games)
                 return games
             if client.source_pref != "demo":
-                return past_games.last_kept(None) or {
+                return past_games.saved(None, count) or {
                     "error": "Open VALORANT and sign in to see your past games."
                 }
             return sample_match.history(count)
@@ -489,6 +485,10 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
             if client.source_pref == "demo":
                 return {"ok": False}
             return art.fetch(params.get("kind"), params.get("name"))
+
+        if req_type == "refresh":
+            refresh.soon()
+            return {}
 
         if req_type == "newest":
             # Demo mode never reaches out, so a demo can't say anything about

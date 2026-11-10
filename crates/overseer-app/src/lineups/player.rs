@@ -44,8 +44,6 @@ pub(crate) const SPEEDS: [f32; 7] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 /// How long, in seconds, a paused clip's controls stay after the pointer
 /// leaves.
 const LINGER: f64 = 2.0;
-/// How long, in seconds, the controls take to fade away.
-const FADE_OUT: f32 = 0.6;
 
 /// How tall the bar over the bottom of the video is.
 const STRIP: f32 = 46.0;
@@ -948,21 +946,13 @@ impl Player {
             || self.scrub.is_some()
             || egui::Popup::is_id_open(ui.ctx(), id.with("speed"));
         let near = busy || self.lingers(ui.ctx(), id, busy);
-        // Quick to come up under the pointer, slow to go, so leaving reads as
-        // the bar settling away rather than being switched off.
-        let fade = ui.ctx().animate_bool_with_time(
-            id.with("fade"),
-            near,
-            overseer_ui::motion::lasting(ui.ctx(), if near { 0.15 } else { FADE_OUT }),
-        );
+        let fade = ui.ctx().animate_bool(id.with("fade"), near);
         if ui.is_rect_visible(rect) {
             self.picture(ui.painter(), rect);
-            // The video's strip comes back with the fade, not all at once
-            // when the bar is gone.
             if fade > 0.0
                 && let Some((_, seen, _)) = &mut self.spot
             {
-                seen.max.y = seen.max.y.min(STRIP.mul_add(-fade, rect.bottom()));
+                seen.max.y = seen.max.y.min(rect.bottom() - STRIP);
             }
             if !self.playing() && self.video().is_none() {
                 mark(ui.painter(), rect.center(), video.hovered());

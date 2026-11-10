@@ -8,7 +8,6 @@ first fetch and asking again costs one history call.
 from __future__ import annotations
 
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -136,6 +135,12 @@ def view(board: dict[str, Any], puuid: str, deltas: dict[str, int]) -> dict[str,
     return game
 
 
+def keep(auth: Any, match_id: str) -> None:
+    """Save a match's scoreboard as it ends, so History has it with VALORANT closed."""
+    if _ID.match(match_id):
+        _safely(auth, match_id)
+
+
 def _safely(auth: Any, match_id: str) -> dict[str, Any] | None:
     """Return `_board`, or None when the request failed, so one lost game isn't all of them."""
     try:
@@ -185,24 +190,40 @@ def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
     return out
 
 
-# The last answer `recent` gave, for the History screen when Riot can't be
-# asked: no client signed in, or no connection.
-_LAST = data_path("history-last.json")
+def saved(puuid: str | None, count: int) -> dict[str, Any] | None:
+    """Your newest `count` games from the disk cache, for when Riot can't be asked.
 
-
-def keep_last(puuid: str, answer: dict[str, Any]) -> None:
-    """Keep `answer` as the last good one for `puuid`."""
-    write_atomic(_LAST, {"puuid": puuid, "at": time.time(), "answer": answer}, prefix=".history-")
-
-
-def last_kept(puuid: str | None) -> dict[str, Any] | None:
-    """Return `puuid`'s last answer, or whoever's with None, and `savedAt` saying when."""
-    kept = read_json(_LAST, {})
-    if not isinstance(kept, dict) or not isinstance(kept.get("answer"), dict):
+    With no account signed in, the player in the most saved games is you.
+    `savedAt` is when the newest of them ended. None with nothing saved.
+    """
+    count = max(1, min(MOST, count))
+    files = sorted(_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    # Saved as they were first looked at, so the newest files hold the newest
+    # games, with room for some looked at out of order.
+    boards = [
+        b
+        for f in files[: count * 3]
+        if isinstance(b := read_json(str(f), None), dict) and b.get("players") and b.get("matchId")
+    ]
+    if not puuid:
+        seen: dict[str, int] = {}
+        for board in boards:
+            for player in board["players"]:
+                seen[player.get("puuid")] = seen.get(player.get("puuid"), 0) + 1
+        puuid = max(seen, key=lambda p: seen[p]) if seen else None
+    mine = [b for b in boards if any(p.get("puuid") == puuid for p in b["players"])]
+    if not puuid or not mine:
         return None
-    if puuid and kept.get("puuid") != puuid:
-        return None
-    return {**kept["answer"], "savedAt": kept.get("at")}
+    mine.sort(key=lambda b: b.get("startedAt") or 0, reverse=True)
+    mine = mine[:count]
+    deltas = history.deltas(puuid)
+    newest = mine[0]
+    ended = ((newest.get("startedAt") or 0) + (newest.get("lengthMs") or 0)) / 1000
+    return {
+        "games": [view(b, puuid, deltas) for b in mine],
+        "asked": count,
+        "savedAt": ended or None,
+    }
 
 
 def _self_check() -> None:
@@ -275,18 +296,34 @@ def _self_check() -> None:
         check(details == [f"/match-details/v1/matches/{ids[1]}"], details)
         check(again["games"][0]["result"] == "Defeat")
 
-    # The last answer comes back marked, for its own account only.
+    # Offline, the saved games come back newest first, yours only, and with
+    # nobody signed in the player in most of them is taken to be you.
     with (
         tempfile.TemporaryDirectory() as tmp,
-        mock.patch(f"{__name__}._LAST", str(Path(tmp) / "last.json")),
+        mock.patch.object(history, "deltas", return_value={}),
+        mock.patch(f"{__name__}._DIR", Path(tmp)),
     ):
-        check(last_kept("me") is None, "nothing kept yet")
-        keep_last("me", {"games": [{"matchId": "m"}], "asked": 5})
-        kept = last_kept("me")
-        check(kept is not None and kept["games"] == [{"matchId": "m"}] and kept["savedAt"], kept)
-        check(last_kept(None) == kept, "whoever was signed in last")
-        check(last_kept("someone else") is None, "not another account's")
-    print("past_games self-check OK (scoreboard, your side, disk cache, throttling, last kept)")
+        check(saved("me", 5) is None, "nothing saved yet")
+
+        def game(mid: str, at: int, *who: str) -> None:
+            board = {
+                "matchId": mid,
+                "startedAt": at,
+                "lengthMs": 1000,
+                "teams": [],
+                "players": [{"puuid": p, "team": "Blue"} for p in who],
+            }
+            write_atomic(str(Path(tmp) / f"{mid}.json"), board, prefix=".game-")
+
+        game("old", 1000, "me", "a")
+        game("new", 5000, "me", "b")
+        game("theirs", 9000, "c")
+        mine = saved("me", 5)
+        check(mine is not None and [g["matchId"] for g in mine["games"]] == ["new", "old"], mine)
+        check(mine is not None and mine["savedAt"] == 6.0, mine)
+        check(saved(None, 5) == mine, "the player in most games is you")
+        check(saved("someone else", 5) is None, "not another account's")
+    print("past_games self-check OK (scoreboard, your side, disk cache, throttling, saved)")
 
 
 if __name__ == "__main__":

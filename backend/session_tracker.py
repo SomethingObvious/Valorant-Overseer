@@ -16,6 +16,7 @@ from typing import Any
 import encounter_log
 import history
 import overseerlog
+import past_games
 from common import data_path, read_json, write_atomic
 from common.check import check
 from vconstants import ladder_place, rr_moved
@@ -221,6 +222,7 @@ def _record(lm: Any, board: dict[str, Any]) -> None:
             return
         encounter_log.record_result(board, point.get("result"))
         history.record(point)
+        past_games.keep(lm.auth, str(point["matchId"]))
         if (point.get("mode") or "").lower() != "competitive":
             return
         with _LOCK:

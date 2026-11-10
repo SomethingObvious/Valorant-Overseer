@@ -258,7 +258,7 @@ impl History {
                 Some("There are no games on this account yet.".to_owned())
             }
             Past::Have(games) if games.saved_at.is_some() => Some(format!(
-                "Overseer can't reach Riot right now, so these are your games from {}.",
+                "VALORANT isn't open or Riot can't be reached, so these are your saved games. The newest ended {}.",
                 kept_ago(now_ms, games.saved_at)
             )),
             Past::Have(games) if games.partial => Some(format!(

@@ -1399,7 +1399,7 @@ impl Overseer {
 
     /// The masthead: the match as a scorebug, the connection, and the
     /// window's own buttons. Says which of those was pressed.
-    fn header(&self, ui: &mut Ui, edge: bool) -> Option<header::Chrome> {
+    fn header(&self, ui: &mut Ui, edge: bool) -> (Option<header::Chrome>, bool) {
         header::draw(
             ui,
             &header::Masthead {
@@ -1439,11 +1439,17 @@ impl Overseer {
         let (radius, tint, word, why) = match (&self.stopped, &self.status) {
             (Some(why), _) => (3.0, colour::ENEMY, "Stopped", why.clone()),
             (None, Status::Lost(why)) => (3.0, colour::ENEMY, "Reconnecting", why.clone()),
+            (None, Status::Live) if self.board.state.as_deref() == Some("OFFLINE") => (
+                3.0,
+                colour::TEXT_FAINT,
+                "",
+                "VALORANT isn't running. History and Lineups still work from what's saved. Click to look for it again now.".to_owned(),
+            ),
             (None, Status::Live) => (
                 3.0,
                 colour::ALLY,
                 "",
-                "Connected to VALORANT. The board follows the game as it changes.".to_owned(),
+                "Connected to VALORANT. The board follows the game as it changes. Click to read it again now.".to_owned(),
             ),
             (None, Status::Connecting(detail)) => (2.0, colour::WARN, "Connecting", detail.clone()),
         };

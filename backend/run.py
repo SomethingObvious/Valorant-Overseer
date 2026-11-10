@@ -537,20 +537,17 @@ def choose_port(preferred: str | int, label: str) -> int:
     )
 
 
-def wait_bridge(launch_id: str, pid: int, timeout: float) -> bool:
+def wait_bridge(launch_id: str, timeout: float) -> bool:
     """Wait for the backend to publish .overseer/bridge.json for this launch."""
     # The file survives from the previous run, so it only counts once it names
     # this launch. The launch id is what matches: the venv's python.exe
     # re-execs, so the pid handed to Popen is not the pid the backend reports.
-    # The pid still matches a backend too old to write a launch id.
     bridge = OVERSEER_DIR / "bridge.json"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             data = json.loads(bridge.read_text(encoding="utf-8"))
-            if int(data.get("wsPort", 0)) > 0 and (
-                (launch_id and data.get("launchId") == launch_id) or int(data.get("pid", 0)) == pid
-            ):
+            if int(data.get("wsPort", 0)) > 0 and data.get("launchId") == launch_id:
                 return True
         except (OSError, ValueError, TypeError, AttributeError):
             # Missing, or not this launch's yet. Keep polling.
@@ -750,7 +747,7 @@ def main() -> None:
             stderr=subprocess.STDOUT if log is not None else None,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        if not wait_bridge(launch_id, proc.pid, 40):
+        if not wait_bridge(launch_id, 40):
             forget_runtime()
             LOG.error("VG-BACKEND-001 backend did not start; last output:\n%s", tail_backend_log())
             die("VG-BACKEND-001", f"The backend didn't start. {details}")
@@ -826,15 +823,11 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
 
         # A file left by the previous launch must not count as this one.
         _bridge(wsPort=7878, pid=4242, launchId="an-older-launch")
-        check(not wait_bridge("mine", 999, 1.2), "a stale bridge was accepted")
-
-        # And a backend too old to write one still matches on pid.
-        _bridge(wsPort=7878, pid=999)
-        check(wait_bridge("mine", 999, 1.2), "the pid fallback was not matched")
+        check(not wait_bridge("mine", 1.2), "a stale bridge was accepted")
 
         # A bridge with no port is not a bridge.
         _bridge(wsPort=0, pid=999, launchId="mine")
-        check(not wait_bridge("mine", 999, 1.2), "a portless bridge was accepted")
+        check(not wait_bridge("mine", 1.2), "a portless bridge was accepted")
 
         # A runtime is checked again once any package in it changes.
         _site = Path(_tmp) / "venv" / "Lib" / "site-packages"
@@ -875,7 +868,7 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     )
     try:
         check(
-            wait_bridge(_launch, _proc.pid, 45),
+            wait_bridge(_launch, 45),
             "the launcher did not recognise a backend it started itself",
         )
     finally:

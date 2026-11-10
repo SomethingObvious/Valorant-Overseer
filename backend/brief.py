@@ -503,7 +503,6 @@ def match_reads(
     return {
         "match_id": str(info.get("matchId") or ""),
         "map": str((map_name or valapi.map_by_url)(str(info.get("mapId") or "")) or ""),
-        "started_ms": int(info.get("gameStartMillis") or 0),
         "agent": UUID_TO_NAME.get(str(me.get("characterId") or "").lower()),
         "tier": me.get("competitiveTier"),
         "party_size": parties[str(party)] if party else None,

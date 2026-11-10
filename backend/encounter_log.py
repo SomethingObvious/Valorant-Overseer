@@ -41,17 +41,14 @@ _LOCK = threading.RLock()
 
 
 def _empty_store() -> dict[str, Any]:
-    return {"version": 2, "accounts": {}, "discardedLegacyPlayers": 0}
+    return {"version": 2, "accounts": {}}
 
 
 def _load() -> dict[str, Any]:
     raw = read_json(_PATH, None)
     if isinstance(raw, dict) and raw.get("version") == 2 and isinstance(raw.get("accounts"), dict):
         return raw
-    out = _empty_store()
-    if isinstance(raw, dict):
-        out["discardedLegacyPlayers"] = sum(isinstance(v, dict) for v in raw.values())
-    return out
+    return _empty_store()
 
 
 def _save() -> None:

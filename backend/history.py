@@ -25,51 +25,19 @@ _REFRESH_TTL = 600.0
 _refresh_at: dict[str, float] = {}
 
 
-def _empty_store() -> dict[str, Any]:
-    return {"version": 3, "accounts": {}, "discardedOrphanPoints": 0}
-
-
-def _normalise_store(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        return _empty_store()
-    version = raw.get("version")
-    if version == 3 and isinstance(raw.get("accounts"), dict):
-        out = _empty_store()
-        out.update(raw)
-        return out
-    if version == 2 and isinstance(raw.get("accounts"), dict):
-        out = _empty_store()
-        discarded = len(raw.get("legacyPoints") or [])
-        for puuid, account in raw["accounts"].items():
-            if not puuid or not isinstance(account, dict):
-                continue
-            points = account.get("points") or []
-            kept = [p for p in points if isinstance(p, dict) and p.get("source") != "legacy"]
-            discarded += len(points) - len(kept)
-            out["accounts"][puuid] = {**account, "points": kept}
-        out["discardedOrphanPoints"] = discarded
-        return out
-    out = _empty_store()
-    out["discardedOrphanPoints"] = len(raw.get("points") or [])
-    return out
-
-
 def _load(raw: Any) -> dict[str, Any]:
-    try:
-        return _normalise_store(raw)
-    except TypeError as e:
-        LOG.warning("%s parsed, but not as rr history, starting empty: %r", _PATH, e)
-        return _empty_store()
+    if isinstance(raw, dict) and raw.get("version") == 3 and isinstance(raw.get("accounts"), dict):
+        return raw
+    if raw is not None:
+        LOG.warning("%s parsed, but not as rr history, starting empty", _PATH)
+    return {"version": 3, "accounts": {}}
 
 
 def _save() -> None:
     write_atomic(_PATH, _STORE, prefix=".rrhist-")
 
 
-_raw = read_json(_PATH, None)
-_STORE = _load(_raw)
-if isinstance(_raw, dict) and _raw.get("version") != 3:
-    _save()
+_STORE = _load(read_json(_PATH, None))
 
 
 def _quality(point: dict[str, Any]) -> int:

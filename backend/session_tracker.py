@@ -58,8 +58,7 @@ def _load() -> dict[str, list[dict[str, Any]]]:
     for puuid, account in (accounts or {}).items():
         if not isinstance(account, dict):
             continue
-        # Files from older versions keep the points under "active".
-        points = account.get("points", (account.get("active") or {}).get("points"))
+        points = account.get("points")
         if isinstance(points, list):
             out[str(puuid)] = [p for p in points if isinstance(p, dict)][-_MAX_POINTS:]
     return out

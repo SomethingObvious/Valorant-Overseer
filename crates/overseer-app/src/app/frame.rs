@@ -1,6 +1,7 @@
 //! Everything inside the window's frame, laid out once a frame.
 
 use egui::{CentralPanel, Panel, Ui};
+use overseer_core::Status;
 
 use crate::board;
 use crate::header;
@@ -35,7 +36,7 @@ impl Overseer {
         self.appear(ui, now);
 
         let chrome = egui::Frame::NONE.fill(colour::BG);
-        let pressed = Panel::top("header")
+        let (pressed, refresh) = Panel::top("header")
             .exact_size(header::HEIGHT)
             .frame(egui::Frame::NONE.fill(colour::BG_RAISED))
             .show(ui, |ui| self.header(ui, edge))
@@ -47,6 +48,9 @@ impl Overseer {
             .inner;
         if let Some(pressed) = pressed {
             self.chrome(ui.ctx(), pressed);
+        }
+        if refresh && self.status == Status::Live {
+            let _asked = self.bridge.ask("refresh", serde_json::Value::Null);
         }
         if let Some(hint) = clicked {
             self.perform(ui.ctx(), hint);

@@ -44,13 +44,14 @@ pub(crate) struct Light {
     pub(crate) why: String,
 }
 
-/// Draws the masthead, and says which button was pressed.
-pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> Option<Chrome> {
+/// Draws the masthead, and says which button was pressed and whether the
+/// connection light was clicked.
+pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> (Option<Chrome>, bool) {
     let (rect, bar) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT), Sense::click_and_drag());
     let pressed = (!head.edge && chrome::drag(ui, &bar)).then_some(Chrome::Maximize);
     if !ui.is_rect_visible(rect) {
-        return pressed;
+        return (pressed, false);
     }
     let painter = ui.painter().clone();
     backdrop(&painter, rect, head.board.map.as_deref());
@@ -77,19 +78,22 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> Option<Chrome> {
         &head.light,
         head.still,
     );
-    let spoken = ui.interact(
-        Rect::from_x_y_ranges(right..=buttons_at, rect.y_range()),
-        ui.id().with("connection"),
-        Sense::hover(),
-    );
+    let spoken = ui
+        .interact(
+            Rect::from_x_y_ranges(right..=buttons_at, rect.y_range()),
+            ui.id().with("connection"),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     spoken.widget_info(|| {
         let said = match (head.light.word, head.light.why.as_str()) {
             ("", _) => "Connected".to_owned(),
             (word, "") => word.to_owned(),
             (word, why) => format!("{word}. {why}"),
         };
-        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said)
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, said)
     });
+    let refresh = spoken.clicked();
     if !head.light.why.is_empty() {
         let _why = spoken.on_hover_text(&head.light.why);
     }
@@ -102,7 +106,7 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> Option<Chrome> {
         right,
     );
     score(&painter, head, rect.center().x, middle, (left, right));
-    clicked.or(pressed)
+    (clicked.or(pressed), refresh)
 }
 
 /// The map, dimmed, under a ramp that keeps the title side dark enough to

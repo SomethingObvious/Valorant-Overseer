@@ -736,9 +736,12 @@ pub fn install_fonts(ctx: &egui::Context) {
 /// Inter at 700, registered behind the Barlow faces.
 const BOLD_FALLBACK: &str = "overseer-bold-fallback";
 
-/// Windows' own bold faces for Hangul, kana, Han and Thai names, read from its
-/// font folder because bundling them would add fifty megabytes to the binary.
-const SCRIPTS: [Script; 4] = [
+/// Windows' own bold faces for scripts Inter lacks, read from its font folder
+/// because bundling them would add fifty megabytes to the binary. Segoe UI
+/// covers Arabic, Hebrew, Armenian, Georgian and the small caps letters name
+/// generators use, Nirmala the Indic scripts, Gadugi Cherokee, and Segoe UI
+/// Symbol the script and double struck letters.
+const SCRIPTS: [Script; 8] = [
     (
         "malgunbd.ttf",
         0,
@@ -755,6 +758,26 @@ const SCRIPTS: [Script; 4] = [
         |c| matches!(c, '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}'),
     ),
     ("LeelawUI.ttf", 0, |c| matches!(c, '\u{0E00}'..='\u{0E7F}')),
+    ("segoeuib.ttf", 0, |c| {
+        matches!(
+            c,
+            '\u{0530}'..='\u{08FF}'
+                | '\u{10A0}'..='\u{10FF}'
+                | '\u{1D00}'..='\u{1DBF}'
+                | '\u{A720}'..='\u{A7FF}'
+                | '\u{FB00}'..='\u{FDFC}'
+                | '\u{FE70}'..='\u{FEFF}'
+        )
+    }),
+    ("Nirmala.ttc", 1, |c| matches!(c, '\u{0900}'..='\u{0DFF}')),
+    (
+        "gadugib.ttf",
+        0,
+        |c| matches!(c, '\u{13A0}'..='\u{167F}' | '\u{AB70}'..='\u{ABBF}'),
+    ),
+    ("seguisym.ttf", 0, |c| {
+        matches!(c, '\u{1D400}'..='\u{1D7FF}')
+    }),
 ];
 
 /// A system face: its file, its index in the file, and the characters it is
@@ -1021,7 +1044,7 @@ pub fn caps_text(
 
 #[cfg(test)]
 mod tests {
-    use super::{Face, caps, colour, install_fonts, size, tracking_for};
+    use super::{Face, caps, colour, cover_now, install_fonts, size, tracking_for};
 
     /// A family registered nowhere panics inside epaint the first time a glyph
     /// in it is laid out.
@@ -1068,5 +1091,52 @@ mod tests {
             [tracking_for(size::LABEL), 0.0],
             "one tracked run and one solid one"
         );
+    }
+
+    /// Names in every script a player might use draw with no boxes, once the
+    /// faces they need are loaded.
+    #[test]
+    fn strange_names_have_glyphs() {
+        let names = [
+            "\u{0642}\u{0646}\u{0627}\u{0635}",
+            "\u{05E9}\u{05DC}\u{05D5}\u{05DD}",
+            "\u{0930}\u{093E}\u{091C}\u{093E}",
+            "\u{09AC}\u{09BE}\u{0982}\u{09B2}\u{09BE}",
+            "\u{0B95}\u{0BB2}\u{0BCD}",
+            "\u{0531}\u{0580}\u{0574}",
+            "\u{10E5}\u{10D0}\u{10E0}\u{10D7}",
+            "\u{0E2A}\u{0E27}\u{0E31}\u{0E2A}",
+            "\u{3086}\u{304D}\u{30C4}\u{FF92}",
+            "\u{BE5B}\u{B098}",
+            "\u{4E42}\u{5F61}",
+            "Nguy\u{1EC5}n \u{03A9}\u{03BC}\u{03AD}\u{03B3}\u{03B1} \u{0416}\u{0443}\u{043A}",
+            "\u{1D4DA}\u{1D4F2}\u{1D4F7}\u{1D4F0}",
+            "\u{1D0B}\u{026A}\u{0274}\u{0262}\u{1D4F}\u{A731}",
+            "\u{FF2B}\u{FF29}\u{FF2E}\u{FF27}",
+            "\u{2020}\u{029A}\u{029E}\u{00D8}",
+            "\u{13B7}\u{13A1}\u{13D2}",
+        ];
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut missing = Vec::new();
+        for frame in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                if frame == 0 {
+                    cover_now(ui.ctx(), &names.concat());
+                }
+                if frame < 2 {
+                    return;
+                }
+                for face in [Face::Display, Face::Body] {
+                    for c in names.concat().chars() {
+                        if !ui.ctx().fonts_mut(|f| f.has_glyph(&face.at(size::BODY), c)) {
+                            missing.push(format!("{face:?} U+{:04X}", u32::from(c)));
+                        }
+                    }
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

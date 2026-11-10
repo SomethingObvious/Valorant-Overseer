@@ -579,16 +579,23 @@ fn details(
     if let Some(file) = file {
         // Pinned, the panel doesn't scroll, so the clip is held to what it
         // leaves with BELOW to spare for the pictures and words under it.
-        let room = if pinned {
+        // With nothing under it, the clip size has nothing to make room for,
+        // so the clip takes the panel down to the notice line.
+        let said = |text: &Option<String>| text.as_deref().is_some_and(|t| !t.trim().is_empty());
+        let under = !lineup.images.is_empty() || said(&lineup.notes) || said(&lineup.description);
+        let tall = ui.ctx().content_rect().height();
+        let room = if !pinned {
+            0.0
+        } else if under {
             view.prefs
                 .size
-                .mul_add(
-                    ui.ctx().content_rect().height(),
-                    BELOW - ui.available_height(),
-                )
+                .mul_add(tall, BELOW - ui.available_height())
                 .max(0.0)
         } else {
-            0.0
+            let notice = if view.said.is_some() { space::XXL } else { 0.0 };
+            view.prefs
+                .size
+                .mul_add(tall, space::SM + notice - ui.available_height())
         };
         let player = player::of(&mut view.player, file, 0.0, view.prefs);
         player.show(ui, (0.0, runs), 100.0, room);

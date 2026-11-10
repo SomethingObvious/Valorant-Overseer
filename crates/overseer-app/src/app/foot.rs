@@ -10,8 +10,8 @@ use overseer_ui::{self, Face, caps_text, colour, size, space};
 use super::{Hint, Overseer, SAID, Screen, VERSION};
 
 impl Overseer {
-    /// A newer release, at the footer's far right, when there is one: quiet,
-    /// since it waits for whenever suits. A click opens its page, and
+    /// A newer release, at the footer's far right, when there is one, as a
+    /// filled block in the accent. A click opens its page, and
     /// Never Show Again beside it stops the daily look. Returns where the
     /// rest of the footer has to stop.
     fn newer(
@@ -25,7 +25,7 @@ impl Overseer {
         let newest = crate::update::newer(&self.settings.updates, VERSION);
         let notice = newest
             .as_ref()
-            .map(|n| format!("Version {n} Is Out"))
+            .map(|n| format!("Update to {n}"))
             .unwrap_or_default();
         let now = ui.input(|i| i.time);
         let armed = self
@@ -70,7 +70,16 @@ impl Overseer {
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(about);
             hit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
-            if hit.hovered() {
+            // The release itself is a filled block, so it can't be missed.
+            let filled = matches!(hint, Hint::Release);
+            let ink = if hit.hovered() {
+                colour::TEXT_STRONG
+            } else {
+                tint
+            };
+            if filled {
+                painter.rect_filled(area, 0, ink);
+            } else if hit.hovered() {
                 painter.rect_filled(area, 0, colour::BG_HOVER);
             }
             if hit.clicked() {
@@ -82,11 +91,7 @@ impl Overseer {
                 Align2::RIGHT_CENTER,
                 text,
                 font,
-                if hit.hovered() {
-                    colour::TEXT_STRONG
-                } else {
-                    tint
-                },
+                if filled { colour::BG } else { ink },
             );
             right = drawn.left() - space::LG;
         }

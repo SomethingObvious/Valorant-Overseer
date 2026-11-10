@@ -41,6 +41,10 @@ pub(crate) const SIZES: [(f32, &str); 4] = [
 ];
 /// The speeds there are to pick from.
 pub(crate) const SPEEDS: [f32; 7] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+/// How long, in seconds, a paused clip's controls stay after the pointer
+/// leaves.
+const LINGER: f64 = 2.0;
+
 /// How tall the bar over the bottom of the video is.
 const STRIP: f32 = 46.0;
 /// How often the timeline moves while Windows' engine plays, in seconds.
@@ -925,7 +929,8 @@ impl Player {
     }
 
     /// The video in `rect` with its controls over the bottom of it. They
-    /// show while the pointer is over it, and always while it is paused. A
+    /// show while the pointer is over it, and while it is paused they stay
+    /// for [`LINGER`] after the pointer leaves or the pause lands. A
     /// click on the video plays or pauses it. Nothing can be drawn over
     /// Windows' engine, so while they show, its window is cut short by
     /// their height for them, and the video keeps its size.
@@ -937,10 +942,10 @@ impl Player {
         video.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play or pause the clip")
         });
-        let near = ui.rect_contains_pointer(rect)
-            || !self.playing()
+        let busy = ui.rect_contains_pointer(rect)
             || self.scrub.is_some()
             || egui::Popup::is_id_open(ui.ctx(), id.with("speed"));
+        let near = busy || self.lingers(ui.ctx(), id, busy);
         let fade = ui.ctx().animate_bool_with_time(
             id.with("fade"),
             near,
@@ -964,6 +969,27 @@ impl Player {
         if fade > 0.0 && !self.coming() {
             self.controls(ui, rect, id, fade);
         }
+    }
+
+    /// Whether a paused clip's controls are still within [`LINGER`] of the
+    /// pointer leaving or the clip being paused.
+    fn lingers(&self, ctx: &egui::Context, id: Id, busy: bool) -> bool {
+        let playing = self.playing();
+        let now = ctx.input(|i| i.time);
+        let key = id.with("linger");
+        let (mut since, was) = ctx
+            .data(|d| d.get_temp::<(f64, bool)>(key))
+            .unwrap_or((now, playing));
+        if busy || was != playing {
+            since = now;
+        }
+        ctx.data_mut(|d| d.insert_temp(key, (since, playing)));
+        let left = LINGER - (now - since);
+        let on = !playing && left > 0.0;
+        if on {
+            ctx.request_repaint_after(Duration::from_secs_f64(left));
+        }
+        on
     }
 
     /// The bar over the bottom of the video: the timeline along its top,

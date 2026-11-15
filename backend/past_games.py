@@ -7,6 +7,7 @@ first fetch and asking again costs one history call.
 
 from __future__ import annotations
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -20,7 +21,7 @@ from agents import resolve_agent
 from common.check import check, present
 from common.jsonstore import data_path, read_json, write_atomic
 from live_match import _fallback_name, _is_throttled, _mode_label
-from rounds import round_stats
+from rounds import round_stats, rounds_played
 from vconstants import map_name_from_path
 
 LOG = overseerlog.get_logger("past_games")
@@ -69,10 +70,7 @@ def scoreboard(md: dict[str, Any]) -> dict[str, Any] | None:
     if not raw or not info.get("matchId"):
         return None
     teams = [t for t in md.get("teams") or [] if isinstance(t, dict) and t.get("teamId")]
-    # Played rounds, not rounds won, since a surrender ends a match early.
-    rounds = (
-        len(md.get("roundResults") or []) or sum(int(t.get("roundsWon") or 0) for t in teams) or 1
-    )
+    rounds = rounds_played(md)
     extra = round_stats(md, rounds)
     players = []
     for p in raw:
@@ -155,6 +153,7 @@ def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
     path = _DIR / f"{match_id}.json"
     kept = read_json(str(path), None)
     if isinstance(kept, dict) and kept.get("players"):
+        _date(path, kept)
         return kept
     md = auth.pd_get(f"/match-details/v1/matches/{match_id}", retries=2, urgent=True)
     if _is_throttled(md) or not isinstance(md, dict):
@@ -163,7 +162,23 @@ def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
     if board:
         # Never pruned, at about 3 KB a match, so a year of play is a few MB.
         write_atomic(str(path), board, prefix=".game-")
+        _date(path, board)
     return board
+
+
+def _date(path: Path, board: dict[str, Any]) -> None:
+    """Date a saved game's file by when the game began.
+
+    `saved` reads the newest files first. One look at History fetches the
+    newest game first, so dated by the fetch the oldest games had the newest
+    files, and the newest games could be the ones left out.
+    """
+    try:
+        began = float(board.get("startedAt") or 0) / 1000
+        if began > 0:
+            os.utime(path, (began, began))
+    except (OSError, TypeError, ValueError, OverflowError) as e:
+        LOG.warning("couldn't date %s by its game: %r", path.name, e)
 
 
 def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
@@ -244,7 +259,12 @@ def _self_check() -> None:
 
         hit = {"receiver": "them", "damage": 150, "headshots": 1, "bodyshots": 3, "legshots": 0}
         return {
-            "matchInfo": {"matchId": match_id, "mapId": "", "queueID": "competitive"},
+            "matchInfo": {
+                "matchId": match_id,
+                "mapId": "",
+                "queueID": "competitive",
+                "gameStartMillis": 1_700_000_000_000 + int(match_id[-1]) * 1000,
+            },
             "players": [player("me", "Blue", 4), player("them", "Red", 2)],
             "teams": [
                 {"teamId": "Blue", "roundsWon": 2 if blue_won else 1, "won": blue_won},
@@ -295,6 +315,9 @@ def _self_check() -> None:
         details = [c for c in calls if c.startswith("/match-details")]
         check(details == [f"/match-details/v1/matches/{ids[1]}"], details)
         check(again["games"][0]["result"] == "Defeat")
+        # The file is dated by its game, whenever it was fetched.
+        dated = (Path(tmp) / f"{ids[0]}.json").stat().st_mtime
+        check(dated == 1_700_000_001, dated)
 
     # Offline, the saved games come back newest first, yours only, and with
     # nobody signed in the player in most of them is taken to be you.

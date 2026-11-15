@@ -106,6 +106,9 @@ def _waiting_for(e: Exception) -> str | None:
     waiting won't fix.
     """
     if not LocalAuth.available() or isinstance(e, (ClientNotReadyError, FileNotFoundError)):
+        # The next launch gets its own two minutes. Left running from a launch
+        # that was given up on, the wait was over before the game had started.
+        _GAME_WAIT.clear()
         return "riot"
     if isinstance(e, GameNotStartedError):
         now = time.time()
@@ -666,7 +669,9 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     ):
         check(_waiting_for(GameNotStartedError()) == "game")
         check(_waiting_for(GameNotStartedError()) is None)
-    _GAME_WAIT.clear()
+    # The client closing ends that wait, so the next launch starts a new one.
+    with mock.patch.object(LocalAuth, "available", return_value=False):
+        check(_waiting_for(GameNotStartedError()) == "riot" and not _GAME_WAIT, _GAME_WAIT)
     # Under the default auto, an empty board still says what it waits on.
     _auth = mock.MagicMock()
     _auth.available.return_value = True

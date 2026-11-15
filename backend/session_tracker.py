@@ -222,18 +222,19 @@ def _record(lm: Any, board: dict[str, Any]) -> None:
             return
         encounter_log.record_result(board, point.get("result"))
         history.record(point)
+        if (point.get("mode") or "").lower() == "competitive":
+            with _LOCK:
+                points = _POINTS.setdefault(str(point["puuid"]), [])
+                if all(p.get("matchId") != point["matchId"] for p in points):
+                    points.append(point)
+                    del points[:-_MAX_POINTS]
+                    _save()
+                at = ladder_place(point.get("tier"), point.get("rr"))
+                if at is not None:
+                    _STANDING[str(point["puuid"])] = (at, time.time())
+        # Last, since it asks Riot again and can wait on the minute's budget,
+        # and a scoreboard that won't save must not cost the session its game.
         past_games.keep(lm.auth, str(point["matchId"]))
-        if (point.get("mode") or "").lower() != "competitive":
-            return
-        with _LOCK:
-            points = _POINTS.setdefault(str(point["puuid"]), [])
-            if all(p.get("matchId") != point["matchId"] for p in points):
-                points.append(point)
-                del points[:-_MAX_POINTS]
-                _save()
-            at = ladder_place(point.get("tier"), point.get("rr"))
-            if at is not None:
-                _STANDING[str(point["puuid"])] = (at, time.time())
     except Exception:
         LOG.exception("recording match %s failed", board.get("matchId"))
 

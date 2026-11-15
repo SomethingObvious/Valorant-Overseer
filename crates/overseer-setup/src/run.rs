@@ -87,7 +87,7 @@ where
 {
     // Setup has no console of its own, so without this Windows opens one,
     // and closing it would stop the install halfway.
-    let child = Command::new("powershell.exe")
+    let child = Command::new(payload::shipped(payload::POWERSHELL))
         .args(args)
         .current_dir(root)
         .creation_flags(payload::NO_WINDOW)
@@ -153,7 +153,7 @@ pub(crate) fn silent(root: &Path, region: &str, carried: Option<&Path>) -> i32 {
     }
     let script = root.join("scripts").join("install.ps1");
     let args = install_args(&script, region);
-    Command::new("powershell.exe")
+    Command::new(payload::shipped(payload::POWERSHELL))
         .args(&args)
         .current_dir(root)
         .creation_flags(payload::NO_WINDOW)

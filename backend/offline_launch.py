@@ -47,8 +47,10 @@ _OFFLINE_DIR = (
 )
 
 CERT_URL = os.getenv("OVERSEER_OFFLINE_CERT_URL", "https://mln.cx/deceive/localhost.pfx")
-# sha256 of the pfx as fetched 2026-08-20. See _fetch_cert.
-CERT_SHA256 = "522a9aa0d980ce792c7f6faec3cff1d23567f5feae11f3e697fff984decee1b0"
+# sha256 of the pfx as fetched 2026-11-14. See _fetch_cert. The certificate in
+# it runs out on 2026-12-26, and the host puts a new file up about a month
+# before that, which this pin refuses until it is looked at and updated.
+CERT_SHA256 = "2ead9d94aebd98455262b4ae250a3426011e2a1ec0ee523391d327e49cd4b0ed"
 _CACHED_CERT = str(_OFFLINE_DIR / "chat.pem")
 _CERT_CACHE_TTL = 7 * 86400
 

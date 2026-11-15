@@ -10,6 +10,7 @@ import base64
 import heapq
 import json
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -312,6 +313,14 @@ def _riot_throttle(endpoint: str, *, budget: bool = False, urgent: bool = False)
     _take_token(_RIOT_BUCKET, _RIOT_BURST, _RIOT_MAX_RPS)
 
 
+def _retry_after(resp: requests.Response) -> float:
+    """Return the seconds a 429 asks for, 0 when it doesn't say."""
+    try:
+        return max(0.0, float(resp.headers.get("Retry-After") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class ClientNotReadyError(Exception):
     """The Riot client is running but has no entitlements to hand out yet."""
 
@@ -326,6 +335,13 @@ def _lockfile_path() -> Path:
 
 def _shooter_log_path() -> Path:
     return Path(os.getenv("LOCALAPPDATA", "")) / r"VALORANT\Saved\Logs\ShooterGame.log"
+
+
+# The region's servers as the log names them. Every call to them carries the
+# account's tokens, so only a plain label under a.pvp.net is ever taken from
+# the log, and a line that reads any other way names no server.
+_PD_HOST = re.compile(r"([a-z0-9-]+)\.a\.pvp\.net/account-xp/v1/", re.IGNORECASE)
+_GLZ_HOST = re.compile(r"\bglz-([a-z0-9-]+)\.([a-z0-9-]+)\.a\.pvp\.net/", re.IGNORECASE)
 
 
 class LocalAuth:
@@ -359,13 +375,10 @@ class LocalAuth:
             raise GameNotStartedError(msg)
         with _shooter_log_path().open(encoding="utf8") as f:
             for line in f:
-                if ".a.pvp.net/account-xp/v1/" in line:
-                    pd_url = line.split(".a.pvp.net/account-xp/v1/")[0].split(".")[-1]
-                elif "https://glz" in line:
-                    glz_url = [
-                        line.split("https://glz-")[1].split(".")[0],
-                        line.split("https://glz-")[1].split(".")[1],
-                    ]
+                if found := _PD_HOST.search(line):
+                    pd_url = found[1]
+                elif found := _GLZ_HOST.search(line):
+                    glz_url = [found[1], found[2]]
                 if pd_url and glz_url:
                     if pd_url == "pbe":
                         return ["na", ["na-1", "na"]]
@@ -477,10 +490,20 @@ class LocalAuth:
             return {}
 
     def glz_get(self, endpoint: str) -> dict[str, Any]:
-        """Return a GET from the glz server, the one that runs matches and parties."""
-        _riot_throttle(f"glz:{endpoint}")
+        """Return a GET from the glz server, the one that runs matches and parties.
+
+        It never waits out a pause Riot asked for. The board asks again on its
+        next build, so until then the answer is throttled without being sent.
+        """
+        name = f"glz:{endpoint}"
+        if held_secs(name) > 0:
+            return {"errorCode": "RATE_LIMITED", "status": 429}
+        _riot_throttle(name)
         self.req_count += 1
         resp = _session().get(self.glz_url + endpoint, headers=self.headers(), timeout=8)
+        if resp.status_code == 429:
+            _set_hold(name, _retry_after(resp) or 3.0)
+            return {"errorCode": "RATE_LIMITED", "status": 429}
         return self._json(resp)
 
     def pd_get(
@@ -510,10 +533,7 @@ class LocalAuth:
             self.req_count += 1
             resp = _session().get(self.pd_url + endpoint, headers=self.headers(), timeout=8)
             if resp.status_code == 429:
-                try:
-                    ra = float(resp.headers.get("Retry-After") or 0)
-                except (TypeError, ValueError):
-                    ra = 0.0
+                ra = _retry_after(resp)
                 _set_hold(endpoint, ra or backoff)
                 if budgeted:
                     _budget_lockout(ra or backoff)
@@ -780,6 +800,41 @@ def _self_check() -> None:
         check(89 < budget_eta(20) < 92, budget_eta(20))
         keep_for_first_reads(5)
         _SENT.clear()
+    # The region is read from the log's own lines, and a line that would point
+    # the account's tokens at another host names no server at all.
+    with tempfile.TemporaryDirectory() as tmp:
+        log, lockfile = Path(tmp) / "ShooterGame.log", Path(tmp) / "lockfile"
+        lockfile.write_text("Riot Client:1:2:pw:https", encoding="utf-8")
+        with (
+            mock.patch(f"{__name__}._shooter_log_path", return_value=log),
+            mock.patch(f"{__name__}._lockfile_path", return_value=lockfile),
+        ):
+            log.write_text(
+                "LogHttp: server glz-elsewhere.example/x.y/z\n"
+                "LogHttp: GET https://pd.eu.a.pvp.net/account-xp/v1/players/me\n",
+                encoding="utf8",
+            )
+            try:
+                taken: str | None = LocalAuth().glz_url
+            except GameNotStartedError:
+                taken = None
+            check(taken is None, taken)
+            with log.open("a", encoding="utf8") as more:
+                more.write("LogHttp: GET https://glz-eu-1.eu.a.pvp.net/session/v1/sessions/me\n")
+            auth = LocalAuth()
+    check(auth.pd_url == "https://pd.eu.a.pvp.net", auth.pd_url)
+    check(auth.glz_url == "https://glz-eu-1.eu.a.pvp.net", auth.glz_url)
+    # A 429 from the match server holds its calls back for as long as it asks,
+    # answered throttled without being sent, and holds nothing else.
+    auth.kept_headers = {"Authorization": "Bearer t"}
+    busy = mock.Mock(status_code=429, headers={"Retry-After": "30"})
+    with mock.patch(f"{__name__}._session") as session:
+        session.return_value.get.return_value = busy
+        check(auth.glz_get("/parties/v1/parties/p").get("status") == 429)
+        check(auth.glz_get("/parties/v1/parties/p").get("status") == 429)
+        check(session.return_value.get.call_count == 1, session.return_value.get.call_count)
+    check(29 < held_secs("glz:/x") <= 30 and held_secs("/match-details/") == 0, _HOLD_UNTIL)
+    _HOLD_UNTIL["glz"] = 0.0
     # A failed resolve is tried again on Riot's hosts, never on the client's own.
     riot = _session().get_adapter("https://pd.na.a.pvp.net/")
     local = _session().get_adapter("https://127.0.0.1:1234/")

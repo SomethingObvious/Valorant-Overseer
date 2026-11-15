@@ -31,7 +31,7 @@ from common import console_logger
 from common.check import check
 from common.jsonstore import data_path, read_json, write_atomic
 from match_cache import MatchCache
-from rounds import buy_habits, habits_of, round_stats
+from rounds import buy_habits, habits_of, round_stats, rounds_played
 from smurf import compute_smurf, smurf_evidence
 from vconstants import (
     GAMEMODES,
@@ -115,7 +115,8 @@ _CONTENT_CACHE: dict[str, Any] = {"seasons": None, "at": 0.0, "failed_at": 0.0}
 _LEVEL_CACHE: dict[str, int] = {}
 
 _KD_FILL_LOCK = threading.Lock()
-_KD_FILLING: set[str] = set()
+# Who is being filled right now, by match.
+_KD_FILLING: dict[str, set[str]] = {}
 
 _KD_CACHE: dict[str, tuple[tuple[Any, ...], tuple[Any, ...], int]] = {}
 # The brief's measurements of one match for one player, keyed match:player.
@@ -1399,11 +1400,18 @@ class LiveMatch:
             return result
 
     def spawn_kd_fill(self, match_id: str, puuids: list[str]) -> None:
-        """Fill in K/D for `puuids` on a thread of its own, once per match."""
+        """Fill in K/D for `puuids` on a thread of its own, each player on one at a time.
+
+        The enemies are listed a minute or more after your team, whose deeper
+        reads can still be waiting on Riot's minute by then. They get a fill
+        of their own, so their first games go out ahead of those.
+        """
         with _KD_FILL_LOCK:
-            if match_id in _KD_FILLING:
+            busy = _KD_FILLING.setdefault(match_id, set())
+            puuids = [p for p in puuids if p not in busy]
+            if not puuids:
                 return
-            _KD_FILLING.add(match_id)
+            busy.update(puuids)
 
         def _fill_one(puuid: str) -> None:
             entry = _CACHE.get(f"{match_id}:{puuid}")
@@ -1522,7 +1530,10 @@ class LiveMatch:
                             time.sleep(max(0.0, _deeper_at() - time.time()))
             finally:
                 with _KD_FILL_LOCK:
-                    _KD_FILLING.discard(match_id)
+                    busy = _KD_FILLING.get(match_id, set())
+                    busy.difference_update(puuids)
+                    if not busy:
+                        _KD_FILLING.pop(match_id, None)
 
         threading.Thread(target=_run, daemon=True, name=f"kd-fill-{match_id[:8]}").start()
 
@@ -2057,9 +2068,7 @@ class LiveMatch:
         teams = {t.get("teamId"): t for t in md.get("teams", []) if t.get("teamId")}
         mine = teams.get(team_id, {})
         won = mine.get("won")
-        rounds = max((t.get("roundsWon", 0) for t in teams.values()), default=0) + min(
-            (t.get("roundsWon", 0) for t in teams.values()), default=0
-        )
+        rounds = rounds_played(md)
 
         hits_by_player: dict[str, int] = {}
         heads_by_player: dict[str, int] = {}
@@ -2156,11 +2165,7 @@ class LiveMatch:
             return {"error": "Match details unavailable."}
         info = md.get("matchInfo", {}) or {}
         teams = {t.get("teamId"): t for t in md.get("teams", []) if t.get("teamId")}
-        rounds = (
-            sum(t.get("roundsWon", 0) for t in teams.values())
-            or len(md.get("roundResults", []))
-            or 1
-        )
+        rounds = rounds_played(md)
 
         hits: dict[str, Any] = {}
         heads: dict[str, Any] = {}
@@ -2618,6 +2623,38 @@ def _self_check() -> None:
     _KD_CACHE.clear()
     _MATCH_DETAIL_CACHE.clear()
     _READS_CACHE.clear()
+
+    # A player listed while another's fill is still running gets a fill of
+    # their own at once, and one already being filled gets no second.
+    waiting, release = threading.Event(), threading.Event()
+    asked: list[str] = []
+
+    def slow(puuid: str, **_: Any) -> tuple[float, None, str, dict[str, Any]]:
+        asked.append(puuid)
+        if puuid == "ally":
+            waiting.set()
+            release.wait(10)
+        return 1.0, None, "ok", {}
+
+    _CACHE["both:ally"] = {"kd": None, "kd_done": False}
+    _CACHE["both:enemy"] = {"kd": None, "kd_done": False}
+    with (
+        mock.patch.object(lm, "kd_hs", side_effect=slow),
+        mock.patch.object(lm, "_on_hand", return_value=0),
+    ):
+        lm.spawn_kd_fill("both", ["ally"])
+        check(waiting.wait(10), "the first fill never started")
+        lm.spawn_kd_fill("both", ["ally", "enemy"])
+        deadline = time.time() + 10
+        while "enemy" not in asked and time.time() < deadline:
+            time.sleep(0.01)
+        check(asked[:2] == ["ally", "enemy"] and asked.count("ally") == 1, asked)
+        release.set()
+        for t in threading.enumerate():
+            if t.name == "kd-fill-both":
+                t.join()
+    check(not _KD_FILLING, _KD_FILLING)
+    check(_CACHE["both:enemy"]["kd"] == 1.0, _CACHE["both:enemy"])
 
     # A top up that loses its connection is logged and owed again, rather than
     # killing the fill thread with the player marked done.

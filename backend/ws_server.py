@@ -190,8 +190,11 @@ def start(
                 return
 
             msg = _parse(raw)
+            # As bytes, since compare_digest raises on text outside ASCII and
+            # a wrong token should be told so, whatever is in it.
             if msg.get("type") != "auth" or not hmac.compare_digest(
-                str(msg.get("token") or ""), _STATE.session_token
+                str(msg.get("token") or "").encode("utf-8", "replace"),
+                _STATE.session_token.encode(),
             ):
                 await _safe_send(
                     websocket,

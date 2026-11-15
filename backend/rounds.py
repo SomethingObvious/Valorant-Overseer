@@ -18,6 +18,18 @@ from common.check import check
 _TRADE_WINDOW_MS = 3000
 
 
+def rounds_played(md: dict[str, Any]) -> int:
+    """Return how many rounds a match ran to, at least one.
+
+    Counted from the rounds themselves. A surrender ends a match early and
+    credits the winners with the rounds they still needed, so the two scores
+    add up to more rounds than anybody played.
+    """
+    teams = [t for t in md.get("teams") or [] if isinstance(t, dict)]
+    won = sum(int(t.get("roundsWon") or 0) for t in teams)
+    return len(md.get("roundResults") or []) or won or 1
+
+
 def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
     """Per-player damage, KAST, opening duels, spike, clutches and multikills."""
     # Rounds get abandoned, players disconnect, and Riot has shipped rounds with
@@ -289,6 +301,12 @@ def buy_habits(md: dict[str, Any], puuid: str) -> dict[str, Any]:
 
 
 def _self_check() -> None:
+    # A surrender at 9 to 3 goes down as 13 to 3, and was twelve rounds.
+    gave_up = {"roundResults": [{}] * 12, "teams": [{"roundsWon": 13}, {"roundsWon": 3}]}
+    check(rounds_played(gave_up) == 12, rounds_played(gave_up))
+    check(rounds_played({"teams": [{"roundsWon": 13}, {"roundsWon": 11}]}) == 24)
+    check(rounds_played({}) == 1)
+
     # Two rounds, worked out by hand, covering every branch of round_stats:
     # an opening duel, an assist, a survivor, a trade inside the window and a
     # multikill.

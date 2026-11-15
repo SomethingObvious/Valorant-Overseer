@@ -19,6 +19,23 @@ const TAIL: u64 = 16;
 /// Windows' `CREATE_NO_WINDOW`.
 pub(crate) const NO_WINDOW: u32 = 0x0800_0000;
 
+/// Windows PowerShell, under System32.
+pub(crate) const POWERSHELL: &str = r"WindowsPowerShell\v1.0\powershell.exe";
+
+/// A program that ships with Windows, by its full path under System32. Asked
+/// for by name alone, a file of that name beside setup is started in its
+/// place, and setup runs from wherever it was downloaded to.
+pub(crate) fn shipped(tool: &str) -> PathBuf {
+    let tool = Path::new(tool);
+    std::env::var_os("SystemRoot").map_or_else(
+        || {
+            tool.file_name()
+                .map_or_else(|| tool.to_path_buf(), PathBuf::from)
+        },
+        |windows| PathBuf::from(windows).join("System32").join(tool),
+    )
+}
+
 /// Where the zip sits inside `exe`, as its offset and length, when it carries
 /// one.
 pub(crate) fn carried(exe: &Path) -> Option<(u64, u64)> {
@@ -96,7 +113,7 @@ fn close_window(root: &Path) {
         Where-Object { $_.Path -eq $env:OVERSEER_EXE } | \
         ForEach-Object { Stop-Process -InputObject $_ -Force; $null = $_.WaitForExit(10000) }";
     drop(
-        Command::new("powershell.exe")
+        Command::new(shipped(POWERSHELL))
             .args(["-NoProfile", "-Command", script])
             .env("OVERSEER_EXE", exe)
             .creation_flags(NO_WINDOW)
@@ -107,11 +124,7 @@ fn close_window(root: &Path) {
 /// Unpacks `zip` into `root` with the tar that ships with Windows 10 and 11.
 fn extract(zip: &Path, root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| format!("Couldn't make {}: {e}", root.display()))?;
-    // By its full path, so a tar.exe earlier on PATH can't stand in for it.
-    let tar = std::env::var_os("SystemRoot").map_or_else(
-        || PathBuf::from("tar.exe"),
-        |windows| PathBuf::from(windows).join("System32").join("tar.exe"),
-    );
+    let tar = shipped("tar.exe");
     let out = Command::new(&tar)
         .arg("-xf")
         .arg(zip)
@@ -136,7 +149,17 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
 
-    use super::{MAGIC, carried, unpack};
+    use super::{MAGIC, POWERSHELL, carried, shipped, unpack};
+
+    /// Windows' own programs are started by full path, so a file of the same
+    /// name beside setup never stands in for one.
+    #[test]
+    fn windows_programs_come_from_system32() {
+        for tool in [POWERSHELL, "tar.exe"] {
+            let path = shipped(tool);
+            assert!(path.is_absolute() && path.is_file(), "{}", path.display());
+        }
+    }
 
     /// A stand-in setup: some bytes for the exe, a real zip made by tar, its
     /// length and the magic.

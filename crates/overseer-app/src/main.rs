@@ -192,6 +192,13 @@ fn serve(root: &Path) -> Option<String> {
         .args(["--prod", "--parent"])
         .arg(std::process::id().to_string())
         .current_dir(root)
+        // Left set by another program, either of these points this Python at
+        // that program's files, and with the first it doesn't start at all.
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        // Printing a name or a path with a letter outside this PC's code
+        // page raises, which a player's name does on most PCs.
+        .env("PYTHONIOENCODING", "utf-8:replace")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

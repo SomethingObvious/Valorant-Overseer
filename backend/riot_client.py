@@ -11,6 +11,7 @@ import heapq
 import json
 import os
 import re
+import ssl
 import threading
 import time
 from collections import deque
@@ -86,6 +87,43 @@ def _session() -> requests.Session:
 
 
 _log = console_logger("riot_client")
+
+# What the calls to the client on this PC pass as their proxies. Windows'
+# proxy setting covers 127.0.0.1 unless somebody excepts it, and a proxy on
+# another machine then looks for the client there and finds nothing.
+_DIRECT = {"no_proxy": "127.0.0.1"}
+_SERVER_AUTH = "1.3.6.1.5.5.7.3.1"
+
+
+def trust_windows_roots() -> None:
+    """Have every web request trust the roots Windows trusts, beside the bundled ones.
+
+    Antivirus that scans HTTPS, and a school or office network that does,
+    signs every site with a root that only Windows has been given, and
+    requests reads nothing but its own bundle. A bundle already named in the
+    environment is somebody's own choice and stays.
+    """
+    if os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE"):
+        return
+    path = Path(data_path("roots.pem"))
+    tmp = path.with_suffix(".tmp")
+    try:
+        roots = Path(requests.certs.where()).read_text(encoding="utf-8")
+        for der, kind, trust in ssl.enum_certificates("ROOT"):
+            for_sites = trust is True or (not isinstance(trust, bool) and _SERVER_AUTH in trust)
+            if kind == "x509_asn" and for_sites:
+                roots += ssl.DER_cert_to_PEM_cert(der)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(roots, encoding="utf-8")
+        # Loaded before it is used, as a file that can't be read as roots
+        # would fail every request where the bundled ones fail none.
+        ssl.create_default_context(cafile=str(tmp))
+        tmp.replace(path)
+    except (OSError, ValueError) as e:
+        _log(f"Windows' roots couldn't be added ({e!r}), so only the bundled ones are trusted")
+        return
+    os.environ["REQUESTS_CA_BUNDLE"] = str(path)
+
 
 _RIOT_RATE_LOCK = threading.Lock()
 _RIOT_MAX_RPS = env_number("RIOT_MAX_RPS", 10.0, low=0.0)
@@ -369,7 +407,7 @@ class LocalAuth:
         if not _shooter_log_path().is_file():
             msg = "VALORANT hasn't written ShooterGame.log yet"
             raise GameNotStartedError(msg)
-        with _shooter_log_path().open(encoding="utf8") as f:
+        with _shooter_log_path().open(encoding="utf8", errors="replace") as f:
             for line in f:
                 if found := _PD_HOST.search(line):
                     pd_url = found[1]
@@ -423,7 +461,7 @@ class LocalAuth:
         except (requests.RequestException, ValueError, AttributeError) as e:
             _log(f"valorant-api version lookup failed ({e!r}), using the log")
         try:
-            with _shooter_log_path().open(encoding="utf8") as f:
+            with _shooter_log_path().open(encoding="utf8", errors="replace") as f:
                 for line in f:
                     if "CI server version:" in line:
                         v = line.split("CI server version:", 1)[1].strip()
@@ -451,6 +489,7 @@ class LocalAuth:
             headers=self._local_headers(),
             verify=False,
             timeout=5,
+            proxies=_DIRECT,
         )
         try:
             ent = resp.json()
@@ -562,6 +601,7 @@ class LocalAuth:
                 headers=self._local_headers(),
                 verify=False,
                 timeout=5,
+                proxies=_DIRECT,
             )
             .json()
         )
@@ -815,11 +855,31 @@ def _self_check() -> None:
             except GameNotStartedError:
                 taken = None
             check(taken is None, taken)
-            with log.open("a", encoding="utf8") as more:
-                more.write("LogHttp: GET https://glz-eu-1.eu.a.pvp.net/session/v1/sessions/me\n")
+            # A line caught half written costs that line and not the region.
+            with log.open("ab") as more:
+                more.write(b"LogInit: \xff\xfe\n")
+                more.write(b"LogHttp: GET https://glz-eu-1.eu.a.pvp.net/session/v1/sessions/me\n")
             auth = LocalAuth()
     check(auth.pd_url == "https://pd.eu.a.pvp.net", auth.pd_url)
     check(auth.glz_url == "https://glz-eu-1.eu.a.pvp.net", auth.glz_url)
+    # The client on this PC is asked directly, whatever proxy Windows has set.
+    with mock.patch(f"{__name__}._session") as session:
+        auth.local_get("/x")
+        check(session.return_value.get.call_args.kwargs.get("proxies") == _DIRECT)
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        mock.patch.dict(os.environ, {"REQUESTS_CA_BUNDLE": "theirs.pem"}),
+        mock.patch(f"{__name__}.data_path", return_value=str(Path(tmp) / "roots.pem")),
+    ):
+        os.environ.pop("CURL_CA_BUNDLE", None)
+        trust_windows_roots()
+        check(os.environ["REQUESTS_CA_BUNDLE"] == "theirs.pem", "a chosen bundle was replaced")
+        del os.environ["REQUESTS_CA_BUNDLE"]
+        trust_windows_roots()
+        made = Path(os.environ.get("REQUESTS_CA_BUNDLE", ""))
+        bundled = Path(requests.certs.where()).read_text(encoding="utf-8")
+        trusted = made.read_text(encoding="utf-8") if made.name == "roots.pem" else ""
+        check(trusted.startswith(bundled) and len(trusted) > len(bundled), made)
     # A 429 from the match server holds its calls back for as long as it asks,
     # answered throttled without being sent, and holds nothing else.
     auth.kept_headers = {"Authorization": "Bearer t"}

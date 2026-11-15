@@ -51,6 +51,7 @@ from riot_client import (
     LocalAuth,
     RiotClient,
     chat_presences,
+    trust_windows_roots,
 )
 from vconstants import APP_VERSION
 
@@ -768,6 +769,7 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
 
 def start() -> int:
     """Start the bridge and what feeds it, each on its own thread, and return its port."""
+    trust_windows_roots()
     port = _start_ws_bridge()
     threading.Thread(target=_warm_lineups, daemon=True, name="lineups-warm").start()
     threading.Thread(target=_watch_state, daemon=True, name="state-watch").start()

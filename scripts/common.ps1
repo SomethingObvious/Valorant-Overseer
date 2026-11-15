@@ -4,6 +4,13 @@ $ProgressPreference = "SilentlyContinue"
 # Windows PowerShell 5.1 can still default to TLS 1.0, which python.org refuses.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+# Left set by another program, either of these points every Python started
+# from here at that program's files, and with the first none of them starts.
+Remove-Item Env:PYTHONHOME, Env:PYTHONPATH -ErrorAction SilentlyContinue
+# pip prints the folder it runs from, and printing a letter outside this PC's
+# code page raises, which a user name in another script makes it do.
+$env:PYTHONIOENCODING = "utf-8:replace"
+
 $Root = Split-Path -Parent $PSScriptRoot
 $VenvDir = Join-Path $Root ".venv"
 $VenvPy = Join-Path $VenvDir "Scripts\python.exe"
@@ -269,6 +276,9 @@ function Get-PythonIdentity([string]$exe, [string[]]$exeArgs) {
 
 function Test-PythonExact($identity, $manifest) {
     if (-not $identity) { return $false }
+    # The Microsoft Store's Python keeps a copy of AppData to itself, so what
+    # it writes into an install there is never seen by the window.
+    if ("$($identity.basePrefix)" -match '\\WindowsApps\\') { return $false }
     return ($identity.implementation -eq $manifest.python.implementation) -and
     ($identity.version -eq $manifest.python.version) -and
     ($identity.bits -eq $manifest.python.bits) -and
@@ -660,15 +670,19 @@ function Update-ShortcutIcon {
 }
 
 function Set-OverseerShortcut([string]$Lnk, [string]$Target, [string]$Arguments, [string]$Description) {
-    $ws = New-Object -ComObject WScript.Shell
-    $sc = $ws.CreateShortcut($lnk)
-    $sc.TargetPath = $target
-    $sc.Arguments = $arguments
+    # The shell's own link object, which starts from an empty file.
+    # WScript.Shell's refuses a path with a letter outside this PC's code
+    # page, and a user name in another script puts one in every path here.
+    if (-not (Test-Path -LiteralPath $Lnk)) { [System.IO.File]::WriteAllBytes($Lnk, [byte[]]@()) }
+    $shell = New-Object -ComObject Shell.Application
+    $sc = $shell.Namespace((Split-Path -Parent $Lnk)).ParseName((Split-Path -Leaf $Lnk)).GetLink
+    $sc.Path = $Target
+    $sc.Arguments = $Arguments
     $sc.WorkingDirectory = $Root
     $ico = Update-ShortcutIcon
-    if ($ico) { $sc.IconLocation = "$ico,0" }
-    $sc.Description = $description
-    $sc.Save()
+    if ($ico) { $sc.SetIconLocation($ico, 0) }
+    $sc.Description = $Description
+    $sc.Save($Lnk)
 }
 
 function New-DesktopShortcut {

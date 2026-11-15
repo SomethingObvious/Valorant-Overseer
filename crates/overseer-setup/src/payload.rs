@@ -78,10 +78,15 @@ pub(crate) fn unpack(exe: &Path, root: &Path) -> Result<(), String> {
             root.display()
         ));
     }
-    let zip = std::env::temp_dir().join(format!("overseer-setup-{}.zip", std::process::id()));
+    // The zip goes into the folder itself and tar starts there, so tar is
+    // given no path. It can't open one with a letter outside this PC's code
+    // page, and a user name in another script puts one in every path here.
+    std::fs::create_dir_all(root).map_err(|e| format!("Couldn't make {}: {e}", root.display()))?;
+    let name = format!("overseer-setup-{}.zip", std::process::id());
+    let zip = root.join(&name);
     let done = copy_out(exe, at, len, &zip).and_then(|()| {
         close_window(root);
-        extract(&zip, root)
+        extract(&name, root)
     });
     drop(std::fs::remove_file(&zip));
     done
@@ -121,15 +126,14 @@ fn close_window(root: &Path) {
     );
 }
 
-/// Unpacks `zip` into `root` with the tar that ships with Windows 10 and 11.
-fn extract(zip: &Path, root: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| format!("Couldn't make {}: {e}", root.display()))?;
+/// Unpacks the zip named `zip` in `root` into `root`, with the tar that ships
+/// with Windows 10 and 11.
+fn extract(zip: &str, root: &Path) -> Result<(), String> {
     let tar = shipped("tar.exe");
     let out = Command::new(&tar)
         .arg("-xf")
         .arg(zip)
-        .arg("-C")
-        .arg(root)
+        .current_dir(root)
         .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("Couldn't start {}: {e}", tar.display()))?;
@@ -193,7 +197,10 @@ mod tests {
         let dir = std::env::temp_dir().join("overseer-setup-payload");
         drop(std::fs::remove_dir_all(&dir));
         let exe = setup_with(&dir, "run.py", "print('hi')\n");
-        let root = dir.join("Valorant Overseer");
+        // A user name in three scripts, which no one code page holds.
+        let root = dir
+            .join("\u{416}\u{4e2d}\u{d55c}")
+            .join("Valorant Overseer");
         std::fs::create_dir_all(root.join("backend")).unwrap();
         std::fs::write(root.join("backend").join(".env"), "RIOT_REGION=eu\n").unwrap();
 

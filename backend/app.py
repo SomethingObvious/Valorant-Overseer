@@ -42,8 +42,9 @@ import sample_match
 import session_tracker
 import tags
 from agents import AGENTS
-from common import data_path, read_json, write_atomic
+from common import data_path, env_number, read_json, write_atomic
 from common.check import check
+from common.system import process_names
 from riot_client import (
     ClientNotReadyError,
     GameNotStartedError,
@@ -111,12 +112,26 @@ def _waiting_for(e: Exception) -> str | None:
         _GAME_WAIT.clear()
         return "riot"
     if isinstance(e, GameNotStartedError):
+        if not _game_running():
+            # A launch that was given up on leaves a log with no region in
+            # it. Nothing is starting, so the two minutes begin with the game.
+            _GAME_WAIT.clear()
+            return "game"
         now = time.time()
         began = _GAME_WAIT.setdefault("since", now)
         # VALORANT names its region within a minute of starting, so a log
         # that still hasn't after two is something waiting won't fix.
         return "game" if now - began < _GAME_PATIENCE else None
     return None
+
+
+def _game_running() -> bool:
+    """Whether VALORANT itself is running, taken to be when the process list can't be read."""
+    try:
+        return _GAME_EXE in process_names()
+    except Exception as e:
+        LOG.warning("could not list processes to look for VALORANT: %r", e)
+        return True
 
 
 def _client_notice() -> dict[str, Any]:
@@ -137,11 +152,12 @@ _LAST_GOOD: dict[str, Any] = {"board": None, "at": 0.0, "notReady": False}
 # When the client was first found up with VALORANT's region still unknown.
 _GAME_WAIT: dict[str, float] = {}
 _GAME_PATIENCE = 120.0
+_GAME_EXE = "valorant-win64-shipping.exe"
 _HOLD_SECS = 12
 # How long between live boards once a match is on. The round plays out in the
 # game, not here, so a board a tick slower costs nothing and spares the local
 # API. _watch_state still wakes the loop the moment the match ends.
-_INGAME_POLL = float(os.getenv("WS_STATE_POLL_INGAME", "15.0"))
+_INGAME_POLL = env_number("WS_STATE_POLL_INGAME", 15.0, low=0.5)
 
 _BUILD_LOCK = threading.Lock()
 _BUILD_FRESH = 3.5
@@ -408,16 +424,21 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
             if not puuid:
                 return {"error": "The profile request needs a puuid."}
             data = None
+            why = "No career available. Open VALORANT and sign in."
             if _live_enabled():
                 try:
                     d = live_match.LiveMatch(LocalAuth()).player_career(puuid)
                     if d.get("matches"):
                         data = d
+                    elif d.get("unread"):
+                        why = "Riot didn't send this player's games. Try again in a minute."
+                    else:
+                        why = "This player has no recent games in a standard mode."
                 except Exception:
                     LOG.exception("transport profile failed")
             if data is None:
                 if client.source_pref != "demo":
-                    return {"error": "No career available. Open VALORANT and sign in."}
+                    return {"error": why}
                 now = _board_player(puuid)
                 data = sample_match.career(puuid, now.get("rankTier"), now.get("rr"))
             out = dict(data)
@@ -509,7 +530,7 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
 def _start_ws_bridge() -> int:
     import ws_server
 
-    ws_port = int(os.getenv("WS_PORT", "7878"))
+    ws_port = int(env_number("WS_PORT", 7878, low=1, high=65535))
 
     def ws_state_provider() -> dict[str, Any]:
         board = dict(build_live())
@@ -665,10 +686,18 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     _GAME_WAIT.clear()
     with (
         mock.patch.object(LocalAuth, "available", return_value=True),
+        mock.patch(f"{__name__}._game_running", return_value=True),
         mock.patch(f"{__name__}.time.time", side_effect=[1000.0, 1000.0 + _GAME_PATIENCE]),
     ):
         check(_waiting_for(GameNotStartedError()) == "game")
         check(_waiting_for(GameNotStartedError()) is None)
+    # With the game closed there is nothing to run out of patience with.
+    with (
+        mock.patch.object(LocalAuth, "available", return_value=True),
+        mock.patch(f"{__name__}._game_running", return_value=False),
+    ):
+        check(_waiting_for(GameNotStartedError()) == "game" and not _GAME_WAIT, _GAME_WAIT)
+    _GAME_WAIT["since"] = 0.0
     # The client closing ends that wait, so the next launch starts a new one.
     with mock.patch.object(LocalAuth, "available", return_value=False):
         check(_waiting_for(GameNotStartedError()) == "riot" and not _GAME_WAIT, _GAME_WAIT)

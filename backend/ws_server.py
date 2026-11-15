@@ -11,7 +11,6 @@ import asyncio
 import functools
 import hmac
 import json
-import os
 import secrets
 import threading
 from dataclasses import dataclass
@@ -20,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import overseerlog
 import refresh
-from common import console_logger
+from common import console_logger, env_number
 from vconstants import APP_VERSION
 
 if TYPE_CHECKING:
@@ -158,7 +157,7 @@ def start(
     loop can poll slower in states where little changes, like a match in play.
     """
     _STATE.session_token = secrets.token_urlsafe(32)
-    interval = float(os.getenv("WS_STATE_POLL", "4.0"))
+    interval = env_number("WS_STATE_POLL", 4.0, low=0.5)
 
     ready = threading.Event()
     boot_error: list[BaseException] = []

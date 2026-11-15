@@ -1966,9 +1966,10 @@ class LiveMatch:
                 f"/match-history/v1/history/{puuid}?startIndex=0&endIndex=20", urgent=True
             )
             entries = hist.get("History", []) or [] if isinstance(hist, dict) else []
+            answered = isinstance(hist, dict) and isinstance(hist.get("History"), list)
         except requests.RequestException as e:
             _log(f"match history failed for {puuid[:8]}: {type(e).__name__}: {e}")
-            entries = []
+            entries, answered = [], False
         mids = career_mids(entries, count)
 
         hit = _CAREER_CACHE.get(puuid)
@@ -2053,6 +2054,10 @@ class LiveMatch:
         # three of the fetches, would otherwise stick until the next match.
         if rated and mids and len(matches) == len(mids):
             _cache_put(_CAREER_CACHE, _KD_CACHE_MAX, puuid, (out, tuple(mids)))
+        # No games is the player's history, unless Riot never sent it or sent
+        # none of the games in it, which says nothing about them.
+        if not matches and (mids or not answered):
+            out["unread"] = True
         return out
 
     def career_match(self, md: dict[str, Any], puuid: str, mid: str) -> dict[str, Any] | None:

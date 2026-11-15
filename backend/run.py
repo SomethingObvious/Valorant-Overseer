@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, NoReturn
 
-from common import load_env
+from common import env_number, load_env
 from common.check import check
 from common.system import NETSTAT, POWERSHELL, TASKKILL
 
@@ -724,7 +724,9 @@ def main() -> None:
         else "Its output is above."
     )
     try:
-        ws_port = choose_port(os.environ.get("WS_PORT", "7878"), "WebSocket bridge")
+        ws_port = choose_port(
+            int(env_number("WS_PORT", 7878, low=1, high=65535)), "WebSocket bridge"
+        )
         env = os.environ.copy()
         env["WS_PORT"] = str(ws_port)
         # Stamped into bridge.json so this launch can recognise its own.

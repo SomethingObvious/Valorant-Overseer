@@ -29,9 +29,8 @@ paths = [
   # token, that is what it is for, and it is gitignored, so flagging it would
   # only teach people to ignore the scanner.
   '''(^|/)\.overseer/''',
-  # The localhost TLS certificate the offline-mode chat proxy presents to the
-  # Riot client. Its key has to be on disk to terminate TLS at all, it is the
-  # same well-known certificate Deceive publishes, and it guards nothing but a
-  # loopback socket.
+  # A self-signed localhost certificate that used to ship as the offline-mode
+  # chat proxy's last resort. No file in the tree holds a key any more, and
+  # this stays for the history scan, which still reads the commits that did.
   '''backend/offline_chat\.pem''',
 ]

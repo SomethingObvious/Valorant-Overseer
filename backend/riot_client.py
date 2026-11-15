@@ -21,7 +21,7 @@ from typing import Any
 
 import requests
 import urllib3
-from common import console_logger, data_path, read_json, write_atomic
+from common import console_logger, data_path, env_number, read_json, write_atomic
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from vconstants import GAMEMODES, map_name_from_path
@@ -88,11 +88,7 @@ def _session() -> requests.Session:
 _log = console_logger("riot_client")
 
 _RIOT_RATE_LOCK = threading.Lock()
-try:
-    _RIOT_MAX_RPS = max(0.0, float(os.getenv("RIOT_MAX_RPS", "10")))
-except ValueError:
-    _log(f"RIOT_MAX_RPS {os.getenv('RIOT_MAX_RPS')!r} is not a number (using 10)")
-    _RIOT_MAX_RPS = 10.0
+_RIOT_MAX_RPS = env_number("RIOT_MAX_RPS", 10.0, low=0.0)
 _RIOT_BURST = _RIOT_MAX_RPS if _RIOT_MAX_RPS > 0 else 1.0
 _RIOT_BUCKET = {"tokens": _RIOT_BURST, "at": 0.0}
 

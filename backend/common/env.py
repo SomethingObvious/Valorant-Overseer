@@ -7,11 +7,38 @@ site-packages is intact, so it cannot import anything from there.
 
 from __future__ import annotations
 
+import math
 import os
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def env_number(
+    name: str, default: float, *, low: float = -math.inf, high: float = math.inf
+) -> float:
+    """Return the number in the environment variable `name`, or `default`.
+
+    A value that isn't a number from `low` to `high` is said on stderr and
+    `default` stands in, so a typo in .env costs a setting and not the launch.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if low <= value <= high:
+        return value
+    print(
+        f"[env] {name} is {raw!r}, which isn't a number it can be, so {default:g} is used",
+        file=sys.stderr,
+        flush=True,
+    )
+    return default
 
 
 def load_env(*paths: Path) -> None:

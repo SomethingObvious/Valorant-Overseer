@@ -14,7 +14,6 @@ import base64
 import codecs
 import contextlib
 import functools
-import hashlib
 import http.client
 import json
 import os
@@ -26,15 +25,18 @@ import sys
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from cryptography import x509
+
 import requests
 from common.check import check, present
-from common.system import TASKKILL
+from common.system import TASKKILL, process_names
 
 CHAT_DOMAIN = "deceive-localhost.molenzwiebel.xyz"
 
@@ -47,16 +49,8 @@ _OFFLINE_DIR = (
 )
 
 CERT_URL = os.getenv("OVERSEER_OFFLINE_CERT_URL", "https://mln.cx/deceive/localhost.pfx")
-# sha256 of the pfx as fetched 2026-11-14. See _fetch_cert. The certificate in
-# it runs out on 2026-12-26, and the host puts a new file up about a month
-# before that, which this pin refuses until it is looked at and updated.
-CERT_SHA256 = "2ead9d94aebd98455262b4ae250a3426011e2a1ec0ee523391d327e49cd4b0ed"
 _CACHED_CERT = str(_OFFLINE_DIR / "chat.pem")
 _CERT_CACHE_TTL = 7 * 86400
-
-CERT_PATH = os.getenv(
-    "OVERSEER_OFFLINE_CERT", str(Path(__file__).resolve().parent / "offline_chat.pem")
-)
 
 RIOT_INSTALLS = str(
     Path(os.getenv("PROGRAMDATA", r"C:\ProgramData")) / "Riot Games" / "RiotClientInstalls.json"
@@ -432,25 +426,36 @@ def _hidden_riot_process_kwargs() -> dict[str, Any]:
     }
 
 
-def _fetch_cert() -> bool:
+def _cert_fault(cert: x509.Certificate) -> str | None:
+    """Return why a certificate can't be the chat proxy's, or None when it can."""
+    from cryptography import x509
+
     try:
-        r = _http().get(CERT_URL, timeout=15)
-        r.raise_for_status()
-        pfx = r.content
-    except requests.RequestException as e:
-        _dbg(f"cert: fetch failed ({e})")
-        return False
-    # Pinned, the way runtime.json pins the Python installer. This file is a
-    # private key that terminates TLS for the Riot client on this machine, and
-    # it comes from a host nobody here controls. The pin means that host can
-    # stop serving it but cannot serve something else.
-    #
-    # If this ever fires, do not widen it. Fetch the file by hand, look at what
-    # changed, and update the constant on purpose.
-    digest = hashlib.sha256(pfx).hexdigest()
-    if digest != CERT_SHA256:
-        _dbg(f"cert: REFUSED, sha256 {digest} does not match the pin {CERT_SHA256}")
-        return False
+        names = cert.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        ).value.get_values_for_type(x509.DNSName)
+    except x509.ExtensionNotFound:
+        names = []
+    if CHAT_DOMAIN not in names:
+        return f"it is for {names or 'no name'}, not {CHAT_DOMAIN}"
+    began, ends = cert.not_valid_before_utc, cert.not_valid_after_utc
+    if not began <= datetime.now(UTC) <= ends:
+        return f"it runs from {began:%Y-%m-%d} to {ends:%Y-%m-%d}"
+    return None
+
+
+def _pem_from(pfx: bytes) -> bytes | None:
+    """Return the downloaded pfx as a PEM chain and key, or None when it isn't the chat proxy's.
+
+    The file is a certificate and its private key, which terminate TLS for the
+    Riot client on this machine, and it comes from a host nobody here
+    controls. It is a 90-day certificate that the host replaces every two
+    months, so its bytes can't be pinned for longer than that. What is checked
+    is that it is the certificate for CHAT_DOMAIN and in date. The Riot client
+    turns away one with that name that no authority signed, so a wrong file
+    leaves chat unconnected and nothing more, and the key was never a secret,
+    as anyone can download it.
+    """
     try:
         from cryptography.hazmat.primitives.serialization import (
             Encoding,
@@ -462,15 +467,31 @@ def _fetch_cert() -> bool:
         key, cert, extra = pkcs12.load_key_and_certificates(pfx, None)
         if key is None or cert is None:
             _dbg("cert: pfx missing key or leaf cert; ignoring")
-            return False
+            return None
+        fault = _cert_fault(cert)
+        if fault:
+            _dbg(f"cert: REFUSED, {fault}")
+            return None
         pem = cert.public_bytes(Encoding.PEM)
         for c in extra or []:
             pem += c.public_bytes(Encoding.PEM)
-        pem += key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        return pem + key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
     except Exception as e:
         # cryptography can be missing, or can reject the pfx with several
         # different exception types, and every one of them means no cert.
         _dbg(f"cert: pfx->pem conversion failed ({e!r})")
+        return None
+
+
+def _fetch_cert() -> bool:
+    try:
+        r = _http().get(CERT_URL, timeout=15)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        _dbg(f"cert: fetch failed ({e})")
+        return False
+    pem = _pem_from(r.content)
+    if pem is None:
         return False
     tmp = _CACHED_CERT + ".tmp"
     try:
@@ -478,7 +499,8 @@ def _fetch_cert() -> bool:
         with Path(tmp).open("wb") as f:
             f.write(pem)
         # Load it before it replaces the cache, so a PEM the ssl module rejects
-        # never becomes the cert the chat proxy starts with.
+        # never becomes the cert the chat proxy starts with. This is also what
+        # says the key is the certificate's own.
         ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(tmp)
         Path(tmp).replace(_CACHED_CERT)
         _dbg("cert: fetched Deceive pfx + cached as PEM")
@@ -494,33 +516,38 @@ def _fetch_cert() -> bool:
     return False
 
 
-def ensure_cert() -> str:
-    """Return the chat proxy's certificate file.
+def _cached_cert_fits() -> bool:
+    """Whether the saved certificate is still one the Riot client would take."""
+    try:
+        from cryptography import x509
 
-    The pinned download when it is fresh, else a stale copy, else the one
-    shipped with the app.
+        cert = x509.load_pem_x509_certificate(Path(_CACHED_CERT).read_bytes())
+    except (OSError, ValueError, ImportError):
+        return False
+    return _cert_fault(cert) is None
+
+
+def ensure_cert() -> str:
+    """Return the chat proxy's certificate file: the saved one, downloaded again each week.
+
+    A download that fails falls back on the saved one for as long as it is in
+    date. With neither, offline mode says so before the Riot client is touched.
     """
     try:
-        age = time.time() - Path(_CACHED_CERT).stat().st_mtime
-        if 0 <= age < _CERT_CACHE_TTL and Path(_CACHED_CERT).stat().st_size > 0:
-            return _CACHED_CERT
+        fresh = 0 <= time.time() - Path(_CACHED_CERT).stat().st_mtime < _CERT_CACHE_TTL
     except OSError:
-        pass
+        fresh = False
+    if fresh and _cached_cert_fits():
+        return _CACHED_CERT
     if _fetch_cert():
         return _CACHED_CERT
-    if Path(_CACHED_CERT).is_file() and Path(_CACHED_CERT).stat().st_size > 0:
-        _dbg("cert: fetch failed, using stale cached trusted cert")
+    if _cached_cert_fits():
+        _dbg("cert: fetch failed, using the saved one, which is still in date")
         return _CACHED_CERT
-    if Path(CERT_PATH).is_file() and Path(CERT_PATH).stat().st_size > 0:
-        _dbg(
-            "cert: WARNING no trusted cert available; using bundled self-signed. "
-            "The Riot client will REJECT this. Check network access to "
-            f"{CERT_URL} (Deceive's cert host)."
-        )
-        return CERT_PATH
     msg = (
-        f"Couldn't get a certificate for offline mode. The download from {CERT_URL} "
-        f"failed and there's no copy in the cache or at {CERT_PATH}."
+        "Appear Offline couldn't get its certificate. The download from "
+        f"{CERT_URL} failed and the saved copy is missing or out of date. "
+        "Check your connection and try again."
     )
     raise RuntimeError(msg)
 
@@ -998,62 +1025,12 @@ def _broker_main() -> int:
         return 0
 
 
-def _windows_process_names() -> set[str]:
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    snapshot_fn = kernel32.CreateToolhelp32Snapshot
-    snapshot_fn.argtypes = (wintypes.DWORD, wintypes.DWORD)
-    snapshot_fn.restype = wintypes.HANDLE
-    first_fn = kernel32.Process32FirstW
-    first_fn.argtypes = (wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W))
-    first_fn.restype = wintypes.BOOL
-    next_fn = kernel32.Process32NextW
-    next_fn.argtypes = (wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W))
-    next_fn.restype = wintypes.BOOL
-    close_fn = kernel32.CloseHandle
-    close_fn.argtypes = (wintypes.HANDLE,)
-    close_fn.restype = wintypes.BOOL
-
-    snapshot = snapshot_fn(0x00000002, 0)
-    invalid = ctypes.c_void_p(-1).value
-    if snapshot in (None, invalid):
-        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
-    names = set()
-    try:
-        entry = PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(entry)
-        if first_fn(snapshot, ctypes.byref(entry)):
-            while True:
-                names.add(str(entry.szExeFile).lower())
-                if not next_fn(snapshot, ctypes.byref(entry)):
-                    break
-    finally:
-        close_fn(snapshot)
-    return names
-
-
 def _riot_process_running() -> bool:
     # Broad because this is the monitor thread's only call that can fail, and
     # if that thread dies the relay never shuts down. A failed check counts
     # as running, so the relay stays up when in doubt.
     try:
-        names = _windows_process_names()
+        names = process_names()
         return any(name.lower() in names for name in _RIOT_PROCS)
     except Exception as e:
         _dbg(f"helper: process list failed ({e!r}), taking Riot to be running")
@@ -1273,6 +1250,64 @@ def captured_presence_private() -> dict[str, Any] | None:
     return _captured_presence_private_local()
 
 
+def _check_cert() -> None:
+    """Check the chat certificate is taken for its name and dates, and the saved one too."""
+    import tempfile
+    from datetime import timedelta
+    from unittest import mock
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, pkcs12
+    from cryptography.x509.oid import NameOID
+
+    def made(name: str, *, began: int = -1, ends: int = 30) -> tuple[bytes, bytes]:
+        # A certificate for `name` as a pfx and as PEM, valid from `began`
+        # days from now to `ends` days from now.
+        key = ec.generate_private_key(ec.SECP256R1())
+        who = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+        now = datetime.now(UTC)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(who)
+            .issuer_name(who)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now + timedelta(days=began))
+            .not_valid_after(now + timedelta(days=ends))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+            .sign(key, hashes.SHA256())
+        )
+        pfx = pkcs12.serialize_key_and_certificates(None, key, cert, None, NoEncryption())
+        return pfx, cert.public_bytes(Encoding.PEM)
+
+    with mock.patch(f"{__name__}._dbg"):
+        check(_pem_from(made(CHAT_DOMAIN)[0]) is not None, "the chat domain's own was refused")
+        check(_pem_from(made("elsewhere.example")[0]) is None, "another name's was taken")
+        check(_pem_from(made(CHAT_DOMAIN, began=-100, ends=-10)[0]) is None, "a lapsed one")
+        check(_pem_from(made(CHAT_DOMAIN, began=5)[0]) is None, "one not yet in date")
+        check(_pem_from(b"not a pfx") is None)
+
+        # With no download to be had, a saved copy still in date is used
+        # however old the file is, and one that has run out is not.
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "chat.pem"
+            with (
+                mock.patch(f"{__name__}._CACHED_CERT", str(saved)),
+                mock.patch(f"{__name__}._fetch_cert", return_value=False),
+            ):
+                saved.write_bytes(made(CHAT_DOMAIN)[1])
+                os.utime(saved, (0, 0))
+                check(ensure_cert() == str(saved))
+                saved.write_bytes(made(CHAT_DOMAIN, began=-100, ends=-10)[1])
+                try:
+                    lapsed: str | None = ensure_cert()
+                except RuntimeError:
+                    lapsed = None
+                check(lapsed is None, "a saved certificate that ran out was used")
+
+
 if __name__ == "__main__" and "--offline-helper-broker" in sys.argv:
     raise SystemExit(_broker_main())
 
@@ -1352,4 +1387,5 @@ if __name__ == "__main__":
     check(strip_fake_stanzas(f"<iq to='{_FAKE_JID}' id='1'><q/></iq>{real}") == real)
     check(strip_fake_stanzas(real + "<message to='x'") == real + "<message to='x'")
 
+    _check_cert()
     print("offline_launch self-check OK")

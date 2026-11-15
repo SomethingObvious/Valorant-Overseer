@@ -12,14 +12,6 @@ $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path -LiteralPath $Path)) { Write-Host "  x no such path: $Path" -ForegroundColor Red; exit 2 }
 
-# backend/offline_chat.pem is the localhost TLS certificate the offline-mode
-# chat proxy presents to the Riot client. Its key has to be on disk for the
-# proxy to terminate TLS at all, it is the same well-known certificate Deceive
-# publishes at CERT_URL, and it guards nothing but a loopback socket. It is the
-# one file allowed to contain a private key, and it is named here rather than
-# excluded by extension so that a *second* key file cannot arrive unnoticed.
-$KeyAllowed = @("backend\offline_chat.pem")
-
 $Scans = @(
     # Any BEGIN ... PRIVATE KEY, bare PKCS#8 included, since that is what openssl
     # genpkey, cryptography and ssh-keygen -m PKCS8 emit. Split so this file does
@@ -55,7 +47,6 @@ foreach ($file in (Get-ChildItem -LiteralPath $Path -Recurse -File -Force)) {
     $rel = $file.FullName.Substring($Path.TrimEnd('\').Length).TrimStart('\')
     $content = [System.IO.File]::ReadAllText($file.FullName)
     foreach ($scan in $Scans) {
-        if ($scan.Name -eq "private key" -and ($KeyAllowed -contains $rel)) { continue }
         if ($content -match $scan.Pattern) {
             Write-Host "  x possible $($scan.Name) in $rel" -ForegroundColor Red
             $bad = 1

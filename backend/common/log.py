@@ -16,8 +16,6 @@ def console_logger(
 ) -> Callable[[str], None]:
     """Return a `log(msg)` that prints `[tag] msg` and also sends it to `also` if given."""
 
-    # quiet_aware=False is for a message that has to reach the console even
-    # under OVERSEER_QUIET, like the bridge failing to start.
     def log(msg: str) -> None:
         if quiet_aware and os.getenv("OVERSEER_QUIET"):
             return

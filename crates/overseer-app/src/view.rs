@@ -1,7 +1,3 @@
-//! The settings screen, and the entry point the snapshot tests draw through.
-//! Every switch is on this one screen with a sentence saying what it does,
-//! because a setting you have to toggle to understand is one nobody touches.
-
 use egui::{Align2, ScrollArea, Sense, Ui, pos2, vec2};
 
 #[cfg(test)]
@@ -13,7 +9,7 @@ use crate::hotkey;
 use crate::lineups::{COLOURS, SIZES, SPEEDS, speed_name, swatch};
 use crate::offline::Offline;
 use crate::overlay::Corner;
-use crate::settings::{MapTurn, Quality, Settings};
+use crate::settings::{Discord, MapTurn, Quality, Settings};
 #[cfg(test)]
 use crate::sort::Sort;
 #[cfg(test)]
@@ -24,17 +20,13 @@ use egui::{CentralPanel, Panel};
 use overseer_core::Board;
 use overseer_ui::{Face, caps_at, caps_text, caps_width, colour, size, space};
 
-/// What failed to start and why, since each one changes what the screen can
-/// promise.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Trouble<'a> {
-    /// Why nothing listens for the overlay's button.
     pub(crate) hotkey: Option<&'a str>,
     /// Why there is no icon beside the clock.
     pub(crate) tray: Option<&'a str>,
 }
 
-/// Draws the settings screen. True when something changed and wants saving.
 pub(crate) fn settings(
     ui: &mut Ui,
     settings: &mut Settings,
@@ -51,6 +43,7 @@ pub(crate) fn settings(
             jumps(ui);
 
             offline_chat(ui, offline, still);
+            changed |= discord(ui, settings, still);
             changed |= columns(ui, settings, still);
             changed |= tags(ui, settings, still);
 
@@ -102,8 +95,6 @@ pub(crate) fn settings(
     changed
 }
 
-/// Draws the help screen: what the board's marks mean, and every key. Kept
-/// out of Settings, which is only for what can be changed.
 pub(crate) fn help(ui: &mut Ui) {
     ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -116,7 +107,6 @@ pub(crate) fn help(ui: &mut Ui) {
         });
 }
 
-/// Whether the footer says when a newer version is out.
 fn updates(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     section(
         ui,
@@ -157,7 +147,6 @@ fn updates(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     flipped
 }
 
-/// Offline chat, first since it's what people come to Settings for most.
 fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
     section(
         ui,
@@ -165,8 +154,6 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
         "Appear offline to your friends in Riot chat. Nothing changes in the game.",
     );
     let on = offline.on();
-    // Turning it on restarts the game, so it waits out a match, and takes a
-    // second press otherwise, the way Delete does.
     let restarts = offline.state.is_some_and(|s| !s.running) && !on;
     let now = ui.input(|i| i.time);
     if offline.playing || offline.armed.is_some_and(|at| now - at > ARMED) {
@@ -210,11 +197,36 @@ fn offline_chat(ui: &mut Ui, offline: &mut Offline, still: bool) {
     }
 }
 
-/// How many seconds a first press of Appear Offline waits for the second.
+/// Whether your Discord profile shows your match. True when it changed.
+fn discord(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
+    section(
+        ui,
+        "Discord",
+        "What your Discord profile says while you play.",
+    );
+    let flipped = switch(
+        ui,
+        "Discord Status",
+        "Show the mode, the map, the score and your agent on your profile, for anyone who can see it",
+        settings.discord == Discord::On,
+        false,
+        still,
+    );
+    if flipped {
+        settings.discord = match settings.discord {
+            Discord::On => Discord::Off,
+            Discord::Off => Discord::On,
+        };
+    }
+    note(
+        ui,
+        "Overseer hands it to the Discord app on this PC, which needs to be open. Turning it off clears it.",
+    );
+    flipped
+}
+
 const ARMED: f64 = 5.0;
 
-/// Where everything Overseer keeps lives, with a button to open each folder.
-/// It is all plain files, to look at, back up, copy to another PC or change.
 fn data(ui: &mut Ui, root: &std::path::Path) {
     section(
         ui,
@@ -230,8 +242,6 @@ fn data(ui: &mut Ui, root: &std::path::Path) {
             ("App Folder", root.to_path_buf()),
         ] {
             if controls::button(ui, label, controls::Tone::Plain, true).clicked() {
-                // Made first if it isn't there yet, so the button never does
-                // nothing. Explorer opens it by itself, and nothing waits on it.
                 drop(std::fs::create_dir_all(&folder));
                 drop(overseer_native::launch(
                     std::process::Command::new("explorer").arg(&folder),
@@ -248,7 +258,6 @@ fn data(ui: &mut Ui, root: &std::path::Path) {
     );
 }
 
-/// Each mark on a row and what it means, for [`legend`].
 const MARKS: [(&str, &str); 12] = [
     (
         "Worth a Look",
@@ -294,7 +303,6 @@ const MARKS: [(&str, &str); 12] = [
     ),
 ];
 
-/// What the marks on a player's row mean, for what a glance doesn't say.
 fn legend(ui: &mut Ui) {
     section(
         ui,
@@ -337,7 +345,6 @@ fn legend(ui: &mut Ui) {
     }
 }
 
-/// Every key the window listens for, including the ones the footer leaves out.
 fn keys(ui: &mut Ui) {
     section(
         ui,
@@ -392,8 +399,6 @@ fn keys(ui: &mut Ui) {
         let painter = ui.painter();
         let _plate =
             overseer_ui::keycap(painter, pos2(rect.left() + space::XL, rect.center().y), key);
-        // Every description starts just past the widest key, rather than far
-        // across the page from a short one.
         painter.text(
             pos2(
                 rect.left() + space::XL + widest + space::LG,
@@ -407,15 +412,12 @@ fn keys(ui: &mut Ui) {
     }
 }
 
-/// Which columns the board shows. True when one was switched.
 fn columns(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     section(
         ui,
         "Columns",
         "Choose which stats show on each player's row.",
     );
-    // One long list is a thin ribbon down a wide window, so they go two
-    // abreast wherever two fit.
     let changed = if ui.available_width() < TWO_ABREAST {
         switches(ui, &COLUMNS, settings, still)
     } else {
@@ -432,7 +434,6 @@ fn columns(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     changed | games_read(ui, settings) | party_kept(ui, settings)
 }
 
-/// Which tags the rows show and which kind leads. True when one changed.
 fn tags(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     section(
         ui,
@@ -470,7 +471,6 @@ fn tags(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
                     moved = Some(true);
                 }
             });
-            // A switch adds its gap below it, which a row would take as width.
             ui.vertical(|ui| flipped = switch(ui, kind, &about, !off, false, still));
         });
         if let Some(later) = moved {
@@ -514,11 +514,8 @@ fn tags(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     changed
 }
 
-/// How wide the arrows beside each kind of tag are.
 const MOVER: f32 = 24.0;
 
-/// One of the two arrows that move a kind of tag, up or down. True when
-/// clicked. At the end of the list it can't move that way and is drawn dim.
 fn mover(ui: &mut Ui, up: bool, can: bool, kind: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         vec2(MOVER, 16.0),
@@ -550,7 +547,6 @@ fn mover(ui: &mut Ui, up: bool, can: bool, kind: &str) -> bool {
         .clicked()
 }
 
-/// How many games each row's K/D and reads come from. True when it changed.
 fn games_read(ui: &mut Ui, settings: &mut Settings) -> bool {
     let options: Vec<(f32, String)> = crate::settings::GAMES_READ
         .iter()
@@ -596,7 +592,6 @@ fn games_read(ui: &mut Ui, settings: &mut Settings) -> bool {
     picked.is_some() || within.is_some()
 }
 
-/// How long your party's games stay on disk. True when it changed.
 fn party_kept(ui: &mut Ui, settings: &mut Settings) -> bool {
     let options: Vec<(f32, String)> = crate::settings::PARTY_KEPT
         .iter()
@@ -622,15 +617,13 @@ fn party_kept(ui: &mut Ui, settings: &mut Settings) -> bool {
     }
     note(
         ui,
-        "How long your party's games stay on disk, so a restart reads them back instead of asking Riot again. Stats still only count your newest games.",
+        "How long your party's games stay on disk, so a restart reads them back instead of asking Riot again. Games with somebody you have met more than 3 times in a month stay for a month. Stats still only count your newest games.",
     );
     picked.is_some()
 }
 
-/// Below this width the column switches stay in one list.
 const TWO_ABREAST: f32 = 760.0;
 
-/// One toggle per column, in the order the board draws them.
 fn switches(ui: &mut Ui, columns: &[Column], settings: &mut Settings, still: bool) -> bool {
     let mut changed = false;
     for column in columns {
@@ -647,8 +640,6 @@ fn switches(ui: &mut Ui, columns: &[Column], settings: &mut Settings, still: boo
     changed
 }
 
-/// The overlay and tray sections, both about what the app does while the
-/// game has the screen.
 fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bool) -> bool {
     let mut changed = false;
     section(
@@ -686,8 +677,6 @@ fn overlay(ui: &mut Ui, settings: &mut Settings, trouble: Trouble<'_>, still: bo
     changed
 }
 
-/// The overlay's key, `label`, as a button that waits for the next press,
-/// and what it does or why it can't, `failed`.
 fn overlay_key(ui: &mut Ui, label: &str, failed: Option<&str>) {
     let catching = hotkey::catching();
     ui.horizontal(|ui| {
@@ -703,7 +692,6 @@ fn overlay_key(ui: &mut Ui, label: &str, failed: Option<&str>) {
         let picked = controls::button(ui, text, tone, enabled)
             .on_hover_text("Click, then press the key or mouse button you want");
         if picked.clicked() {
-            // Space or Enter on a focused button would click it again.
             picked.surrender_focus();
             ui.ctx()
                 .data_mut(|d| d.insert_temp(egui::Id::new(CATCH_KEY), true));
@@ -732,8 +720,6 @@ fn overlay_key(ui: &mut Ui, label: &str, failed: Option<&str>) {
     }
 }
 
-/// The tray's section: how the icon works, or that it failed, with a way
-/// to try again.
 fn tray(ui: &mut Ui, failed: bool) {
     section(ui, "System Tray", "The Overseer icon near the clock.");
     if !failed {
@@ -760,8 +746,6 @@ fn tray(ui: &mut Ui, failed: bool) {
 /// to make it again on its own thread.
 pub(crate) const TRAY_AGAIN: &str = "tray-again";
 
-/// Set when the overlay's key is clicked, for the app to bind the next
-/// press.
 pub(crate) const CATCH_KEY: &str = "catch-key";
 
 /// A button that installs yt-dlp and `FFmpeg`, or updates them, with winget in
@@ -797,7 +781,6 @@ fn clip_tools(ui: &mut Ui) {
     );
 }
 
-/// How a lineup's clip plays when it first shows. True when something changed.
 fn clips(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     let mut changed = false;
     section(
@@ -849,7 +832,6 @@ fn clips(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     changed | lineup_maps(ui, settings, still)
 }
 
-/// How each lineup map is drawn. True when something changed.
 fn lineup_maps(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     section(ui, "Lineup Maps", "How each map is drawn.");
     let mut changed = false;
@@ -893,8 +875,6 @@ fn lineup_maps(ui: &mut Ui, settings: &mut Settings, still: bool) -> bool {
     changed
 }
 
-/// The colour a molly's area is drawn in: By Side, or one of the drawing
-/// colours. True when one was picked.
 fn area_colour(ui: &mut Ui, settings: &mut Settings) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
@@ -921,8 +901,6 @@ fn area_colour(ui: &mut Ui, settings: &mut Settings) -> bool {
     changed
 }
 
-/// A row of chips for one value, with its name on the left. True when one
-/// was picked.
 fn choice(ui: &mut Ui, name: &str, options: &[(f32, String)], value: &mut f32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -939,7 +917,6 @@ fn choice(ui: &mut Ui, name: &str, options: &[(f32, String)], value: &mut f32) -
     changed
 }
 
-/// The name at the left of a row of chips or a button.
 fn row_name(ui: &mut Ui, name: &str) {
     let (rect, _response) = ui.allocate_exact_size(vec2(96.0, space::ROW), Sense::hover());
     let _drawn = caps_text(
@@ -952,7 +929,6 @@ fn row_name(ui: &mut Ui, name: &str) {
     );
 }
 
-/// How much the window may spend on looking good. True when it changed.
 fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, why: Option<&str>) -> bool {
     let mut changed = false;
     let still = quality == Quality::Efficient;
@@ -985,7 +961,6 @@ fn effort(ui: &mut Ui, settings: &mut Settings, quality: Quality, why: Option<&s
     changed
 }
 
-/// Whether this PC counts as slow, and why Auto decided what it did.
 fn your_pc(
     ui: &mut Ui,
     settings: &mut Settings,
@@ -1015,7 +990,6 @@ fn your_pc(
     changed
 }
 
-/// The screen's own title, and a sentence under it.
 pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());
@@ -1042,11 +1016,9 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
     }
 }
 
-/// The sections of Settings for the chips at its top to jump to, in four
-/// groups, since thirteen chips in a row read as one wall.
 const SECTIONS: [(&str, &[&str]); 4] = [
     ("Board", &["Columns", "Tags", "Layout"]),
-    ("In Game", &["Offline Chat", "Overlay"]),
+    ("In Game", &["Offline Chat", "Discord", "Overlay"]),
     ("Lineups", &["Lineup Clips", "Lineup Maps"]),
     (
         "App",
@@ -1054,23 +1026,16 @@ const SECTIONS: [(&str, &[&str]); 4] = [
     ),
 ];
 
-/// Room for the longest group name, so every group's chips start together.
 const GROUP: f32 = 64.0;
 
-/// Where a chip at the top of Settings asked to go, until the section is
-/// drawn and scrolls there.
 const JUMP: &str = "settings-jump";
 
-/// Scrolls Settings to the section called `name` the next time it is drawn.
 pub(crate) fn open_at(ctx: &egui::Context, name: &str) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(JUMP), name.to_owned()));
 }
 
-/// A chip for every section, which scrolls the page to it, since the page is
-/// long and every group on it looks alike.
 fn jumps(ui: &mut Ui) {
     ui.add_space(space::SM);
-    // Inset as a whole, so a second line of chips lines up with the first.
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(space::XL as i8, 0))
         .show(ui, |ui| {
@@ -1097,8 +1062,6 @@ fn jumps(ui: &mut Ui) {
         });
 }
 
-/// A section heading: the name, a sentence about it, and a hairline to the
-/// edge, with more room above it than below, so each group reads as one.
 fn section(ui: &mut Ui, text: &str, about: &str) {
     ui.add_space(space::XXL);
     let (rect, _response) =
@@ -1143,8 +1106,6 @@ fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool, still: b
     overseer_ui::choice(ui, name, about, on, one_of, still)
 }
 
-/// A line of explanation under a group, wrapped to the screen, since the
-/// hotkey and tray notes run past a narrow window.
 pub(crate) fn note(ui: &mut Ui, text: &str) {
     let galley = ui.painter().layout(
         text.to_owned(),
@@ -1163,8 +1124,6 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
         .galley(pos2(rect.left() + space::XL, top), galley, colour::TEXT_DIM);
 }
 
-/// The strip over the board on somebody's first look: where to start, and
-/// how to find the rest. True once Got It is pressed.
 pub(crate) fn welcome(ui: &mut Ui) -> bool {
     let mut done = false;
     egui::Frame::NONE
@@ -1192,9 +1151,6 @@ pub(crate) fn welcome(ui: &mut Ui) -> bool {
     done
 }
 
-/// Something that has gone wrong, under a group: a warning sign and the
-/// words in the warning colour at the size of an explanation, so it doesn't
-/// read as one more footnote.
 pub(crate) fn warning(ui: &mut Ui, text: &str) {
     let sign = space::LG;
     let galley = ui.painter().layout(
@@ -1210,7 +1166,6 @@ pub(crate) fn warning(ui: &mut Ui, text: &str) {
         return;
     }
     let top = rect.center().y - galley.size().y / 2.0;
-    // The sign sits on the first line, however many the words wrap to.
     let line = Face::Body.at(size::LABEL + 1.0).size;
     let middle = pos2(rect.left() + space::XL + sign / 2.0, top + line * 0.6);
     let corners = vec![
@@ -1223,7 +1178,6 @@ pub(crate) fn warning(ui: &mut Ui, text: &str) {
         colour::WARN,
         egui::Stroke::NONE,
     ));
-    // The mark inside it, a bar and a dot, drawn rather than typed.
     ui.painter().line_segment(
         [
             middle + vec2(0.0, -sign * 0.22),
@@ -1240,25 +1194,16 @@ pub(crate) fn warning(ui: &mut Ui, text: &str) {
     );
 }
 
-/// One frame of the app, for the snapshot and budget tests to draw.
 #[cfg(test)]
 pub(crate) struct Shown<'a> {
-    /// What the bridge last sent.
     pub(crate) board: &'a Board,
-    /// Who the panel is about, by name rather than by id, because a fixture
-    /// is written by a person.
     pub(crate) selected: Option<&'a str>,
-    /// Every switch.
     pub(crate) settings: &'a Settings,
-    /// How the board is ordered.
     pub(crate) sort: &'a Sort,
-    /// What has been written about them.
     pub(crate) notes: &'a mut crate::notes::Notes,
-    /// The selected player's history.
     pub(crate) career: &'a crate::career::Career,
 }
 
-/// The detail panel, for the snapshot only: the window builds its own.
 #[cfg(test)]
 fn beside(
     ui: &mut Ui,
@@ -1281,8 +1226,6 @@ fn beside(
             ));
             ui.painter()
                 .vline(all.left(), all.y_range(), (1.0, colour::VOID));
-            // A dark stroke then a light one, the same cut that separates
-            // the rows, so the panel reads as a column beside the board.
             ui.painter().vline(
                 all.left() + 1.0,
                 all.y_range(),
@@ -1296,8 +1239,6 @@ fn beside(
         });
 }
 
-/// The board and the panel as the window draws them, for the snapshot and
-/// budget tests.
 #[cfg(test)]
 pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
     let Shown {
@@ -1329,8 +1270,6 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
             if settings.welcome == crate::settings::Welcome::Due {
                 let _done = welcome(ui);
             }
-            // Fixtures pick by name, and the board keys by account the way
-            // the window does.
             let chosen = selected
                 .and_then(|name| {
                     board
@@ -1339,8 +1278,6 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                         .find(|p| p.name.as_deref() == Some(name))
                 })
                 .and_then(|p| p.puuid.as_deref());
-            // `since` is well past the entrance animation, so the picture is
-            // of a settled board.
             let _touched = board::draw(
                 ui,
                 &board::Scene {
@@ -1353,6 +1290,7 @@ pub(crate) fn snapshot(ui: &mut Ui, shown: Shown<'_>) {
                     place: board::Place::Window,
                     still: false,
                     since: 10.0,
+                    lost: false,
                 },
             );
         });

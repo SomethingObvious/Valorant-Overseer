@@ -1,10 +1,3 @@
-//! The panel for drawing on the map: which shape, which colour, how solid,
-//! how wide a cone opens, and taking back or clearing what is drawn. The
-//! colour and the opacity also change the shape drawn or moved last. Every
-//! change is kept straight away, so closing the window loses nothing. The
-//! sandbox is the same panel with agents and the Spike to put down, and
-//! keeps nothing.
-
 use egui::{Sense, Stroke, Ui, vec2};
 use overseer_ui::colour;
 
@@ -15,7 +8,6 @@ use super::side::{title, words};
 use super::{Mode, SPIKE, Sketch, View, pick};
 use crate::controls::{self, Tone};
 
-/// Draws the panel while shapes are being drawn.
 pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     let map = view.map.clone().unwrap_or_default();
     let Mode::Draw(sketch) = &mut view.mode else {
@@ -61,7 +53,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     }
     let sized = brush_size(ui, sketch);
     let retyped = lettering(ui, sketch);
-    // The eraser has no colour or opacity of its own.
     let restyled = sketch.tool() != "erase" && look(ui, sketch);
     let mut changed = restyled || retyped || sized;
     ui.add_space(overseer_ui::space::MD);
@@ -85,8 +76,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     }
 }
 
-/// The Spike and every agent, to put down with a click. Picking the one
-/// already out goes back to the shape.
 fn stamps(ui: &mut Ui, atlas: &Atlas, sketch: &mut Sketch) {
     controls::heading(ui, "Agents");
     ui.horizontal_wrapped(|ui| {
@@ -102,11 +91,8 @@ fn stamps(ui: &mut Ui, atlas: &Atlas, sketch: &mut Sketch) {
     });
 }
 
-/// Undo, Delete Shape, Clear All and Done, and the Delete key, under the
-/// tools. Says whether the shapes changed and whether Done was pressed.
 fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     let (mut changed, mut done) = (false, false);
-    // The Delete key too, unless a label's words have the keyboard.
     let typing = ui.memory(|m| m.focused().is_some());
     let pressed = !typing && ui.input(|i| i.key_pressed(egui::Key::Delete));
     let undo = !typing
@@ -116,8 +102,6 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
                 egui::Key::Z,
             ))
         });
-    // A change is kept for Undo once it's finished, so a drag or a slider
-    // is one step rather than one a frame.
     if !typing && !ui.input(|i| i.pointer.any_down()) && sketch.shapes != sketch.settled {
         let before = std::mem::replace(&mut sketch.settled, sketch.shapes.clone());
         sketch.history.push(before);
@@ -168,7 +152,6 @@ fn buttons(ui: &mut Ui, sketch: &mut Sketch, count: usize) -> (bool, bool) {
     (changed, done)
 }
 
-/// The kind of the picked shape, if one is picked.
 fn picked_kind(sketch: &Sketch) -> Option<&str> {
     sketch
         .picked
@@ -176,8 +159,6 @@ fn picked_kind(sketch: &Sketch) -> Option<&str> {
         .map(|s| s.kind.as_str())
 }
 
-/// How thick the brush draws, while the brush is out or a stroke is picked.
-/// Says whether the picked stroke changed.
 fn brush_size(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     let stroke = picked_kind(sketch) == Some("brush");
     if sketch.tool() != "brush" && !stroke {
@@ -204,10 +185,7 @@ fn brush_size(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     false
 }
 
-/// The words for a label or a text box, while that tool is out or one of
-/// them is picked. Says whether the picked one changed.
 fn lettering(ui: &mut Ui, sketch: &mut Sketch) -> bool {
-    // Whether a label or a box is picked, and which.
     let picked = match picked_kind(sketch) {
         Some("text") => Some(false),
         Some("textbox") => Some(true),
@@ -218,7 +196,6 @@ fn lettering(ui: &mut Ui, sketch: &mut Sketch) -> bool {
         return false;
     }
     controls::heading(ui, "Words");
-    // A label is a line of a few words. A box holds a paragraph or two.
     let (typed, longest) = if boxed {
         let hint = "Type what the box says";
         (controls::notes(ui, &mut sketch.words, hint), 400)
@@ -237,8 +214,6 @@ fn lettering(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     } else {
         sketch.words.trim()
     };
-    // A label with no words is nothing, so it keeps the ones it had. An
-    // empty box is still a box.
     if typed.changed()
         && picked.is_some()
         && (boxed || !words.is_empty())
@@ -250,8 +225,6 @@ fn lettering(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     false
 }
 
-/// The colour and the opacity, for the next shape and the picked one. Says
-/// whether the picked shape changed.
 fn look(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     let mut changed = false;
     controls::heading(ui, "Colour");
@@ -286,7 +259,6 @@ fn look(ui: &mut Ui, sketch: &mut Sketch) -> bool {
     changed
 }
 
-/// One colour to pick, ringed in cream when it is the one picked.
 pub(crate) fn swatch(ui: &mut Ui, hex: &str, on: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
     let painter = ui.painter();

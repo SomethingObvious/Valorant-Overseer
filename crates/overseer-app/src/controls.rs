@@ -6,38 +6,28 @@ use overseer_ui::{Face, caps_text, caps_width, colour, size, space};
 
 use crate::board::paint;
 
-/// How loud a button is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tone {
-    /// One of several things to do.
     Plain,
-    /// The thing this screen is for: outlined in cream, since a solid cream
-    /// plate is a choice that is already on.
     Primary,
-    /// A button that throws something away.
     Danger,
 }
 
-/// How tall a button or a chip is.
 const HEIGHT: f32 = 24.0;
 
-/// How wide [`button`] draws `text`, for laying something out beside it.
 pub(crate) fn width(ui: &Ui, text: &str) -> f32 {
     space::XL.mul_add(2.0, caps_width(ui.painter(), text, paint::label()))
 }
 
-/// Gives a drawn control the name a screen reader says for it, as a button.
 pub(crate) fn named(response: &Response, label: &str) {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
 }
 
-/// A button in the current layout. A disabled one is dim and ignores clicks.
 pub(crate) fn button(ui: &mut Ui, text: &str, tone: Tone, enabled: bool) -> Response {
     let wide = width(ui, text);
     button_wide(ui, text, (tone, enabled), wide)
 }
 
-/// [`button`] `wide` points across, so a row of them lines up as a grid.
 pub(crate) fn button_wide(
     ui: &mut Ui,
     text: &str,
@@ -90,10 +80,6 @@ pub(crate) fn button_wide(
     }
 }
 
-/// A box showing the choice made, `wide` points across, that opens a menu
-/// of the others. It reads as a field rather than a button: the choice
-/// sits on the left in plain text, with an arrow that points down, or up
-/// while the menu is open.
 pub(crate) fn select(ui: &mut Ui, text: &str, wide: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(wide, 32.0), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
@@ -142,7 +128,6 @@ pub(crate) fn select(ui: &mut Ui, text: &str, wide: f32) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// The card a menu opens in: raised, with a hairline round it.
 pub(crate) fn menu_card() -> egui::Frame {
     egui::Frame::NONE
         .fill(colour::BG_RAISED)
@@ -151,8 +136,6 @@ pub(crate) fn menu_card() -> egui::Frame {
         .inner_margin(4)
 }
 
-/// A row in a menu `wide` points across, lit under the pointer, with a red
-/// mark on the left when it is `on`.
 pub(crate) fn menu_row(ui: &mut Ui, text: &str, on: bool, wide: f32) -> Response {
     let (rect, row) = ui.allocate_exact_size(vec2(wide, 26.0), Sense::click());
     let row = row.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -183,12 +166,10 @@ pub(crate) fn menu_row(ui: &mut Ui, text: &str, on: bool, wide: f32) -> Response
     row
 }
 
-/// How wide [`chip`] draws `text`, for laying something out beside it.
 pub(crate) fn chip_width(ui: &Ui, text: &str) -> f32 {
     space::LG.mul_add(2.0, caps_width(ui.painter(), text, paint::label()))
 }
 
-/// One choice of several, lit when it is the one chosen.
 pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     let painter = ui.painter().clone();
     let wide = chip_width(ui, text);
@@ -218,8 +199,6 @@ pub(crate) fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A word that can be switched off: an outlined chip while it's on, and
-/// faint with a line through it while it's off.
 pub(crate) fn word_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     let painter = ui.painter().clone();
     let wide = chip_width(ui, text);
@@ -249,8 +228,6 @@ pub(crate) fn word_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A chip with a small white icon before its words, tinted like them, for
-/// an ability.
 pub(crate) fn chip_with(
     ui: &mut Ui,
     icon: Option<&egui::TextureHandle>,
@@ -302,7 +279,6 @@ pub(crate) fn chip_with(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A small caps heading over the controls that follow it.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(space::MD);
     let (rect, _response) =
@@ -319,24 +295,33 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
     }
 }
 
-/// A one-line text box `width` wide, set into the board's slant.
 pub(crate) fn field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    field_named(ui, text, hint, width, None)
+}
+
+pub(crate) fn field_named(
+    ui: &mut Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    id: Option<egui::Id>,
+) -> Response {
     let (rect, _response) = ui.allocate_exact_size(vec2(width, HEIGHT + 2.0), Sense::hover());
     ui.painter()
         .add(paint::slant(rect, false, true, colour::BG_INSET));
-    let response = ui.put(
-        rect.shrink2(vec2(space::MD, 2.0)),
-        egui::TextEdit::singleline(text)
-            .frame(egui::Frame::NONE)
-            .vertical_align(egui::Align::Center)
-            .font(Face::Body.at(size::BODY))
-            .hint_text(hint_text(hint)),
-    );
+    let mut edit = egui::TextEdit::singleline(text)
+        .frame(egui::Frame::NONE)
+        .vertical_align(egui::Align::Center)
+        .font(Face::Body.at(size::BODY))
+        .hint_text(hint_text(hint));
+    if let Some(id) = id {
+        edit = edit.id(id);
+    }
+    let response = ui.put(rect.shrink2(vec2(space::MD, 2.0)), edit);
     underline(ui, rect, &response);
     response
 }
 
-/// A text box a few lines tall, for notes.
 pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT * 3.0), Sense::hover());
@@ -355,7 +340,6 @@ pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     response
 }
 
-/// A cream line along the bottom of a text box while it has the keyboard.
 fn underline(ui: &Ui, rect: Rect, response: &Response) {
     if response.has_focus() {
         ui.painter().rect_filled(
@@ -369,7 +353,6 @@ fn underline(ui: &Ui, rect: Rect, response: &Response) {
     }
 }
 
-/// A hint in the text box's own face.
 fn hint_text(hint: &str) -> RichText {
     RichText::new(hint)
         .color(colour::HINT)

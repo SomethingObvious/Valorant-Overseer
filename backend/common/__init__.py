@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Helpers that more than one backend module needs.
-
-Something moves in here once two modules already carry their own copy of it,
-not on the theory that it might be shared one day.
-"""
+"""Helpers that more than one backend module needs."""
 
 from __future__ import annotations
 

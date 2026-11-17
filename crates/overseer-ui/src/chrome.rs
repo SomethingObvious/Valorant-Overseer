@@ -42,8 +42,6 @@ pub fn buttons(ui: &Ui, rect: Rect, order: &[Button], state: State) -> (f32, Opt
     let painter = ui.painter();
     let mut x = rect.right();
     let mut clicked = None;
-    // Placed right to left, then made left to right, so Tab goes across the
-    // bar the way it reads.
     let mut placed = Vec::with_capacity(order.len());
     for &button in order {
         if button == Button::Settings {
@@ -108,7 +106,6 @@ pub fn buttons(ui: &Ui, rect: Rect, order: &[Button], state: State) -> (f32, Opt
     (x, clicked)
 }
 
-/// A button's glyph, drawn in lines ten points across so they all match.
 fn icon(painter: &egui::Painter, button: Button, c: Pos2, ink: Color32, maximized: bool) {
     let stroke = Stroke::new(1.2, ink);
     match button {
@@ -116,7 +113,6 @@ fn icon(painter: &egui::Painter, button: Button, c: Pos2, ink: Color32, maximize
             painter.hline((c.x - 5.0)..=(c.x + 5.0), c.y, stroke);
         }
         Button::Maximize if maximized => {
-            // Two windows, the one behind showing only its top and right.
             let front = Rect::from_center_size(pos2(c.x - 1.0, c.y + 1.0), vec2(8.0, 8.0));
             painter.rect_stroke(front, 0, stroke, egui::StrokeKind::Middle);
             painter.add(Shape::line(
@@ -137,7 +133,6 @@ fn icon(painter: &egui::Painter, button: Button, c: Pos2, ink: Color32, maximize
             painter.line_segment([c + vec2(-5.0, 5.0), c + vec2(5.0, -5.0)], stroke);
         }
         Button::Settings => {
-            // A gear: eight flat teeth round a ring, and the hole.
             let teeth = 8;
             let half = std::f32::consts::PI / teeth as f32;
             let mut rim = Vec::with_capacity(teeth * 4);
@@ -152,7 +147,6 @@ fn icon(painter: &egui::Painter, button: Button, c: Pos2, ink: Color32, maximize
             painter.circle_stroke(c, 2.2, stroke);
         }
         Button::Lineups => {
-            // A sight: a ring and four ticks pointing in.
             painter.circle_stroke(c, 5.0, stroke);
             for (from, to) in [
                 (vec2(0.0, -8.0), vec2(0.0, -3.0)),
@@ -186,9 +180,6 @@ pub fn drag(ui: &Ui, bar: &Response) -> bool {
 }
 
 /// A ring round the widget the keyboard is on, so Tab shows where it went.
-///
-/// It shows once Tab has been pressed and goes at the next click, so moving
-/// the pointer never leaves a ring behind on what was clicked.
 pub fn focus(ctx: &egui::Context) {
     let id = egui::Id::new("keyboard-focus");
     let (tabbed, pointed) = ctx.input(|i| (i.key_pressed(egui::Key::Tab), i.pointer.any_pressed()));

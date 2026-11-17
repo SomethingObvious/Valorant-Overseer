@@ -15,7 +15,6 @@ use windows::Win32::UI::Shell::{
 };
 use windows_core::w;
 
-/// What the dialog chose and nobody has taken yet.
 static CHOSEN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Opens the dialog over the app's window, on a thread of its own so the
@@ -44,8 +43,6 @@ pub fn take_pictures() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Shows the dialog and waits for it. Cancelling it, or any failure, chooses
-/// nothing.
 fn chosen(owner: isize) -> Vec<PathBuf> {
     let owner = HWND(owner as *mut c_void);
     // SAFETY: COM is started on this thread before the dialog is made and

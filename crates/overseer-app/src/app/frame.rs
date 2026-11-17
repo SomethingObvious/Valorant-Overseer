@@ -1,5 +1,3 @@
-//! Everything inside the window's frame, laid out once a frame.
-
 use egui::{CentralPanel, Panel, Ui};
 use overseer_core::Status;
 
@@ -11,15 +9,12 @@ use overseer_ui::{self, colour, motion, space};
 use super::{COMPACT, DWELL, Overseer, Screen, panel_grip};
 
 impl Overseer {
-    /// Everything inside the window's frame.
     pub(super) fn window(&mut self, ui: &mut Ui, edge: bool) {
         self.keys(ui);
         if ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
             self.keyboard_owns = false;
         }
         let now = ui.input(|i| i.time);
-        // Wake when the pointer will have settled. Otherwise the history
-        // waits for the next event, which on a still board never comes.
         if self.hovered.is_some() && now - self.hovered_at < DWELL {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs_f64(DWELL));
@@ -72,14 +67,10 @@ impl Overseer {
         }
 
         let width = ui.available_width();
-        // With nobody on the board the panel would only say so, so the
-        // waiting plate has the window. Your last stats count as a board.
         let was = self.panel_visible;
         self.panel_visible = width >= COMPACT
             && self.settings.panel
             && (!self.board.players.is_empty() || self.showing_kept());
-        // `logic` only asks for a history while the panel shows, and it ran
-        // before this frame opened it.
         if self.panel_visible && !was {
             ui.ctx().request_repaint();
         }
@@ -87,9 +78,6 @@ impl Overseer {
         CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                // The ground darkens towards the bottom. Ten rows never fill
-                // the window, and a flat colour under the empty half looks
-                // unfinished.
                 let all = ui.max_rect();
                 ui.painter().add(egui::Shape::gradient_rect(
                     all,

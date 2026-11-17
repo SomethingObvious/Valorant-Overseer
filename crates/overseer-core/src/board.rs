@@ -10,12 +10,10 @@ use serde::Deserialize;
 pub(crate) mod number {
     use serde::{Deserialize, Deserializer};
 
-    /// A whole number, from whatever number arrived.
     pub(crate) fn whole<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
         Ok(real(d)?.map(|v| v.round().clamp(0.0, f64::from(u32::MAX)) as u32))
     }
 
-    /// A whole number that can be negative: rating earned, a session's net.
     pub(crate) fn signed<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
         Ok(real(d)?.map(|v| v.round() as i64))
     }
@@ -263,7 +261,7 @@ pub struct Player {
     pub smurf_evidence: Vec<Evidence>,
     /// The tags the backend worked out for itself, most useful first.
     pub auto_tags: Vec<AutoTag>,
-    /// The pregame brief: what they tend to do, each line with the count
+    /// The brief on them: what they tend to do, each line with the count
     /// behind it, composed for this map and this side of the lobby. The
     /// panel's History disclosure lists it.
     pub brief: Vec<BriefLine>,
@@ -280,16 +278,16 @@ pub struct Tendencies {
     pub title: Option<String>,
     /// Their pace in a word, aggressive, passive or even, with the
     /// percentile among peers behind it.
-    pub tag: Option<TendenciesFinding>,
+    pub tag: Option<TendencyFinding>,
     /// What they tend to do against peers, up to three lines, every
     /// readable player.
-    pub habits: Vec<TendenciesFinding>,
+    pub habits: Vec<TendencyFinding>,
     /// The one finding about this round, if one earned it.
-    pub main: Option<TendenciesFinding>,
+    pub main: Option<TendencyFinding>,
     /// What they held on this kind of round, when the round has a kind.
-    pub buy: Option<TendenciesBuy>,
+    pub buy: Option<TendencyBuy>,
     /// Their spacing against peers, as a secondary line.
-    pub style: Option<TendenciesFinding>,
+    pub style: Option<TendencyFinding>,
     /// What to say when nothing earned a place, and empty otherwise.
     pub empty: Option<String>,
     /// The sample and how much of it was on this lobby's agent.
@@ -299,7 +297,7 @@ pub struct Tendencies {
 /// A finding: the words, the figures under them, what to do about it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct TendenciesFinding {
+pub struct TendencyFinding {
     /// The words: the habit, the pace word, or the callout.
     pub headline: Option<String>,
     /// The figures behind it, in a sentence.
@@ -330,7 +328,7 @@ pub struct TendenciesFinding {
 /// A buy block: the family and its rounds, the guns, the armor.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct TendenciesBuy {
+pub struct TendencyBuy {
     /// The family and its rounds, or the forecast's context.
     pub label: Option<String>,
     /// The guns over the rounds, or with their odds.
@@ -338,20 +336,20 @@ pub struct TendenciesBuy {
     /// The armor over the rounds, or with its odds.
     pub armor: Option<String>,
     /// The guns drawn as icons, each with its odds or count.
-    pub items: Vec<TendenciesGun>,
+    pub items: Vec<TendencyGun>,
 }
 
 /// One gun in a buy block's icon row.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct TendenciesGun {
+pub struct TendencyGun {
     /// The weapon's name, as valorant-api names it.
     pub name: Option<String>,
     /// Its odds this round, or its count over past rounds.
     pub value: Option<String>,
 }
 
-/// One line of the pregame brief, in the backend's words.
+/// One line of the brief, in the backend's words.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BriefLine {
@@ -392,7 +390,7 @@ pub struct AutoTag {
     pub why: Option<String>,
     /// What the word means, for somebody meeting it for the first time.
     pub means: Option<String>,
-    /// What sort of thing it is: weapon, economy, duels, agent, tendencies,
+    /// What sort of thing it is: weapon, economy, duels, agent, tendency,
     /// form, history, rank or map.
     pub kind: Option<String>,
     /// Where Settings put it on a row, first to last. Without it the row
@@ -608,7 +606,6 @@ mod tests {
         assert_eq!(encounter.total(), u32::MAX);
     }
 
-    /// The backend sends an empty frame between a match ending and the menus.
     #[test]
     fn empty_frame_parses() {
         let board: Board = serde_json::from_str("{}").expect("an empty object is a valid board");
@@ -712,7 +709,6 @@ mod tests {
         assert_eq!(board.score.and_then(|s| s.round), Some(5));
     }
 
-    /// Two mains in one role name it, and three in three roles name none.
     #[test]
     fn a_role_needs_two_mains() {
         let main = |agent: &str, games: u32, role: &str| TopAgent {

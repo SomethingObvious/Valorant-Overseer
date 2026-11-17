@@ -11,31 +11,20 @@ use overseer_ui::{Face, art, caps_text, chrome, colour, motion, space};
 
 use crate::board::paint;
 
-/// How tall the masthead is.
 pub(crate) const HEIGHT: f32 = 56.0;
 
-/// Everything the masthead shows.
 #[derive(Debug)]
 pub(crate) struct Masthead<'a> {
-    /// What the bridge last sent.
     pub(crate) board: &'a Board,
-    /// The connection light.
     pub(crate) light: Light,
-    /// The efficient tier: no light behind anything.
     pub(crate) still: bool,
-    /// Whether the window fills the screen, which turns maximize into restore.
     pub(crate) maximized: bool,
-    /// The screen whose button is lit, because it is open.
     pub(crate) open: Option<Chrome>,
-    /// Whether the pointer is on the window's edge, where a press resizes
-    /// rather than drags.
     pub(crate) edge: bool,
 }
 
 pub(crate) use overseer_ui::chrome::Button as Chrome;
 
-/// The connection light: how big, what colour, the word beside it, which is
-/// empty while all is well, and the exact reason, said on its hover.
 #[derive(Debug)]
 pub(crate) struct Light {
     pub(crate) radius: f32,
@@ -44,8 +33,6 @@ pub(crate) struct Light {
     pub(crate) why: String,
 }
 
-/// Draws the masthead, and says which button was pressed and whether the
-/// connection light was clicked.
 pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> (Option<Chrome>, bool) {
     let (rect, bar) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT), Sense::click_and_drag());
@@ -109,13 +96,9 @@ pub(crate) fn draw(ui: &mut Ui, head: &Masthead<'_>) -> (Option<Chrome>, bool) {
     (clicked.or(pressed), refresh)
 }
 
-/// The map, dimmed, under a ramp that keeps the title side dark enough to
-/// read on whatever the map happens to be.
 pub(crate) fn backdrop(painter: &egui::Painter, rect: Rect, map: Option<&str>) {
     painter.rect_filled(rect, 0, colour::BG_RAISED);
     if let Some(strip) = map.and_then(|m| art::map(painter.ctx(), m)) {
-        // Fit the width and take the middle band of the height, so the
-        // strip is cropped rather than stretched into a smear.
         let texture = strip.size_vec2();
         let band = (texture.x / texture.y) / (rect.width() / rect.height()).max(0.01);
         let band = band.clamp(0.0, 1.0);
@@ -151,23 +134,16 @@ pub(crate) fn backdrop(painter: &egui::Painter, rect: Rect, map: Option<&str>) {
     painter.hline(rect.x_range(), rect.bottom() - 0.5, (1.0, colour::VOID));
 }
 
-/// The map's name, then the state, the queue and the side as plates, each
-/// dropped if it would reach `limit`. Returns where the last one ended.
 fn title(painter: &egui::Painter, board: &Board, start: f32, middle: f32, limit: f32) -> f32 {
     let name = board.map.as_deref().unwrap_or("Overseer");
     let font = Face::Heavy.at(28.0);
-    // The line box the title is centred in keeps room for descenders under
-    // the capitals, so anything lined up with the box would sit high. The
-    // mark is centred on the capitals, and the plates share their bottom.
     let galley = painter.layout_job(overseer_ui::caps(name, font.clone(), colour::TEXT_STRONG));
     let caps = galley.mesh_bounds;
     let top = middle - galley.size().y / 2.0;
-    // Out of a match the title is the app's own name, with the mark in front.
     let mut start = start;
     if board.map.is_none()
         && let Some(mark) = art::mark(painter.ctx())
     {
-        // A little taller than the capitals.
         let centre = top + caps.center().y;
         let tall = caps.height() * art::MARK_OVER_CAPS;
         let wide = tall * mark.aspect_ratio();
@@ -195,16 +171,12 @@ fn title(painter: &egui::Painter, board: &Board, start: f32, middle: f32, limit:
         .as_deref()
         .or(board.state.as_deref())
         .unwrap_or("Waiting");
-    // The side is a solid plate in the game's own colours for it. The state
-    // drops out once there is a score, since the score says the match is on.
     for (text, tint, solid) in [
         (
             board.score.is_none().then_some(state),
             colour::TEXT_DIM,
             false,
         ),
-        // Skipped when the state already says it: in the lobby the mode is
-        // "Lobby" and the state is "In Lobby".
         (
             board
                 .mode
@@ -229,8 +201,6 @@ fn title(painter: &egui::Painter, board: &Board, start: f32, middle: f32, limit:
     x
 }
 
-/// One slanted plate in the masthead standing on `bottom`: a tint of its
-/// colour with the word in it, or solid with the word in the ground's black.
 pub(crate) fn plate(
     painter: &egui::Painter,
     x: f32,
@@ -258,7 +228,6 @@ pub(crate) fn plate(
     rect
 }
 
-/// How wide [`plate`] draws `text`.
 fn plate_width(painter: &egui::Painter, text: &str) -> f32 {
     space::XL.mul_add(2.0, overseer_ui::caps_width(painter, text, paint::label()))
 }
@@ -354,8 +323,6 @@ fn flare(painter: &egui::Painter, digit: Rect, value: u32, tint: Color32, still:
     let settled = painter
         .ctx()
         .animate_value_with_time(id.with("eased"), target, motion::MEASURE);
-    // How far the eased value still lags is how recently the round was won,
-    // so there is no timestamp to keep.
     let strength = (target - settled).abs().min(1.0);
     if strength > 0.01 {
         painter.add(paint::glow(
@@ -367,11 +334,8 @@ fn flare(painter: &egui::Painter, digit: Rect, value: u32, tint: Color32, still:
     }
 }
 
-/// How big the reading ring is.
 const RING: f32 = 6.0;
 
-/// While the rows are still reading back, a ring for how much is in hand
-/// and when the rest should be, left of `right`. Returns where it starts.
 fn reading(ui: &Ui, painter: &egui::Painter, rect: Rect, right: f32, head: &Masthead<'_>) -> f32 {
     let Some(reading) = head.board.reading.as_ref() else {
         return right;
@@ -465,9 +429,6 @@ fn tick(left: f64, minutes: bool) -> f64 {
     }
 }
 
-/// What is left, the way the ring says it: seconds, then minutes and
-/// seconds, or whole minutes when `minutes`, and once the estimate has run
-/// out, that it is finishing.
 fn countdown(left: f64, minutes: bool) -> String {
     match left.ceil() {
         s if s < 1.0 => "Finishing".to_owned(),
@@ -477,8 +438,6 @@ fn countdown(left: f64, minutes: bool) -> String {
     }
 }
 
-/// The connection light and what it says, from the right edge. Returns
-/// where it starts.
 fn light(painter: &egui::Painter, rect: Rect, light: &Light, still: bool) -> f32 {
     let Light {
         radius, tint, word, ..

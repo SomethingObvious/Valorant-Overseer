@@ -1,141 +1,104 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Strips comments and docstrings from Python files for the release build.
-
-Never run it on the repository itself, only on the staged copy.
-"""
+"""Strips comments and docstrings from Python files for the release build."""
 
 from __future__ import annotations
 
 import ast
 import io
-import os
+import re
 import sys
 import tokenize
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-_BODY_FIELDS = ("body", "orelse", "finalbody")
-
-
-def _is_bare_string(stmt: ast.stmt) -> bool:
-    return (
-        isinstance(stmt, ast.Expr)
-        and isinstance(stmt.value, ast.Constant)
-        and isinstance(stmt.value.value, str)
-    )
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
-def _string_statement_spans(tree: ast.AST) -> list[tuple[int, int, bool, int]]:
-    spans = []
+def _bare_strings(tree: ast.AST) -> Iterator[tuple[ast.Expr, bool]]:
     for node in ast.walk(tree):
-        for field in _BODY_FIELDS:
-            body = getattr(node, field, None)
-            if not isinstance(body, list) or not body:
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
                 continue
-            strings = [s for s in body if _is_bare_string(s)]
-            if not strings:
-                continue
-            empties = len(strings) == len(body) and not isinstance(node, ast.Module)
-            for i, stmt in enumerate(strings):
-                spans.append((stmt.lineno, stmt.end_lineno, empties and i == 0, stmt.col_offset))
-    return spans
-
-
-def _comment_spans(src: str) -> dict[int, int]:
-    out = {}
-    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
-        if tok.type == tokenize.COMMENT:
-            out[tok.start[0]] = tok.start[1]
-    return out
+            strings = [
+                s
+                for s in block
+                if isinstance(s, ast.Expr)
+                and isinstance(s.value, ast.Constant)
+                and isinstance(s.value.value, str)
+            ]
+            # A block of nothing but strings needs a pass where the first one
+            # was, except a whole file, which can be empty.
+            emptied = bool(strings) and len(strings) == len(block)
+            emptied = emptied and not isinstance(node, ast.Module)
+            for n, stmt in enumerate(strings):
+                yield stmt, emptied and n == 0
 
 
 def strip_source(src: str) -> str:
     """Return `src` without its comments and docstrings."""
-    tree = ast.parse(src)
-    docs = _string_statement_spans(tree)
-    comments = _comment_spans(src)
     lines = src.splitlines()
-
-    drop: set[int] = set()
-    replace: dict[int, str] = {}
-    for start, end, needs_pass, indent in docs:
-        if lines[start - 1][:indent].strip():
+    gone: set[int] = set()
+    instead: dict[int, str] = {}
+    for stmt, emptied in _bare_strings(ast.parse(src)):
+        first = stmt.lineno
+        if lines[first - 1][: stmt.col_offset].strip():
             continue
-        drop.update(range(start, end + 1))
-        if needs_pass:
-            replace[start] = " " * indent + "pass"
-
-    out = []
-    for i, line in enumerate(lines, start=1):
-        if i in replace:
-            out.append(replace[i])
-            continue
-        if i in drop:
-            continue
-        if i in comments:
-            kept = line[: comments[i]].rstrip()
-            if not kept:
-                continue
-            out.append(kept)
-            continue
-        out.append(line.rstrip())
-
-    cleaned, blanks = [], 0
-    for line in out:
-        if not line.strip():
-            blanks += 1
-            if blanks > 2:
-                continue
-        else:
-            blanks = 0
-        cleaned.append(line)
-    return "\n".join(cleaned).strip("\n") + "\n"
+        gone.update(range(first, (stmt.end_lineno or first) + 1))
+        if emptied:
+            instead[first] = " " * stmt.col_offset + "pass"
+    cut = {
+        tok.start[0]: tok.start[1]
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline)
+        if tok.type == tokenize.COMMENT
+    }
+    kept = []
+    for number, line in enumerate(lines, 1):
+        if number in instead:
+            kept.append(instead[number])
+        elif number not in gone:
+            text = line[: cut.get(number, len(line))].rstrip()
+            if text or number not in cut:
+                kept.append(text)
+    return re.sub(r"\n{4,}", "\n\n\n", "\n".join(kept)).strip("\n") + "\n"
 
 
-def strip_file(path: str, *, check: bool = False) -> tuple[int, int]:
-    """Strip one file, or with `check` only say whether it would change.
-
-    Returns its size before and after.
-    """
-    with Path(path).open(encoding="utf-8") as fh:
-        original = fh.read()
-    stripped = strip_source(original)
-    compile(stripped, path, "exec")
+def strip_file(path: Path, *, check: bool = False) -> tuple[int, int]:
+    """Strip one file, or with `check` only fail when it would change."""
+    before = path.read_text(encoding="utf-8")
+    after = strip_source(before)
+    compile(after, str(path), "exec")
     if check:
-        if stripped != original:
+        if after != before:
             msg = "comments or docstrings remain"
             raise ValueError(msg)
-        return len(original), len(original)
-    with Path(path).open("w", encoding="utf-8", newline="\n") as fh:
-        fh.write(stripped)
-    return len(original), len(stripped)
+        return len(before), len(before)
+    path.write_text(after, encoding="utf-8", newline="\n")
+    return len(before), len(after)
 
 
 def main(root: str, *, check: bool = False) -> int:
     """Strip every Python file under `root`, and return the exit code."""
-    before = after = files = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
-        for name in sorted(filenames):
-            if not name.endswith(".py"):
-                continue
-            path = str(Path(dirpath) / name)
-            try:
-                b, a = strip_file(path, check=check)
-            except Exception as exc:
-                print(f"FAIL {os.path.relpath(path, root)}: {exc}", file=sys.stderr)
-                return 1
-            before, after, files = before + b, after + a, files + 1
+    files = sorted(p for p in Path(root).rglob("*.py") if "__pycache__" not in p.parts)
+    sizes = []
+    for path in files:
+        try:
+            sizes.append(strip_file(path, check=check))
+        except (OSError, SyntaxError, ValueError) as e:
+            print(f"FAIL {path.relative_to(root)}: {e}", file=sys.stderr)
+            return 1
+    before, after = sum(b for b, _ in sizes), sum(a for _, a in sizes)
     if check:
-        print(f"verified {files} Python files contain no comments or docstrings")
+        print(f"verified {len(sizes)} Python files contain no comments or docstrings")
     else:
-        saved = 100 * (before - after) / before if before else 0
-        print(
-            f"stripped {files} python files: {before:,} -> {after:,} bytes ({saved:.1f}% smaller)"
-        )
+        smaller = 100 * (before - after) / (before or 1)
+        print(f"stripped {len(sizes)} Python files, {before:,} to {after:,} bytes", end="")
+        print(f" ({smaller:.1f}% smaller)")
     return 0
 
 
 if __name__ == "__main__":
-    check_mode = "--check" in sys.argv[1:]
-    args = [arg for arg in sys.argv[1:] if arg != "--check"]
-    sys.exit(main(args[0] if args else ".", check=check_mode))
+    flags = sys.argv[1:]
+    roots = [a for a in flags if a != "--check"]
+    sys.exit(main(roots[0] if roots else ".", check="--check" in flags))

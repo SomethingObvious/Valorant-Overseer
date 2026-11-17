@@ -1,7 +1,4 @@
 ﻿param(
-    # Deletes your notes, lineups, settings and match history as well. Without
-    # it they stay in the folder, and installing again picks them back up. Run
-    # from Settings > Apps, it asks instead.
     [switch]$RemoveData
 )
 
@@ -17,15 +14,11 @@ $AppEntries = @(
     "assets", "backend", "docs", "scripts", "tui", ".venv", ".overseer", "lineups", ".env"
 )
 
-# What stays unless the player says otherwise.
 $DataPaths = @(".overseer", "lineups", "backend\data", "backend\.env", ".env") |
     ForEach-Object { Join-Path $Root $_ }
 
-# Downloaded videos sit inside the lineups but are only a cache, so they go
-# either way.
 $CachePaths = @("lineups\.cache") | ForEach-Object { Join-Path $Root $_ }
 
-# True for a kept path or anything inside one.
 function Test-Kept([string]$Path) {
     foreach ($d in $DataPaths) {
         if ($Path -eq $d -or $Path.StartsWith($d + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
@@ -57,9 +50,6 @@ function Remove-Entry([string]$Path) {
     }
 }
 
-# Removes what Overseer put under $Dir and keeps the kept paths. At the top it
-# takes only the names in $Only, and below that everything. It goes into a
-# folder only when the folder holds a kept path, and never into a link.
 function Remove-AppFiles([string]$Dir, [string[]]$Only) {
     foreach ($item in Get-ChildItem -LiteralPath $Dir -Force) {
         if ($Only -and $Only -notcontains $item.Name) { continue }
@@ -73,9 +63,6 @@ function Remove-AppFiles([string]$Dir, [string[]]$Only) {
     }
 }
 
-# Folders that hold more than one program's files. An install that ended up
-# in one of these, from unpacking the release straight into Downloads say,
-# has its files picked out by hand rather than risk somebody else's.
 function Test-SharedFolder([string]$Dir) {
     $full = [IO.Path]::GetFullPath($Dir).TrimEnd('\')
     if ($full -eq [IO.Path]::GetPathRoot($full).TrimEnd('\')) { return $true }
@@ -96,15 +83,9 @@ function Get-ShortcutTarget($Shell, [string]$Lnk) {
     try { return $Shell.CreateShortcut($Lnk).TargetPath } catch { return "" }
 }
 
-# Matches a path to one of the app's own entries in this folder, wherever it
-# turns up in a command line. Only those, so an install in a folder other
-# things run from never touches the other things.
 $AppPathPattern = "(?i)(" + (($AppEntries | ForEach-Object { [regex]::Escape((Join-Path $Root $_)) }) -join "|") + ")(?=[\\"" ]|$)"
 
 function Remove-Shortcuts {
-    # The ones that open the app here, under any name, which catches a taskbar
-    # pin. Ours by name that open a folder that's gone go too, since a moved or
-    # deleted install leaves those. A second install elsewhere keeps its own.
     $ws = New-Object -ComObject WScript.Shell
     $ours = @("Valorant Overseer.lnk", "Valorant Overseer (terminal).lnk")
     $pins = Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
@@ -164,16 +145,15 @@ $exit = 0
 try {
     $maintenanceMutex = New-OverseerMutex "Maintenance" "A Valorant Overseer install is running. Wait for it to finish, then try again."
     $checkout = Test-Path -LiteralPath (Join-Path $Root ".git")
-    # Read now, since runtime.json goes with the folder.
-    $python = try { (Get-RuntimeManifest).python.version } catch { "" }
+    $python = try { (Read-Manifest).python.version } catch { "" }
     $shared = Test-SharedFolder $Root
 
-    if (-not $RemoveData -and -not $checkout -and (Test-StdinInteractive)) {
+    if (-not $RemoveData -and -not $checkout -and (Test-CanPrompt)) {
         $answer = (Read-Host "  Delete your notes, lineups and match history too? (y/N)").Trim()
         $RemoveData = $answer -match '^(y|yes)$'
     }
     if ($RemoveData) { $DataPaths = @() }
-    Write-OverseerLog -Log install -Message "uninstall started (v$(Get-LocalVersion), removeData=$RemoveData)"
+    Write-OverseerLog -Log install -Message "uninstall started (v$(Get-AppVersion), removeData=$RemoveData)"
 
     Step "Closing Valorant Overseer"
     Stop-AppProcesses
@@ -185,7 +165,6 @@ try {
     Remove-OutsideFiles
 
     if ($checkout) {
-        # A copy of the source is somebody's work, not something setup made.
         Note "$Root is a copy of the source, so the folder stays. Delete it yourself when you're done with it."
     }
     elseif ($shared) {
@@ -193,7 +172,6 @@ try {
     }
     else {
         Step "Deleting the app"
-        # A process can't delete the folder it's standing in.
         Set-Location -LiteralPath $env:TEMP
         [Environment]::CurrentDirectory = $env:TEMP
         foreach ($cache in $CachePaths) { Remove-Entry $cache }
@@ -206,8 +184,6 @@ try {
         }
         else {
             $kept = @($left | Where-Object { Test-Kept $_.FullName })
-            # A folder left only because it holds kept data isn't stuck. A file
-            # of the app's still in it is.
             $stuck = @($left | Where-Object { $AppEntries -contains $_.Name -and -not (Test-Kept $_.FullName) } |
                     ForEach-Object { if ($_.PSIsContainer) { Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue } else { $_ } } |
                     Where-Object { -not (Test-Kept $_.FullName) })
@@ -235,5 +211,5 @@ finally {
     Close-OverseerMutex $maintenanceMutex
 }
 
-if (Test-StdinInteractive) { $null = Read-Host "  Press Enter to close" }
+if (Test-CanPrompt) { $null = Read-Host "  Press Enter to close" }
 exit $exit

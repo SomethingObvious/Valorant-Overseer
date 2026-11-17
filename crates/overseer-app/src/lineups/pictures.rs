@@ -1,7 +1,3 @@
-//! The pictures a lineup carries: thumbnails in the form, each one whole
-//! down the panel, and one at a time big in the middle of the window over
-//! a dark backdrop.
-
 use egui::{
     Align2, Color32, CursorIcon, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2,
 };
@@ -9,28 +5,20 @@ use overseer_ui::{Face, art, colour, size, space};
 
 use super::player::cross;
 
-/// How many thumbnails share a row.
 const ACROSS: usize = 3;
 
-/// The most of the window's height a picture down the panel takes.
 pub(super) const TALLEST: f32 = 0.6;
 
-/// The kinds of file a picture can be added from, by extension.
 const KINDS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 
-/// The most pictures one lineup carries, the same as the backend keeps.
 pub(super) const MOST: usize = 8;
 
-/// Whether `path` names a picture that can be added, by its extension.
 pub(super) fn is_picture(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| KINDS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// Thumbnails of `pictures`, three to a row, each filling its tile with the
-/// middle of its picture. With `removable` each has an X in its corner.
-/// Returns the one clicked, and the one whose X was clicked.
 pub(super) fn thumbnails(
     ui: &mut Ui,
     pictures: &[String],
@@ -90,7 +78,6 @@ pub(super) fn thumbnails(
     (opened, removed)
 }
 
-/// The width over the height of the picture at `path`, once it is read.
 pub(super) fn aspect(ctx: &egui::Context, path: &str) -> Option<f32> {
     art::file(ctx, path).map(|t| {
         let size = t.size_vec2();
@@ -98,9 +85,6 @@ pub(super) fn aspect(ctx: &egui::Context, path: &str) -> Option<f32> {
     })
 }
 
-/// `pictures` one under another, each as wide as the panel in its own
-/// shape, so a screenshot reads without opening it. Returns the one
-/// clicked.
 pub(super) fn column(ui: &mut Ui, pictures: &[String]) -> Option<usize> {
     let wide = ui.available_width();
     let tallest = ui.ctx().content_rect().height() * TALLEST;
@@ -124,7 +108,6 @@ pub(super) fn column(ui: &mut Ui, pictures: &[String]) -> Option<usize> {
     opened
 }
 
-/// One thumbnail in `rect`, or a word saying the file is gone.
 fn tile_picture(ui: &Ui, rect: Rect, path: &str, hot: bool) {
     let painter = ui.painter();
     painter.rect_filled(rect, 2.0, colour::BG_INSET);
@@ -157,8 +140,6 @@ fn tile_picture(ui: &Ui, rect: Rect, path: &str, hot: bool) {
     }
 }
 
-/// The middle of a picture `size` that fills a tile `tile` without
-/// stretching, as the part of the picture to draw.
 fn cover(size: Vec2, tile: Vec2) -> Rect {
     let picture = size.x / size.y.max(1.0);
     let wanted = tile.x / tile.y.max(1.0);
@@ -187,7 +168,6 @@ pub(super) fn viewer(ctx: &egui::Context, pictures: &[String], at: usize) -> Opt
         return None;
     }
     let mut at = at.min(count - 1);
-    // Taken here, so the clip behind doesn't skip on the same keys.
     let (back, on) = ctx.input_mut(|i| {
         (
             i.consume_key(Modifiers::NONE, Key::ArrowLeft),
@@ -276,8 +256,6 @@ fn arrows(ui: &Ui, rect: Rect, (at, count): (usize, usize)) -> usize {
     next
 }
 
-/// A dark disc with an arrowhead pointing left or right, brighter under the
-/// pointer.
 fn chevron(painter: &egui::Painter, rect: Rect, left: bool, hot: bool) {
     painter.circle_filled(
         rect.center(),

@@ -11,7 +11,6 @@ from typing import Any
 from agents import AGENTS
 from vconstants import MAPS
 
-# Public because sample_match builds its fake players from the same names.
 AGENT_NAMES = [a["name"] for a in AGENTS]
 
 _NAME_PARTS_A = [
@@ -85,94 +84,70 @@ def fake_puuid(rng: random.Random) -> str:
     return f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
 
 
-def _line(rng: random.Random, rounds: int, anchor: float) -> dict[str, Any]:
-    base_k = rng.uniform(0.55, 0.95) * rounds * (0.85 + anchor * 0.5)
-    kills = max(3, int(base_k + rng.uniform(-3, 4)))
-    deaths = max(3, int(rounds * rng.uniform(0.45, 0.8)))
-    assists = max(0, int(rounds * rng.uniform(0.15, 0.5)))
-    acs = int(
-        (kills * 150 + assists * 45 + rng.uniform(-40, 60) * rounds / 10)
-        / max(rounds, 1)
-        * (rounds / 24 + 0.6)
-    )
-    acs = max(80, min(acs, 420))
-    score = acs * rounds
-    hs = round(rng.uniform(14, 44), 1)
+def _line(rng: random.Random, rounds: int, skill: float) -> dict[str, Any]:
+    per_round = rng.uniform(0.55, 0.95) * (0.85 + skill / 2)
+    kills = max(3, round(per_round * rounds + rng.uniform(-3, 4)))
+    deaths = max(3, round(rounds * rng.uniform(0.45, 0.8)))
+    assists = round(rounds * rng.uniform(0.15, 0.5))
+    # About what ACS comes to from 220 a kill and 50 an assist, give or take.
+    acs = round((220 * kills + 50 * assists) / max(rounds, 1) * rng.uniform(0.9, 1.15))
+    acs = max(80, min(420, acs))
     return {
         "kills": kills,
         "deaths": deaths,
         "assists": assists,
-        "score": score,
+        "score": acs * rounds,
         "acs": acs,
-        "hsPct": hs,
+        "hsPct": round(rng.uniform(14, 44), 1),
     }
+
+
+def _result(rng: random.Random, skill: float) -> tuple[str, int, int]:
+    if rng.random() < 0.04:
+        return "Draw", 12, 12
+    if rng.random() < 0.40 + skill * 0.30:
+        return "Victory", 13, rng.randint(3, 11)
+    return "Defeat", rng.randint(3, 11), 13
+
+
+def _stranger(rng: random.Random) -> dict[str, Any]:
+    return {"puuid": fake_puuid(rng), "name": make_name(rng), "agent": rng.choice(AGENT_NAMES)}
 
 
 def generate_player(puuid: str, match_count: int = 20) -> dict[str, Any]:
     """Return a made-up player for `puuid`, the same one every time."""
     rng = random.Random(_seed_int(puuid))
-
     skill = rng.uniform(0.25, 0.85)
-    rank_tier = 3 + int(skill * 21)
-    rr = rng.randint(8, 98)
-
-    main_agent = rng.choice(AGENT_NAMES)
-    secondary = rng.sample([a for a in AGENT_NAMES if a != main_agent], 5)
-
+    main = rng.choice(AGENT_NAMES)
+    others = rng.sample([a for a in AGENT_NAMES if a != main], 5)
     friends = [{"puuid": fake_puuid(rng), "name": make_name(rng)} for _ in range(rng.randint(2, 4))]
-
     now = datetime.now(UTC)
     matches = []
-    for i in range(match_count):
-        mode = "Competitive" if rng.random() < 0.78 else rng.choice(["Unrated", "Swiftplay"])
-        map_name = rng.choice(MAPS)
-        won = rng.random() < (0.40 + skill * 0.30)
-        if rng.random() < 0.04:
-            result, rw, rl = "Draw", 12, 12
-        elif won:
-            result = "Victory"
-            rw, rl = 13, rng.randint(3, 11)
-        else:
-            result = "Defeat"
-            rw, rl = rng.randint(3, 11), 13
-        rounds = rw + rl
-
-        agent = main_agent if rng.random() < 0.45 else rng.choice(secondary)
-
-        n_friends = rng.randint(0, min(3, len(friends)))
-        chosen_friends = rng.sample(friends, n_friends)
-        team = [
-            {"puuid": f["puuid"], "name": f["name"], "agent": rng.choice(AGENT_NAMES)}
-            for f in chosen_friends
-        ]
-        while len(team) < 4:
-            team.append(
-                {
-                    "puuid": fake_puuid(rng),
-                    "name": make_name(rng),
-                    "agent": rng.choice(AGENT_NAMES),
-                }
-            )
-
+    for n in range(match_count):
+        result, won, lost = _result(rng, skill)
+        came = rng.sample(friends, rng.randint(0, min(3, len(friends))))
+        team = [{**f, "agent": rng.choice(AGENT_NAMES)} for f in came]
+        team += [_stranger(rng) for _ in range(4 - len(team))]
         matches.append(
             {
                 "matchId": fake_puuid(rng),
-                "map": map_name,
-                "mode": mode,
-                "date": (now - timedelta(hours=i * rng.uniform(5, 30))).isoformat(),
+                "map": rng.choice(MAPS),
+                "mode": "Competitive"
+                if rng.random() < 0.78
+                else rng.choice(["Unrated", "Swiftplay"]),
+                "date": (now - timedelta(hours=n * rng.uniform(5, 30))).isoformat(),
                 "result": result,
-                "roundsWon": rw,
-                "roundsLost": rl,
-                "agent": agent,
-                "stats": _line(rng, rounds, skill),
+                "roundsWon": won,
+                "roundsLost": lost,
+                "agent": main if rng.random() < 0.45 else rng.choice(others),
+                "stats": _line(rng, won + lost, skill),
                 "teammates": team,
             }
         )
-
     return {
         "puuid": puuid,
-        "rankTier": rank_tier,
-        "rr": rr,
+        "rankTier": 3 + int(skill * 21),
+        "rr": rng.randint(8, 98),
         "matches": matches,
         "source": "demo",
     }

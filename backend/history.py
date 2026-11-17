@@ -1,8 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Your ranked rating over time, per account, for the History screen.
-
-Recorded as matches end and backfilled from Riot's competitive updates.
-"""
+"""Your ranked rating over time, per account, for the History screen."""
 
 from __future__ import annotations
 
@@ -41,64 +38,58 @@ _STORE = _load(read_json(_PATH, None))
 
 
 def _quality(point: dict[str, Any]) -> int:
-    score = 10 if point.get("source") == "live" else 1
-    score += sum(point.get(k) is not None for k in ("result", "delta", "tier", "rr"))
-    if point.get("resultExact"):
-        score += 3
-    return score
+    known = sum(point.get(field) is not None for field in ("result", "delta", "tier", "rr"))
+    seen = 10 if point.get("source") == "live" else 1
+    return seen + known + (3 if point.get("resultExact") else 0)
 
 
-def _clean_point(point: dict[str, Any], source: str) -> dict[str, Any]:
-    allowed = (
-        "matchId",
-        "ts",
-        "map",
-        "result",
-        "delta",
-        "tier",
-        "rr",
-        "actId",
-        "agent",
-        "agentColor",
-        "partySize",
-        "mode",
-        "scores",
-        "kills",
-        "deaths",
-        "assists",
-        "kd",
-        "acs",
-        "hsPct",
-        "resultExact",
-    )
-    out = {k: point.get(k) for k in allowed if point.get(k) is not None}
-    out["source"] = source
-    if "resultExact" not in out:
-        out["resultExact"] = source == "live"
-    return out
+_KEPT = (
+    "matchId",
+    "ts",
+    "map",
+    "result",
+    "delta",
+    "tier",
+    "rr",
+    "actId",
+    "agent",
+    "agentColor",
+    "partySize",
+    "mode",
+    "scores",
+    "kills",
+    "deaths",
+    "assists",
+    "kd",
+    "acs",
+    "hsPct",
+    "resultExact",
+)
 
 
-def _upsert_points(
+def _cleaned(point: dict[str, Any], source: str) -> dict[str, Any]:
+    kept = {key: value for key in _KEPT if (value := point.get(key)) is not None}
+    return {"resultExact": source == "live", **kept, "source": source}
+
+
+def _merged(
     points: list[dict[str, Any]], point: dict[str, Any], source: str
 ) -> list[dict[str, Any]]:
-    cleaned = _clean_point(point, source)
-    match_id = cleaned.get("matchId")
-    if not match_id or not cleaned.get("ts"):
+    fresh = _cleaned(point, source)
+    match_id = fresh.get("matchId")
+    if not match_id or not fresh.get("ts"):
         return points
-    existing = next((p for p in points if p.get("matchId") == match_id), None)
-    if existing is None:
-        points.append(cleaned)
+    by_match = {p["matchId"]: p for p in points if p.get("matchId") and p.get("ts")}
+    old = by_match.get(match_id)
+    if old is None:
+        by_match[match_id] = fresh
     else:
-        merged = dict(existing)
-        for key, value in cleaned.items():
-            if value is None:
-                continue
-            if _quality(cleaned) >= _quality(existing) or merged.get(key) is None:
-                merged[key] = value
-        existing.clear()
-        existing.update(merged)
-    deduped = {p.get("matchId"): p for p in points if p.get("matchId") and p.get("ts")}
-    return sorted(deduped.values(), key=lambda p: p.get("ts") or 0)[-_MAX_POINTS:]
+        better = _quality(fresh) >= _quality(old)
+        by_match[match_id] = {
+            **old,
+            **{key: value for key, value in fresh.items() if better or old.get(key) is None},
+        }
+    return sorted(by_match.values(), key=lambda p: p.get("ts") or 0)[-_MAX_POINTS:]
 
 
 def _ensure_account(puuid: str) -> dict[str, Any]:
@@ -108,13 +99,34 @@ def _ensure_account(puuid: str) -> dict[str, Any]:
 
 def record(point: dict[str, Any]) -> None:
     """Record one rating point for its account, keeping the best copy of each match."""
-    owner = point.get("puuid")
-    if not owner or str(owner).startswith("demo"):
+    owner = str(point.get("puuid") or "")
+    if not owner or owner.startswith("demo"):
         return
     with _LOCK:
-        account = _ensure_account(str(owner))
-        account["points"] = _upsert_points(account.get("points", []), point, "live")
+        account = _ensure_account(owner)
+        account["points"] = _merged(account.get("points", []), point, "live")
         _save()
+
+
+def _point_from_update(update: dict[str, Any]) -> dict[str, Any] | None:
+    started = int((update.get("MatchStartTime") or 0) / 1000)
+    if not update.get("MatchID") or not started:
+        return None
+    earned = update.get("RankedRatingEarned")
+    result = None
+    # RR won or lost gives the result away, and a 0 says neither.
+    if isinstance(earned, (int, float)) and earned:
+        result = "Victory" if earned > 0 else "Defeat"
+    return {
+        "matchId": update["MatchID"],
+        "ts": started,
+        "map": map_name_from_path(update.get("MapID") or ""),
+        "result": result,
+        "resultExact": False,
+        "delta": earned,
+        "tier": update.get("TierAfterUpdate"),
+        "rr": update.get("RankedRatingAfterUpdate"),
+    }
 
 
 def refresh(auth: Any) -> None:
@@ -127,38 +139,19 @@ def refresh(auth: Any) -> None:
         return
     if not puuid:
         return
-
-    now = time.time()
     with _LOCK:
         _ensure_account(puuid)
-        if now - _refresh_at.get(puuid, 0) < _REFRESH_TTL:
+        if 0 <= time.time() - _refresh_at.get(puuid, 0) < _REFRESH_TTL:
             _save()
             return
-        _refresh_at[puuid] = now
+        _refresh_at[puuid] = time.time()
     try:
-        matches = _competitive_updates(auth, puuid)
+        updates = _competitive_updates(auth, puuid)
         with _LOCK:
             account = _ensure_account(puuid)
             points = account.get("points", [])
-            for match in matches:
-                delta = match.get("RankedRatingEarned")
-                ts = int((match.get("MatchStartTime") or 0) / 1000) or None
-                if not match.get("MatchID") or not ts:
-                    continue
-                result = None
-                if isinstance(delta, (int, float)) and delta:
-                    result = "Victory" if delta > 0 else "Defeat"
-                point = {
-                    "matchId": match.get("MatchID"),
-                    "ts": ts,
-                    "map": map_name_from_path(match.get("MapID") or ""),
-                    "result": result,
-                    "resultExact": False,
-                    "delta": delta,
-                    "tier": match.get("TierAfterUpdate"),
-                    "rr": match.get("RankedRatingAfterUpdate"),
-                }
-                points = _upsert_points(points, point, "backfill")
+            for point in filter(None, map(_point_from_update, updates)):
+                points = _merged(points, point, "backfill")
             account["points"] = points
             _save()
     except Exception as e:
@@ -168,10 +161,6 @@ def refresh(auth: Any) -> None:
 
 
 def _competitive_updates(auth: Any, puuid: str) -> list[dict[str, Any]]:
-    """Return the account's last 40 competitive matches with what each did to its RR.
-
-    Raises RuntimeError with Riot's own error code when it answers with one.
-    """
     matches: list[dict[str, Any]] = []
     for start in (0, 20):
         cu = auth.pd_get(
@@ -205,7 +194,6 @@ def deltas(puuid: str) -> dict[str, int]:
 
 
 def _main(points: list[dict[str, Any]]) -> str | None:
-    """Return the agent played most over the last 20 recorded matches."""
     played = Counter(
         p.get("agent") for p in points[-20:] if p.get("agent") not in (None, "", "Unknown")
     )
@@ -213,16 +201,11 @@ def _main(points: list[dict[str, Any]]) -> str | None:
 
 
 def _last_played(account: dict[str, Any]) -> int:
-    """When the account's newest recorded match was, as a Unix time."""
     return max((int(p.get("ts") or 0) for p in account.get("points") or []), default=0)
 
 
 def main_agent() -> str | None:
-    """Return the agent the most recently played account plays most.
-
-    It goes by the newest account rather than the signed-in one, so it answers
-    while the Riot client is closed too.
-    """
+    """Return the agent the most recently played account plays most."""
     with _LOCK:
         accounts = (_STORE.get("accounts") or {}).values()
         account: dict[str, Any] = max(accounts, key=_last_played, default={})
@@ -234,4 +217,13 @@ if __name__ == "__main__":
     check(_main(played) == "Sova")
     older = [{"agent": "Omen"}] * 30
     check(_main(older + [{"agent": "Jett"}] * 20) == "Jett", "only the last 20 count")
+
+    filled = _merged([], {"matchId": "m", "ts": 5, "delta": 18, "tier": 12}, "backfill")
+    both = _merged(filled, {"matchId": "m", "ts": 5, "delta": 20, "kills": 9}, "live")
+    check(len(both) == 1, both)
+    check((both[0]["delta"], both[0]["tier"], both[0]["kills"]) == (20, 12, 9), both)
+    check(both[0]["source"] == "live" and both[0]["resultExact"], both)
+    check(_merged(both, {"matchId": "n"}, "live") == both, "a point with no time was kept")
+    back = _merged(both, {"matchId": "m", "ts": 5, "delta": 1}, "backfill")
+    check(back[0]["delta"] == 20, "a backfill overwrote a live point")
     print("history self-check OK")

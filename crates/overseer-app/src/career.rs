@@ -12,46 +12,28 @@ use crate::board::{self, Side};
 use crate::panel::{self, heading, line, stat};
 use overseer_ui::{Face, caps_text, colour, size, space};
 
-/// How tall a chart is: enough for a shape to read as one, and short enough
-/// that the numbers under it stay on the panel.
 const CHART: f32 = 44.0;
-/// How many matches to list. The history has eight to ten, and listing all
-/// of them pushes the sections under it out of reach.
 const LISTED: usize = 5;
 
-/// Where the request for one account's history has got to, so the panel can
-/// say it is waiting or was refused instead of going blank.
 #[derive(Debug, Default)]
 pub(crate) enum Career {
-    /// Nobody has been selected yet.
     #[default]
     Nothing,
-    /// Asked, waiting.
     Asking {
-        /// The id the answer will carry.
         id: u64,
-        /// Who it is about.
         puuid: String,
     },
-    /// Answered.
     Have {
-        /// Who it is about.
         puuid: String,
-        /// Boxed because it is much larger than the other variants, and the
-        /// enum would be that size everywhere it is stored.
         profile: Box<Profile>,
     },
-    /// Answered with a reason there is nothing to show.
     Refused {
-        /// Who it was about.
         puuid: String,
-        /// What the backend said, which is usually actionable.
         why: String,
     },
 }
 
 impl Career {
-    /// Which account this concerns, whatever state it is in.
     fn about(&self) -> Option<&str> {
         match self {
             Self::Nothing => None,
@@ -61,7 +43,6 @@ impl Career {
         }
     }
 
-    /// Asks for whoever is selected now, unless this is already about them.
     pub(crate) fn follow(
         &mut self,
         bridge: &Bridge,
@@ -76,7 +57,6 @@ impl Career {
         if self.about() == Some(puuid) {
             return;
         }
-        // Fetched earlier in this lobby, so there is nothing new to ask.
         if let Some(profile) = seen.get(puuid) {
             *self = Self::Have {
                 puuid: puuid.to_owned(),
@@ -84,8 +64,6 @@ impl Career {
             };
             return;
         }
-        // A question sent into a dead socket is queued until it reconnects,
-        // and by then nobody wants the answer.
         if !live {
             return;
         }
@@ -96,15 +74,12 @@ impl Career {
         };
     }
 
-    /// Forgets a question that was in flight when the socket dropped, since
-    /// nothing will answer it now.
     pub(crate) fn reconnected(&mut self) {
         if matches!(self, Self::Asking { .. }) {
             *self = Self::Nothing;
         }
     }
 
-    /// Takes an answer, if it is the one being waited on.
     pub(crate) fn answered(
         &mut self,
         id: u64,
@@ -114,9 +89,6 @@ impl Career {
         let Self::Asking { id: waiting, puuid } = self else {
             return;
         };
-        // Any other id answers a question abandoned when the selection moved
-        // on, and taking it would put one player's history under another's
-        // name.
         if *waiting != id {
             return;
         }
@@ -129,8 +101,6 @@ impl Career {
                     seen.insert(puuid.clone(), profile.clone());
                     Self::Have { puuid, profile }
                 }
-                // Worded for a player, because the decoder's own error is a
-                // line of field names.
                 Err(_) => Self::Refused {
                     puuid,
                     why: "Their history came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned(),
@@ -140,7 +110,6 @@ impl Career {
     }
 }
 
-/// Draws whatever there is for this account.
 pub(crate) fn show(ui: &mut Ui, career: &Career, puuid: &str, side: Side) {
     match career {
         Career::Asking { puuid: who, .. } if who == puuid => {
@@ -167,7 +136,6 @@ pub(crate) fn show(ui: &mut Ui, career: &Career, puuid: &str, side: Side) {
     }
 }
 
-/// Everything a full history has to say, in the order it is worth reading.
 fn history(ui: &mut Ui, profile: &Profile, side: Side) {
     if profile.matches.is_empty() {
         heading(ui, "Career");
@@ -183,8 +151,6 @@ fn history(ui: &mut Ui, profile: &Profile, side: Side) {
     habits(ui, profile);
 }
 
-/// Kills, deaths and assists a game. The K/D stays with the numbers above, so
-/// there are not two K/Ds over different games to choose between.
 fn averages(ui: &mut Ui, profile: &Profile) {
     let a = &profile.averages;
     let games = a.games.unwrap_or(profile.matches.len() as u32);
@@ -206,8 +172,6 @@ fn averages(ui: &mut Ui, profile: &Profile) {
     );
 }
 
-/// Where their rating has been going, as a line of ladder positions so a
-/// promotion reads as a rise.
 fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
     let run = profile.rating_run();
     if run.len() < 2 {
@@ -215,8 +179,6 @@ fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
     }
     panel::subheading(ui, "Rating", colour::TEXT_DIM);
     let points: Vec<f32> = run.iter().map(|m| ladder(m)).collect();
-    // A rating that never moved gets a sentence instead of a flat line with a
-    // dot at each end.
     let flat = points
         .iter()
         .all(|p| (p - points.first().copied().unwrap_or(0.0)).abs() < 0.5);
@@ -248,8 +210,6 @@ fn rating(ui: &mut Ui, profile: &Profile, side: Side) {
     rating_summary(ui, &path, (&change, tint), run.len());
 }
 
-/// Under the chart, set like the panel's other figures: where they went on
-/// the left, and on the right what it came to and over how many games.
 fn rating_summary(ui: &mut Ui, path: &str, (change, tint): (&str, egui::Color32), games: usize) {
     let (rect, _response) = ui.allocate_exact_size(
         vec2(ui.available_width(), space::XL + space::SM),
@@ -288,8 +248,6 @@ fn rating_summary(ui: &mut Ui, path: &str, (change, tint): (&str, egui::Color32)
     );
 }
 
-/// The agent, plus the mode when it was not competitive, since a swiftplay
-/// K/D is not a ranked one.
 fn played(m: &CareerMatch) -> String {
     let mode = m
         .mode
@@ -302,14 +260,10 @@ fn played(m: &CareerMatch) -> String {
         .join(" \u{b7} ")
 }
 
-/// How tall the rating chart is, taller than the others so each tier it
-/// crosses has a band tall enough to name.
 const RATING_CHART: f32 = 96.0;
 
-/// Room down the rating chart's left for the tier names.
 const TIER_LABELS: f32 = 64.0;
 
-/// How far the chart's top and bottom lines stand off the rating line.
 const BREATHE: f32 = 4.0;
 
 /// The rating chart's scale: a dashed line at every tier's edge, each tier
@@ -318,12 +272,8 @@ fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32
     let y_of = |v: f32| inner.bottom() - inner.height() * (v - low) / (high - low);
     let tiers = ((high - low) / 100.0).round() as u32;
     let band = inner.height() / tiers.max(1) as f32;
-    // Every band named when they are tall enough to read, every other one
-    // when a long slide squeezes them.
     let every = if band >= 13.0 { 1 } else { 2 };
     let first = (low / 100.0).round() as u32;
-    // Dashed and fainter than the panel's dividers, so the lines read as a
-    // scale and not as the end of a section.
     let rule = egui::Stroke::new(1.0, colour::TEXT_FAINT.gamma_multiply(0.35));
     for k in 0..=tiers {
         let y = y_of(100.0f32.mul_add(k as f32, low));
@@ -366,8 +316,6 @@ fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32
     }
 }
 
-/// The rating as a line over the tiers it crossed, each tier a band named
-/// down the left, and the game under the pointer read out beside its point.
 fn rating_chart(ui: &mut Ui, run: &[&CareerMatch], points: &[f32]) {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), RATING_CHART), Sense::hover());
@@ -384,7 +332,6 @@ fn rating_chart(ui: &mut Ui, run: &[&CareerMatch], points: &[f32]) {
             rect.bottom() - space::SM - BREATHE,
         ),
     );
-    // Out to whole tiers, so every band is a full tier and has a name.
     let (low, high) = points
         .iter()
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &p| {
@@ -416,8 +363,6 @@ fn rating_chart(ui: &mut Ui, run: &[&CareerMatch], points: &[f32]) {
     }
 }
 
-/// The game under the pointer: a guide down to it, a ring on it, and its
-/// rank, rating and what that game did, on a plate beside it.
 fn readout(painter: &egui::Painter, inner: Rect, spot: egui::Pos2, m: &CareerMatch) {
     painter.vline(spot.x, inner.y_range(), (1.0, colour::TEXT_FAINT));
     painter.circle_filled(spot, 3.5, colour::TEXT_STRONG);
@@ -434,8 +379,6 @@ fn readout(painter: &egui::Painter, inner: Rect, spot: egui::Pos2, m: &CareerMat
     .join("  \u{b7}  ");
     let galley = painter.layout_no_wrap(said, Face::Number.at(size::LABEL), colour::TEXT_STRONG);
     let size = galley.size() + vec2(2.0 * space::MD, space::SM);
-    // Beside the point on whichever side has room, and above it unless that
-    // leaves the chart.
     let x = if spot.x + space::MD + size.x <= inner.right() {
         spot.x + space::MD
     } else {
@@ -484,15 +427,12 @@ fn tier_name(tier: u32) -> String {
     }
 }
 
-/// A tier's own colour for its name, dimmed so the line stays the brightest
-/// thing on the chart.
 fn tier_ink(tier: u32) -> egui::Color32 {
     // Toward the text colour rather than a label's, so Immortal's dark red
     // still reads at 5:1.
     overseer_ui::shape::blend(overseer_ui::rank(Some(tier)), colour::TEXT, 0.35)
 }
 
-/// A ladder position that does not restart every tier.
 fn ladder(m: &CareerMatch) -> f32 {
     // From Immortal 1 up, Riot's RR keeps counting past 100 instead of
     // starting again at each tier, so it climbs from Immortal 1's floor.
@@ -504,7 +444,6 @@ fn ladder(m: &CareerMatch) -> f32 {
 /// Immortal 1's tier, where the RR stops starting again at each tier.
 const IMMORTAL: u32 = 24;
 
-/// How often they were the problem, as bars against an even ratio.
 fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
     let mut values: Vec<f32> = profile
         .matches
@@ -521,7 +460,6 @@ fn per_match_kd(ui: &mut Ui, profile: &Profile, side: Side) {
         .on_hover_text("Oldest first. The line marks a K/D of 1.");
 }
 
-/// Which guns did the killing, with a bar for the share.
 fn guns(ui: &mut Ui, profile: &Profile) {
     if profile.top_guns.is_empty() {
         return;
@@ -538,8 +476,6 @@ fn guns(ui: &mut Ui, profile: &Profile) {
         }
         let painter = ui.painter().clone();
         let share = f32::from(u16::try_from(gun.share.unwrap_or(0).min(100)).unwrap_or(0));
-        // Set like the board's K/D: the numeral first, then a bar for
-        // comparing it with the others.
         let numeral = caps_text(
             &painter,
             pos2(rect.left() + space::LG + 44.0, rect.center().y),
@@ -578,7 +514,6 @@ fn guns(ui: &mut Ui, profile: &Profile) {
     }
 }
 
-/// The last few matches, one line each.
 fn matches(ui: &mut Ui, profile: &Profile, side: Side) {
     panel::subheading(ui, "Last Matches", colour::TEXT_DIM);
     for m in profile.matches.iter().take(LISTED) {
@@ -594,8 +529,6 @@ fn matches(ui: &mut Ui, profile: &Profile, side: Side) {
         } else {
             colour::TEXT_FAINT
         };
-        // A thin rail for the result. It is the first thing the eye wants
-        // and not worth a word's width.
         painter.rect_filled(
             Rect::from_min_size(
                 pos2(rect.left() + space::LG, rect.top() + 3.0),
@@ -649,9 +582,7 @@ fn matches(ui: &mut Ui, profile: &Profile, side: Side) {
     }
 }
 
-/// Who they keep turning up with, which is how a stack shows itself.
 fn together(ui: &mut Ui, profile: &Profile) {
-    // Once together is a random teammate, not somebody they play with.
     let named: Vec<&overseer_core::CoPlayer> = profile
         .co_players
         .iter()
@@ -661,7 +592,6 @@ fn together(ui: &mut Ui, profile: &Profile) {
     if named.is_empty() {
         return;
     }
-    // Your own career counts every lobby on record, and says so.
     if profile.co_players_from.as_deref() == Some("log") {
         panel::subheading(ui, "Played With Most", colour::TEXT_DIM);
     } else {
@@ -684,7 +614,6 @@ fn together(ui: &mut Ui, profile: &Profile) {
     }
 }
 
-/// The two habits worth planning around.
 fn habits(ui: &mut Ui, profile: &Profile) {
     let force = &profile.force_habit;
     let bonus = profile.bonus_buys.first();
@@ -753,15 +682,12 @@ fn plot(ui: &mut Ui, values: &[f32], rule: f32, hot: egui::Color32) -> egui::Res
     response
 }
 
-/// Which of `n` points evenly across `inner` is nearest to `x`.
 fn nearest(inner: Rect, n: usize, x: f32) -> usize {
     let last = n.saturating_sub(1);
     let t = ((x - inner.left()) / inner.width().max(1.0)).clamp(0.0, 1.0);
     ((t * last as f32).round() as usize).min(last)
 }
 
-/// The range to draw over, padded so it is never zero wide and a flat series
-/// sits through the middle.
 fn bounds(values: &[f32], rule: f32) -> (f32, f32) {
     let mut low = f32::INFINITY;
     let mut high = f32::NEG_INFINITY;
@@ -821,8 +747,6 @@ mod tests {
         assert_eq!(band_name(21), "Ascendant 1");
     }
 
-    /// Ids are never reused, so a late answer belongs to a selection that has
-    /// moved on.
     #[test]
     fn a_late_answer_to_an_abandoned_question_is_dropped() {
         let mut career = Career::Asking {
@@ -843,12 +767,10 @@ mod tests {
             "an abandoned answer was remembered"
         );
 
-        // Once there is an answer, nothing replaces it.
         career.answered(4, Err("no".to_owned()), &mut seen);
         assert!(matches!(career, Career::Have { .. }));
     }
 
-    /// A question in flight when the socket dropped will never be answered.
     #[test]
     fn a_reconnect_forgets_what_it_was_waiting_for() {
         let mut career = Career::Asking {
@@ -858,8 +780,6 @@ mod tests {
         career.reconnected();
         assert!(matches!(career, Career::Nothing));
 
-        // An answer already in hand survives, so a history somebody is
-        // reading does not go blank.
         let mut career = Career::Have {
             puuid: "a".to_owned(),
             profile: Box::default(),

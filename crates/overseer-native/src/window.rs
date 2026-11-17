@@ -14,7 +14,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows_core::PCWSTR;
 
-/// The app's window, as its handle, which every video plays inside.
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 /// Tells the crate which window videos play in, by its Win32 handle.
@@ -22,12 +21,11 @@ pub fn set_window(hwnd: isize) {
     WINDOW.store(hwnd, Ordering::Relaxed);
 }
 
-/// The app's window, or an invalid handle before [`set_window`].
 pub(crate) fn window() -> HWND {
     HWND(WINDOW.load(Ordering::Relaxed) as *mut c_void)
 }
 
-/// Stops the top-level window titled `title` from taking the focus on a click.
+/// Stops this process's top-level window titled `title` from taking the focus on a click.
 ///
 /// Otherwise a click makes the overlay the foreground window, which pulls
 /// VALORANT out of full screen. Does nothing while there is no such window,
@@ -40,7 +38,9 @@ pub fn never_activate(title: &str) {
         let Ok(window) = FindWindowW(None, PCWSTR(wide.as_ptr())) else {
             return;
         };
-        if window.is_invalid() {
+        let mut owner = 0;
+        let _thread = GetWindowThreadProcessId(window, Some(&raw mut owner));
+        if window.is_invalid() || owner != std::process::id() {
             return;
         }
         let style = GetWindowLongPtrW(window, GWL_EXSTYLE);

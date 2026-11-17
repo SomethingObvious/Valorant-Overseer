@@ -27,9 +27,6 @@ function Deny([string]$Reason, [string[]]$Detail) {
 
 $raw = [System.IO.File]::ReadAllText($MessageFile)
 
-# `git commit --verbose` appends a scissors line and a diff, which git discards,
-# so the scan stops at the scissors line. Not at the first `diff --git`, which a
-# crafted message can forge.
 $comment = (& git config --get core.commentChar)
 if (-not $comment -or $comment -eq "auto") { $comment = "#" }
 $scissors = [regex]::Escape($comment) + ' -{6,} >8 -{6,}'

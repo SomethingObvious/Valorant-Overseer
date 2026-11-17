@@ -6,9 +6,6 @@
 
 #![warn(missing_docs)] // Let's keep `epi` well-documented.
 
-#[cfg(target_arch = "wasm32")]
-use core::any::Any;
-
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
 pub use crate::native::winit_integration::UserEvent;
@@ -180,26 +177,6 @@ pub trait App {
     /// Use [`egui::Context::show_viewport_deferred`] to spawn additional viewports (windows).
     /// (A "viewport" in egui means an native OS window).
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame);
-
-    /// Get a handle to the app.
-    ///
-    /// Can be used from web to interact or other external context.
-    ///
-    /// You need to implement this if you want to be able to access the application from JS using [`crate::WebRunner::app_mut`].
-    ///
-    /// This is needed because downcasting `Box<dyn App>` -> `Box<dyn Any>` to get &`ConcreteApp` is not simple in current rust.
-    ///
-    /// Just copy-paste this as your implementation:
-    /// ```ignore
-    /// #[cfg(target_arch = "wasm32")]
-    /// fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-    ///     Some(&mut *self)
-    /// }
-    /// ```
-    #[cfg(target_arch = "wasm32")]
-    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
-        None
-    }
 
     /// Called on shutdown, and perhaps at regular intervals. Allows you to save state.
     ///
@@ -391,15 +368,6 @@ pub struct NativeOptions {
     /// Defaults to true.
     pub dithering: bool,
 
-    /// Android application for `winit`'s event loop.
-    ///
-    /// This value is required on Android to correctly create the event loop. See
-    /// [`EventLoopBuilder::build`] and [`with_android_app`] for details.
-    ///
-    /// [`EventLoopBuilder::build`]: winit::event_loop::EventLoopBuilder::build
-    /// [`with_android_app`]: winit::platform::android::EventLoopBuilderExtAndroid::with_android_app
-    #[cfg(target_os = "android")]
-    pub android_app: Option<winit::platform::android::activity::AndroidApp>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -421,9 +389,6 @@ impl Clone for NativeOptions {
             wgpu_options: self.wgpu_options.clone(),
 
             persistence_path: self.persistence_path.clone(),
-
-            #[cfg(target_os = "android")]
-            android_app: self.android_app.clone(),
 
             ..*self
         }
@@ -466,96 +431,11 @@ impl Default for NativeOptions {
 
             dithering: true,
 
-            #[cfg(target_os = "android")]
-            android_app: None,
         }
     }
 }
 
 // ----------------------------------------------------------------------------
-
-/// Options when using `eframe` in a web page.
-#[cfg(target_arch = "wasm32")]
-pub struct WebOptions {
-    /// What rendering backend to use.
-    #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
-    pub renderer: Renderer,
-
-    /// Sets the number of bits in the depth buffer.
-    ///
-    /// `egui` doesn't need the depth buffer, so the default value is 0.
-    /// Unused by webgl context as of writing.
-    pub depth_buffer: u8,
-
-    /// Which version of WebGL context to select
-    ///
-    /// Default: [`WebGlContextOption::BestFirst`].
-    #[cfg(feature = "glow")]
-    pub webgl_context_option: WebGlContextOption,
-
-    /// Configures glow instance.
-    #[cfg(feature = "glow")]
-    pub glow_options: egui_glow::GlowConfiguration,
-
-    /// Configures wgpu instance/device/adapter/surface creation and renderloop.
-    #[cfg(feature = "wgpu_no_default_features")]
-    pub wgpu_options: egui_wgpu::WgpuConfiguration,
-
-    /// Controls whether to apply dithering to minimize banding artifacts.
-    ///
-    /// Dithering assumes an sRGB output and thus will apply noise to any input value that lies between
-    /// two 8bit values after applying the sRGB OETF function, i.e. if it's not a whole 8bit value in "gamma space".
-    /// This means that only inputs from texture interpolation and vertex colors should be affected in practice.
-    ///
-    /// Defaults to true.
-    pub dithering: bool,
-
-    /// If the web event corresponding to an egui event should be propagated
-    /// to the rest of the web page.
-    ///
-    /// The default is `true`, meaning
-    /// [`stopPropagation`](https://developer.mozilla.org/en-US/docs/Web/API/Event/stopPropagation)
-    /// is called on every event, and the event is not propagated to the rest of the web page.
-    pub should_stop_propagation: Box<dyn Fn(&egui::Event) -> bool>,
-
-    /// Whether the web event corresponding to an egui event should have `prevent_default` called
-    /// on it or not.
-    ///
-    /// Defaults to true.
-    pub should_prevent_default: Box<dyn Fn(&egui::Event) -> bool>,
-
-    /// Maximum rate at which to repaint. This can be used to artificially reduce the repaint rate below
-    /// vsync in order to save resources.
-    pub max_fps: Option<u32>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Default for WebOptions {
-    fn default() -> Self {
-        Self {
-            #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
-            renderer: Renderer::default(),
-
-            depth_buffer: 0,
-
-            #[cfg(feature = "glow")]
-            webgl_context_option: WebGlContextOption::BestFirst,
-
-            #[cfg(feature = "glow")]
-            glow_options: egui_glow::GlowConfiguration::default(),
-
-            #[cfg(feature = "wgpu_no_default_features")]
-            wgpu_options: egui_wgpu::WgpuConfiguration::default(),
-
-            dithering: true,
-
-            should_stop_propagation: Box::new(|_| true),
-            should_prevent_default: Box::new(|_| true),
-
-            max_fps: None,
-        }
-    }
-}
 
 // ----------------------------------------------------------------------------
 
@@ -827,78 +707,9 @@ impl Frame {
     }
 }
 
-/// Information about the web environment (if applicable).
-#[derive(Clone, Debug)]
-#[cfg(target_arch = "wasm32")]
-pub struct WebInfo {
-    /// The browser user agent.
-    pub user_agent: String,
-
-    /// Information about the URL.
-    pub location: Location,
-}
-
-/// Information about the URL.
-///
-/// Everything has been percent decoded (`%20` -> ` ` etc).
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Debug)]
-pub struct Location {
-    /// The full URL (`location.href`) without the hash, percent-decoded.
-    ///
-    /// Example: `"http://www.example.com:80/index.html?foo=bar"`.
-    pub url: String,
-
-    /// `location.protocol`
-    ///
-    /// Example: `"http:"`.
-    pub protocol: String,
-
-    /// `location.host`
-    ///
-    /// Example: `"example.com:80"`.
-    pub host: String,
-
-    /// `location.hostname`
-    ///
-    /// Example: `"example.com"`.
-    pub hostname: String,
-
-    /// `location.port`
-    ///
-    /// Example: `"80"`.
-    pub port: String,
-
-    /// The "#fragment" part of "www.example.com/index.html?query#fragment".
-    ///
-    /// Note that the leading `#` is included in the string.
-    /// Also known as "hash-link" or "anchor".
-    pub hash: String,
-
-    /// The "query" part of "www.example.com/index.html?query#fragment".
-    ///
-    /// Note that the leading `?` is NOT included in the string.
-    ///
-    /// Use [`Self::query_map`] to get the parsed version of it.
-    pub query: String,
-
-    /// The parsed "query" part of "www.example.com/index.html?query#fragment".
-    ///
-    /// "foo=hello&bar%20&foo=world" is parsed as `{"bar ": [""], "foo": ["hello", "world"]}`
-    pub query_map: std::collections::BTreeMap<String, Vec<String>>,
-
-    /// `location.origin`
-    ///
-    /// Example: `"http://www.example.com:80"`.
-    pub origin: String,
-}
-
 /// Information about the integration passed to the use app each frame.
 #[derive(Clone, Debug)]
 pub struct IntegrationInfo {
-    /// Information about the surrounding web environment.
-    #[cfg(target_arch = "wasm32")]
-    pub web_info: WebInfo,
 
     /// Seconds of cpu usage (in seconds) on the previous frame.
     ///
@@ -913,21 +724,6 @@ pub struct IntegrationInfo {
 impl IntegrationInfo {
     fn mock() -> Self {
         Self {
-            #[cfg(target_arch = "wasm32")]
-            web_info: WebInfo {
-                user_agent: "kittest".to_owned(),
-                location: Location {
-                    url: "http://localhost".to_owned(),
-                    protocol: "http:".to_owned(),
-                    host: "localhost".to_owned(),
-                    hostname: "localhost".to_owned(),
-                    port: "80".to_owned(),
-                    hash: String::new(),
-                    query: String::new(),
-                    query_map: Default::default(),
-                    origin: "http://localhost".to_owned(),
-                },
-            },
             cpu_usage: None,
         }
     }

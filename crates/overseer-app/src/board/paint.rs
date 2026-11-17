@@ -1,8 +1,3 @@
-//! The broadcast's vocabulary, drawn once: slabs, the slant, faces cut to
-//! it, emblems with their light, numerals that line up, and results as pips.
-//! Everything on the board is built from these, which keeps it one graphic
-//! rather than a page of widgets.
-
 use egui::epaint::Vertex;
 use egui::{Align2, Color32, FontId, Mesh, Pos2, Rect, Shape, pos2, vec2};
 use overseer_core::Player;
@@ -10,13 +5,8 @@ use overseer_ui::{Face, art, colour, hex, rank, shape, size, space};
 
 use super::Side;
 
-/// How far the slant leans, as the run of the cut per point of its height.
-/// About twelve degrees, and every slanted thing on the board uses it.
 pub(crate) const LEAN: f32 = 0.21;
 
-/// A quadrilateral whose left and right edges lean by [`LEAN`] where asked.
-/// `lead` cuts the left edge and `tail` the right. With neither it is a
-/// plain rectangle, which is what most slabs are.
 pub(crate) fn slanted(rect: Rect, lead: bool, tail: bool) -> Vec<Pos2> {
     let run = rect.height() * LEAN;
     vec![
@@ -27,8 +17,6 @@ pub(crate) fn slanted(rect: Rect, lead: bool, tail: bool) -> Vec<Pos2> {
     ]
 }
 
-/// The website's slash laid level after a heading: a red line with a thin
-/// one under it, centred on `y`. Nothing is drawn when there is no room.
 pub(crate) fn double_rule(painter: &egui::Painter, x: std::ops::RangeInclusive<f32>, y: f32) {
     if x.end() - x.start() < 8.0 {
         return;
@@ -45,7 +33,6 @@ pub(crate) fn double_rule(painter: &egui::Painter, x: std::ops::RangeInclusive<f
     );
 }
 
-/// A filled slanted shape.
 pub(crate) fn slant(rect: Rect, lead: bool, tail: bool, fill: Color32) -> Shape {
     Shape::convex_polygon(slanted(rect, lead, tail), fill, egui::Stroke::NONE)
 }
@@ -61,18 +48,14 @@ pub(crate) fn side_tint(side: Option<&str>, other: Color32) -> Color32 {
     }
 }
 
-/// The outline of a chip slanted at both ends.
 pub(crate) fn chip_edge(painter: &egui::Painter, chip: Rect, ink: Color32) {
     outline(painter, slanted(chip, true, true), (1.0, ink));
 }
 
-/// A tag the app worked out, as an outline in the board's slant. Your own
-/// tags are solid cream, and the difference is who said it.
 pub(crate) fn chip_outline(painter: &egui::Painter, chip: Rect, ink: Color32) {
     outline(painter, slanted(chip, false, true), (1.0, ink));
 }
 
-/// `points` drawn as a line back round to the first.
 pub(crate) fn outline(
     painter: &egui::Painter,
     mut points: Vec<Pos2>,
@@ -84,9 +67,6 @@ pub(crate) fn outline(
     painter.add(Shape::line(points, stroke.into()));
 }
 
-/// One slab, with an offset shadow under it and a light along its top edge.
-/// `lift` runs from resting to under the pointer and raises both. `still`
-/// drops the shadow, since the efficient tier draws no blur.
 pub(crate) fn slab(painter: &egui::Painter, rect: Rect, fill: Color32, lift: f32, still: bool) {
     if !still {
         painter.add(
@@ -109,15 +89,7 @@ pub(crate) fn slab(painter: &egui::Painter, rect: Rect, fill: Color32, lift: f32
     );
 }
 
-/// The agent's killfeed crop, with its right edge cut to the slant.
-///
-/// The texture is mapped straight onto the slanted quad, so the cut goes
-/// through the picture. An agent this build has no art for gets a plate in
-/// their colour with their initial, since the newest agent's row is the one
-/// somebody most wants to read.
 pub(crate) fn crop(painter: &egui::Painter, player: &Player, rect: Rect) {
-    // Nobody picked yet: a blacked-out figure over the player card the row
-    // already has behind it.
     let Some(agent) = player.agent.as_deref() else {
         stand_in(painter, player, rect);
         return;
@@ -155,9 +127,6 @@ pub(crate) fn crop(painter: &egui::Painter, player: &Player, rect: Rect) {
     paint_face(painter, &face, rect, &points, Color32::WHITE);
 }
 
-/// The blacked-out figure in the crop's slot, for somebody with no agent
-/// yet. It is a square head and shoulders, because the killfeed crop is cut
-/// so tight that blacked out it fills the slot and looks like a hole.
 fn stand_in(painter: &egui::Painter, player: &Player, rect: Rect) {
     let side = rect.height();
     let square = Rect::from_center_size(
@@ -167,9 +136,6 @@ fn stand_in(painter: &egui::Painter, player: &Player, rect: Rect) {
     figure(painter, player, square, 1.5);
 }
 
-/// A player's blacked-out stand-in filling `square`, its rim `rim` points up
-/// and to the right. It is the agent they play most, as the likeliest pick,
-/// or some agent picked by their account for somebody with no history.
 pub(crate) fn figure(painter: &egui::Painter, player: &Player, square: Rect, rim: f32) {
     let main = player
         .mains()
@@ -191,7 +157,6 @@ pub(crate) fn figure(painter: &egui::Painter, player: &Player, square: Rect, rim
     }
 }
 
-/// A crop drawn into the slanted box.
 fn paint_face(
     painter: &egui::Painter,
     face: &egui::TextureHandle,
@@ -215,11 +180,8 @@ fn paint_face(
     painter.add(Shape::mesh(mesh));
 }
 
-/// The stand-in's rim: its own shape offset up and to the right, in cream,
-/// so it reads as a figure lit from behind rather than a hole in the card.
 const RIM: Color32 = Color32::from_rgba_premultiplied(150, 147, 141, 170);
 
-/// The stand-in figure itself.
 const SHADOW: Color32 = Color32::from_black_alpha(238);
 
 /// FNV-1a over the account id, so a player gets the same stand-in every
@@ -244,9 +206,6 @@ pub(crate) fn banner(ctx: &egui::Context, player: &Player) -> Option<egui::Textu
         .or_else(|| art::default_card(ctx))
 }
 
-/// The player card behind the head of a row, for somebody who has not
-/// picked an agent, the way agent select shows it. It fades into the row's
-/// `fill` just past the face, so the name sits on the row and not on the card.
 pub(crate) fn card_behind(
     painter: &egui::Painter,
     player: &Player,
@@ -283,11 +242,6 @@ pub(crate) fn card_behind(
     painter.rect_filled(Rect::from_min_max(pos2(to, card.top()), card.max), 0, fill);
 }
 
-/// A rank's emblem, standing in its own light.
-///
-/// The light is a bloom of the emblem's own shape in the tier's colour, and
-/// it gets stronger up the ladder so a Radiant catches the eye before an
-/// Iron. `light` scales it. Nothing is drawn for a tier with no emblem.
 pub(crate) fn emblem(painter: &egui::Painter, tier: u32, centre: Pos2, side: f32, light: f32) {
     let Some(art) = art::rank(painter.ctx(), tier) else {
         return;
@@ -296,8 +250,6 @@ pub(crate) fn emblem(painter: &egui::Painter, tier: u32, centre: Pos2, side: f32
     if light > 0.0
         && let Some(bloom) = art::rank_glow(painter.ctx(), tier)
     {
-        // The bloom's picture is the emblem's with the pad on every side, at
-        // the same pixel scale, so it is drawn that much bigger.
         let stored = art.size()[0] as f32;
         let reach = side * 2.0f32.mul_add(art::GLOW_PAD as f32, stored) / stored;
         let climb = (tier as f32 / 27.0).clamp(0.0, 1.0);
@@ -318,7 +270,6 @@ pub(crate) fn emblem(painter: &egui::Painter, tier: u32, centre: Pos2, side: f32
     painter.add(Shape::mesh(mesh));
 }
 
-/// A disc of colour fading to nothing at its rim.
 pub(crate) fn glow(centre: Pos2, radius: f32, tint: Color32, strength: f32) -> Shape {
     const SEGMENTS: u32 = 24;
     let mut mesh = Mesh::default();
@@ -336,11 +287,6 @@ pub(crate) fn glow(centre: Pos2, radius: f32, tint: Color32, strength: f32) -> S
     Shape::mesh(mesh)
 }
 
-/// A numeral set in fixed cells, right against `at`, and where it landed.
-///
-/// Barlow's digits are proportional, so a column of K/Ds set as plain text
-/// wobbles at the decimal point. Each digit gets the width of a nought and
-/// sits centred in it, the way a tabular figure does.
 pub(crate) fn numeral(
     painter: &egui::Painter,
     text: &str,
@@ -402,23 +348,17 @@ fn vivid(tint: Color32) -> Color32 {
     Color32::from(light)
 }
 
-/// A party down the gutter: one tab the height of its rows, with its size
-/// set sideways in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Spine {
-    /// The party's colour, from the party palette by the party's number.
     pub(crate) tint: Color32,
     /// How many are in it, Riot's count or the app's guess.
     pub(crate) size: u32,
     /// Whether the size is the app's guess rather than Riot's word. A guess
     /// is drawn as an outline.
     pub(crate) guessed: bool,
-    /// The rows it runs down, first and last, by their place in the list.
     pub(crate) rows: (usize, usize),
 }
 
-/// Each party on a side and its colour: the side's own pair, in the
-/// order of the parties' numbers, so a sort never swaps them.
 pub(crate) fn party_tints(members: &[&Player], side: Side) -> Vec<(u32, Color32)> {
     let palette = match side {
         Side::Ally => colour::PARTY_OURS,
@@ -485,17 +425,13 @@ pub(crate) fn spines(players: &[&Player], tints: &[(u32, Color32)]) -> Vec<Spine
     out
 }
 
-/// How wide a party's tab is.
 const SPINE: f32 = 13.0;
 
-/// Draws a party's tab down the gutter beside `rows`, the rows it spans.
 pub(crate) fn spine(painter: &egui::Painter, spine: &Spine, rows: Rect) {
     let tab = Rect::from_min_max(
         pos2(rows.left() - 4.0 - SPINE, rows.top()),
         pos2(rows.left() - 4.0, rows.bottom()),
     );
-    // Its ends cut at the board's lean, so it is one of the board's plates
-    // stood on end rather than a bar.
     let run = SPINE * LEAN * 2.0;
     let corners = [
         pos2(tab.left(), tab.top() + run),
@@ -517,8 +453,6 @@ pub(crate) fn spine(painter: &egui::Painter, spine: &Spine, rows: Rect) {
         ));
         colour::BG
     };
-    // The size, sideways, reading up the tab. The long word if it fits,
-    // the number if not, nothing if not even that.
     let word = match spine.size {
         2 => "Duo".to_owned(),
         3 => "Trio".to_owned(),
@@ -541,8 +475,6 @@ pub(crate) fn spine(painter: &egui::Painter, spine: &Spine, rows: Rect) {
     }
 }
 
-/// A folded corner at the top right of a slab: you wrote something about
-/// this account.
 pub(crate) fn dog_ear(painter: &egui::Painter, rect: Rect) {
     let fold = 9.0;
     painter.add(Shape::convex_polygon(
@@ -556,14 +488,10 @@ pub(crate) fn dog_ear(painter: &egui::Painter, rect: Rect) {
     ));
 }
 
-/// A caps label, the size every column head and chip on the board is set
-/// at.
 pub(crate) fn label() -> FontId {
     Face::Display.at(size::LABEL)
 }
 
-/// A reason split into runs of digits and runs of everything else, the
-/// digits flagged, so the numbers in it can be set in the flag's colour.
 pub(crate) fn split_numbers(text: &str) -> Vec<(&str, bool)> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -601,7 +529,6 @@ pub(crate) fn heat(side: Side, t: f32) -> Color32 {
     }
 }
 
-/// What a win looks like for this side: the enemy's red, or your green.
 pub(crate) const fn win(side: Side) -> Color32 {
     match side {
         Side::Enemy => colour::ENEMY,
@@ -609,7 +536,6 @@ pub(crate) const fn win(side: Side) -> Color32 {
     }
 }
 
-/// A K/D as heat, on the scale the rows use.
 pub(crate) fn kd_heat(side: Side, kd: Option<f64>) -> Color32 {
     kd.map_or(colour::TEXT_FAINT, |v| heat(side, (v as f32 - 0.9) / 0.8))
 }
@@ -618,7 +544,6 @@ pub(crate) fn kd_heat(side: Side, kd: Option<f64>) -> Color32 {
 mod tests {
     use super::split_numbers;
 
-    /// The numbers in a reason are found, decimals and percentages whole.
     #[test]
     fn a_reason_splits_at_its_numbers() {
         let runs = split_numbers("Level 34, K/D 1.92, won 64%");

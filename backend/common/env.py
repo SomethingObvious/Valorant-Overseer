@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Reads backend/.env without python-dotenv.
-
-The launcher calls this before validate_runtime() has checked that
-site-packages is intact, so it cannot import anything from there.
-"""
+"""Reads backend/.env without python-dotenv."""
 
 from __future__ import annotations
 
@@ -19,11 +15,7 @@ if TYPE_CHECKING:
 def env_number(
     name: str, default: float, *, low: float = -math.inf, high: float = math.inf
 ) -> float:
-    """Return the number in the environment variable `name`, or `default`.
-
-    A value that isn't a number from `low` to `high` is said on stderr and
-    `default` stands in, so a typo in .env costs a setting and not the launch.
-    """
+    """Return the number in the environment variable `name`, or `default`."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return default

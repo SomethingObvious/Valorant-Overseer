@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""The test the module self-checks make, kept under ``python -O``.
-
-An ``assert`` statement vanishes when Python runs optimised, which would leave
-a self-check that passes by checking nothing.
-"""
+"""The test the module self-checks make, kept under ``python -O``."""
 
 
 def check(ok: object, why: object = "") -> None:

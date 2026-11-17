@@ -1,8 +1,3 @@
-//! Who throws a lineup and what. The agent sits as one line with a Change
-//! button, and only opens into the search and every agent's face when asked,
-//! so the page isn't a wall of faces. Any agent is a blacked-out figure, and
-//! for it any ability or ult in the game is found by name.
-
 use egui::{Align2, Sense, Stroke, Ui, pos2, vec2};
 use overseer_core::{Ability, Atlas, Kit};
 use overseer_ui::{Face, art, caps_text, colour, space};
@@ -10,20 +5,12 @@ use overseer_ui::{Face, art, caps_text, colour, space};
 use super::{Draft, face, side::words};
 use crate::controls::{self, Tone};
 
-/// The agent a lineup has when any agent can throw it.
 pub(super) const ANY: &str = "Any Agent";
-/// The agent a lineup has when it is only the Spike, planted.
 pub(super) const SPIKE: &str = "Spike";
 
-/// How big an agent's tile is in the grid.
 const TILE: f32 = 38.0;
-/// The most abilities a search shows, so a short word isn't a wall of chips.
 const FOUND: usize = 12;
 
-/// The agent as one line with a Change button, or the search and the grid
-/// while choosing. `main` is the agent the blacked-out figure is cut from.
-/// Make Default shows on any agent but the default one, and pressing it puts
-/// the agent in `default` for the settings to keep.
 pub(super) fn agent(
     ui: &mut Ui,
     atlas: &Atlas,
@@ -78,11 +65,8 @@ pub(super) fn agent(
     }
 }
 
-/// The default agent, and where a new one goes when Make Default is pressed.
 pub(super) type DefaultAgent<'a> = (&'a str, &'a mut Option<String>);
 
-/// The search and every agent that matches it, Any Agent first. Picking one
-/// closes the grid again.
 fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
     let wide = ui.available_width();
     let _find = controls::field(ui, &mut draft.find, "Find an agent", wide);
@@ -100,7 +84,6 @@ fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
         }
     });
     if let Some(name) = picked {
-        // Any agent can throw anything, so picking it keeps the utility.
         let keeps = name == ANY
             || draft
                 .lineup
@@ -117,7 +100,6 @@ fn choose(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
     }
 }
 
-/// One agent's tile, lit when picked. True when it was clicked.
 pub(super) fn tile(ui: &mut Ui, agent: &str, on: bool, main: Option<&str>) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::click());
     let lit = if on || response.hovered() { 1.0 } else { 0.62 };
@@ -137,9 +119,6 @@ pub(super) fn tile(ui: &mut Ui, agent: &str, on: bool, main: Option<&str>) -> bo
     response.clicked()
 }
 
-/// The utility, which a lineup doesn't need: the agent's own four with
-/// their icons, or for any agent whatever the search finds. Clicking the one
-/// picked again clears it.
 pub(super) fn utility(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft) {
     let any = draft.lineup.agent == ANY;
     let list: Vec<(&Kit, &Ability)> = if any {
@@ -206,7 +185,6 @@ pub(super) fn utility(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft) {
     });
 }
 
-/// Every ability in the game, with the agent it belongs to.
 fn every(atlas: &Atlas) -> impl Iterator<Item = (&Kit, &Ability)> {
     atlas
         .agents
@@ -214,7 +192,6 @@ fn every(atlas: &Atlas) -> impl Iterator<Item = (&Kit, &Ability)> {
         .flat_map(|k| k.abilities.iter().map(move |a| (k, a)))
 }
 
-/// An ability with the agent it belongs to.
 fn owner_of<'a>(atlas: &'a Atlas, ability: &str) -> Option<(&'a Kit, &'a Ability)> {
     every(atlas).find(|(_, a)| a.name.as_deref() == Some(ability))
 }

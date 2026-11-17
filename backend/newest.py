@@ -1,13 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Which Overseer release is newest, for the window's look once a day.
-
-One HEAD request to GitHub, which answers with a redirect to the newest
-release's page. The redirect is read and never followed, and a HEAD answer
-has no body, so nothing is downloaded and nothing goes out but the request.
-No session is kept, so the cookies GitHub sets are dropped with it. The only
-thing taken from the answer is a version number in exactly the expected
-place, and anything else counts as no answer.
-"""
+"""Which Overseer release is newest, for the window's look once a day."""
 
 from __future__ import annotations
 

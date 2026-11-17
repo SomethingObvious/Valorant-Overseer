@@ -11,11 +11,10 @@ import valapi
 
 def _read_version() -> str:
     try:
-        v = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+        written = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8")
     except OSError:
-        return "1.1"
-    else:
-        return v or "1.1"
+        written = ""
+    return written.strip() or "1.1"
 
 
 APP_VERSION = _read_version()
@@ -104,13 +103,7 @@ IMMORTAL = 24
 
 
 def rr_moved(update: dict[str, Any]) -> int | None:
-    """How far a ranked match really moved somebody, from one competitive update.
-
-    Riot's RankedRatingEarned is the match's own figure. A rank up, derank
-    protection or a placement can leave the rating somewhere else, so this
-    is where they stood on the whole ladder after it less where they stood
-    before. None when Riot left either end out.
-    """
+    """How far a ranked match really moved somebody, from one competitive update."""
     before = ladder_place(update.get("TierBeforeUpdate"), update.get("RankedRatingBeforeUpdate"))
     after = ladder_place(update.get("TierAfterUpdate"), update.get("RankedRatingAfterUpdate"))
     return None if before is None or after is None else after - before
@@ -123,49 +116,48 @@ def ladder_place(tier: Any, rr: Any) -> int | None:
     return min(tier, IMMORTAL) * 100 + rr
 
 
+_MAP_NAMES = {
+    "Triad": "Haven",
+    "Duality": "Bind",
+    "Bonsai": "Split",
+    "Ascent": "Ascent",
+    "Port": "Icebox",
+    "Foxtrot": "Breeze",
+    "Canyon": "Fracture",
+    "Pitt": "Pearl",
+    "Jam": "Lotus",
+    "Juliett": "Sunset",
+    "Infinity": "Abyss",
+    "Rook": "Corrode",
+    "Plummet": "Summit",
+    "HURM_Alley": "District",
+    "HURM_Bowl": "Kasbah",
+    "HURM_Helix": "Drift",
+    "HURM_HighTide": "Glitch",
+    "HURM_Yard": "Piazza",
+    "Skirmish_A": "Skirmish A",
+    "Skirmish_B": "Skirmish B",
+    "Skirmish_C": "Skirmish C",
+    "Skirmish_D": "Skirmish D",
+    "Skirmish_E": "Skirmish E",
+    "AbilityDraft": "Gauntlet",
+    "Range": "The Range",
+    "RangeV2": "The Range",
+}
+
+
 def map_name_from_path(map_id: str) -> str:
     """Return a map's name from its path, Unknown when there is none."""
     if not map_id:
         return "Unknown"
-    leaf = map_id.rstrip("/").split("/")[-1]
-
-    alias = {
-        "Triad": "Haven",
-        "Duality": "Bind",
-        "Bonsai": "Split",
-        "Ascent": "Ascent",
-        "Port": "Icebox",
-        "Foxtrot": "Breeze",
-        "Canyon": "Fracture",
-        "Pitt": "Pearl",
-        "Jam": "Lotus",
-        "Juliett": "Sunset",
-        "Infinity": "Abyss",
-        "Rook": "Corrode",
-        "Plummet": "Summit",
-        "HURM_Alley": "District",
-        "HURM_Bowl": "Kasbah",
-        "HURM_Helix": "Drift",
-        "HURM_HighTide": "Glitch",
-        "HURM_Yard": "Piazza",
-        "Skirmish_A": "Skirmish A",
-        "Skirmish_B": "Skirmish B",
-        "Skirmish_C": "Skirmish C",
-        "Skirmish_D": "Skirmish D",
-        "Skirmish_E": "Skirmish E",
-        "AbilityDraft": "Gauntlet",
-        "Range": "The Range",
-        "RangeV2": "The Range",
-    }
-    known = alias.get(leaf) or (leaf if leaf in MAPS else None)
+    leaf = map_id.rstrip("/").rpartition("/")[2]
+    if leaf in _MAP_NAMES or leaf in MAPS:
+        return _MAP_NAMES.get(leaf, leaf)
     # A map newer than this table. Riot's own map list has its display name,
     # and the file name is a codename nobody sees in game.
-    return known or valapi.map_by_url(map_id) or leaf or "Unknown"
+    return valapi.map_by_url(map_id) or leaf or "Unknown"
 
 
-# A pair per side, the same pairs the window draws. Your parties and the
-# other team's never share a colour, and none is the enemy's red, your
-# side's green or the flag's amber.
 PARTY_OURS = ["#C58BFF", "#F28DD5"]
 PARTY_THEIRS = ["#5CE1E6", "#7AA2FF"]
 

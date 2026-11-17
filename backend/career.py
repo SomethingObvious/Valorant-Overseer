@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""A player's career, read from their recent matches.
-
-Which matches count, the rating line, the averages, guns and habits the
-panel shows, and the run of wins or losses they are on.
-"""
+"""A player's career, read from their recent matches."""
 
 from __future__ import annotations
 
@@ -17,17 +13,11 @@ def form_streak(form: list[Any]) -> dict[str, Any] | None:
     """Return the run of results at the head of `form`, like three wins, or None."""
     if not form:
         return None
-    t, n = form[0], 1
-    for r in form[1:]:
-        if r != t:
-            break
-        n += 1
-    return {"type": t, "count": n}
+    first = form[0]
+    run = next((n for n, result in enumerate(form) if result != first), len(form))
+    return {"type": first, "count": run}
 
 
-# The modes a career is read from: the ones where a K/D means what it means
-# in a ranked game. A deathmatch or an ability draft arena doubles somebody's
-# kills and says nothing about how they play five against five.
 STANDARD_QUEUES = frozenset({"competitive", "unrated", "swiftplay", "premier"})
 
 
@@ -45,8 +35,6 @@ def rating_run(updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for update in updates:
         tier = int(update.get("TierAfterUpdate") or 0)
-        # A placement reports tier zero, a cliff to the bottom of a ladder the
-        # player was never at.
         if tier < 3:
             continue
         out.append(
@@ -118,16 +106,12 @@ def career_summary(matches: list[Any]) -> dict[str, Any]:
                 "agents": sorted(e["agents"]),
             }
             for e in seen.values()
-            # One match together is a random teammate, not somebody they play with.
             if e["sharedMatches"] >= 2
         ),
         key=lambda x: x["sharedMatches"],
         reverse=True,
     )[:6]
 
-    # Which guns they actually reach for, summed over every match in the
-    # history. Each of those matches was fetched in full for this view
-    # already, so the answer costs a loop rather than a request.
     guns: dict[str, int] = {}
     for row in matches:
         for gun in (row or {}).get("gunKills") or []:
@@ -136,7 +120,6 @@ def career_summary(matches: list[Any]) -> dict[str, Any]:
                 guns[name] = guns.get(name, 0) + int(gun.get("kills") or 0)
     total_gun_kills = sum(guns.values())
 
-    # The pistol round habits, summed the same way.
     forced = lost_pistols = won_pistols = 0
     bonus: dict[str, int] = {}
     for row in matches:
@@ -169,8 +152,6 @@ def career_summary(matches: list[Any]) -> dict[str, Any]:
         },
         "coPlayers": co_players,
         "topGuns": top_guns,
-        # Do they force the round after losing a pistol, and what do they take
-        # into the round after winning one.
         "forceHabit": {
             "forced": forced,
             "chances": lost_pistols,
@@ -201,7 +182,6 @@ def _self_check() -> None:
     check(career_mids(mixed, 8) == ["b", "d", "e"])
     check(career_mids(mixed[:3], 8) == ["b"])
 
-    # The rating line leaves out placements and runs newest first.
     run = rating_run(
         [
             {
@@ -221,8 +201,6 @@ def _self_check() -> None:
     )
     check([r["matchId"] for r in run] == ["new", "old"], run)
 
-    # Tallying the bonus buys must leave the match count the averages divide
-    # by alone.
     bought = [
         {
             "result": result,
@@ -238,7 +216,6 @@ def _self_check() -> None:
     averages = career_summary(bought)["averages"]
     check((averages["games"], averages["kills"], averages["winRate"]) == (2, 15.0, 50), averages)
 
-    # Somebody you keep queueing with comes with how those games went.
     mate = {"puuid": "m", "name": "Mate#1"}
     duo = [{**row, "teammates": [mate]} for row in bought + bought[:1]]
     check(career_summary(duo)["coPlayers"][0]["winRate"] == 67, career_summary(duo)["coPlayers"])

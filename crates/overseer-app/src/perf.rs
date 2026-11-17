@@ -1,10 +1,3 @@
-//! The performance budget, as tests.
-//!
-//! They count work, not time. A timing assertion measures the build and
-//! whatever else the machine is busy with, but a frame that asks for another
-//! frame, or a board that suddenly draws twice the shapes, is the same on
-//! every run.
-
 #![cfg(test)]
 
 use egui::{Ui, vec2};
@@ -23,7 +16,6 @@ use overseer_ui as design;
 /// it catches is the unplanned kind, like a shadow landing on every row.
 const SHAPE_BUDGET: usize = 330;
 
-/// Builds the harness the way the app is built, on a full board.
 fn harness() -> Harness<'static, bool> {
     let mut harness = Harness::builder()
         .with_size(vec2(1200.0, 400.0))
@@ -53,7 +45,6 @@ fn harness() -> Harness<'static, bool> {
     harness
 }
 
-/// Ten players, both teams, which is a full competitive lobby.
 fn board() -> Board {
     let mut board = crate::shot::sample();
     while board.players.len() < 10 {
@@ -72,13 +63,9 @@ fn board() -> Board {
     board
 }
 
-/// A window nobody is touching stops asking to be drawn. If anything asks
-/// every frame, the app runs at the monitor's refresh rate for ever and the
-/// only symptom is the fan.
 #[test]
 fn a_still_window_asks_for_nothing() {
     let mut harness = harness();
-    // An animation is a reason to draw, so let it finish first.
     let mut frames = 0;
     while harness.ctx.has_requested_repaint() && frames < 120 {
         harness.run();
@@ -91,7 +78,6 @@ fn a_still_window_asks_for_nothing() {
     );
 }
 
-/// A full board fits in its shape budget.
 #[test]
 fn a_full_board_stays_inside_its_shape_budget() {
     let mut harness = harness();
@@ -115,16 +101,12 @@ fn a_full_board_stays_inside_its_shape_budget() {
         count <= SHAPE_BUDGET,
         "a full board now draws {count} shapes, and the budget is {SHAPE_BUDGET}"
     );
-    // A budget nothing is near is not a budget. If this fires, the board got
-    // much cheaper and the number should come down with it.
     assert!(
         count * 2 >= SHAPE_BUDGET,
         "a full board draws {count} shapes against a budget of {SHAPE_BUDGET}, which is no longer a budget"
     );
 }
 
-/// The overlay draws exactly the height it was placed for. It never moves
-/// once shown, so a taller board would grow a bottom corner off its place.
 #[test]
 fn the_overlay_is_as_tall_as_it_was_placed_for() {
     let ctx = egui::Context::default();
@@ -159,6 +141,7 @@ fn the_overlay_is_as_tall_as_it_was_placed_for() {
                     place: crate::board::Place::Overlay,
                     still: true,
                     since: 10.0,
+                    lost: false,
                 },
             )
             .drew;

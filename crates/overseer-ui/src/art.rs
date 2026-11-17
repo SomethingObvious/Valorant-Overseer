@@ -85,18 +85,12 @@ impl Kind {
     }
 }
 
-/// Where fetched art is kept, set once by the app.
 static FETCHED: OnceLock<PathBuf> = OnceLock::new();
 
-/// An agent or map, by kind and key, whose art was looked for.
 type Asked = (Kind, String);
 
-/// Agents and maps art was looked for and not found, not yet handed to
-/// the app, and every one looked for already, so each is asked for once.
 static WANTED: Mutex<(Vec<Asked>, BTreeSet<Asked>)> = Mutex::new((Vec::new(), BTreeSet::new()));
 
-/// How long before a picture not found yet is looked for again, in
-/// seconds, since the backend may be fetching it.
 const LOOK_AGAIN: f64 = 3.0;
 
 /// Says where fetched art is kept, once, before anything is drawn.
@@ -114,9 +108,6 @@ pub fn wanted() -> Vec<Asked> {
         .unwrap_or_default()
 }
 
-/// Art for an agent or a map newer than this build, cut by `make` from
-/// what the backend fetched, or else asked for. `use_` tells apart the
-/// pictures cut from one fetched file.
 fn fetched(
     ctx: &Context,
     kind: Kind,
@@ -145,7 +136,6 @@ fn fetched(
     found
 }
 
-/// One fetched picture, by what it is and whose.
 fn raw(dir: &Path, kind: &str, key: &str) -> Option<egui::ColorImage> {
     std::fs::read(dir.join(kind).join(format!("{key}.png")))
         .ok()
@@ -173,9 +163,6 @@ fn portrait(full: &egui::ColorImage) -> egui::ColorImage {
     tile
 }
 
-/// How big Pillow's thumbnail makes a picture `size` big to fit a `side`
-/// square: the long side to `side`, and the short side whichever whole number
-/// next to it keeps the shape closest, the smaller one on a tie.
 fn thumbnail_size([wide, high]: [usize; 2], side: usize) -> [usize; 2] {
     if wide <= side && high <= side {
         return [wide.max(1), high.max(1)];
@@ -221,7 +208,6 @@ fn killfeed_from(
     }
 }
 
-/// `image` cut to the smallest box holding everything not clear.
 fn trimmed(image: &egui::ColorImage) -> egui::ColorImage {
     let [wide, high] = image.size;
     let shows = |x: usize, y: usize| image[(x, y)].a() > 0;
@@ -239,7 +225,6 @@ fn trimmed(image: &egui::ColorImage) -> egui::ColorImage {
     }
 }
 
-/// The part of `image` `size` big from `at`, kept inside it.
 fn cropped(image: &egui::ColorImage, at: [usize; 2], size: [usize; 2]) -> egui::ColorImage {
     let at = [at[0].min(image.size[0]), at[1].min(image.size[1])];
     let size = [
@@ -255,8 +240,6 @@ fn cropped(image: &egui::ColorImage, at: [usize; 2], size: [usize; 2]) -> egui::
     out
 }
 
-/// `image` resized with Lanczos, as the bound art was, on its
-/// premultiplied pixels so no edge picks up a fringe.
 fn resized(picture: &egui::ColorImage, size: [usize; 2]) -> egui::ColorImage {
     let bytes: Vec<u8> = picture
         .pixels
@@ -294,7 +277,6 @@ pub fn rank_glow(ctx: &Context, tier: u32) -> Option<TextureHandle> {
     })
 }
 
-/// The PNG for a tier's emblem.
 fn emblem(tier: u32) -> Option<&'static [u8]> {
     RANKS
         .iter()
@@ -320,11 +302,7 @@ pub fn warm(ctx: &Context) {
 /// pixels.
 pub const GLOW_PAD: usize = 48;
 
-/// The emblem's alpha in white, spread by three box blurs, which comes close
-/// to a gaussian.
 fn bloom(emblem: &egui::ColorImage) -> egui::ColorImage {
-    // Wide enough to read as light, and narrow enough to fade out before the
-    // edge of the row that clips it.
     const RADIUS: usize = 14;
     let [w, h] = emblem.size;
     let (width, height) = (w + 2 * GLOW_PAD, h + 2 * GLOW_PAD);
@@ -351,7 +329,6 @@ fn bloom(emblem: &egui::ColorImage) -> egui::ColorImage {
     egui::ColorImage::new([width, height], pixels)
 }
 
-/// One box blur of `radius` along every row, with nothing past either end.
 fn blur_rows(values: &mut [f32], width: usize, radius: usize) {
     let span = (2 * radius + 1) as f32;
     for row in values.chunks_mut(width) {
@@ -369,7 +346,6 @@ fn blur_rows(values: &mut [f32], width: usize, radius: usize) {
     }
 }
 
-/// Rows become columns, for a picture `width` wide.
 fn transpose(values: &[f32], width: usize) -> Vec<f32> {
     (0..width)
         .flat_map(|x| values.iter().skip(x).step_by(width).copied())
@@ -422,7 +398,6 @@ pub fn spike(ctx: &Context) -> Option<TextureHandle> {
 /// width and height, measured off the hexagon's edges.
 pub const SPIKE_CORE: [f32; 2] = [63.9 / 128.0, 49.85 / 128.0];
 
-/// One of the tables keyed by name, looked up by what the backend sent.
 fn named(ctx: &Context, kind: &str, table: &[(&str, &[u8])], name: &str) -> Option<TextureHandle> {
     let key = slug(name);
     let bytes = table
@@ -545,14 +520,12 @@ pub fn stand_in_portrait(ctx: &Context, seed: u64) -> Option<TextureHandle> {
     pick(ctx, "agent", &PORTRAITS, seed)
 }
 
-/// One entry of a table, picked by `seed`.
 fn pick(ctx: &Context, kind: &str, table: &[(&str, &[u8])], seed: u64) -> Option<TextureHandle> {
     let count = u64::try_from(table.len()).ok()?.max(1);
     let (name, bytes) = table.get(usize::try_from(seed % count).ok()?)?;
     texture(ctx, &format!("{kind}:{name}"), bytes)
 }
 
-/// The name the backend sent as a lookup key, so `KAY/O` is `kayo`.
 fn slug(name: &str) -> String {
     name.chars()
         .filter(char::is_ascii_alphanumeric)
@@ -560,14 +533,10 @@ fn slug(name: &str) -> String {
         .collect()
 }
 
-/// Decodes a PNG the first time it is asked for and hands back the texture
-/// every time after.
 fn texture(ctx: &Context, key: &str, bytes: &[u8]) -> Option<TextureHandle> {
     cached(ctx, key, || decode(bytes))
 }
 
-/// A texture made the first time it is asked for and handed back every time
-/// after.
 fn cached(
     ctx: &Context,
     key: &str,
@@ -576,22 +545,16 @@ fn cached(
     cached_with(ctx, key, TextureOptions::LINEAR, make)
 }
 
-/// [`cached`], with the texture's own `options`.
 fn cached_with(
     ctx: &Context,
     key: &str,
     options: TextureOptions,
     make: impl FnOnce() -> Option<egui::ColorImage>,
 ) -> Option<TextureHandle> {
-    // Kept in the context's store, not a static, because a texture id only
-    // means something to the context that made it, and the snapshot harness
-    // builds contexts of its own.
     let id = egui::Id::new(("art", key));
     if let Some(handle) = ctx.data(|store| store.get_temp::<TextureHandle>(id)) {
         return Some(handle);
     }
-    // Linear, because these are drawn at about half their stored size on a
-    // display of any scale.
     let handle = ctx.load_texture(key, make()?, options);
     ctx.data_mut(|store| store.insert_temp(id, handle.clone()));
     Some(handle)
@@ -638,8 +601,6 @@ mod tests {
         full
     }
 
-    /// An agent the build doesn't carry is asked for once, and drawn once
-    /// what the backend fetched is there.
     #[test]
     fn a_new_agent_is_asked_for_once_and_drawn_once_fetched() {
         let dir = std::env::temp_dir().join(format!("overseer-art-{}", std::process::id()));
@@ -689,7 +650,6 @@ mod tests {
                 continue;
             };
             let full = decode(&raw).unwrap();
-            // Kept beside the raw file, to look at.
             let (cut, framed) = (portrait(&full), card_from(&full));
             save_png(&dir.join(format!("{name}-portrait.png")), &cut).unwrap();
             save_png(&dir.join(format!("{name}-card.png")), &framed).unwrap();
@@ -712,8 +672,6 @@ mod tests {
         assert!(checked > 0, "no raw portraits in the folder");
     }
 
-    /// A picture that fails to decode just goes missing, so this is where it
-    /// gets caught.
     #[test]
     fn every_bound_picture_decodes() {
         for table in [&PORTRAITS[..], &KILLFEED[..], &CARDS[..], &MAPS[..]] {

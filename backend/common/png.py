@@ -12,11 +12,7 @@ if TYPE_CHECKING:
 
 
 def save_png(url: str, path: Path, timeout: float = 15) -> None:
-    """Download a PNG to `path` through a `.part` file, so nobody reads half of one.
-
-    Raises `requests.RequestException` when it can't be fetched, `ValueError`
-    when what came back isn't a PNG, and `OSError` when it can't be saved.
-    """
+    """Download a PNG to `path` through a `.part` file, so nobody reads half of one."""
     answer = requests.get(url, timeout=timeout)
     answer.raise_for_status()
     if not answer.content.startswith(b"\x89PNG"):

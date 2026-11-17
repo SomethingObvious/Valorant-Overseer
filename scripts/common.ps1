@@ -16,610 +16,484 @@ $VenvDir = Join-Path $Root ".venv"
 $VenvPy = Join-Path $VenvDir "Scripts\python.exe"
 $OverseerDir = Join-Path $Root ".overseer"
 $EnvFile = Join-Path $Root "backend\.env"
+$Requirements = Join-Path $Root "backend\requirements.txt"
+$MarkerFormat = 3
 
-$MarkerSchemaVersion = 2
+function Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
+function Ok([string]$Text) { Write-Host "  + $Text" -ForegroundColor Green }
+function Note([string]$Text) { Write-Host "  . $Text" -ForegroundColor DarkGray }
+function Warn([string]$Text) { Write-Host "  ! $Text" -ForegroundColor Yellow }
+function Fail([string]$Text) { Write-Host "  x $Text" -ForegroundColor Red }
 
-function Step($m) { Write-Host ""; Write-Host "==> $m" -ForegroundColor Cyan }
-function Ok($m) { Write-Host "  + $m" -ForegroundColor Green }
-function Note($m) { Write-Host "  . $m" -ForegroundColor DarkGray }
-function Warn($m) { Write-Host "  ! $m" -ForegroundColor Yellow }
-function Fail($m) { Write-Host "  x $m" -ForegroundColor Red }
-
-function Test-Cmd($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
-
-function Update-Path {
-    $m = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $u = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = (@($m, $u) | Where-Object { $_ }) -join ";"
+function Write-Text([string]$Path, [string]$Text) {
+    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-function Write-FileNoBom($path, $content) {
-    $enc = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($path, $content, $enc)
+# Under Stop, Windows PowerShell 5.1 turns a native command's redirected stderr
+# into a terminating error, so the calls that redirect it run through here.
+function Invoke-Quietly([scriptblock]$Block) {
+    $was = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Block } finally { $ErrorActionPreference = $was }
 }
 
-function Get-RuntimeManifest {
-    $p = Join-Path $Root "runtime.json"
-    if (-not [System.IO.File]::Exists($p)) { throw "runtime.json is missing, so this copy is incomplete. Download the release again." }
-    return (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
-}
-
-function Get-LocalVersion {
-    $f = Join-Path $Root "VERSION"
-    if ([System.IO.File]::Exists($f)) { return ((Get-Content -LiteralPath $f -Raw).Trim()) }
-    return "0.0.0"
-}
-
-function HashOf($rel) {
-    $p = Join-Path $Root $rel
-    if (Test-Path $p) { return (Get-FileHash -Algorithm SHA256 -Path $p).Hash }
-    return ""
-}
-
-$Script:RedactionRules = @(
-    @{ Pattern = '([?&](?:s|t|token|key)=)[^&\s"'']+'; Replace = '$1[REDACTED]' },
-    @{ Pattern = '\b([st]=)[A-Za-z0-9._~-]{8,}'; Replace = '$1[REDACTED]' },
-    @{ Pattern = '("(?:token|password|apiKey|api_key|key|secret|authorization)"\s*:\s*")[^"]+(")'; Replace = '$1[REDACTED]$2' },
-    @{ Pattern = '\b(Basic|Bearer)\s+[A-Za-z0-9+/=_\-.]{8,}'; Replace = '$1 [REDACTED]' },
-    @{ Pattern = '\b(password|token|secret|api_key|apikey|authorization)\s*[=:]\s*\S+'; Replace = '$1=[REDACTED]' },
-    @{ Pattern = '\b[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}:[A-Za-z0-9_\-]{16,}\b'; Replace = '[REDACTED-ABLY-KEY]' },
-    @{ Pattern = '\b([0-9a-fA-F]{8})[0-9a-fA-F\-]{24,}\b'; Replace = '$1...[REDACTED]' },
-    @{ Pattern = '\b(\d{6})\d{11,}\b'; Replace = '$1...[REDACTED]' }
-)
-
-function Protect-OverseerText([string]$text) {
-    foreach ($r in $Script:RedactionRules) {
-        $text = [regex]::Replace($text, $r.Pattern, $r.Replace, 'IgnoreCase')
+function Read-Manifest {
+    $path = Join-Path $Root "runtime.json"
+    if (-not [System.IO.File]::Exists($path)) {
+        throw "runtime.json is missing, so this copy is incomplete. Download the release again."
     }
-    return $text
+    return Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
-$Script:LogMaxBytes = 2MB
-$Script:LogBackups = 5
+function Get-AppVersion {
+    $path = Join-Path $Root "VERSION"
+    if (-not [System.IO.File]::Exists($path)) { return "0.0.0" }
+    return (Get-Content -LiteralPath $path -Raw).Trim()
+}
+
+function Get-RequirementsHash {
+    if (-not (Test-Path -LiteralPath $Requirements)) { return "" }
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Requirements).Hash
+}
+
+function Test-Writable([string]$Folder) {
+    $probe = Join-Path $Folder (".overseer-write-test-" + [Guid]::NewGuid().ToString("N"))
+    try {
+        [System.IO.File]::WriteAllText($probe, "x")
+        Remove-Item -LiteralPath $probe -Force
+        return $true
+    }
+    catch { return $false }
+}
+
+$Script:Redactions = @(
+    '([?&](?:s|t|token|key)=)[^&\s"'']+', '$1[REDACTED]'
+    '\b([st]=)[A-Za-z0-9._~-]{8,}', '$1[REDACTED]'
+    '("(?:token|password|apiKey|api_key|key|secret|authorization)"\s*:\s*")[^"]+(")', '$1[REDACTED]$2'
+    '\b(Basic|Bearer)\s+[A-Za-z0-9+/=_\-.]{8,}', '$1 [REDACTED]'
+    '\b(password|token|secret|api_key|apikey|authorization)\s*[=:]\s*\S+', '$1=[REDACTED]'
+    '\b[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}:[A-Za-z0-9_\-]{16,}\b', '[REDACTED-KEY]'
+    '\b([0-9a-fA-F]{8})[0-9a-fA-F\-]{24,}\b', '$1...[REDACTED]'
+    '\b(\d{6})\d{11,}\b', '$1...[REDACTED]'
+)
+if ($env:USERPROFILE) {
+    $Script:Redactions += ([regex]::Escape($env:USERPROFILE) -replace '\\\\', '[\\/]+'), '%USERPROFILE%'
+}
+
+function Protect-OverseerText([string]$Text) {
+    for ($i = 0; $i -lt $Script:Redactions.Count; $i += 2) {
+        $Text = [regex]::Replace($Text, $Script:Redactions[$i], $Script:Redactions[$i + 1], "IgnoreCase")
+    }
+    return $Text
+}
 
 function Write-OverseerLog {
     param([string]$Log, [string]$Level = "INFO", [string]$Code = "", [string]$Message)
     try {
-        if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
+        $null = New-Item -ItemType Directory -Force -Path $OverseerDir
         $file = Join-Path $OverseerDir "$Log.log"
-        if ((Test-Path $file) -and ((Get-Item $file).Length -gt $Script:LogMaxBytes)) {
-            for ($i = $Script:LogBackups - 1; $i -ge 1; $i--) {
-                $src = "$file.$i"; $dst = "$file.$($i + 1)"
-                if (Test-Path $src) { Move-Item -Force $src $dst }
+        if ((Test-Path $file) -and (Get-Item $file).Length -gt 2MB) {
+            foreach ($n in 4..1) {
+                if (Test-Path "$file.$n") { Move-Item -Force "$file.$n" "$file.$($n + 1)" }
             }
             Move-Item -Force $file "$file.1"
         }
-        $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-        $codePart = ""
-        if ($Code) { $codePart = "$Code " }
-        $line = "$ts [$Log] $Level $codePart$(Protect-OverseerText $Message)"
-        [System.IO.File]::AppendAllText($file, $line + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        $stamp = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        $words = @($stamp, "[$Log]", $Level, $Code, (Protect-OverseerText $Message)) | Where-Object { $_ }
+        [System.IO.File]::AppendAllText($file, ($words -join " ") + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
     }
     catch { }
 }
 
-function Show-FatalDialog([string]$message, [string]$logName) {
-    $full = "$message`n`nDetails: $(Join-Path $OverseerDir "$logName.log")"
+function Show-FatalDialog([string]$Message, [string]$LogName) {
+    $text = "$Message`n`nDetails: $(Join-Path $OverseerDir "$LogName.log")"
     try {
         Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show($full, "Valorant Overseer",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        $null = [System.Windows.Forms.MessageBox]::Show($text, "Valorant Overseer", "OK", "Error")
     }
-    catch {
-        Fail $full
-    }
+    catch { Fail $text }
 }
 
-function New-OverseerLock([string]$name) {
-    if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
-    $path = Join-Path $OverseerDir "$name.lock"
-    try {
-        return [System.IO.File]::Open($path, [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-    }
-    catch {
-        throw "Another Valorant Overseer $name operation is already running. Wait for it to finish and try again."
-    }
+function New-OverseerLock([string]$Name) {
+    $null = New-Item -ItemType Directory -Force -Path $OverseerDir
+    try { return [System.IO.File]::Open((Join-Path $OverseerDir "$Name.lock"), "OpenOrCreate", "ReadWrite", "None") }
+    catch { throw "Another Valorant Overseer $Name operation is already running. Wait for it to finish and try again." }
 }
 
-function Get-OverseerMutexName([string]$purpose) {
-    return "Local\Overseer-$purpose-$(Get-PathFingerprint)"
+# Names this install folder in the mutexes and the install marker, and has to
+# come out the same as _path_fingerprint in backend\run.py. That is why only A
+# to Z is lowered, on both sides.
+function Get-FolderId {
+    $path = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $lowered = [regex]::Replace($path, '[A-Z]', { param($m) $m.Value.ToLowerInvariant() })
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($lowered)) }
+    finally { $sha.Dispose() }
+    return -join ($digest[0..7] | ForEach-Object { $_.ToString("X2") })
 }
 
-function New-OverseerMutex([string]$purpose, [string]$busyMessage) {
-    $created = $false
-    $mutex = [System.Threading.Mutex]::new(
-        $false, (Get-OverseerMutexName $purpose), [ref]$created)
-    $acquired = $false
-    try {
-        $acquired = $mutex.WaitOne(0)
-    }
-    catch [System.Threading.AbandonedMutexException] {
-        $acquired = $true
-    }
-    if (-not $acquired) {
-        $mutex.Dispose()
-        throw $busyMessage
-    }
-    return $mutex
+function New-OverseerMutex([string]$Purpose, [string]$Busy) {
+    $mutex = New-Object System.Threading.Mutex($false, "Local\Overseer-$Purpose-$(Get-FolderId)")
+    try { $mine = $mutex.WaitOne(0) }
+    catch [System.Threading.AbandonedMutexException] { $mine = $true }
+    if ($mine) { return $mutex }
+    $mutex.Dispose()
+    throw $Busy
 }
 
-function Close-OverseerMutex($mutex) {
-    if (-not $mutex) { return }
-    try { $mutex.ReleaseMutex() } catch { }
-    try { $mutex.Dispose() } catch { }
+function Close-OverseerMutex($Mutex) {
+    if (-not $Mutex) { return }
+    try { $Mutex.ReleaseMutex() } catch { }
+    $Mutex.Dispose()
+}
+
+function Test-Alive([int]$Id) {
+    return [bool](Get-CimInstance Win32_Process -Filter "ProcessId=$Id" -ErrorAction SilentlyContinue)
+}
+
+function Wait-Exit([int]$Id, [int]$Seconds) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ((Test-Alive $Id) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 200 }
+    return -not (Test-Alive $Id)
 }
 
 # True when the process, or one of the three above it, names $Folder in its exe
 # path or its command line. The venv's python.exe re-execs the base
-# interpreter, which lives outside the install, so the process doing the work
-# is often only recognisable by its parent.
+# interpreter, which runs from outside the install, so the process doing the
+# work is often only recognisable by its parent.
 function Test-ProcessUnder([int]$ProcessId, [string]$Folder) {
     $prefix = $Folder.ToLowerInvariant() + '\'
-    $cur = $ProcessId
-    for ($hop = 0; $hop -lt 4; $hop++) {
-        if ($cur -le 0) { return $false }
-        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
-        if (-not $p) { return $false }
-        if ((($p.ExecutablePath + " " + $p.CommandLine) + "").ToLowerInvariant().Contains($prefix)) { return $true }
-        $cur = [int]$p.ParentProcessId
+    $id = $ProcessId
+    foreach ($hop in 1..4) {
+        if ($id -le 0) { return $false }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+        if (-not $process) { return $false }
+        if ("$($process.ExecutablePath) $($process.CommandLine)".ToLowerInvariant().Contains($prefix)) { return $true }
+        $id = [int]$process.ParentProcessId
     }
     return $false
 }
 
 function Stop-RunningApp([string]$LogName = "launcher") {
     $stateFile = Join-Path $OverseerDir "runtime-state.json"
-    if (-not (Test-Path $stateFile)) { return $false }
-    $appPid = 0
-    try { $appPid = [int]((Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json).pid) } catch { $appPid = 0 }
-    if ($appPid -le 0) { return $false }
-
-    if (-not (Get-CimInstance Win32_Process -Filter "ProcessId=$appPid" -ErrorAction SilentlyContinue)) {
+    $id = 0
+    try { $id = [int](Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json).pid } catch { }
+    if ($id -le 0) { return $false }
+    if (-not (Test-Alive $id)) {
         Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
         return $false
     }
-
-    # The PID may have been reused since the app wrote it down, so only kill it
-    # if it runs from this install's .venv.
-    if (-not (Test-ProcessUnder $appPid $VenvDir)) { return $false }
-
-    Note "Closing the running Valorant Overseer (PID $appPid) first."
-    Write-OverseerLog -Log $LogName -Message "closing running app pid=$appPid before maintenance"
-
-    # Under Stop, Windows PowerShell 5.1 turns a native command's redirected
-    # stderr into a terminating error. The other native calls here that redirect
-    # it step out of Stop the same way.
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & taskkill /PID $appPid /T 2>&1 | Out-Null
-        $deadline = (Get-Date).AddSeconds(3)
-        while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "ProcessId=$appPid" -ErrorAction SilentlyContinue)) {
-            Start-Sleep -Milliseconds 200
-        }
-        if (Get-CimInstance Win32_Process -Filter "ProcessId=$appPid" -ErrorAction SilentlyContinue) {
-            & taskkill /PID $appPid /T /F 2>&1 | Out-Null
-        }
-    }
-    finally { $ErrorActionPreference = $prevEap }
-
-    # Wait for it to exit, so the files it holds are free for the maintenance
-    # that follows.
-    $deadline = (Get-Date).AddSeconds(5)
-    while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "ProcessId=$appPid" -ErrorAction SilentlyContinue)) {
-        Start-Sleep -Milliseconds 200
-    }
+    # The PID may have been reused since the app wrote it down, so only one
+    # running from this install's .venv gets closed.
+    if (-not (Test-ProcessUnder $id $VenvDir)) { return $false }
+    Note "Closing the running Valorant Overseer (PID $id) first."
+    Write-OverseerLog -Log $LogName -Message "closing running app pid=$id before maintenance"
+    Invoke-Quietly { & taskkill /PID $id /T 2>&1 | Out-Null }
+    if (-not (Wait-Exit $id 3)) { Invoke-Quietly { & taskkill /PID $id /T /F 2>&1 | Out-Null } }
+    $null = Wait-Exit $id 5
     Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
     Ok "Closed the running app."
     return $true
 }
 
-function Test-Preflight {
-    $problems = @()
-
+function Get-SetupProblems {
     $os = [Environment]::OSVersion.Version
-    if ($os.Major -lt 10) { $problems += "Windows 10 or 11 is required (this is Windows $($os.Major).$($os.Minor))." }
-    if (-not [Environment]::Is64BitOperatingSystem) { $problems += "64-bit Windows is required." }
+    if ($os.Major -lt 10) { "Windows 10 or 11 is required (this is Windows $($os.Major).$($os.Minor))." }
+    if (-not [Environment]::Is64BitOperatingSystem) { "64-bit Windows is required." }
     $arch = $env:PROCESSOR_ARCHITECTURE
     if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
-    if ($arch -ne "AMD64") { $problems += "This release runs on x64 PCs only, and this one is $arch. ARM64 isn't supported yet." }
-
-    if ($Root -match '\.zip[\\/]' -or $Root -match '\\Temp1_[^\\]*\\') {
-        $problems += "This is running from inside the ZIP file. Extract it first (right-click it and pick Extract All), then run install.bat from the extracted folder."
+    if ($arch -ne "AMD64") { "This release runs on x64 PCs only, and this one is $arch. ARM64 isn't supported yet." }
+    if ($Root -match '\.zip[\\/]|\\Temp1_[^\\]*\\') {
+        "This is running from inside the ZIP file. Extract it first (right-click it and pick Extract All), then run install.bat from the extracted folder."
     }
-
     # PowerShell reads [ ] in a -Path argument as a wildcard, and these scripts
     # hand the install folder to -Path all over the place.
     if ($Root -match '[\[\]]') {
-        $problems += "The folder name has square brackets in it: '$Root'. Rename it without them, say 'overseer [1]' to 'overseer', then run install.bat again."
+        "The folder name has square brackets in it: '$Root'. Rename it without them, say 'overseer [1]' to 'overseer', then run install.bat again."
     }
-
-    foreach ($dir in @($Root, $env:TEMP)) {
-        try {
-            $t = Join-Path $dir (".vg-write-test-" + [Guid]::NewGuid().ToString("N"))
-            [System.IO.File]::WriteAllText($t, "x")
-            Remove-Item $t -Force
-        }
-        catch {
-            $problems += "The folder '$dir' isn't writable. Move Valorant Overseer to a folder you can write to, like Documents."
+    foreach ($folder in $Root, $env:TEMP) {
+        if (-not (Test-Writable $folder)) {
+            "The folder '$folder' isn't writable. Move Valorant Overseer to a folder you can write to, like Documents."
         }
     }
-
     try {
         $drive = (Get-Item $Root).PSDrive
-        if ($drive -and $null -ne $drive.Free -and $drive.Free -lt 2GB) {
-            $problems += "Drive $($drive.Name): has less than 2 GB free. Free some space and try again."
-        }
+        if ($null -ne $drive.Free -and $drive.Free -lt 2GB) { "Drive $($drive.Name): has less than 2 GB free. Free some space and try again." }
     }
     catch { }
-
-    return $problems
 }
 
-function Test-StdinInteractive {
+function Test-CanPrompt {
     try { return -not [Console]::IsInputRedirected } catch { return $false }
 }
 
-function Get-PythonIdentity([string]$exe, [string[]]$exeArgs) {
-    $probe = Join-Path $PSScriptRoot "python_probe.py"
+function Get-PythonInfo([string]$Exe, [string[]]$Prefix = @()) {
     try {
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try { $out = & $exe @($exeArgs + @($probe)) 2>$null }
-        finally { $ErrorActionPreference = $prevEAP }
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        return (($out | Select-Object -Last 1) | ConvertFrom-Json)
+        $said = Invoke-Quietly { & $Exe @($Prefix + (Join-Path $PSScriptRoot "python_probe.py")) 2>$null }
+        if ($LASTEXITCODE -ne 0 -or -not $said) { return $null }
+        return @($said)[-1] | ConvertFrom-Json
     }
     catch { return $null }
 }
 
-function Test-PythonExact($identity, $manifest) {
-    if (-not $identity) { return $false }
+function Test-RightPython($Info, $Manifest) {
     # The Microsoft Store's Python keeps a copy of AppData to itself, so what
     # it writes into an install there is never seen by the window.
-    if ("$($identity.basePrefix)" -match '\\WindowsApps\\') { return $false }
-    return ($identity.implementation -eq $manifest.python.implementation) -and
-    ($identity.version -eq $manifest.python.version) -and
-    ($identity.bits -eq $manifest.python.bits) -and
-    ($identity.machine -eq "AMD64")
+    return [bool]$Info -and "$($Info.base)" -notmatch '\\WindowsApps\\' -and
+    $Info.kind -eq "CPython" -and $Info.version -eq $Manifest.python.version -and
+    $Info.bits -eq 64 -and $Info.machine -eq "AMD64"
 }
 
-function Get-PythonCandidates {
-    $cands = @()
-    $mf = Get-RuntimeManifest
-    $mm = ($mf.python.version -split '\.')[0..1] -join '.'
-    if (Test-Cmd "py") { $cands += @{ Exe = "py"; Args = @("-$mm") } }
-    if (Test-Cmd "python") { $cands += @{ Exe = "python"; Args = @() } }
-    if (Test-Cmd "python3") { $cands += @{ Exe = "python3"; Args = @() } }
-    $regRoots = @(
-        "HKCU:\Software\Python\PythonCore\$mm\InstallPath",
-        "HKLM:\Software\Python\PythonCore\$mm\InstallPath",
-        "HKLM:\Software\WOW6432Node\Python\PythonCore\$mm\InstallPath"
-    )
-    foreach ($rk in $regRoots) {
-        try {
-            $ip = (Get-ItemProperty -Path $rk -ErrorAction Stop).'(default)'
-            if ($ip) {
-                $exe = Join-Path $ip "python.exe"
-                if (Test-Path $exe) { $cands += @{ Exe = $exe; Args = @() } }
-            }
-        }
-        catch { }
+function Get-PythonChoices($Manifest) {
+    $short = ($Manifest.python.version -split '\.')[0..1] -join '.'
+    foreach ($name in "py", "python", "python3") {
+        if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { continue }
+        $prefix = @()
+        if ($name -eq "py") { $prefix = @("-$short") }
+        @{ Exe = $name; Args = $prefix }
     }
-    $default = Join-Path $env:LocalAppData ("Programs\Python\Python" + ($mm -replace '\.', '') + "\python.exe")
-    if (Test-Path $default) { $cands += @{ Exe = $default; Args = @() } }
-    return $cands
+    $keys = "HKCU:\Software\Python\PythonCore", "HKLM:\Software\Python\PythonCore", "HKLM:\Software\WOW6432Node\Python\PythonCore"
+    $folders = @($keys | ForEach-Object { (Get-ItemProperty -Path "$_\$short\InstallPath" -ErrorAction SilentlyContinue).'(default)' })
+    $folders += Join-Path $env:LOCALAPPDATA "Programs\Python\Python$($short -replace '\.', '')"
+    foreach ($folder in ($folders | Where-Object { $_ })) {
+        $exe = Join-Path $folder "python.exe"
+        if (Test-Path $exe) { @{ Exe = $exe; Args = @() } }
+    }
 }
 
-function Find-ExactPython {
-    $mf = Get-RuntimeManifest
-    foreach ($c in Get-PythonCandidates) {
-        $id = Get-PythonIdentity $c.Exe $c.Args
-        if (Test-PythonExact $id $mf) {
-            Write-OverseerLog -Log install -Message "accepted python: $($c.Exe) $($c.Args -join ' ') -> $($id.version) $($id.machine) $($id.bits)-bit at $($id.executable)"
-            return $c
+function Find-Python {
+    $manifest = Read-Manifest
+    foreach ($choice in (Get-PythonChoices $manifest)) {
+        $info = Get-PythonInfo $choice.Exe $choice.Args
+        $what = "$($choice.Exe) $($choice.Args -join ' ')".Trim()
+        if (Test-RightPython $info $manifest) {
+            Write-OverseerLog -Log install -Message "accepted python: $what is $($info.version) $($info.machine) $($info.bits)-bit at $($info.exe)"
+            return $choice
         }
-        if ($id) {
-            Write-OverseerLog -Log install -Level WARN -Message "rejected python candidate $($c.Exe): $($id.implementation) $($id.version) $($id.machine) $($id.bits)-bit"
-        }
-        else {
-            Write-OverseerLog -Log install -Level WARN -Message "rejected python candidate $($c.Exe): does not run (Store alias or broken launcher)"
-        }
+        $why = "does not run (Store alias or broken launcher)"
+        if ($info) { $why = "$($info.kind) $($info.version) $($info.machine) $($info.bits)-bit" }
+        Write-OverseerLog -Log install -Level WARN -Message "rejected python candidate ${what}: $why"
     }
     return $null
 }
 
-function Install-ExactPython {
-    $mf = Get-RuntimeManifest
-    Step "Installing Python $($mf.python.version) (64-bit, from python.org)"
-    $tmp = Join-Path $env:TEMP ("vg-python-" + [Guid]::NewGuid().ToString("N") + ".exe")
+function Install-Python($Manifest) {
+    $pin = $Manifest.python
+    Step "Installing Python $($pin.version) (64-bit, from python.org)"
+    # Off PATH and without the py launcher, so a Python already here still
+    # answers to python and py. Find-Python finds this one by its folder.
+    $setup = Join-Path $env:TEMP "overseer-python-$([Guid]::NewGuid().ToString('N')).exe"
     try {
-        Note "Downloading $($mf.python.installerUrl)"
-        Invoke-WebRequest -Uri $mf.python.installerUrl -OutFile $tmp -TimeoutSec 600
-        $hash = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash
-        if ($hash -ne $mf.python.installerSha256.ToUpper()) {
-            throw "The Python installer's SHA-256 is $hash, not the pinned $($mf.python.installerSha256), so it won't be run."
-        }
-        $sig = Get-AuthenticodeSignature $tmp
-        if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -ne $mf.python.installerSubject) {
-            throw "The Python installer's signature didn't check out (status $($sig.Status)), so it won't be run."
+        Note "Downloading $($pin.download)"
+        Invoke-WebRequest -Uri $pin.download -OutFile $setup -TimeoutSec 600
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash
+        if ($hash -ne $pin.sha256) { throw "The Python installer's SHA-256 is $hash, not the pinned $($pin.sha256), so it won't be run." }
+        $signature = Get-AuthenticodeSignature -LiteralPath $setup
+        if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -ne $pin.signer) {
+            throw "The Python installer's signature didn't check out (status $($signature.Status)), so it won't be run."
         }
         Ok "Installer verified by SHA-256 and Authenticode."
-        $p = Start-Process -FilePath $tmp -Wait -PassThru -ArgumentList `
-            "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1"
-        if ($p.ExitCode -ne 0) { throw "The Python installer failed with exit code $($p.ExitCode)." }
+        $run = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList "/quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 Include_launcher=0"
+        if ($run.ExitCode -ne 0) { throw "The Python installer failed with exit code $($run.ExitCode)." }
     }
-    finally {
-        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    }
-    Update-Path
+    finally { Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue }
 }
 
-function Initialize-ExactPython {
-    $mf = Get-RuntimeManifest
-    $py = Find-ExactPython
-    if (-not $py) {
-        Note "No CPython $($mf.python.version) x64 found on this PC."
-        Install-ExactPython
-        $py = Find-ExactPython
+function Initialize-Python {
+    $manifest = Read-Manifest
+    $python = Find-Python
+    if (-not $python) {
+        Note "No CPython $($manifest.python.version) x64 found on this PC."
+        Install-Python $manifest
+        $python = Find-Python
     }
-    if (-not $py) {
-        throw "VG-PY-001 Couldn't find or install CPython $($mf.python.version) 64-bit. Install it yourself from $($mf.python.installerUrl), then run install.bat again."
+    if (-not $python) {
+        throw "VG-PY-001 Couldn't find or install CPython $($manifest.python.version) 64-bit. Install it yourself from $($manifest.python.download), then run install.bat again."
     }
-    Ok "Python $($mf.python.version) x64 ready."
-    return $py
+    Ok "Python $($manifest.python.version) x64 ready."
+    return $python
 }
 
-function Assert-IsRepoVenv([string]$path) {
-    $resolved = [System.IO.Path]::GetFullPath($path)
-    $expected = [System.IO.Path]::GetFullPath((Join-Path $Root ".venv"))
-    if ($resolved -ne $expected) {
-        throw "Won't touch '$resolved' because it isn't this install's .venv ($expected)."
-    }
-    return $resolved
-}
-
-function Get-VenvPipVersion {
-    try {
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try { $out = (& $VenvPy -m pip --version 2>$null) -join " " }
-        finally { $ErrorActionPreference = $prevEAP }
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        if ($out -match 'pip\s+(\S+)') { return $Matches[1] }
-    }
-    catch { }
+function Get-PipVersion {
+    $said = Invoke-Quietly { & $VenvPy -m pip --version 2>$null }
+    if ($LASTEXITCODE -eq 0 -and "$said" -match 'pip\s+(\S+)') { return $Matches[1] }
     return $null
 }
 
-function Test-Venv([switch]$Quick) {
-    $mf = Get-RuntimeManifest
-    $reasons = @()
+function Read-InstallMarker {
+    try { return Get-Content (Join-Path $OverseerDir "installed.json") -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch { return $null }
+}
 
-    if (-not (Test-Path $VenvPy)) { return @{ Ok = $false; Reasons = @("no python.exe in .venv") } }
-
-    # pyvenv.cfg records the command that created the venv, including the folder
-    # it was made for, which catches a venv copied from somewhere else.
-    $cfgPath = Join-Path $VenvDir "pyvenv.cfg"
-    if (-not (Test-Path $cfgPath)) {
-        $reasons += "venv has no pyvenv.cfg (incomplete or corrupt environment)"
-    }
+# What is wrong with the venv, or nothing when it is fine. -Quick is the
+# launcher's check, which never starts Python.
+function Get-VenvFaults([switch]$Quick) {
+    if (-not (Test-Path $VenvPy)) { return "no python.exe in .venv" }
+    $manifest = Read-Manifest
+    $venvAt = [System.IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
+    $faults = @()
+    $cfgFile = Join-Path $VenvDir "pyvenv.cfg"
+    if (-not (Test-Path $cfgFile)) { $faults += "venv has no pyvenv.cfg (incomplete or corrupt environment)" }
     else {
         try {
-            $cfg = Get-Content $cfgPath -Raw -Encoding UTF8
-            if ($cfg -match '(?im)^command\s*=\s*(.+)$') {
-                $command = $Matches[1].Trim()
-                $marker = '-m venv '
-                $at = $command.LastIndexOf($marker, [StringComparison]::OrdinalIgnoreCase)
-                if ($at -ge 0) {
-                    $createdAt = $command.Substring($at + $marker.Length).Trim().Trim('"').Trim("'")
-                    if (-not [System.IO.Path]::IsPathRooted($createdAt)) {
-                        $createdAt = Join-Path $Root $createdAt
-                    }
-                    $createdResolved = [System.IO.Path]::GetFullPath($createdAt).TrimEnd('\')
-                    $expectedResolved = [System.IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
-                    if ($createdResolved -ne $expectedResolved) {
-                        $reasons += "venv was created for another folder ('$createdResolved' vs '$expectedResolved')"
-                    }
-                }
+            $cfg = Get-Content $cfgFile -Raw -Encoding UTF8
+            # pyvenv.cfg keeps the command that made the venv, folder and all,
+            # which catches one copied in from somewhere else.
+            if ($cfg -match '(?im)^command\s*=.*-m venv\s+(.+)$') {
+                $madeFor = $Matches[1].Trim().Trim([char[]]@('"', "'"))
+                if (-not [System.IO.Path]::IsPathRooted($madeFor)) { $madeFor = Join-Path $Root $madeFor }
+                $madeFor = [System.IO.Path]::GetFullPath($madeFor).TrimEnd('\')
+                if ($madeFor -ne $venvAt) { $faults += "venv was created for another folder ('$madeFor' vs '$venvAt')" }
             }
             # Updating or removing Python takes the venv's base interpreter
             # with it, and the venv's own python.exe then exits at once.
             if ($cfg -match '(?im)^home\s*=\s*(.+)$') {
-                $baseDir = $Matches[1].Trim()
-                if (-not (Test-Path (Join-Path $baseDir "python.exe"))) {
-                    $reasons += "the Python the venv was made from is gone ($baseDir)"
-                }
+                $base = $Matches[1].Trim()
+                if (-not (Test-Path (Join-Path $base "python.exe"))) { $faults += "the Python the venv was made from is gone ($base)" }
             }
         }
-        catch {
-            $reasons += "pyvenv.cfg is unreadable"
-        }
+        catch { $faults += "pyvenv.cfg is unreadable" }
     }
-    $installedFile = Join-Path $OverseerDir "installed.json"
-    if (Test-Path $installedFile) {
-        try {
-            $installedMarker = Get-Content $installedFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($installedMarker.pathFingerprint -and
-                $installedMarker.pathFingerprint -ne (Get-PathFingerprint)) {
-                $reasons += "installation folder moved since the venv was created"
-            }
-        }
-        catch { }
-    }
-
-    $depsFile = Join-Path $OverseerDir "deps.json"
-    $recorded = ""
-    if (Test-Path $depsFile) {
-        try { $recorded = (Get-Content $depsFile -Raw | ConvertFrom-Json).requirements } catch { }
-    }
-    $depsStale = -not $recorded -or $recorded -ne (HashOf "backend\requirements.txt")
-    $depsReason = "requirements.txt changed since packages were installed (hash mismatch)"
-
-    # The launcher's check stops here, without starting Python.
+    $marker = Read-InstallMarker
+    if ($marker.folder -and $marker.folder -ne (Get-FolderId)) { $faults += "installation folder moved since the venv was created" }
+    $recorded = $null
+    try { $recorded = (Get-Content (Join-Path $OverseerDir "deps.json") -Raw | ConvertFrom-Json).requirements } catch { }
+    $stale = "requirements.txt changed since packages were installed (hash mismatch)"
+    $depsStale = -not $recorded -or $recorded -ne (Get-RequirementsHash)
     if ($Quick) {
-        if ($depsStale) { $reasons += $depsReason }
-        return @{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
+        if ($depsStale) { $faults += $stale }
+        return $faults
     }
 
-    $id = Get-PythonIdentity $VenvPy @()
-    if (-not $id) {
-        $reasons += "venv python does not run (moved or corrupt venv)"
+    $info = Get-PythonInfo $VenvPy
+    if (-not $info) { return $faults + "venv python does not run (moved or corrupt venv)" }
+    if (-not (Test-RightPython $info $manifest)) {
+        $faults += "venv python is $($info.kind) $($info.version) $($info.machine) $($info.bits)-bit, need CPython $($manifest.python.version) x64"
     }
-    else {
-        if (-not (Test-PythonExact $id $mf)) {
-            $reasons += "venv python is $($id.implementation) $($id.version) $($id.machine) $($id.bits)-bit, need CPython $($mf.python.version) x64"
-        }
-        if (-not $id.isVenv) { $reasons += "python in .venv is not a virtual environment" }
-        $expected = [System.IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
-        $actual = ""
-        if ($id.prefix) { $actual = [System.IO.Path]::GetFullPath($id.prefix).TrimEnd('\') }
-        if ($actual -ne $expected) { $reasons += "venv prefix is '$actual', not '$expected', so the venv was moved" }
-        if ($id.basePrefix -and -not (Test-Path (Join-Path $id.basePrefix "python.exe"))) {
-            $reasons += "venv base interpreter is gone ($($id.basePrefix))"
-        }
+    if ($info.home -eq $info.base) { $faults += "python in .venv is not a virtual environment" }
+    $prefix = ""
+    if ($info.home) { $prefix = [System.IO.Path]::GetFullPath($info.home).TrimEnd('\') }
+    if ($prefix -ne $venvAt) { $faults += "venv prefix is '$prefix', not '$venvAt', so the venv was moved" }
+    if ($info.base -and -not (Test-Path (Join-Path $info.base "python.exe"))) { $faults += "venv base interpreter is gone ($($info.base))" }
+    if ($faults) { return $faults }
+
+    $pip = Get-PipVersion
+    if ($pip -ne $manifest.pip) { $faults += "pip is '$pip' but the pin is $($manifest.pip)" }
+    if ($depsStale) { $faults += $stale }
+    $checks = [ordered]@{
+        "pip check reports broken or missing dependencies"                 = @("-m", "pip", "check")
+        "installed package versions do not exactly match requirements.txt" = @((Join-Path $PSScriptRoot "verify_installed.py"), "--requirements", $Requirements)
+        "required packages fail to import"                                 = @((Join-Path $PSScriptRoot "import_smoke.py"))
     }
-    if ($reasons.Count -gt 0) { return @{ Ok = $false; Reasons = $reasons } }
-
-    $pipVer = Get-VenvPipVersion
-    if ($pipVer -ne $mf.pip.version) { $reasons += "pip is '$pipVer' but the pin is $($mf.pip.version)" }
-    if ($depsStale) { $reasons += $depsReason }
-
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $VenvPy -m pip check 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { $reasons += "pip check reports broken or missing dependencies" }
-
-        & $VenvPy (Join-Path $PSScriptRoot "verify_installed.py") `
-            --requirements (Join-Path $Root "backend\requirements.txt") 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { $reasons += "installed package versions do not exactly match requirements.txt" }
-
-        & $VenvPy (Join-Path $PSScriptRoot "import_smoke.py") 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { $reasons += "required packages fail to import" }
+    foreach ($fault in $checks.Keys) {
+        Invoke-Quietly { & $VenvPy @($checks[$fault]) 2>&1 | Out-Null }
+        if ($LASTEXITCODE -ne 0) { $faults += $fault }
     }
-    finally { $ErrorActionPreference = $prevEap }
-
-    return @{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
+    return $faults
 }
 
-function Repair-Venv($py) {
-    $resolved = Assert-IsRepoVenv $VenvDir
-    if (Test-Path $resolved) {
+function New-Venv($Python) {
+    # Never anything but this install's own .venv, since it is deleted first.
+    $target = [System.IO.Path]::GetFullPath($VenvDir)
+    $own = [System.IO.Path]::GetFullPath((Join-Path $Root ".venv"))
+    if ($target -ne $own) { throw "Won't touch '$target' because it isn't this install's .venv ($own)." }
+    if (-not (Test-Path $target)) { Step "Creating the Python environment (.venv)" }
+    else {
         Step "Rebuilding the Python environment (.venv)"
-        try {
-            Remove-Item -Recurse -Force $resolved
-        }
+        try { Remove-Item -Recurse -Force -LiteralPath $target }
         catch {
             throw "Couldn't remove the old .venv ($($_.Exception.Message)). Close any running Valorant Overseer windows (and any antivirus quarantine on that folder), then run install.bat again."
         }
     }
-    else {
-        Step "Creating the Python environment (.venv)"
-    }
-    & $py.Exe @($py.Args + @("-m", "venv", $resolved))
+    & $Python.Exe @($Python.Args + @("-m", "venv", $target))
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $VenvPy)) { throw "Couldn't create .venv (exit code $LASTEXITCODE)." }
 }
 
-function Install-PyDeps {
-    $mf = Get-RuntimeManifest
+function Install-Packages {
+    $manifest = Read-Manifest
     Step "Installing the pinned Python packages"
-    & $VenvPy -m pip install --quiet --no-warn-script-location "pip==$($mf.pip.version)"
-    if ($LASTEXITCODE -ne 0) { throw "Couldn't install the pinned pip $($mf.pip.version) (check your internet connection)." }
-    $req = Join-Path $Root "backend\requirements.txt"
-    $done = $false
-    for ($i = 1; $i -le 3; $i++) {
-        if ($i -gt 1) { Warn "pip install failed. Trying again ($i of 3)."; Start-Sleep -Seconds 3 }
-        & $VenvPy -m pip install --require-hashes -r $req
-        if ($LASTEXITCODE -eq 0) { $done = $true; break }
+    & $VenvPy -m pip install --quiet --no-warn-script-location "pip==$($manifest.pip)"
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't install the pinned pip $($manifest.pip) (check your internet connection)." }
+    foreach ($round in 1..3) {
+        & $VenvPy -m pip install --require-hashes -r $Requirements
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($round -eq 3) { throw "VG-DEPS-001 pip install failed. Check your internet connection, then run install.bat again." }
+        Warn "pip install failed. Trying again ($($round + 1) of 3)."
+        Start-Sleep -Seconds 3
     }
-    if (-not $done) { throw "VG-DEPS-001 pip install failed. Check your internet connection, then run install.bat again." }
-
-    & $VenvPy -m pip check
-    if ($LASTEXITCODE -ne 0) { throw "VG-DEPS-001 pip check failed after the install, so the packages don't agree with each other." }
-    & $VenvPy (Join-Path $PSScriptRoot "verify_installed.py") `
-        --requirements (Join-Path $Root "backend\requirements.txt")
-    if ($LASTEXITCODE -ne 0) { throw "VG-DEPS-001 installed package versions do not exactly match requirements.txt." }
-    & $VenvPy (Join-Path $PSScriptRoot "import_smoke.py")
-    if ($LASTEXITCODE -ne 0) { throw "VG-DEPS-001 import smoke test failed after install." }
+    $checks = [ordered]@{
+        "pip check failed after the install, so the packages don't agree with each other" = @("-m", "pip", "check")
+        "installed package versions do not exactly match requirements.txt"                = @((Join-Path $PSScriptRoot "verify_installed.py"), "--requirements", $Requirements)
+        "import smoke test failed after install"                                          = @((Join-Path $PSScriptRoot "import_smoke.py"))
+    }
+    foreach ($fault in $checks.Keys) {
+        & $VenvPy @($checks[$fault])
+        if ($LASTEXITCODE -ne 0) { throw "VG-DEPS-001 $fault." }
+    }
     Ok "Python packages installed and verified."
 }
 
-# Names this install folder in the mutexes and the install marker. It has to
-# match _path_fingerprint in backend\run.py, which is why only A to Z is lowered, the
-# same way on both sides.
-function Get-PathFingerprint {
-    $normalized = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
-    $chars = $normalized.ToCharArray()
-    for ($i = 0; $i -lt $chars.Length; $i++) {
-        $c = [int]$chars[$i]
-        if ($c -ge 0x41 -and $c -le 0x5A) { $chars[$i] = [char]($c + 0x20) }
+function Save-InstallMarker([string]$Region) {
+    $manifest = Read-Manifest
+    $hash = Get-RequirementsHash
+    $null = New-Item -ItemType Directory -Force -Path $OverseerDir
+    $marker = [ordered]@{
+        format       = $MarkerFormat
+        version      = (Get-AppVersion)
+        region       = $Region
+        python       = $manifest.python.version
+        pip          = $manifest.pip
+        requirements = $hash
+        folder       = (Get-FolderId)
+        at           = [DateTime]::UtcNow.ToString("o")
     }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes((-join $chars))
-    return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').Substring(0, 16)
+    Write-Text (Join-Path $OverseerDir "installed.json") ($marker | ConvertTo-Json)
+    Write-Text (Join-Path $OverseerDir "deps.json") (@{ requirements = $hash } | ConvertTo-Json)
 }
 
-function Save-Markers($region) {
-    $mf = Get-RuntimeManifest
-    if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
-    $installed = @{
-        schemaVersion    = $MarkerSchemaVersion
-        version          = (Get-LocalVersion)
-        region           = $region
-        python           = @{ version = $mf.python.version; arch = $mf.python.arch }
-        pip              = $mf.pip.version
-        requirementsHash = (HashOf "backend\requirements.txt")
-        pathFingerprint  = (Get-PathFingerprint)
-        installedAt      = [DateTime]::UtcNow.ToString("o")
-    } | ConvertTo-Json
-    Write-FileNoBom (Join-Path $OverseerDir "installed.json") $installed
-    Save-DepHashes
-}
-
-function Save-DepHashes {
-    if (-not (Test-Path $OverseerDir)) { New-Item -ItemType Directory -Path $OverseerDir | Out-Null }
-    $deps = @{
-        requirements = (HashOf "backend\requirements.txt")
-    } | ConvertTo-Json
-    Write-FileNoBom (Join-Path $OverseerDir "deps.json") $deps
-}
-
-function Test-Markers {
-    $f = Join-Path $OverseerDir "installed.json"
-    if (-not (Test-Path $f)) { return @{ Ok = $false; Reason = "not installed (no marker)" } }
-    try { $m = Get-Content $f -Raw | ConvertFrom-Json } catch { return @{ Ok = $false; Reason = "install marker is corrupt" } }
-    if ([int]$m.schemaVersion -ne $MarkerSchemaVersion) { return @{ Ok = $false; Reason = "install marker is from an older setup" } }
-    if ($m.version -ne (Get-LocalVersion)) { return @{ Ok = $false; Reason = "install marker version '$($m.version)' does not match app version '$(Get-LocalVersion)'" } }
-    if ($m.requirementsHash -ne (HashOf "backend\requirements.txt")) { return @{ Ok = $false; Reason = "app files changed since install (requirements hash mismatch)" } }
-    if ($m.pathFingerprint -ne (Get-PathFingerprint)) { return @{ Ok = $false; Reason = "the folder was moved since install" } }
-    return @{ Ok = $true; Marker = $m }
-}
-
-function Set-Region($region) {
-    $lines = @()
-    if (Test-Path $EnvFile) {
-        $lines = Get-Content $EnvFile -Encoding UTF8 | Where-Object { $_ -notmatch '^\s*RIOT_REGION\s*=' }
-    }
-    $lines += "RIOT_REGION=$region"
-    Write-FileNoBom $EnvFile (($lines -join "`r`n") + "`r`n")
-}
-
-function Get-SavedRegion {
-    if (Test-Path $EnvFile) {
-        $m = (Get-Content $EnvFile -Encoding UTF8 | Select-String -Pattern '^\s*RIOT_REGION\s*=\s*(.+)$')
-        if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
-    }
+function Get-MarkerFault {
+    if (-not (Test-Path (Join-Path $OverseerDir "installed.json"))) { return "not installed (no marker)" }
+    $marker = Read-InstallMarker
+    $version = Get-AppVersion
+    if (-not $marker) { return "install marker is corrupt" }
+    if ([int]$marker.format -ne $MarkerFormat) { return "install marker is from an older setup" }
+    if ($marker.version -ne $version) { return "install marker version '$($marker.version)' does not match app version '$version'" }
+    if ($marker.requirements -ne (Get-RequirementsHash)) { return "app files changed since install (requirements hash mismatch)" }
+    if ($marker.folder -ne (Get-FolderId)) { return "the folder was moved since install" }
     return $null
 }
 
+function Get-Region {
+    if (-not (Test-Path $EnvFile)) { return $null }
+    $line = Select-String -LiteralPath $EnvFile -Pattern '^\s*RIOT_REGION\s*=\s*(.+)$' -Encoding UTF8 | Select-Object -First 1
+    if (-not $line) { return $null }
+    return $line.Matches[0].Groups[1].Value.Trim()
+}
+
+function Set-Region([string]$Region) {
+    $kept = @()
+    if (Test-Path $EnvFile) { $kept = @(Get-Content $EnvFile -Encoding UTF8 | Where-Object { $_ -notmatch '^\s*RIOT_REGION\s*=' }) }
+    Write-Text $EnvFile ((($kept + "RIOT_REGION=$Region") -join "`r`n") + "`r`n")
+}
+
 function Get-AppExe {
-    # The window: beside the launcher once installed, in the build tree when
-    # run from source.
-    foreach ($candidate in @((Join-Path $Root "overseer.exe"), (Join-Path $Root "crates\target\release\overseer.exe"))) {
-        if (Test-Path $candidate) { return $candidate }
-    }
+    return @((Join-Path $Root "overseer.exe"), (Join-Path $Root "crates\target\release\overseer.exe")) |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+
+$Script:ReleaseForbidden = @(
+    '(^|/)\.env$', '\.env\.local', '(^|/)frontend/', '(^|/)node_modules/', '(^|/)__pycache__/', '\.pyc$',
+    '(^|/)\.venv/', '(^|/)\.overseer/', '(^|/)backend/data/', '(^|/)\.next/', '(^|/)\.git/', '(^|/)ops/',
+    '(^|/)vendor/', '(^|/)tests/', '(^|/)\.github/', '(^|/)\.[^/]+/', 'client_id$'
+)
+
+# Windows PowerShell reads a .ps1 without a BOM in the old code page, and cmd
+# loses its place in a .bat with bare LF endings.
+function Get-EncodingFault([System.IO.FileInfo]$File) {
+    $bytes = [System.IO.File]::ReadAllBytes($File.FullName)
+    $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+    if ($File.Extension -eq ".ps1" -and -not $bom) { return "$($File.Name) isn't UTF-8 with a BOM." }
+    if ([System.Text.Encoding]::UTF8.GetString($bytes).Replace("`r`n", "").Contains("`n")) { return "$($File.Name) has LF-only line endings." }
     return $null
 }
 
@@ -635,8 +509,6 @@ function Install-Binaries {
         if (-not (Test-Path $built)) { continue }
         if ((Test-Path $placed) -and ((Get-Item $placed).LastWriteTimeUtc -ge (Get-Item $built).LastWriteTimeUtc)) { continue }
         if ($name -eq "overseer.exe") {
-            # An open window holds its file until it has fully exited, which
-            # can take longer than any fixed pause.
             Get-Process -Name "overseer" -ErrorAction SilentlyContinue |
                 Where-Object { $_.Path -eq $placed } |
                 ForEach-Object {
@@ -739,20 +611,17 @@ function Get-UninstallCommand {
 }
 
 function Register-Uninstall {
-    # A copy of the source isn't an install, and listing it would offer to
-    # delete somebody's work.
     if (Test-Path -LiteralPath (Join-Path $Root ".git")) { return }
     try {
         New-Item -Path $UninstallKey -Force | Out-Null
         $values = @{
             DisplayName     = "Valorant Overseer"
-            DisplayVersion  = (Get-LocalVersion)
+            DisplayVersion  = (Get-AppVersion)
             DisplayIcon     = (Join-Path $Root "assets\overseer.ico")
             InstallLocation = $Root
             UninstallString = (Get-UninstallCommand)
         }
         foreach ($k in $values.Keys) { New-ItemProperty -Path $UninstallKey -Name $k -Value $values[$k] -PropertyType String -Force | Out-Null }
-        # Setup itself is the repair, so Settings offers only Uninstall.
         foreach ($k in @("NoModify", "NoRepair")) { New-ItemProperty -Path $UninstallKey -Name $k -Value 1 -PropertyType DWord -Force | Out-Null }
         Ok "Listed in Settings > Apps, where it can be uninstalled."
     }
@@ -760,8 +629,6 @@ function Register-Uninstall {
 }
 
 function Unregister-Uninstall {
-    # This folder's entry, or one for a folder that has since moved or gone.
-    # Uninstalling a copy elsewhere leaves a working install listed.
     $entry = Get-ItemProperty -Path $UninstallKey -ErrorAction SilentlyContinue
     if (-not $entry) { return }
     $where = [string]$entry.InstallLocation

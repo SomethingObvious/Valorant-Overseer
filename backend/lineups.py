@@ -1,15 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Lineups you add yourself, kept per map in `lineups/` at the install root.
-
-Each is where to stand, where it lands, and a short clip of the throw. The
-window's Lineups screen reads and writes them through the bridge, and the
-command line at the bottom adds them too.
-
-A clip comes from a link through yt-dlp or from a video you recorded, and
-ffmpeg cuts it and sets its volume. Neither ships with Overseer. Both are
-found on PATH, since yt-dlp needs updating every few weeks to keep up with
-the sites it reads, and this build never updates anything itself.
-"""
+"""Lineups you add yourself, kept per map in `lineups/` at the install root."""
 
 from __future__ import annotations
 
@@ -22,6 +12,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 import unicodedata
 import zlib
@@ -49,10 +40,7 @@ _CHANGES = _MINIMAPS / "changes.json"
 # across a patch still fetches a redrawn map.
 _FRESH = 3600.0
 _ICONS = Path(data_path("abilities"))
-# Seconds of video downloaded either side of a clip, so nudging where it
-# starts or stops doesn't mean another download.
 PAD = 5.0
-# Longer than this is a whole video pasted by mistake, not a throw.
 LONGEST = 90.0
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _KEYS = {"Grenade": "C", "Ability1": "Q", "Ability2": "E", "Ultimate": "X"}
@@ -119,7 +107,6 @@ def _tool(name: str) -> str:
 
 
 def _image(url: str | None, path: Path) -> str | None:
-    """Return a picture from valorant-api on disk, fetched the first time."""
     if path.exists():
         return str(path)
     if not url:
@@ -133,7 +120,6 @@ def _image(url: str | None, path: Path) -> str | None:
 
 
 def _pixels(path: Path) -> bytes:
-    """Return a PNG's header and pixels, unpacked to read the same however it was packed."""
     data = path.read_bytes()
     header, packed, at = b"", [], 8
     while at + 8 <= len(data):
@@ -151,12 +137,6 @@ def _pixels(path: Path) -> bytes:
 
 
 def _minimap(url: str | None, name: str, build: str | None) -> tuple[str | None, bool]:
-    """Return a map's minimap on disk for this build, and whether the picture changed.
-
-    A rework redraws a minimap at the same address, so each copy is kept under
-    the build valorant-api last read and fetched again for the next. When that
-    fetch fails, the newest copy there is beats no map at all.
-    """
     file = f"{slug(name)}.png"
     if not build:
         return _image(url, _MINIMAPS / file), False
@@ -177,7 +157,6 @@ def _minimap(url: str | None, name: str, build: str | None) -> tuple[str | None,
 
 
 def _where(m: dict[str, Any], at: dict[str, Any]) -> list[float]:
-    """Return a spot in the game's world as a point on the minimap, 0 to 1 each way."""
     # valorant-api's own formula: the world's y runs across the minimap and
     # its x runs down.
     x = float(at.get("y") or 0) * float(m["xMultiplier"]) + float(m["xScalarToAdd"])
@@ -185,8 +164,16 @@ def _where(m: dict[str, Any], at: dict[str, Any]) -> list[float]:
     return [round(x, 4), round(y, 4)]
 
 
+_MAPS = threading.Lock()
+
+
 def maps() -> list[dict[str, Any]]:
     """Every map with bomb sites: its minimap, sites, callouts and when the minimap changed."""
+    with _MAPS:
+        return _maps()
+
+
+def _maps() -> list[dict[str, Any]]:
     standard = [
         m
         for m in valapi.get("maps", _FRESH) or []
@@ -199,8 +186,6 @@ def maps() -> list[dict[str, Any]]:
 
     def one(m: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         name = m["displayName"]
-        # Where each side starts, so the window can turn the map to put one of
-        # them at the bottom.
         spawns = {
             c.get("superRegionName"): _where(m, c.get("location") or {})
             for c in m.get("callouts") or []
@@ -219,8 +204,6 @@ def maps() -> list[dict[str, Any]]:
                 for c in m.get("callouts") or []
                 if c.get("regionName") and "Spawn" not in (c.get("regionName") or "")
             ],
-            # Minimap widths to a game unit, which turns an ability's reach
-            # into a circle drawn to scale.
             "scale": abs(float(m["xMultiplier"])),
             "attack": spawns.get("Attacker Side"),
             "defend": spawns.get("Defender Side"),
@@ -290,7 +273,6 @@ def listing() -> list[dict[str, Any]]:
 
 
 _KINDS = ("rect", "circle", "oval", "cone", "triangle", "text", "textbox", "brush")
-# A stroke drawn across the whole map a few times over is still well under this.
 _MOST_POINTS = 4000
 _COLOUR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -306,7 +288,6 @@ def drawings() -> dict[str, list[dict[str, Any]]]:
 
 
 def _shape(raw: Any) -> dict[str, Any]:
-    """One shape as it is kept, or why it can't be."""
     if not isinstance(raw, dict) or raw.get("kind") not in _KINDS:
         msg = "A shape is a rectangle, a circle, an oval, a cone, a triangle, text or a stroke."
         raise LineupError(msg)
@@ -323,7 +304,6 @@ def _shape(raw: Any) -> dict[str, Any]:
     except (TypeError, ValueError) as e:
         msg = "A cone's width is in degrees, like 60."
         raise LineupError(msg) from e
-    # A shape saved without an opacity is solid.
     solid = raw.get("opacity")
     try:
         opacity = 1.0 if solid is None else round(min(1.0, max(0.1, float(solid))), 2)
@@ -345,7 +325,6 @@ def _shape(raw: Any) -> dict[str, Any]:
             raise LineupError(msg)
         kept["text"] = words
     if raw["kind"] == "textbox":
-        # Its lines stay as typed, each with its spaces tidied.
         lines = [" ".join(line.split()) for line in str(raw.get("text") or "").splitlines()]
         kept["text"] = "\n".join(lines).strip("\n")[:400]
     if raw["kind"] == "brush":
@@ -404,7 +383,6 @@ def _point(raw: Any, what: str) -> list[float] | None:
 _BEST = "bv*[height<=1920][width<=1920]+ba/b[height<=1920][width<=1920]/b"
 
 
-# How long a download stays in the cache once nothing is using it.
 _CACHE_DAYS = 1
 
 
@@ -423,12 +401,10 @@ def prune_cache(now: float | None = None) -> int:
 
 
 def _key(source: str) -> str:
-    """Return a short name for a link, for the file its download goes in."""
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
 
 
 def _cached(source: str, start: float, end: float) -> tuple[Path, float] | None:
-    """Return a download of `source` that already covers start to end, and where it begins."""
     key = _key(source)
     for path in (ROOT / ".cache").glob(f"{key}-hd-*.mp4"):
         found = re.fullmatch(rf"{key}-hd-(\d+)-(\d+)", path.stem)
@@ -440,16 +416,10 @@ def _cached(source: str, start: float, end: float) -> tuple[Path, float] | None:
 
 
 def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
-    """Return the video to cut from, and the time in it where its first frame sits.
-
-    A link downloads only start to end, with `PAD` either side, and a file
-    you recorded is read where it is.
-    """
+    """Return the video to cut from, and the time in it where its first frame sits."""
     source = source.strip()
     if _cuttable(source):
         return Path(source), 0.0
-    # The whole video, if it was downloaded to trim. Cutting from it is a
-    # couple of seconds, where downloading the clip's part again took ten or so.
     key = _key(source)
     whole = ROOT / ".cache" / f"{key}-watch-hd.mp4"
     if whole.exists():
@@ -459,13 +429,26 @@ def fetch(source: str, start: float, end: float) -> tuple[Path, float]:
         return hit
     begins, ends = max(0.0, start - PAD), end + PAD
     out = ROOT / ".cache" / f"{key}-hd-{round(begins * 10)}-{round(ends * 10)}.mp4"
-    # Cut on the exact second, so the clip's times line up with the link's.
     sections = ["--download-sections", f"*{begins:.2f}-{ends:.2f}", "--force-keyframes-at-cuts"]
     _download(source, out, 600, sections)
     return out, begins
 
 
+_DOWNLOADING: dict[Path, threading.Lock] = {}
+_DOWNLOADS = threading.Lock()
+
+
 def _download(source: str, out: Path, timeout: int, extra: list[str]) -> None:
+    # The editor can be closed and opened again mid-download, and two yt-dlps
+    # on one file trip over each other's .part.
+    with _DOWNLOADS:
+        lock = _DOWNLOADING.setdefault(out, threading.Lock())
+    with lock:
+        if not out.exists():
+            _download_now(source, out, timeout, extra)
+
+
+def _download_now(source: str, out: Path, timeout: int, extra: list[str]) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     command = [
         _tool("ytdlp"),
@@ -498,7 +481,6 @@ def _download(source: str, out: Path, timeout: int, extra: list[str]) -> None:
 
 
 def _local(source: str) -> bool:
-    """Return whether `source` is a video file on this PC, and raise when it isn't a link either."""
     if source and not source.startswith(("http://", "https://")) and Path(source).is_file():
         return True
     parsed = urlparse(source)
@@ -509,11 +491,6 @@ def _local(source: str) -> bool:
 
 
 def _cuttable(source: str) -> bool:
-    """Raise why `source` can't be cut, and return whether it is a file on this PC.
-
-    It is what can be told at once, so a save says so before the lineup
-    waits on a cut that can't work.
-    """
     _tool("ffmpeg")
     if _local(source):
         return True
@@ -545,17 +522,12 @@ _LENGTHS: dict[str, float] = {}
 
 
 def _clock(at: float) -> str:
-    """Seconds as a clock, 151 as 2:31."""
     minutes, rest = divmod(round(at), 60)
     return f"{minutes}:{rest:02}"
 
 
 def length(source: Any) -> float:
-    """How long a video is in seconds.
-
-    Asked of ffprobe for a file on this PC and of yt-dlp for a link. Kept,
-    since a video's length doesn't change.
-    """
+    """How long a video is in seconds."""
     source = str(source or "").strip()
     if source in _LENGTHS:
         return _LENGTHS[source]
@@ -577,7 +549,6 @@ def length(source: Any) -> float:
 
 
 def _times(clip: dict[str, Any]) -> tuple[float, float, int]:
-    # No start is the start of the video, and no end is the end of it.
     given = str(clip.get("from") or "").strip()
     start = seconds(given) if given else 0.0
     given = str(clip.get("to") or "").strip()
@@ -666,10 +637,6 @@ def cut(clip: dict[str, Any], out: Path, *, small: bool = False) -> None:
 
 
 def _patiently(action: Callable[[], object]) -> None:
-    """Do something to a file, waiting a moment while a player lets go of it.
-
-    Windows' media engine closes a clip a little after it is told to stop.
-    """
     for wait in (0.2, 0.4, 0.8):
         try:
             action()
@@ -680,22 +647,13 @@ def _patiently(action: Callable[[], object]) -> None:
     action()
 
 
-# The pictures a lineup can carry, and what they may start as. Each is kept
-# as a PNG, since that is what the window reads.
 _MOST_PICTURES = 8
 _PICTURE_TYPES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
-# Wider than this is only memory, since the window shows them smaller.
 _PICTURE_WIDTH = 1600
 _LONGEST_DESCRIPTION = 4000
 
 
 def _pictures(raw: Any, folder: Path, lineup_id: str, kept: list[str]) -> list[str]:
-    """Return the pictures a lineup keeps, as file names in its folder.
-
-    One it has already stays. One anywhere else on this PC is copied in as a
-    PNG, made one by ffmpeg when it isn't one and shrunk to `_PICTURE_WIDTH`
-    across. A picture it had and no longer lists is deleted.
-    """
     names: list[str] = []
     for entry in raw[:_MOST_PICTURES] if isinstance(raw, list) else []:
         path = Path(str(entry or "").strip())
@@ -734,40 +692,29 @@ def _pictures(raw: Any, folder: Path, lineup_id: str, kept: list[str]) -> list[s
             raise LineupError(msg)
         names.append(name)
     for gone in set(kept) - set(names):
-        (folder / gone).unlink(missing_ok=True)
+        if Path(gone).name == gone:
+            (folder / gone).unlink(missing_ok=True)
     return names
 
 
 def _shown(lineup: dict[str, Any], path: Path) -> dict[str, Any]:
-    """Return a saved lineup as the window takes it.
-
-    Its clip's file and its pictures go in as paths, each only when it is
-    there.
-    """
     shown = dict(lineup)
     clip = shown.get("clip") or {}
     video, failed = path.with_suffix(".mp4"), path.with_suffix(".failed")
     if clip and video.exists():
         shown["clip"] = {**clip, "file": str(video)}
     elif clip and failed.exists():
-        # Why its cut didn't work, for the window to say.
         with contextlib.suppress(OSError):
             why = failed.read_text(encoding="utf-8", errors="replace").strip()
             shown["clip"] = {**clip, "failed": why[:400] or "no reason given"}
     pictures = [path.parent / name for name in shown.get("images") or []]
     shown["images"] = [str(p) for p in pictures if p.exists()]
-    # When it was last saved, so the window can tell one made on a map since
-    # redrawn.
     shown["saved"] = path.stat().st_mtime
     return shown
 
 
 def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
-    """Save a lineup, and cut the clip that comes with it after, at 720p when `small`.
-
-    It answers once the lineup is written, so it is on the map straight away,
-    and the list has the clip's file once the cut is done.
-    """
+    """Save a lineup, and cut the clip that comes with it after, at 720p when `small`."""
     if not isinstance(raw, dict):
         msg = "That lineup is empty."
         raise LineupError(msg)
@@ -793,7 +740,6 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
         "description": str(raw.get("description") or "").strip()[:_LONGEST_DESCRIPTION] or None,
         "stand": _point(raw.get("stand"), "you stand"),
         "land": _point(raw.get("land"), "it lands"),
-        # A bent wall's eight bends are the most any ability has.
         "points": _points(raw.get("points"))[:8],
     }
     path = folder / f"{lineup_id}.json"
@@ -817,7 +763,6 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
             later = wanted
         lineup["clip"] = wanted
     elif isinstance(clip, dict):
-        # A clip with no source is one taken off, its file with it.
         _patiently(lambda: video.unlink(missing_ok=True))
     elif old_clip:
         lineup["clip"] = old_clip
@@ -830,6 +775,10 @@ def save(raw: Any, clip: Any = None, *, small: bool = False) -> dict[str, Any]:
     if isinstance(clip, dict):
         path.with_suffix(".failed").unlink(missing_ok=True)
     if later:
+        # A cut of the old clip still running can land between the unlink
+        # above and this write, and the new cut would skip over it.
+        with contextlib.suppress(OSError):
+            video.unlink(missing_ok=True)
         _cut_later(path, later, small=small)
     return _shown(lineup, path)
 
@@ -854,11 +803,7 @@ def delete(map_name: Any, lineup_id: Any) -> dict[str, Any]:
 
 
 def confirm(map_name: Any, lineup_id: Any) -> dict[str, Any]:
-    """Mark a lineup as checked since its map last changed.
-
-    Its file's time is when it was last saved, which is what the window holds
-    against when the map changed, so touching it is enough.
-    """
+    """Mark a lineup as checked since its map last changed."""
     path = _folder(map_name) / f"{lineup_id}.json"
     lineup = read_json(str(path), None) if _SLUG.match(str(lineup_id or "")) else None
     if not isinstance(lineup, dict):
@@ -919,19 +864,13 @@ def _counted(n: int) -> str:
 
 
 def _pack(lineups: list[Any]) -> str:
-    """Return `lineups` as a code, the way `_unpack` reads one."""
     text = json.dumps(lineups, separators=(",", ":"), ensure_ascii=False)
     body = base64.b32encode(zlib.compress(text.encode(), 9)).decode().rstrip("=")
     return f"{_PREFIX}{body}{_END}"
 
 
 def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
-    """Return a code for a map's lineups, or for those with these ids.
-
-    It carries each clip's link and times and not the clip, so it is short
-    enough for a chat message. A clip from a file on this PC stays out, since
-    its path means nothing on another PC and names your folders.
-    """
+    """Return a code for a map's lineups, or for those with these ids."""
     wanted = {str(i) for i in ids} if isinstance(ids, list) else set()
     folder = slug(str(map_name or ""))
     out = []
@@ -940,7 +879,6 @@ def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
         if path.stem not in wanted and path.parent.name != folder:
             continue
         lineup = read_json(str(path), None)
-        # A map's drawing.json sits beside its lineups, and isn't one.
         if not isinstance(lineup, dict) or lineup.get("id") != path.stem:
             continue
         kept = {k: lineup[k] for k in _SHARED if lineup.get(k) not in (None, "", [])}
@@ -967,8 +905,6 @@ def export_code(map_name: Any = None, ids: Any = None) -> dict[str, Any]:
 
 
 def _unpack(text: str) -> list[Any]:
-    # Chats wrap long lines and some slip in invisible formatting characters,
-    # so neither counts as part of the code.
     flat = "".join(c for c in text if not c.isspace() and unicodedata.category(c) != "Cf")
     found = _CODE.search(flat)
     if not found:
@@ -993,7 +929,6 @@ def _unpack(text: str) -> list[Any]:
 
 
 def _same(lineup: dict[str, Any]) -> str:
-    """Return what makes two lineups the same one, whoever saved it."""
     keys = ("map", "agent", "title", "stand", "land")
     return json.dumps([str(lineup.get(k)).lower() for k in keys])
 
@@ -1012,11 +947,6 @@ def _clip_site(source: str) -> bool:
 def _arrival(
     entry: Any, known: dict[str, str], kits: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Return a pasted entry as a lineup to save and the clip to cut for it.
-
-    It is checked against the game's maps, agents and abilities, and its clip
-    is only kept when it comes from a video site with both its times.
-    """
     if not isinstance(entry, dict):
         msg = "That isn't a lineup."
         raise LineupError(msg)
@@ -1041,12 +971,6 @@ def _arrival(
 
 
 def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
-    """Cut a lineup's clip on the cutter's thread.
-
-    The lineup already keeps the clip's link and times. One that fails leaves
-    why in a file beside it, for Edit then Save to try again. A lineup deleted
-    meanwhile, or saved with another clip, is skipped.
-    """
     video, failed = path.with_suffix(".mp4"), path.with_suffix(".failed")
 
     def wanted_still() -> bool:
@@ -1068,8 +992,6 @@ def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
             with contextlib.suppress(OSError):
                 video.unlink(missing_ok=True)
             return
-        # The whole video was only for trimming. A cut from it still running
-        # keeps it, and a day's pruning takes it.
         with contextlib.suppress(OSError):
             (ROOT / ".cache" / f"{_key(str(wanted['source']))}-watch-hd.mp4").unlink(
                 missing_ok=True
@@ -1079,12 +1001,7 @@ def _cut_later(path: Path, wanted: dict[str, Any], *, small: bool) -> None:
 
 
 def import_code(text: Any, *, small: bool = False) -> dict[str, Any]:
-    """Save the lineups in a code from `export_code`, and start cutting their clips.
-
-    Each is checked the way the form checks one, and one you already have is
-    left alone. It answers once the lineups are saved, and their clips are cut
-    one at a time after, up to `_MOST_CUT` of them.
-    """
+    """Save the lineups in a code from `export_code`, and start cutting their clips."""
     shared = _unpack(str(text or ""))
     known = {m["name"].lower(): m["name"] for m in maps()}
     kits = {a["name"].lower(): a for a in agents()}
@@ -1141,12 +1058,7 @@ def import_code(text: Any, *, small: bool = False) -> dict[str, Any]:
 
 
 def watch(source: Any) -> dict[str, str]:
-    """Return a file the window can play.
-
-    A video on this PC as it is, or for a link a copy of the whole video at the
-    best quality up to 1080p, downloaded once so the window can seek to any
-    second of it straight away.
-    """
+    """Return a file the window can play."""
     source = str(source or "").strip()
     if _local(source):
         return {"source": source, "file": str(Path(source).resolve())}
@@ -1170,7 +1082,6 @@ def overview() -> dict[str, Any]:
 
 
 def _settled(shown: dict[str, Any]) -> dict[str, Any]:
-    """Return a saved lineup as the list has it once its clip is cut, for the self-check."""
     _CUTTER.submit(lambda: None).result()
     return next(item for item in listing() if item["id"] == shown["id"])
 
@@ -1179,7 +1090,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     from unittest import mock
 
     def cut_all() -> None:
-        # The cutter takes one job at a time, so one queued behind them waits.
         _CUTTER.submit(lambda: None).result()
 
     recording = tmp / "mine.mp4"
@@ -1212,13 +1122,10 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         )
         recorded = {"map": "Ascent", "agent": "Brimstone", "title": "Mine", "stand": [0.5, 0.5]}
         mine = _settled(save(recorded, {"source": str(recording), "from": "1", "to": "3"}))
-        # A drawing sits beside the lineups and must not go out as one.
         save_drawing(
             "Ascent", [{"kind": "circle", "colour": "#ff4655", "a": [0.5, 0.5], "b": [0.6, 0.5]}]
         )
 
-        # The code has no ids or pictures, and a clip from a file on this PC
-        # stays out. Pasted with the message around it and wrapped, it reads.
         made = export_code("Ascent")
         code = made["code"]
         shared = _unpack(f"here you go\n{code[:40]}\n{code[40:]} have fun")
@@ -1244,17 +1151,12 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
             back,
         )
         (arrived,) = back["added"]
-        # It answers before the clip is cut, with the clip's link to cut from.
         check(arrived["id"] != first["id"] and back["cutting"] == 1, back)
         cut_all()
         cut_now = next(item for item in listing() if item["id"] == arrived["id"])
         check(Path(cut_now["clip"]["file"]).exists(), cut_now)
-        # Cut from the part of the video the first save downloaded.
         check([Path(r[0]).stem for r in runs] == ["ffmpeg"], runs)
 
-        # An id, a picture, a local clip or one from a site nobody posts
-        # lineups on all stay out, and nothing is fetched for them. Odd values
-        # count as unreadable rather than stopping the rest.
         hostile = [
             {
                 "map": "ascent",
@@ -1315,8 +1217,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
             msg = "a code that unpacks to 10 MB, or nests 3000 deep, was read"
             raise AssertionError(msg)
 
-    # Without the tools the lineup still comes in, keeping the clip's link and
-    # times so saving it later cuts the clip.
     delete("Ascent", arrived["id"])
     with (
         mock.patch(f"{__name__}.shutil.which", return_value=None),
@@ -1333,8 +1233,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     check("being cut" in late["said"] and "file" not in stored["clip"], stored)
     check(stored["clip"]["source"] == linked["source"] and stored["clip"]["to"] == 9.0)
 
-    # A clip with no source takes the clip off, file and all, where no clip
-    # at all leaves it be.
     with (
         mock.patch(f"{__name__}._run", side_effect=fake_run),
         mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
@@ -1343,7 +1241,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
             {"map": "Ascent", "agent": "Brimstone", "title": "Takes Off", "stand": [0.7, 0.7]},
             {"source": "https://localhost/v?id=9", "from": "1", "to": "2"},
         )
-        # It answers before the clip is cut, and the list has it once it is.
         check("file" not in clipped["clip"], clipped)
         clipped = _settled(clipped)
     video = Path(clipped["clip"]["file"])
@@ -1351,7 +1248,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
     gone = save(clipped, {"source": ""})
     check("clip" not in gone and not video.exists(), gone)
 
-    # A cut that fails says why, and saving it again tries again.
     def failing(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         if Path(command[0]).stem == "ffmpeg":
             return subprocess.CompletedProcess(command, 1, "", "Invalid data found")
@@ -1370,7 +1266,6 @@ def _check_codes(tmp: Path, fake_run: Any, runs: list[list[str]]) -> None:
         mock.patch(f"{__name__}.shutil.which", side_effect=lambda exe: f"C:/tools/{exe}.exe"),
     ):
         mended = _settled(save(broke, retry))
-        # A cut the lineup has moved on from is dropped, the newer one kept.
         save(mended, {**retry, "from": "1.5"})
         moved = _settled(save(mended, {**retry, "from": "1.2"}))
     check("failed" not in mended["clip"] and Path(mended["clip"]["file"]).exists(), mended)
@@ -1398,7 +1293,6 @@ def _self_check() -> None:
             continue
         raise AssertionError(bad)
 
-    # Ascent's own numbers put its A site's callout on the right of the map.
     ascent = {
         "xMultiplier": 7e-05,
         "yMultiplier": -7e-05,
@@ -1407,9 +1301,6 @@ def _self_check() -> None:
     }
     check(_where(ascent, {"x": 6153.585, "y": -6626.2114}) == [0.3501, 0.1425])
 
-    # Each build fetches the minimap again and drops the copy before it, a
-    # fetch that fails shows the copy there is, and only a picture that is
-    # really different counts as the map changing, not one packed again.
     def png(pixels: bytes, level: int = 6) -> bytes:
         def chunk(kind: bytes, body: bytes) -> bytes:
             crc = zlib.crc32(kind + body).to_bytes(4, "big")
@@ -1459,7 +1350,6 @@ def _self_check() -> None:
 
         def fake_run(command: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
             runs.append(command)
-            # Each tool writes the file it was told to.
             Path(command[command.index("-o") + 1] if "-o" in command else command[-1]).write_bytes(
                 b"x"
             )
@@ -1486,16 +1376,12 @@ def _self_check() -> None:
             )
             saved = _settled(saved)
             download, trim = runs
-            # The link goes after "--", so it can never be read as an option,
-            # and only the clip with five seconds either side comes down.
             check(download[-2:] == ["--", "https://localhost/v?id=1"], download)
             check("*65.00-82.00" in download, download)
             # The cut starts five seconds into that download, at 60% volume.
             check(trim[trim.index("-ss") + 1] == "5.000" and "volume=0.60" in trim, trim)
             check(Path(saved["clip"]["file"]).exists(), saved)
 
-            # Saving again with the same clip cuts nothing, and a nudge inside
-            # the download cuts again without downloading.
             runs.clear()
             again = save(
                 {**saved, "title": "A Main Molly"}, {**saved["clip"], "from": "1:10", "to": "1:17"}
@@ -1511,8 +1397,6 @@ def _self_check() -> None:
                     continue
                 raise AssertionError(bad)
 
-        # The whole video for trimming goes once the clip is cut, and anything
-        # in the cache a day old goes when the backend starts.
         cache = ROOT / ".cache"
         cache.mkdir(parents=True, exist_ok=True)
         fresh, stale = cache / "fresh.mp4", cache / "stale.mp4"
@@ -1522,9 +1406,6 @@ def _self_check() -> None:
         check(prune_cache() == 1 and fresh.exists() and not stale.exists())
         fresh.unlink()
 
-        # A picture comes in as a PNG in the lineup's folder, stays when the
-        # next save lists it, goes when one doesn't, and a long description
-        # is kept to its limit.
         source = Path(tmp) / "shot.png"
         source.write_bytes(b"x")
         with (
@@ -1547,8 +1428,6 @@ def _self_check() -> None:
         delete("Ascent", saved["id"])
         _check_codes(Path(tmp), fake_run, runs)
 
-        # Shapes keep their kind, colour and points, a cone's width is held
-        # to what can be drawn, and anything else is refused with why.
         circle: dict[str, Any] = {
             "kind": "circle",
             "colour": "#ff4655",
@@ -1610,7 +1489,6 @@ def _self_check() -> None:
         said = str(e)
     check("2:31" in said, f"a whole video past the limit said {said!r}")
     _LENGTHS.clear()
-    # A link is downloaded to watch once, and a file on this PC is watched as it is.
     with (
         tempfile.TemporaryDirectory() as tmp,
         mock.patch(f"{__name__}.ROOT", Path(tmp)),
@@ -1635,7 +1513,6 @@ def _self_check() -> None:
             mine.write_bytes(b"x")
             check(watch(str(mine)) == {"source": str(mine), "file": str(mine.resolve())})
             check(len(fetched) == 1, "a file on this PC was downloaded")
-            # Saving cuts from the video already there, without downloading.
             check(fetch(link, 3, 9) == (Path(copy), 0.0))
             check(len(fetched) == 1, "saving downloaded the clip again")
     print(

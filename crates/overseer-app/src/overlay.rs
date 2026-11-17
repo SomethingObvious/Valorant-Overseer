@@ -9,7 +9,6 @@ use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2, ViewportBuilder, ViewportId, pos
 use overseer_ui::{Face, caps_text, colour, space};
 use serde::{Deserialize, Serialize};
 
-/// How far the overlay sits from the edges of the screen.
 const MARGIN: f32 = 16.0;
 /// Room kept for the task bar, which is always on top too and would cover a
 /// bottom corner on the desktop. Neither egui nor winit reports the work
@@ -18,27 +17,19 @@ const TASKBAR: f32 = 48.0;
 /// Cards of 620 points, room for every zone and a name, and a gutter each
 /// side for the party tab.
 pub(crate) const WIDTH: f32 = 620.0 + 2.0 * crate::board::GUTTER;
-/// The overlay window's title, which is how it is found to keep it from
-/// taking the focus.
 pub(crate) const TITLE: &str = "Valorant Overseer Overlay";
-/// Which corner of the screen the overlay sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Corner {
-    /// Over the minimap.
     TopLeft,
-    /// Above the scoreboard side of the screen, and where the overlay
-    /// starts, out of the way of the agents in agent select.
     #[default]
     TopRight,
-    /// Out of the way of everything the game draws at the top.
     BottomLeft,
     /// The quietest corner in VALORANT's own layout.
     BottomRight,
 }
 
 impl Corner {
-    /// Every corner, for the settings screen.
     pub(crate) const ALL: [Self; 4] = [
         Self::TopLeft,
         Self::TopRight,
@@ -46,7 +37,6 @@ impl Corner {
         Self::BottomRight,
     ];
 
-    /// What to call it on screen.
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::TopLeft => "Top Left",
@@ -56,7 +46,6 @@ impl Corner {
         }
     }
 
-    /// Why you might want it there.
     pub(crate) const fn about(self) -> &'static str {
         match self {
             Self::TopLeft => "Top left of the screen, beside the minimap",
@@ -67,8 +56,6 @@ impl Corner {
     }
 }
 
-/// Where a window of `size` sits in `corner`, clamped so it never starts off
-/// the edge of a monitor smaller than it.
 fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
     let right = (monitor.x - size.x - MARGIN).max(MARGIN);
     let bottom = (monitor.y - size.y - MARGIN - TASKBAR).max(MARGIN);
@@ -84,38 +71,26 @@ fn place(corner: Corner, monitor: Vec2, size: Vec2) -> Pos2 {
 /// is built for before it has measured what it draws.
 pub(crate) const DESIGNED: f32 = crate::board::OVERLAY_HEIGHT;
 
-/// A little more than a match of five a side needs. A bigger lobby, like a
-/// deathmatch's thirteen, may take up to four fifths of the screen, and no
-/// more, so a board that grows without bound can never cover the game.
 pub(crate) const CEILING: f32 = 700.0;
 
-/// The tallest the overlay may be on a screen `monitor` tall.
 pub(crate) fn tallest(monitor: f32) -> f32 {
     (monitor * 0.8).max(CEILING)
 }
 
-/// The greeting's plate, the height of the team plates on the board.
 const PLATE: f32 = 32.0;
 
-/// The greeting's height: its plate and a margin above and below.
 pub(crate) const GREETING: f32 = PLATE + 2.0 * space::MD;
 
-/// Draws the overlay in its own window, `height` tall, which is what it
-/// last drew.
 pub(crate) fn show(
     ctx: &egui::Context,
     corner: Corner,
     height: f32,
     mut board: impl FnMut(&mut Ui),
 ) {
-    // Built against a guessed screen, it would have to move next frame.
     let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
         ctx.request_repaint();
         return;
     };
-    // As tall as the board, not a fixed size: this adapter presents opaque,
-    // and the transparent part of a taller window would be a black slab over
-    // the game.
     let size = vec2(WIDTH, height.clamp(GREETING, tallest(monitor.y)));
     let at = place(corner, monitor, size);
     ctx.show_viewport_immediate(
@@ -127,9 +102,6 @@ pub(crate) fn show(
     );
 }
 
-/// What the overlay's window holds: its ground, the board, and a hairline
-/// round the edge so it reads as a panel over the game rather than a hole
-/// in it.
 pub(crate) fn contents(ui: &mut Ui, board: &mut impl FnMut(&mut Ui)) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(colour::BG))
@@ -142,9 +114,6 @@ pub(crate) fn contents(ui: &mut Ui, board: &mut impl FnMut(&mut Ui)) {
     );
 }
 
-/// What the overlay shows for a moment after it is switched on with no
-/// match to show: a red plate where the enemy team will be, saying so, and
-/// the key that hides it again. Returns the height it took.
 pub(crate) fn greeting(ui: &mut Ui) -> f32 {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), GREETING), Sense::hover());
@@ -195,8 +164,6 @@ pub(crate) fn greeting(ui: &mut Ui) -> f32 {
     GREETING
 }
 
-/// The overlay's hide button, in the top right corner of `rect` beside the
-/// score. Returns whether it was clicked.
 pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
     let spot = Rect::from_center_size(
         pos2(
@@ -229,18 +196,12 @@ pub(crate) fn hide_button(ui: &Ui, rect: Rect) -> bool {
     response.clicked()
 }
 
-/// The window's identity. It carries the corner because a corner only takes
-/// effect when the window is built. A window moved after it is shown stops
-/// being composited on this machine, though it still says it is visible,
-/// so a bottom corner, which is placed from the window's `height`, carries
-/// that too and a new height there builds a new window.
 fn id_for(corner: Corner, height: f32) -> ViewportId {
     let bottom = matches!(corner, Corner::BottomLeft | Corner::BottomRight);
     let placed_by = bottom.then(|| height.to_bits());
     ViewportId::from_hash_of(("overseer-overlay", corner.label(), placed_by))
 }
 
-/// The overlay window, all decided before it exists.
 fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
     ViewportBuilder::default()
         .with_title(TITLE)
@@ -249,10 +210,7 @@ fn attributes(at: Pos2, size: Vec2) -> ViewportBuilder {
         .with_decorations(false)
         .with_always_on_top()
         .with_transparent(true)
-        // Never the keyboard when it appears. `never_activate` stops a click
-        // from taking it after that.
         .with_active(false)
-        // One task bar button for the app, not two.
         .with_taskbar(false)
         .with_resizable(false)
 }
@@ -262,9 +220,6 @@ mod tests {
 
     use super::{Corner, DESIGNED};
 
-    /// Changing corner has to build a new window, because a shown window that
-    /// moves stops being drawn, and so does a new height in a bottom corner.
-    /// A top corner only grows down, so its window just resizes.
     #[test]
     fn a_corner_is_part_of_the_windows_identity() {
         let mut seen = std::collections::HashSet::new();

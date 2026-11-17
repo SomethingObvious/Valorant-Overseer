@@ -1,9 +1,3 @@
-//! The overlay: the match in a strip and the enemy as cards, or in agent
-//! select your own team, the only one known yet. Every card has the same
-//! zones at the same x, the face and the name, then the rank, the K/D and
-//! the rest, so a number sits under the one above it and reads without a
-//! heading.
-
 use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Player};
 use overseer_ui::{Face, caps_text, colour, motion, shape, size, space};
@@ -11,7 +5,6 @@ use overseer_ui::{Face, caps_text, colour, motion, shape, size, space};
 use super::rows::{self, Look, Metrics};
 use super::{GUTTER, ITEM, Scene, Side, Touched, heads, paint};
 
-/// An enemy's card: two lines, the face as tall as both.
 const CARD: Metrics = Metrics {
     height: 48.0,
     name: 17.0,
@@ -23,22 +16,13 @@ const CARD: Metrics = Metrics {
     tags_first: true,
 };
 
-/// The rank's zone: the emblem, the tier and what sits under it.
 const RANK: f32 = 128.0;
-/// The K/D's zone, its numeral set right.
 const KD: f32 = 60.0;
-/// The last zone: the results and the level, the rates under them.
 const MORE: f32 = 172.0;
-/// The space between two zones.
 const SPACE: f32 = 14.0;
-/// The room at a card's right edge.
 const TAIL: f32 = 12.0;
-/// The match strip's height.
 const STRIP: f32 = 26.0;
-/// Where the middle of the match strip is, down from the overlay's gutter,
-/// for the hide button that sits at its right end.
 pub(crate) const STRIP_MIDDLE: f32 = STRIP / 2.0;
-/// The room the hide button takes at the strip's right end.
 const HIDE_ROOM: f32 = 32.0;
 /// How far a block sits under the one above it.
 const BETWEEN: f32 = 14.0;
@@ -56,16 +40,11 @@ pub(crate) const HEIGHT: f32 = GUTTER
     + (CARD.height + ITEM + rows::GAP) * 5.0
     + GUTTER;
 
-/// Where the zones of a card sit across it.
 #[derive(Debug, Clone, Copy)]
 struct Zones {
-    /// Where the name has to stop.
     name: f32,
-    /// The rank zone's left edge.
     rank: f32,
-    /// The K/D's right edge.
     kd: f32,
-    /// The last zone's left and right edges.
     more: (f32, f32),
 }
 
@@ -86,11 +65,10 @@ impl Zones {
     }
 }
 
-/// Draws the overlay inside its gutters, and says how tall it came out.
 pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2]) -> Touched {
     let top = ui.cursor().top();
     ui.add_space(GUTTER);
-    strip(ui, scene.board);
+    strip(ui, scene.board, scene.lost);
     let enemies = scene
         .board
         .players
@@ -98,8 +76,6 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2])
         .any(|p| super::side_of(scene.board, p) == Side::Enemy);
     for (side, team) in order {
         let players = super::roster(scene.board, team, scene.sort);
-        // Your own team can be seen in the game, so once the other one is
-        // known the overlay is just them, and half the height.
         if players.is_empty() || (enemies && *side != Side::Enemy) {
             continue;
         }
@@ -131,7 +107,6 @@ pub(crate) fn overlay(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2])
     }
 }
 
-/// How one row is drawn, from the scene and the player.
 fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side) -> Look<'a> {
     let id = player.puuid.as_deref();
     Look {
@@ -151,9 +126,7 @@ fn look<'a>(scene: &Scene<'a>, player: &'a Player, side: Side) -> Look<'a> {
     }
 }
 
-/// The match: the map, the side and the queue on the left, the score and
-/// the round on the right, and the key that hides it between them.
-fn strip(ui: &mut Ui, board: &Board) {
+fn strip(ui: &mut Ui, board: &Board, lost: bool) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), STRIP), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -219,14 +192,13 @@ fn strip(ui: &mut Ui, board: &Board) {
             tint,
         );
     }
-    hint(painter, board, (x, right), y);
+    hint(painter, (board, lost), (x, right), y);
 }
 
-/// The hint between the plates and the score. A board held through a
-/// dropped connection says so in its place, since in game nothing else
-/// would show it isn't live.
-fn hint(painter: &egui::Painter, board: &Board, (x, right): (f32, f32), y: f32) {
-    let (hint, tint) = if board.held_since.is_some() {
+fn hint(painter: &egui::Painter, (board, lost): (&Board, bool), (x, right): (f32, f32), y: f32) {
+    let (hint, tint) = if lost {
+        ("Reconnecting to Overseer".to_owned(), colour::WARN)
+    } else if board.held_since.is_some() {
         ("Can't Reach VALORANT Right Now".to_owned(), colour::WARN)
     } else {
         (
@@ -247,7 +219,6 @@ fn hint(painter: &egui::Painter, board: &Board, (x, right): (f32, f32), y: f32) 
     }
 }
 
-/// One player's card.
 fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
     let m = look.metrics;
     let (rect, response) =
@@ -292,7 +263,6 @@ fn row(ui: &mut Ui, player: &Player, look: &Look<'_>) -> Rect {
     rect
 }
 
-/// A card's zones, two lines each.
 fn card(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look: &Look<'_>) {
     let m = look.metrics;
     let upper = rect.height().mul_add(0.34, rect.top());
@@ -364,8 +334,6 @@ fn card(painter: &egui::Painter, player: &Player, rect: Rect, zones: Zones, look
     }
 }
 
-/// The rank: its emblem, its tier, and under it the peak when it was
-/// higher, else the RR.
 fn rank(
     painter: &egui::Painter,
     player: &Player,
@@ -419,8 +387,6 @@ fn rank(
     }
 }
 
-/// A value with its name before it, set right against `right` on `y`, and
-/// where the name starts.
 fn pair(
     painter: &egui::Painter,
     (right, y): (f32, f32),

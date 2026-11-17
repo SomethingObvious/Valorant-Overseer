@@ -13,22 +13,16 @@ use std::sync::{Mutex, PoisonError};
 use overseer_native::{Buttons, Press};
 use serde::{Deserialize, Serialize};
 
-/// A key or mouse button, and the Ctrl, Alt and Shift held with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "Saved")]
 pub(crate) struct Binding {
-    /// Its virtual-key code, which the mouse buttons have too.
     pub(crate) key: u16,
-    /// Whether Ctrl is part of it.
     pub(crate) ctrl: bool,
-    /// Whether Alt is part of it.
     pub(crate) alt: bool,
-    /// Whether Shift is part of it.
     pub(crate) shift: bool,
 }
 
 impl Binding {
-    /// The one it starts on, Ctrl+Alt+O.
     pub(crate) const DEFAULT: Self = Self {
         key: 0x4F,
         ctrl: true,
@@ -36,7 +30,6 @@ impl Binding {
         shift: false,
     };
 
-    /// Whether it is a mouse button, which needs the mouse read.
     const fn mouse(self) -> bool {
         matches!(self.key, 1 | 2 | 4 | 5 | 6)
     }
@@ -72,26 +65,18 @@ impl Default for Binding {
     }
 }
 
-/// What the settings file holds: a binding, or one of the four named keys
-/// from before any button could be picked.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Saved {
-    /// A binding as it is written now.
     Bound {
-        /// [`Binding::key`].
         key: u16,
-        /// [`Binding::ctrl`].
         #[serde(default)]
         ctrl: bool,
-        /// [`Binding::alt`].
         #[serde(default)]
         alt: bool,
-        /// [`Binding::shift`].
         #[serde(default)]
         shift: bool,
     },
-    /// One of the old four, like `ctrl-shift-o`.
     Named(String),
 }
 
@@ -129,7 +114,6 @@ impl From<Saved> for Binding {
     }
 }
 
-/// What a key is called on screen, by its virtual-key code.
 fn key_name(key: u16) -> String {
     let named = match key {
         1 => "Left Click",
@@ -200,20 +184,16 @@ fn key_name(key: u16) -> String {
 /// that print it and the thread that listens for it read it from here.
 static CHOSEN: Mutex<Binding> = Mutex::new(Binding::DEFAULT);
 
-/// Whether the next press becomes the binding, which Settings asks for.
 static CATCHING: AtomicBool = AtomicBool::new(false);
 
-/// The binding in use.
 fn chosen() -> Binding {
     *CHOSEN.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the binding in use is called.
 pub(crate) fn label() -> String {
     chosen().label()
 }
 
-/// Whether Settings is waiting for a press to bind.
 pub(crate) fn catching() -> bool {
     CATCHING.load(Ordering::Relaxed)
 }
@@ -221,17 +201,13 @@ pub(crate) fn catching() -> bool {
 /// What the listening thread found since the last look.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Heard {
-    /// Presses of the overlay's button.
     pub(crate) presses: usize,
-    /// A press caught for Settings, which is the binding now.
     pub(crate) caught: Option<Binding>,
-    /// Whether catching ended, caught or not.
     pub(crate) done: bool,
 }
 
 /// The thread listening for the overlay's button, and what it heard.
 pub(crate) struct Listener {
-    /// Starts and stops the mouse.
     buttons: Buttons,
     /// Presses that matter, put here by that thread.
     presses: Receiver<Press>,
@@ -244,7 +220,6 @@ impl std::fmt::Debug for Listener {
 }
 
 impl Listener {
-    /// Everything heard since the last look.
     pub(crate) fn heard(&self) -> Heard {
         let mut heard = Heard::default();
         for press in self.presses.try_iter() {
@@ -257,8 +232,6 @@ impl Listener {
                     self.stop();
                     heard.done = true;
                 }
-                // The left button clicks Settings itself, and Ctrl, Alt and
-                // Shift only count held with another key.
                 1 | 0x10..=0x12 | 0xA0..=0xA5 => {}
                 key => {
                     let caught = Binding {
@@ -276,27 +249,22 @@ impl Listener {
         heard
     }
 
-    /// Makes the next press the binding.
     pub(crate) fn catch(&self) {
         CATCHING.store(true, Ordering::Relaxed);
         self.buttons.mouse(true);
     }
 
-    /// Stops waiting for a press to bind.
     pub(crate) fn stop(&self) {
         CATCHING.store(false, Ordering::Relaxed);
         self.buttons.mouse(chosen().mouse());
     }
 
-    /// Listens for `binding` from now on.
     pub(crate) fn choose(&self, binding: Binding) {
         *CHOSEN.lock().unwrap_or_else(PoisonError::into_inner) = binding;
         self.stop();
     }
 }
 
-/// Listens for `binding` anywhere and calls `wake` on each press that
-/// matters, or says why it can't.
 pub(crate) fn start(
     binding: Binding,
     wake: impl Fn() + Send + Sync + 'static,
@@ -326,7 +294,6 @@ mod tests {
 
     use super::{Binding, Press};
 
-    /// A file from before any button could be picked keeps its key.
     #[test]
     fn the_old_named_keys_still_read() {
         let read = |text: &str| serde_json::from_str::<Binding>(text).unwrap();
@@ -344,8 +311,6 @@ mod tests {
         assert_eq!(side.label(), "Mouse 4");
     }
 
-    /// Walking or crouching while pressing it still counts, and missing one
-    /// of its own doesn't.
     #[test]
     fn extra_modifiers_still_match() {
         let press = |key, ctrl, alt, shift| Press {

@@ -15,12 +15,9 @@ use std::path::PathBuf;
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
 
-/// Big enough for the log, small enough to feel like a dialog.
 const SIZE: [f32; 2] = [720.0, 520.0];
 
 fn main() -> eframe::Result {
-    // A setup with the app inside installs to the app's one home. The plain
-    // one in an install works on the install around it.
     let carried = std::env::current_exe()
         .ok()
         .filter(|exe| payload::carried(exe).is_some());
@@ -39,7 +36,6 @@ fn main() -> eframe::Result {
         .with_inner_size(SIZE)
         .with_min_inner_size(SIZE)
         .with_resizable(false)
-        // The header is the title bar, with its own buttons.
         .with_decorations(false);
     if let Some(icon) = overseer_ui::art::logo_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
@@ -55,13 +51,11 @@ fn main() -> eframe::Result {
     )
 }
 
-/// The value after a flag, when there is one.
 fn flag(args: &[String], name: &str) -> Option<String> {
     let at = args.iter().position(|a| a == name)?;
     args.get(at + 1).filter(|v| !v.starts_with("--")).cloned()
 }
 
-/// The directory holding the install, which is the one holding `scripts`.
 fn install_root() -> PathBuf {
     if let Some(from_env) = std::env::var_os("OVERSEER_ROOT") {
         return PathBuf::from(from_env);

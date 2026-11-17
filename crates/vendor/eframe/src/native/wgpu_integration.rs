@@ -174,37 +174,6 @@ impl<'app> WgpuWinitApp<'app> {
         }
     }
 
-    #[cfg(target_os = "android")]
-    fn recreate_window(&self, event_loop: &ActiveEventLoop, running: &WgpuWinitRunning<'app>) {
-        let SharedState {
-            egui_ctx,
-            viewports,
-            viewport_from_window,
-            painter,
-            ..
-        } = &mut *running.shared.borrow_mut();
-
-        initialize_or_update_viewport(
-            viewports,
-            ViewportIdPair::ROOT,
-            ViewportClass::Root,
-            self.native_options.viewport.clone(),
-            None,
-            painter,
-        )
-        .initialize_window(event_loop, egui_ctx, viewport_from_window, painter);
-    }
-
-    #[cfg(target_os = "android")]
-    fn drop_window(&mut self) -> Result<(), egui_wgpu::WgpuError> {
-        if let Some(running) = &mut self.running {
-            let mut shared = running.shared.borrow_mut();
-            shared.viewports.remove(&ViewportId::ROOT);
-            pollster::block_on(shared.painter.set_window(ViewportId::ROOT, None))?;
-        }
-        Ok(())
-    }
-
     fn init_run_state(
         &mut self,
         egui_ctx: egui::Context,
@@ -446,8 +415,6 @@ impl WinitApp for WgpuWinitApp<'_> {
         log::debug!("Event::Resumed");
 
         let running = if let Some(running) = &self.running {
-            #[cfg(target_os = "android")]
-            self.recreate_window(event_loop, running);
             running
         } else {
             let storage = if let Some(file) = &self.native_options.persistence_path {
@@ -483,8 +450,6 @@ impl WinitApp for WgpuWinitApp<'_> {
     }
 
     fn suspended(&mut self, _: &ActiveEventLoop) -> crate::Result<EventResult> {
-        #[cfg(target_os = "android")]
-        self.drop_window()?;
         Ok(EventResult::Save)
     }
 

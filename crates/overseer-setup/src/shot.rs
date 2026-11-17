@@ -1,6 +1,3 @@
-//! Each wizard step rendered offscreen and compared with a PNG, because an
-//! installer is seen once by everybody and looked at again by nobody.
-
 #![cfg(test)]
 
 use egui::{Ui, vec2};
@@ -9,8 +6,6 @@ use egui_kittest::Harness;
 use crate::plan::{Finding, Survey};
 use crate::wizard;
 
-/// The findings for a machine with nothing wrong with it, or for one whose
-/// folder can't be written to.
 fn findings(blocked: bool) -> Survey {
     let folder = if blocked {
         // A real Windows error, and longer than the row has room for.
@@ -75,24 +70,15 @@ fn log(done: bool) -> Vec<String> {
     lines.iter().take(shown).map(|s| (*s).to_owned()).collect()
 }
 
-/// Which frame to draw.
 enum Scene {
-    /// Nothing yet: fonts land on the frame after they are installed.
     Blank,
-    /// Step one.
     Look(Survey),
-    /// Step two.
     Choose(usize),
-    /// Step three, with an outcome or without one.
     Install(Vec<String>, Option<bool>),
-    /// The title bar, at a step.
     Head(wizard::Step),
-    /// The footer, at a step and an outcome, and whether it updates an
-    /// install already there.
     Foot(wizard::Step, Option<bool>, bool),
 }
 
-/// Draws one scene through the wizard's own functions.
 fn draw(ui: &mut Ui, scene: &mut Scene) {
     match scene {
         Scene::Blank => {}

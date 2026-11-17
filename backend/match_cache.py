@@ -12,11 +12,7 @@ from common.check import check, present
 
 
 class MatchCache:
-    """A thread-safe FIFO of compressed JSON, with fresh objects on each read.
-
-    The byte budget counts the compressed payloads only, not the decoded
-    documents or the index.
-    """
+    """A thread-safe FIFO of compressed JSON, with fresh objects on each read."""
 
     def __init__(self, *, max_entries: int, max_bytes: int) -> None:
         """Set both retention limits. A limit of zero or less turns retention off."""
@@ -48,7 +44,6 @@ class MatchCache:
             previous = self._entries.pop(mid, None)
             if previous is not None:
                 self._bytes -= len(previous)
-            # One unusually large match must not empty the rest of the cache.
             if len(payload) > self._max_bytes:
                 return
             while self._entries and (
@@ -92,8 +87,6 @@ def _self_check() -> None:
     with mock.patch("zlib.decompress", side_effect=AssertionError("unexpected decode")):
         check("b" in cache and "missing" not in cache, "membership does not decode")
 
-    # Leave room for exactly one of the larger documents, regardless of zlib's
-    # version. These checks exercise byte eviction independently of the count.
     cache.clear()
     cache.put("b", detail)
     payload_size = cache.usage()[1]

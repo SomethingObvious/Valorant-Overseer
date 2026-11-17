@@ -52,7 +52,7 @@ _REDACTIONS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\b[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}:[A-Za-z0-9_\-]{16,}\b"),
-        "[REDACTED-ABLY-KEY]",
+        "[REDACTED-KEY]",
     ),
     (re.compile(r"\b([0-9a-fA-F]{8})[0-9a-fA-F\-]{24,}\b"), r"\1…[REDACTED]"),
     (re.compile(r"\b(\d{6})\d{11,}\b"), r"\1…[REDACTED]"),
@@ -75,40 +75,37 @@ class _UtcFormatter(logging.Formatter):
         return redact(super().format(record))
 
 
-def get_logger(component: str, filename: str | None = None) -> logging.Logger:
-    """Return the `overseer.<component>` logger.
-
-    It writes to .overseer/<filename or component>.log.
-    """
-    name = f"overseer.{component}"
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
+def _log_file(component: str, filename: str) -> logging.Handler:
     try:
         OVERSEER_DIR.mkdir(exist_ok=True)
         handler = RotatingFileHandler(
-            OVERSEER_DIR / f"{filename or component}.log",
+            OVERSEER_DIR / f"{filename}.log",
             maxBytes=MAX_BYTES,
             backupCount=BACKUP_COUNT,
             encoding="utf-8",
         )
-        handler.setFormatter(
-            _UtcFormatter(
-                fmt=f"%(asctime)s.%(msecs)03dZ [{component}] %(levelname)s %(message)s",
-                datefmt="%Y-%m-%dT%H:%M:%S",
-            )
-        )
-        logger.addHandler(handler)
     except OSError:
-        logger.addHandler(logging.NullHandler())
+        return logging.NullHandler()
+    handler.setFormatter(
+        _UtcFormatter(
+            fmt=f"%(asctime)s.%(msecs)03dZ [{component}] %(levelname)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    )
+    return handler
+
+
+def get_logger(component: str, filename: str | None = None) -> logging.Logger:
+    """Return the `overseer.<component>` logger."""
+    logger = logging.getLogger(f"overseer.{component}")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addHandler(_log_file(component, filename or component))
     return logger
 
 
 if __name__ == "__main__":
-    # The entitlements header and accessToken are the two a keyword rule
-    # misses, so both are here.
     _MUST_REDACT = (
         "Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
         "X-Riot-Entitlements-JWT: eyJraWQiOiJzMSJ9.abcdefghijkl.sig",
@@ -123,7 +120,6 @@ if __name__ == "__main__":
         check("REDACT" in _out, f"not redacted: {_sample!r} -> {_out!r}")
         check("eyJ" not in _out or "REDACTED-JWT" in _out, f"jwt survived: {_out!r}")
 
-    # A log that redacts everything is no use either.
     check(redact("backend started on port 5000") == "backend started on port 5000")
 
     print(f"overseerlog self-check OK ({len(_MUST_REDACT)} secret shapes redacted)")

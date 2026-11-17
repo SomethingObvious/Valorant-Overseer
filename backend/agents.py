@@ -1,10 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Every agent's id, role and colour, and a lookup by name or id.
-
-The agents there were when this build was made are written below. One
-Riot adds after is learned from valorant-api by `learn`, and kept on disk
-so it is still known with no connection.
-"""
+"""Every agent's id, role and colour, and a lookup by name or id."""
 
 from __future__ import annotations
 
@@ -75,7 +70,6 @@ _GREY = "#9AA1AB"
 
 
 def _row(agent: Any) -> dict[str, str] | None:
-    """One of valorant-api's agents as this table keeps it, or None without a name or id."""
     if not isinstance(agent, dict):
         return None
     name = str(agent.get("displayName") or "").strip()
@@ -89,7 +83,6 @@ def _row(agent: Any) -> dict[str, str] | None:
 
 
 def _add(row: dict[str, str]) -> bool:
-    """Add one agent to every table unless it is known, and say whether it was new."""
     name, uuid = row["name"], row["uuid"]
     if uuid in AGENT_BY_UUID or name.lower() in AGENT_BY_NAME:
         return False
@@ -101,10 +94,7 @@ def _add(row: dict[str, str]) -> bool:
 
 
 def learn() -> list[str]:
-    """Add the agents valorant-api lists that this build doesn't, and return their names.
-
-    With no answer, the ones it listed last time are added from disk.
-    """
+    """Add the agents valorant-api lists that this build doesn't, and return their names."""
     listed = valapi.get("agents?isPlayableCharacter=true")
     if listed:
         rows = [r for r in map(_row, listed) if r and r["uuid"] not in _BUILT_IN]
@@ -116,7 +106,6 @@ def learn() -> list[str]:
 
 
 def _row_kept(row: Any) -> dict[str, str] | None:
-    """Read back a row `learn` kept on disk, as valorant-api would have said it."""
     if not isinstance(row, dict):
         return None
     return _row(
@@ -160,7 +149,6 @@ def _self_check() -> None:
         found = resolve_agent("newcomer")
         check(found is not None and found["color"] == "#FF8800" and found["role"] == "Initiator")
 
-        # Offline, the next start learns it from what was kept.
         for table in (AGENT_BY_NAME, AGENT_BY_UUID, UUID_TO_NAME):
             table.pop("newcomer", None)
             table.pop("0000aaaa-1111-2222-3333-444455556666", None)

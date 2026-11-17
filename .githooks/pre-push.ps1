@@ -44,7 +44,6 @@ function Deny([string]$Reason, [string[]]$Detail) {
     exit 1
 }
 
-# Through a file, not an argument: see the note at the top of the scanner.
 function Test-Attribution([string]$Text, [string]$Label) {
     $file = Join-Path $env:TEMP ("vg-scan-" + [Guid]::NewGuid().ToString("N") + ".txt")
     [System.IO.File]::WriteAllText($file, $Text)
@@ -57,9 +56,6 @@ function Test-Attribution([string]$Text, [string]$Label) {
 
 $Zero = "0000000000000000000000000000000000000000"
 
-# The base branch may not exist yet on a first push to an empty remote. git
-# writes that to stderr, which $ErrorActionPreference = 'Stop' turns into a
-# terminating error that fails the push for no reason.
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try { & git fetch --quiet $Remote $BaseBranch 2>$null } catch { }
@@ -74,7 +70,6 @@ foreach ($line in ([Console]::In.ReadToEnd() -split "`r?`n")) {
     $localRef, $localSha, $remoteRef, $remoteSha = $parts[0], $parts[1], $parts[2], $parts[3]
     if ($localSha -eq $Zero) { continue }   # branch deletion
 
-    # An annotated tag carries a message that `git log` over the range never sees.
     if ($remoteRef -like "refs/tags/*") {
         $tagText = (& git cat-file -p $localSha) -join "`n"
         if (-not (Test-Attribution "$tagText$localRef" "the tag being pushed")) {

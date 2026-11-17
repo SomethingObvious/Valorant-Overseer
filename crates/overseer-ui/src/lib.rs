@@ -80,7 +80,6 @@ pub mod motion {
         egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
     }
 
-    /// Where the flag [`set_still`] keeps is stored.
     fn still_key() -> egui::Id {
         egui::Id::new("motion-still")
     }
@@ -385,10 +384,6 @@ pub fn say(ui: &mut egui::Ui, gutter: f32, tint: Color32, message: &str) {
 }
 
 /// A row that can be switched on, true when clicked.
-///
-/// `one_of` draws it as one choice among siblings rather than a switch that
-/// stands alone. `still`, for the window's efficient tier, makes the hover land
-/// at once instead of fading in.
 pub fn choice(
     ui: &mut egui::Ui,
     name: &str,
@@ -425,8 +420,6 @@ pub fn choice(
         egui::pos2(rect.left() + space::LG, rect.top()),
         egui::pos2(rect.right() - space::LG, rect.bottom()),
     );
-    // Only a chosen sibling lights its row. A dozen lit switches would say
-    // nothing.
     let ground = if on && one_of {
         colour::BG_SELECTED
     } else {
@@ -468,9 +461,6 @@ pub fn choice(
     response.clicked()
 }
 
-/// What a switch does, from `at` to `end` and centred on `middle`, cut to
-/// one line rather than run off the end of the row, as two switches side by
-/// side leave half the width each and the longest explanation is wider.
 fn explanation(painter: &egui::Painter, about: &str, (at, end, middle): (f32, f32, f32)) {
     let mut job = egui::text::LayoutJob::simple_singleline(
         about.to_owned(),
@@ -491,9 +481,6 @@ fn explanation(painter: &egui::Painter, about: &str, (at, end, middle): (f32, f3
     );
 }
 
-/// The widest name among the switches drawn in `ui`, counting one `named`
-/// points wide, so every switch in a group starts its explanation at one
-/// edge. It is kept from the frames that drew them.
 fn widest_name(ui: &egui::Ui, named: f32) -> f32 {
     let key = egui::Id::new(("choice-names", ui.id()));
     let before = ui
@@ -549,7 +536,6 @@ fn mark(painter: &egui::Painter, pip: egui::Rect, on: bool, one_of: bool) {
     }
 }
 
-/// How tall a switch's slab is.
 const ROW_CHOICE: f32 = 32.0;
 
 /// One key, drawn as a plate with its letter on it.
@@ -590,8 +576,6 @@ pub fn keycap_width(painter: &egui::Painter, key: &str) -> f32 {
     (galley.size().x + space::MD).max(16.0)
 }
 
-/// Barlow has no arrows, so a key that is not ASCII is set in Inter rather
-/// than drawn as a box.
 fn keycap_face(key: &str) -> FontId {
     if key.is_ascii() {
         Face::Display.at(size::MICRO)
@@ -629,7 +613,6 @@ pub enum Face {
 }
 
 impl Face {
-    /// The family name registered in [`install_fonts`].
     const fn key(self) -> &'static str {
         match self {
             Self::Display => "overseer-display",
@@ -646,8 +629,6 @@ impl Face {
         FontId::new(points, FontFamily::Name(self.key().into()))
     }
 
-    /// Brings Barlow's caps down a touch to share a centre line with Inter,
-    /// and pins Inter's weight and optical size.
     fn tweak(self) -> egui::FontTweak {
         match self {
             Self::Display | Self::Heavy | Self::Number | Self::Cut => egui::FontTweak {
@@ -667,7 +648,6 @@ impl Face {
     }
 }
 
-/// The font file behind each face, bound into the binary.
 const FACES: [(Face, &[u8]); 5] = [
     (
         Face::Display,
@@ -780,8 +760,6 @@ const SCRIPTS: [Script; 8] = [
     }),
 ];
 
-/// A system face: its file, its index in the file, and the characters it is
-/// loaded for.
 type Script = (&'static str, u32, fn(char) -> bool);
 
 /// Loads the system face for any script in `text` that has none yet, on its
@@ -806,8 +784,6 @@ pub fn cover_now(ctx: &egui::Context, text: &str) {
     }
 }
 
-/// The faces `text` needs that nobody has asked for yet, marked as asked for
-/// so each one loads once.
 fn wanted(ctx: &egui::Context, text: &str) -> Vec<(&'static str, u32)> {
     let asked = egui::Id::new("overseer-scripts");
     let mut out = Vec::new();
@@ -853,8 +829,6 @@ pub fn style() -> Style {
     let mut visuals = Visuals::dark();
     visuals.panel_fill = colour::BG;
     visuals.window_fill = colour::BG;
-    // Text fields sit a step darker than the surface under them, so they look
-    // like somewhere to type.
     visuals.extreme_bg_color = colour::VOID;
     visuals.faint_bg_color = colour::BG_RAISED;
     visuals.override_text_color = Some(colour::TEXT);
@@ -891,7 +865,6 @@ pub fn style() -> Style {
     style.spacing.item_spacing = egui::vec2(space::MD, space::SM);
     style.spacing.window_margin = egui::Margin::ZERO;
     style.interaction.selectable_labels = false;
-    // For any widget that does not name its own font.
     style.text_styles = [
         (TextStyle::Heading, Face::Display.at(size::TITLE)),
         (TextStyle::Body, Face::Body.at(size::BODY)),
@@ -917,8 +890,6 @@ pub fn typed(text: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
     set(text, font, tint)
 }
 
-/// Lays `upper` out tracked for its size, with scripts that are set solid
-/// left untracked.
 fn set(upper: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
     let tracking = tracking_for(font.size);
     let base = egui::TextFormat {
@@ -954,13 +925,10 @@ fn set(upper: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
     job
 }
 
-/// Whether a character belongs to a script that is set without tracking.
 fn unspaced(c: char) -> bool {
     SCRIPTS.iter().any(|(_, _, needs)| needs(c))
 }
 
-/// The tracking left after the last character of a caps label, which is
-/// not part of its width.
 fn trailing(text: &str, points: f32) -> f32 {
     if text.chars().last().is_some_and(unspaced) {
         0.0
@@ -1046,13 +1014,10 @@ pub fn caps_text(
 mod tests {
     use super::{Face, caps, colour, cover_now, install_fonts, size, tracking_for};
 
-    /// A family registered nowhere panics inside epaint the first time a glyph
-    /// in it is laid out.
     #[test]
     fn every_face_is_bound() {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
-        // Fonts only exist once a frame has run, so the check runs inside one.
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let ctx = ui.ctx();
             for face in [
@@ -1093,8 +1058,6 @@ mod tests {
         );
     }
 
-    /// Names in every script a player might use draw with no boxes, once the
-    /// faces they need are loaded.
     #[test]
     fn strange_names_have_glyphs() {
         let names = [

@@ -1,29 +1,12 @@
 {
-  "schemaVersion": 1,
-  "app": {
-    "version": "2.6.2",
-    "channel": "stable"
-  },
+  "version": "2.7.0",
+  "channel": "stable",
+  "speaks": 2,
   "python": {
-    "implementation": "CPython",
     "version": "3.13.16",
-    "arch": "x64",
-    "bits": 64,
-    "installerUrl": "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe",
-    "installerSha256": "fb4f9f5d438b2396da0086dc70b935c530cb578e37adc6d354f7ad2037fee83b",
-    "installerSubject": "CN=Python Software Foundation, O=Python Software Foundation, L=Beaverton, S=Oregon, C=US"
+    "download": "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe",
+    "sha256": "fb4f9f5d438b2396da0086dc70b935c530cb578e37adc6d354f7ad2037fee83b",
+    "signer": "CN=Python Software Foundation, O=Python Software Foundation, L=Beaverton, S=Oregon, C=US"
   },
-  "pip": {
-    "version": "26.1.2"
-  },
-  "requirements": {
-    "path": "backend/requirements.txt",
-    "hashAlgorithm": "sha256"
-  },
-  "protocol": {
-    "version": 1,
-    "supported": [
-      1
-    ]
-  }
+  "pip": "26.1.2"
 }

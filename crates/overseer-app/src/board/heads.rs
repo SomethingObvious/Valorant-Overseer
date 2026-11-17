@@ -1,6 +1,3 @@
-//! What sits over each side: a plate in the side's colour, red for the
-//! enemy and teal for your team, cut the same way, and the column heads.
-
 use egui::{Align2, Color32, Pos2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::Board;
 use overseer_ui::{Face, caps_text, colour, space};
@@ -10,11 +7,8 @@ use super::grid::Grid;
 use super::paint;
 use crate::sort::{Direction, Sort};
 
-/// How tall a side's plate is.
 pub(crate) const PLATE: f32 = 36.0;
 
-/// The plate over one side, with its averages. True when its worth-a-look
-/// chip was clicked.
 pub(crate) fn team(ui: &mut Ui, board: &Board, side: Side, team: &str) -> bool {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), PLATE), Sense::hover());
@@ -66,7 +60,6 @@ pub(crate) fn team(ui: &mut Ui, board: &Board, side: Side, team: &str) -> bool {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked();
     }
-    // The shard's right edge leans in by its foot.
     let right = rect.width().mul_add(-0.006, rect.right()) - space::LG;
     taken = economy(
         ui,
@@ -85,9 +78,6 @@ pub(crate) fn team(ui: &mut Ui, board: &Board, side: Side, team: &str) -> bool {
     clicked
 }
 
-/// A side's plate: a shard in its colour whose edges are off square by a
-/// degree or so, and a thin rule under it that drops a little faster than
-/// its foot, the website's cut.
 fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
     let at = |x: f32, y: f32| {
         pos2(
@@ -101,8 +91,6 @@ fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
         egui::Stroke::NONE,
     ));
     let foot = at(0.0, 0.92).y;
-    // The plate's foot drops to the right, so a rule that rose would run
-    // into it on a wide board. This one drops with it, a touch faster.
     let (left, right) = (foot + 3.0, rect.width().mul_add(0.001, rect.bottom() + 3.0));
     painter.add(egui::Shape::convex_polygon(
         vec![
@@ -116,8 +104,6 @@ fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
     ));
 }
 
-/// A chip slanted at both ends and turned by `degrees` about its centre, so
-/// a row of them on the plate reads as cut out and laid down by hand.
 fn tilted_chip(painter: &egui::Painter, chip: Rect, fill: Color32, degrees: f32) {
     let (sin, cos) = degrees.to_radians().sin_cos();
     let centre = chip.center();
@@ -138,7 +124,6 @@ fn tilted_chip(painter: &egui::Painter, chip: Rect, fill: Color32, degrees: f32)
     ));
 }
 
-/// A black chip on the red plate, in the flag's amber.
 fn worth_chip(painter: &egui::Painter, at: Pos2, flagged: usize) -> Rect {
     let text = format!("{flagged} Worth a Look");
     let galley = painter.layout_job(overseer_ui::caps(&text, Face::Cut.at(10.5), colour::WARN));
@@ -187,7 +172,6 @@ fn economy(
         if who.is_empty() || end + wide > limit {
             continue;
         }
-        // A black chip like the worth-a-look count's.
         let chip = Rect::from_min_size(pos2(end, y - 10.0), vec2(wide, 20.0));
         tilted_chip(painter, chip, colour::BG, turn);
         let _said = caps_text(
@@ -263,8 +247,6 @@ fn averages(
     }
 }
 
-/// The column heads over a side, drawn from the same grid as its rows, and
-/// the one that was clicked. Clicking a head sorts by it.
 pub(crate) fn columns(ui: &mut Ui, grid: &Grid, sort: &Sort) -> Option<&'static str> {
     let (rect, _response) = ui.allocate_exact_size(
         vec2(ui.available_width(), space::XL + space::SM),
@@ -339,8 +321,6 @@ pub(crate) fn columns(ui: &mut Ui, grid: &Grid, sort: &Sort) -> Option<&'static 
     clicked
 }
 
-/// How many columns are on but don't fit, at the end of the heads, with
-/// their names on its hover.
 fn missing(ui: &Ui, painter: &egui::Painter, rect: Rect, dropped: &[&str]) {
     let Some((last, others)) = dropped.split_last() else {
         return;

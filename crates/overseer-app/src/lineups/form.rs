@@ -1,8 +1,3 @@
-//! The page a lineup is written on: where it goes on the map, who throws it,
-//! and the optional utility, side, site, clip, name and notes. Each part is a
-//! section with a tick once it is done, the optional ones say so, and Save
-//! stays at the bottom of the panel where it can't scroll away.
-
 use egui::{Align2, Color32, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Atlas, Plan, Tools};
 use overseer_ui::{Face, caps_text, colour, size, space};
@@ -41,7 +36,6 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     section(ui, "Agent", !draft.lineup.agent.is_empty(), false);
     pick::agent(ui, atlas, draft, (main.as_deref(), default));
     if planted {
-        // The Spike has no utility to pick.
     } else if draft.lineup.agent.is_empty() {
         section(ui, "Utility", false, true);
         words(ui, "Pick the agent first.", colour::TEXT_FAINT);
@@ -80,7 +74,6 @@ pub(super) fn body(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     asked
 }
 
-/// Save and Cancel, and what still stops a save, kept at the panel's foot.
 pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
     let busy = view.pending.map(|(_, job)| job);
     let Mode::Edit(draft) = &view.mode else {
@@ -109,8 +102,6 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
     match (busy, missing) {
         (Some(Job::Save), _) => words(ui, "Saving.", colour::TEXT_DIM),
         (_, Some(why)) => notice(ui, why, colour::WARN),
-        // With no name typed, the one it gets is said here, since in its
-        // box it is only a faint placeholder.
         _ if draft.lineup.title.trim().is_empty() => notice(
             ui,
             &format!("Ready to save as {}.", draft.named()),
@@ -118,8 +109,6 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
         ),
         _ => notice(ui, "Ready to save.", colour::ALLY),
     }
-    // A draft with anything in it takes a second press to throw away, the
-    // way Delete and Clear All do.
     if cancelled && ask {
         if let Mode::Edit(draft) = &mut view.mode {
             draft.discard = Some(now);
@@ -134,8 +123,6 @@ pub(super) fn footer(ui: &mut Ui, view: &mut View) -> Option<Request> {
     saved.then_some(Request::Save)
 }
 
-/// A section's heading with a rule to the edge, and a tick once it is done
-/// or else Optional for the parts a lineup doesn't need.
 fn section(ui: &mut Ui, name: &str, done: bool, optional: bool) {
     ui.add_space(space::LG);
     let (rect, _response) =
@@ -175,19 +162,14 @@ fn section(ui: &mut Ui, name: &str, done: bool, optional: bool) {
     }
 }
 
-/// A green square with a tick in it, centred on `centre`. Returns where it went.
 fn tick(painter: &egui::Painter, centre: egui::Pos2) -> Rect {
     let mark = Rect::from_center_size(centre, vec2(12.0, 16.0));
     overseer_ui::pip(painter, mark, true);
     mark
 }
 
-/// How tall a place's row is.
 const PLACE_ROW: f32 = 44.0;
 
-/// Where you stand and where it lands, each a row with its pin drawn the way
-/// the map draws it. The one the next click on the map sets is lit like a
-/// picked lineup, and a placed one has a tick.
 fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
     let most = areas::spots(draft.lineup.ability.as_deref()).map_or(1, |s| s.0);
     for (place, name, set) in rows(draft, most) {
@@ -238,7 +220,6 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
                     colour::TEXT_DIM
                 },
             );
-            // A sentence, so in the face for reading rather than small caps.
             painter.text(
                 pos2(text_at, rect.top() + 31.0),
                 Align2::LEFT_CENTER,
@@ -259,9 +240,6 @@ fn placing(ui: &mut Ui, atlas: &Atlas, draft: &mut Draft, main: Option<&str>) {
     }
 }
 
-/// The rows under On the Map: where you stand and where it lands, or for
-/// the Spike only where it's planted, and a row for more places it lands
-/// when it can be put down in `most` of them.
 fn rows(draft: &Draft, most: usize) -> Vec<(Place, &'static str, bool)> {
     let land = draft.lineup.land.is_some();
     let mut rows = if draft.lineup.agent == SPIKE {
@@ -286,9 +264,6 @@ fn rows(draft: &Draft, most: usize) -> Vec<(Place, &'static str, bool)> {
     rows
 }
 
-/// What a row under On the Map says, and in what colour: whether it is
-/// placed and what a click on the map does. The row for more places it lands
-/// counts `placed` of the `most` it can.
 fn status(
     place: Place,
     (set, next): (bool, bool),
@@ -309,7 +284,6 @@ fn status(
     (words.to_owned(), tint)
 }
 
-/// Which side and site it is for.
 fn whereabouts(ui: &mut Ui, plan: Option<&Plan>, draft: &mut Draft) {
     ui.horizontal_wrapped(|ui| {
         for (side, name) in [("attack", "Attacking"), ("defense", "Defending")] {
@@ -327,16 +301,10 @@ fn whereabouts(ui: &mut Ui, plan: Option<&Plan>, draft: &mut Draft) {
     });
 }
 
-/// How far a trim handle reaches for the pointer, either side of it.
 const GRIP: f32 = 11.0;
-/// The shortest clip the trim bar keeps, in seconds.
 const SHORTEST: f64 = 0.5;
-/// How tall the trim bar, the From and To boxes and the volume under the
-/// video are, together, in points.
 const CUTTING_ROOM: f32 = 150.0;
-/// The longest clip the backend cuts, in seconds.
 pub(super) const LONGEST: f64 = 90.0;
-/// How long the trim bar takes to zoom to a new span, in seconds.
 const ZOOM: f32 = 0.25;
 
 /// The long description and the pictures, both optional. A picture comes in
@@ -368,11 +336,6 @@ fn extras(ui: &mut Ui, draft: &mut Draft) {
     );
 }
 
-/// The clip: a button until it is wanted, then where it comes from, the
-/// video itself, a trim bar over it, where it is cut and how loud it is.
-/// Dragging a handle or typing a time shows that frame, and Play plays the
-/// part kept. Asks how long the source runs once it has sat unchanged for a
-/// moment, then for a file of it the window can play.
 fn clip(
     ui: &mut Ui,
     tools: Tools,
@@ -407,7 +370,6 @@ fn clip(
             draft.measure = Measure::default();
             *slot = None;
         }
-        // Enter in the box loads it the same as the button.
         wanted = typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         wanted |= controls::button(ui, label, Tone::Primary, can).clicked();
     });
@@ -459,13 +421,7 @@ fn clip(
     watch_now(draft, tools, link).then_some(Request::Watch)
 }
 
-/// The video, once there is a file of it to play, or else what is still
-/// being done to get one, playing the part kept. Before Load Video, a
-/// saved lineup shows its clip as it was cut.
 fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
-    // Nothing starts on its own here, and it is smaller than a saved
-    // lineup's, so the trim bar, the times and the volume under it fit on
-    // screen with it.
     let prefs = Prefs {
         autoplay: false,
         size: prefs.size * 0.6,
@@ -483,7 +439,6 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
         } else if let Some(why) = draft.measure.failed.as_deref() {
             notice(ui, why, colour::WARN);
         } else if let Some((cut, runs)) = draft.cut.as_ref().filter(|_| draft.same_source()) {
-            // Its volume is in it already, so it plays as it is.
             player::of(slot, cut, 0.0, prefs).show(ui, (0.0, *runs), 100.0, CUTTING_ROOM);
             words(
                 ui,
@@ -495,7 +450,6 @@ fn watch(ui: &mut Ui, draft: &Draft, slot: &mut Option<Player>, prefs: Prefs) {
     };
     let span = kept(draft).unwrap_or((0.0, LONGEST));
     let player = player::of(slot, file, span.0, prefs);
-    // The bar carries the clip's volume, so the clip itself plays as it is.
     player.follow(draft.volume, ui.input(|i| i.time));
     player.show(ui, span, 100.0, CUTTING_ROOM);
 }
@@ -515,11 +469,8 @@ fn scrub(ui: &mut Ui, draft: &mut Draft, slot: &mut Option<Player>) {
             && draft.measure.held.is_none()
             && let Some(at) = draft.measure.last.take()
         {
-            // The exact frame once let go, since the strip's are only near.
             player.still(at);
         }
-        // Decoded ahead for the stretch the trim bar shows, once nothing is
-        // being dragged, so a drag never waits on a new strip.
         if draft.measure.held.is_none()
             && let Some(reach) = reach(draft)
         {
@@ -528,22 +479,16 @@ fn scrub(ui: &mut Ui, draft: &mut Draft, slot: &mut Option<Player>) {
     }
 }
 
-/// The stretch the trim bar spans once it settles.
 fn reach(draft: &Draft) -> Option<(f64, f64)> {
     let (start, end) = kept(draft)?;
     Some(widened(start, end, draft.measure.length?))
 }
 
-/// What is kept from `start` to `end`, with as much again either side, so a
-/// short clip out of a long video still gets the width to be cut to a tenth
-/// of a second.
 fn widened(start: f64, end: f64, total: f64) -> (f64, f64) {
     let margin = (end - start).max(5.0);
     ((start - margin).max(0.0), (end + margin).min(total))
 }
 
-/// Where the part kept starts and ends, once the source's length is known.
-/// No From is the start of the video and no To is its end.
 fn kept(draft: &Draft) -> Option<(f64, f64)> {
     let total = draft.measure.length?;
     let start = super::seconds(&draft.from)
@@ -557,7 +502,6 @@ fn kept(draft: &Draft) -> Option<(f64, f64)> {
     Some((start, end))
 }
 
-/// Says which of the clip's programs aren't installed.
 fn missing(ui: &mut Ui, tools: Tools, link: bool) {
     for (needed, missing) in [
         (
@@ -575,8 +519,6 @@ fn missing(ui: &mut Ui, tools: Tools, link: bool) {
     }
 }
 
-/// Whether to ask for a file of the source to play: once its length is
-/// known, if the programs that get one are there.
 const fn watch_now(draft: &Draft, tools: Tools, link: bool) -> bool {
     let measure = &draft.measure;
     measure.length.is_some()
@@ -587,8 +529,6 @@ const fn watch_now(draft: &Draft, tools: Tools, link: bool) -> bool {
         && (!link || tools.ytdlp)
 }
 
-/// Whether to ask how long the source runs now: when it is new, Load Video
-/// has asked for it, and the program that can tell is installed.
 fn measure_now(draft: &Draft, tools: Tools) -> bool {
     let source = draft.source.trim();
     if !draft.measure.wanted
@@ -602,10 +542,6 @@ fn measure_now(draft: &Draft, tools: Tools) -> bool {
     !((link && !tools.ytdlp) || (!link && !tools.ffmpeg))
 }
 
-/// The part of the video kept, as a bar with a handle at each end and the
-/// playhead while it plays. Dragging a handle writes From or To in tenths
-/// of a second, and typing in either moves its handle. With nothing typed
-/// the whole video is kept. Returns the time of a handle being dragged.
 fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
     let (total, (mut start, mut end)) = draft.measure.length.zip(kept(draft))?;
     let (rect, _response) =
@@ -614,7 +550,6 @@ fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
         pos2(rect.left() + GRIP, rect.top() + 16.0),
         pos2(rect.right() - GRIP, rect.top() + 32.0),
     );
-    // Held still while a handle is dragged, so the scale doesn't shift under it.
     let span = draft
         .measure
         .held
@@ -680,8 +615,6 @@ fn trim(ui: &mut Ui, draft: &mut Draft, playhead: Option<f64>) -> Option<f64> {
     dragged
 }
 
-/// The part of the video the bar spans, [`widened`], eased there so the bar
-/// zooms rather than jumps once a handle is let go.
 fn around(ui: &Ui, start: f64, end: f64, total: f64) -> (f64, f64) {
     let (lo, hi) = widened(start, end, total);
     let ease = |name: &str, to: f64| {
@@ -696,15 +629,11 @@ fn around(ui: &Ui, start: f64, end: f64, total: f64) -> (f64, f64) {
     (lo, hi.max(lo + 0.1))
 }
 
-/// Where `t` seconds falls on `track` when it spans `span`.
 fn scale(track: Rect, span: (f64, f64), t: f64) -> f32 {
     let share = ((t - span.0) / (span.1 - span.0)).clamp(0.0, 1.0);
     track.width().mul_add(share as f32, track.left())
 }
 
-/// Paints the trim bar: a strip for the whole video with the part the bar
-/// spans marked on it, the bar with what is kept and its two handles, and
-/// the times under it.
 fn bar(
     painter: &egui::Painter,
     (rect, track): (Rect, Rect),
@@ -769,7 +698,6 @@ fn bar(
     }
 }
 
-/// A small caps label beside the box it names.
 fn caption(ui: &mut Ui, text: &str) {
     let font = crate::board::paint::label();
     let wide = overseer_ui::caps_width(ui.painter(), text, font.clone());

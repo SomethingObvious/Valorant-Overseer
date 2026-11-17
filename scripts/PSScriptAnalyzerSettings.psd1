@@ -25,9 +25,9 @@
         # lines nobody will ever read.
         'PSAvoidUsingEmptyCatchBlock'
 
-        # Get-PythonCandidates returns candidates; Test-Markers checks the
-        # markers; Install-PyDeps installs the dependency set. The singular
-        # form would misdescribe every one of them.
+        # Get-PythonChoices returns every Python worth trying, Get-VenvFaults
+        # every fault it finds and Install-Packages the whole pinned set, so the
+        # singular would misdescribe each of them.
         'PSUseSingularNouns'
 
         # -WhatIf on an internal helper that is only ever called by install.ps1

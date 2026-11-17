@@ -12,37 +12,28 @@ use std::thread::Builder;
 use crate::payload;
 use crate::plan::install_args;
 
-/// What the installer says while it works.
 #[derive(Debug, Clone)]
 pub(crate) enum Line {
-    /// A line it printed.
     Said(String),
-    /// It finished, with whether it worked.
     Done(bool),
 }
 
-/// A running installer.
 #[derive(Debug)]
 pub(crate) struct Running {
     lines: Receiver<Line>,
 }
 
 impl Running {
-    /// Everything it has said since the last look.
     pub(crate) fn drain(&self) -> Vec<Line> {
         self.lines.try_iter().collect()
     }
 
-    /// The next thing it says within `timeout`, so a test can wait without a
-    /// sleep loop.
     #[cfg(test)]
     fn next_within(&self, timeout: std::time::Duration) -> Option<Line> {
         self.lines.recv_timeout(timeout).ok()
     }
 }
 
-/// Starts the installer and returns something to read it with. A setup that
-/// `carried` the app unpacks it first.
 pub(crate) fn start<W>(root: &Path, region: &str, carried: Option<&Path>, wake: W) -> Running
 where
     W: Fn() + Clone + Send + 'static,
@@ -80,7 +71,6 @@ where
     Running { lines }
 }
 
-/// Runs the installer, passes on every line it prints, then says how it ended.
 fn watch<W>(args: &[String], root: &Path, tx: &Sender<Line>, wake: &W)
 where
     W: Fn() + Clone + Send,
@@ -123,7 +113,6 @@ where
     wake();
 }
 
-/// Sends each line from one of the installer's pipes until it closes.
 fn pass(pipe: impl Read, tx: &Sender<Line>, wake: &impl Fn()) {
     // Bytes rather than `lines()`, which gives up at the first line that isn't
     // UTF-8 and loses the rest. Windows PowerShell writes in the console's
@@ -136,15 +125,12 @@ fn pass(pipe: impl Read, tx: &Sender<Line>, wake: &impl Fn()) {
     }
 }
 
-/// Tells the window the install failed, and why.
 fn fail(tx: &Sender<Line>, wake: &impl Fn(), why: &str) {
     drop(tx.send(Line::Said(why.to_owned())));
     drop(tx.send(Line::Done(false)));
     wake();
 }
 
-/// Runs the installer with no window, for a repair or a script, and returns
-/// its exit code.
 pub(crate) fn silent(root: &Path, region: &str, carried: Option<&Path>) -> i32 {
     if let Some(exe) = carried
         && payload::unpack(exe, root).is_err()
@@ -177,8 +163,6 @@ mod tests {
 
     use super::{Line, Running, start};
 
-    /// Everything the installer says and how it ended, or no ending when it
-    /// goes quiet for `patience`.
     fn finish(running: &Running, patience: Duration) -> (Vec<String>, Option<bool>) {
         let mut said = Vec::new();
         while let Some(line) = running.next_within(patience) {
@@ -190,7 +174,6 @@ mod tests {
         (said, None)
     }
 
-    /// The window has no other way out of the running step.
     #[test]
     fn a_missing_installer_still_finishes() {
         let running = start(Path::new("Z:/nowhere"), "na", None, || {});
@@ -217,8 +200,6 @@ mod tests {
 
         let running = start(&root, "na", None, || {});
         let (said, done) = finish(&running, Duration::from_secs(30));
-        // A stalled installer still has the folder open, and the assert below
-        // says more about that than a failed delete would.
         drop(std::fs::remove_dir_all(&root));
 
         let sizes: Vec<usize> = said.iter().map(String::len).collect();

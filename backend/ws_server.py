@@ -1,25 +1,22 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""The local WebSocket bridge on 127.0.0.1 the front ends connect to.
-
-It wants the per-launch token first and closes any connection with an Origin
-header, since no browser has any business here.
-"""
+"""The bridge the window reads the board through, a WebSocket on 127.0.0.1."""
 
 from __future__ import annotations
 
 import asyncio
-import functools
 import hmac
 import json
 import secrets
 import threading
-from dataclasses import dataclass
+import time
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import overseerlog
 import refresh
 from common import console_logger, env_number
+from common.check import check
 from vconstants import APP_VERSION
 
 if TYPE_CHECKING:
@@ -27,121 +24,230 @@ if TYPE_CHECKING:
 
 try:
     from websockets.exceptions import ConnectionClosed
-    from websockets.legacy.server import serve as _ws_serve
+    from websockets.legacy.server import serve as _serve
 except ImportError as e:
-    msg = (
-        "The 'websockets' package is required for local WebSocket mode. "
-        "Run install.bat to repair the installation."
-    )
+    msg = "Overseer needs the websockets package. Run install.bat to repair the install."
     raise RuntimeError(msg) from e
 
 LOG = overseerlog.get_logger("ws", "websocket")
+_say = console_logger("ws", quiet_aware=False, also=LOG)
 
-PROTOCOL_VERSION = 1
-SUPPORTED_PROTOCOLS = {1}
-CAPABILITIES = ["state", "commands", "requests"]
+SPEAKS = 2
 
-CLOSE_AUTH = 4401
-CLOSE_ORIGIN = 4403
-CLOSE_PROTOCOL = 4406
+_HELLO_WAIT = 5.0
+_SETTLE = 0.4
+_PING_EVERY = 30
+# How long the board loop may go without finishing a pass before the pings
+# stop. A pass is a build and a wait of 15 seconds at most, so this is a
+# build that hung. Without pings the window counts the backend as gone and
+# starts a new one, where pings alone would keep a frozen board looking live.
+_STUCK = 180.0
+_UNREAD = frozenset({"riotRequests", "queue", "agents", "teams"})
 
-
-# Speaks even under OVERSEER_QUIET, because the bridge failing to start is
-# what the user needs to see.
-_log = console_logger("ws", quiet_aware=False, also=LOG)
-
-
-@dataclass
-class _State:
-    # The token a client must send first, made when the bridge starts.
-    session_token: str = ""
-
-
-_STATE = _State()
-_CLIENTS: set[Any] = set()
+# Close codes: the window reconnects after the first and gives up on the rest.
+_CLOSE_KEY = 4401
+_CLOSE_BROWSER = 4403
+_CLOSE_SPEAKS = 4406
 
 
-async def _process_request(_path: str, request_headers: Any) -> Any:
+def _frame(kind: str, **fields: Any) -> str:
+    return json.dumps({"kind": kind, **fields}, default=str)
+
+
+def _read(raw: Any) -> dict[str, Any]:
     try:
-        get = request_headers.get
-    except AttributeError:
+        got = json.loads(raw)
+    except (TypeError, ValueError, RecursionError) as e:
+        LOG.warning("a message that isn't JSON was dropped: %r", e)
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+async def _no_browsers(_path: str, headers: Any) -> Any:
+    origin = getattr(headers, "get", lambda _key: None)("Origin")
+    if origin is None:
         return None
-
-    # Only a browser sends an Origin header, and no browser has any business
-    # here. Whatever page is asking, the answer is no.
-    origin = get("Origin")
-    if origin is not None:
-        _log(f"rejected browser origin: {origin}")
-        return (
-            HTTPStatus.FORBIDDEN,
-            [("Content-Type", "text/plain"), ("Content-Length", "16")],
-            b"Forbidden origin",
-        )
-
-    return None
+    _say(f"turned away a browser from {origin}")
+    body = b"No browsers"
+    return HTTPStatus.FORBIDDEN, [("Content-Length", str(len(body)))], body
 
 
-async def _safe_send(ws: Any, obj: dict[str, Any]) -> bool:
-    try:
-        await ws.send(json.dumps(obj, default=str))
-    except ConnectionClosed:
-        return False
-    except (TypeError, ValueError) as e:
-        LOG.warning("could not encode a %r message: %r", obj.get("type"), e)
-        return False
-    else:
+class _Bridge:
+    def __init__(
+        self,
+        boards: Callable[[], dict[str, Any]],
+        answer: Callable[[str, dict[str, Any]], dict[str, Any]],
+        pace: Callable[[float], float],
+    ) -> None:
+        self.key = secrets.token_urlsafe(32)
+        self.watching: set[Any] = set()
+        self.boards = boards
+        self.answer = answer
+        self.pace = pace
+        self.every = env_number("WS_STATE_POLL", 4.0, low=0.5, high=60.0)
+        self.loop = asyncio.new_event_loop()
+        # Boards build on threads of their own. Questions share the default
+        # pool, and on a bad connection a few slow profile lookups can fill
+        # it, which would freeze the board while the pings still went out.
+        self.board_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="board")
+        self.passed = time.monotonic()
+
+    def stuck(self) -> bool:
+        return time.monotonic() - self.passed > _STUCK
+
+    async def tell(self, ws: Any, kind: str, **fields: Any) -> bool:
+        try:
+            await ws.send(_frame(kind, **fields))
+        except ConnectionClosed:
+            return False
+        except (TypeError, ValueError) as e:
+            LOG.warning("a %s message wouldn't encode: %r", kind, e)
+            return False
         return True
 
+    async def tell_all(self, kind: str, **fields: Any) -> None:
+        text = _frame(kind, **fields)
+        for ws in list(self.watching):
+            try:
+                await ws.send(text)
+            except Exception as e:
+                if not isinstance(e, ConnectionClosed):
+                    LOG.warning("dropped a window whose send failed: %r", e)
+                self.watching.discard(ws)
 
-def _parse(raw: Any) -> dict[str, Any]:
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError, RecursionError) as e:
-        # Only the error goes in the log. The raw text can be an auth message
-        # with the session token in it.
-        LOG.warning("dropped a message that is not JSON: %r", e)
-        return {}
-    return data if isinstance(data, dict) else {}
+    async def turn_away(self, ws: Any, why: str, say: str, code: int) -> None:
+        await self.tell(ws, "refused", why=why, say=say, version=APP_VERSION)
+        await ws.close(code=code, reason=why)
 
-
-async def _broadcast(obj: Any) -> None:
-    if not _CLIENTS:
-        return
-    payload = json.dumps(obj, default=str)
-    dead = []
-    for ws in list(_CLIENTS):
+    async def hello(self, ws: Any) -> bool:
         try:
-            await ws.send(payload)
+            got = _read(await asyncio.wait_for(ws.recv(), timeout=_HELLO_WAIT))
+        except TimeoutError:
+            await self.turn_away(ws, "late", "No key came. Restart Valorant Overseer.", _CLOSE_KEY)
+            return False
         except ConnectionClosed:
-            dead.append(ws)
-        except Exception as e:
-            # One broken client must not stop the others getting the board.
-            LOG.warning("dropping a client after a failed send: %r", e)
-            dead.append(ws)
-    for ws in dead:
-        _CLIENTS.discard(ws)
-
-
-def _self_handshake(ws_port: int, timeout: float = 6.0) -> None:
-    from websockets.sync.client import connect as _sync_connect
-
-    with _sync_connect(f"ws://127.0.0.1:{ws_port}", open_timeout=timeout, close_timeout=2) as ws:
-        ws.send(
-            json.dumps(
-                {"type": "auth", "token": _STATE.session_token, "protocol": PROTOCOL_VERSION}
+            return False
+        # Compared as bytes, since compare_digest raises on text outside
+        # ASCII, and a wrong key with odd characters is still just wrong.
+        sent = str(got.get("key") or "").encode("utf-8", "replace")
+        if got.get("kind") != "hello" or not hmac.compare_digest(sent, self.key.encode()):
+            await self.turn_away(
+                ws, "key", "The bridge didn't know this key. Restart Valorant Overseer.", _CLOSE_KEY
             )
-        )
-        reply = json.loads(ws.recv(timeout=timeout))
-        if reply.get("type") != "auth_ok":
-            msg = f"self-handshake got {reply.get('type')!r}"
-            raise RuntimeError(msg)
+            return False
+        if got.get("speaks") != SPEAKS:
+            LOG.warning("a window speaking %r was turned away", got.get("speaks"))
+            await self.turn_away(
+                ws,
+                "speaks",
+                "This window and the backend are from different versions. Run the setup again.",
+                _CLOSE_SPEAKS,
+            )
+            return False
+        return await self.tell(ws, "welcome", speaks=SPEAKS, version=APP_VERSION)
+
+    async def reply(self, ws: Any, asked: dict[str, Any]) -> None:
+        what = str(asked.get("what") or "")
+        given = asked.get("with")
+        try:
+            got = await self.loop.run_in_executor(
+                None, self.answer, what, given if isinstance(given, dict) else {}
+            )
+        except Exception as e:
+            LOG.exception("the %r question failed", what)
+            await self.tell(ws, "reply", n=asked.get("n"), failed=str(e))
+            return
+        await self.tell(ws, "reply", n=asked.get("n"), answer=got)
+
+    async def serve(self, ws: Any) -> None:
+        if ws.request_headers.get("Origin") is not None:
+            await ws.close(code=_CLOSE_BROWSER, reason="No browsers")
+            return
+        if not await self.hello(ws):
+            return
+        self.watching.add(ws)
+        try:
+            first = await self.loop.run_in_executor(self.board_pool, self.boards)
+            await self.tell(ws, "board", board=first)
+        except Exception:
+            LOG.exception("a new window's first board failed")
+        pending: set[asyncio.Task[None]] = set()
+        try:
+            async for raw in ws:
+                got = _read(raw)
+                if got.get("kind") == "ask":
+                    task = asyncio.create_task(self.reply(ws, got))
+                    pending.add(task)
+                    task.add_done_callback(pending.discard)
+        except ConnectionClosed:
+            pass
+        finally:
+            self.watching.discard(ws)
+
+    async def send_boards(self) -> None:
+        sent = None
+        failing = ""
+        while True:
+            try:
+                board = await self.loop.run_in_executor(self.board_pool, self.boards)
+                seen = json.dumps(
+                    {k: v for k, v in board.items() if k not in _UNREAD},
+                    sort_keys=True,
+                    default=str,
+                )
+                if seen != sent:
+                    sent = seen
+                    await self.tell_all("board", board=board)
+                failing = ""
+            except Exception as e:
+                if repr(e) != failing:
+                    failing = repr(e)
+                    LOG.exception("sending a board failed")
+            self.passed = time.monotonic()
+            waited = self.pace(self.every)
+            if await self.loop.run_in_executor(self.board_pool, refresh.wait, waited):
+                await asyncio.sleep(_SETTLE)
+            refresh.clear()
+
+    async def send_pings(self) -> None:
+        said = False
+        while True:
+            await asyncio.sleep(_PING_EVERY)
+            if self.stuck():
+                if not said:
+                    LOG.error("no board in %ss, so the pings stop for a restart", _STUCK)
+                    said = True
+                continue
+            said = False
+            await self.tell_all("ping")
+
+    async def main(self, port: int, up: threading.Event) -> None:
+        async with _serve(
+            self.serve,
+            "127.0.0.1",
+            port,
+            process_request=_no_browsers,
+            ping_interval=None,
+            max_queue=16,
+            # The default 1 MiB is a few hundred brush strokes on one map. Past
+            # it the socket closes, and the window sends the same drawing again
+            # each time it reconnects.
+            max_size=16 * 2**20,
+        ):
+            _say(f"listening on 127.0.0.1:{port}, speaking version {SPEAKS}, local windows only")
+            up.set()
+            await asyncio.gather(self.send_boards(), self.send_pings())
 
 
-# How long the board loop waits after an early wake for the rest of a burst.
-_SETTLE = 0.4
+def _say_hello(port: int, key: str, wait: float = 6.0) -> None:
+    from websockets.sync.client import connect
 
-# Board fields the window never reads. Two of them count up on every build.
-_UNREAD = frozenset({"riotRequests", "queue", "agents", "teams"})
+    with connect(f"ws://127.0.0.1:{port}", open_timeout=wait, close_timeout=2) as ws:
+        ws.send(_frame("hello", key=key, speaks=SPEAKS))
+        got = _read(ws.recv(timeout=wait))
+    if got.get("kind") != "welcome":
+        msg = f"it said {got.get('kind')!r} to a hello"
+        raise RuntimeError(msg)
 
 
 def start(
@@ -151,208 +257,39 @@ def start(
     request_handler: Callable[[str, dict[str, Any]], dict[str, Any]],
     pace: Callable[[float], float],
 ) -> str:
-    """Start the WebSocket bridge on a thread and return once it answers.
+    """Start the bridge on its own thread, and return its key once it answers a hello."""
+    bridge = _Bridge(board_provider, request_handler, pace)
+    up = threading.Event()
+    failed: list[BaseException] = []
 
-    `pace` may stretch the wait between boards from the base interval, so the
-    loop can poll slower in states where little changes, like a match in play.
-    """
-    _STATE.session_token = secrets.token_urlsafe(32)
-    interval = env_number("WS_STATE_POLL", 4.0, low=0.5)
-
-    ready = threading.Event()
-    boot_error: list[BaseException] = []
-
-    def _run() -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def handler(websocket: Any) -> None:
-            origin = websocket.request_headers.get("Origin")
-            if origin is not None:
-                await websocket.close(code=CLOSE_ORIGIN, reason="Forbidden origin")
-                return
-
-            try:
-                raw = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-            except TimeoutError:
-                await _safe_send(
-                    websocket,
-                    {
-                        "type": "auth_error",
-                        "code": "timeout",
-                        "message": "No token arrived within 5 seconds. Restart Valorant Overseer",
-                    },
-                )
-                await websocket.close(code=CLOSE_AUTH, reason="Auth timeout")
-                return
-            except ConnectionClosed:
-                return
-
-            msg = _parse(raw)
-            # As bytes, since compare_digest raises on text outside ASCII and
-            # a wrong token should be told so, whatever is in it.
-            if msg.get("type") != "auth" or not hmac.compare_digest(
-                str(msg.get("token") or "").encode("utf-8", "replace"),
-                _STATE.session_token.encode(),
-            ):
-                await _safe_send(
-                    websocket,
-                    {
-                        "type": "auth_error",
-                        "code": "bad_token",
-                        "message": "The bridge didn't accept this token. Restart Valorant Overseer",
-                    },
-                )
-                await websocket.close(code=CLOSE_AUTH, reason="Invalid token")
-                return
-
-            client_proto = msg.get("protocol", 1)
-            if not isinstance(client_proto, int) or client_proto not in SUPPORTED_PROTOCOLS:
-                LOG.warning(
-                    "rejected client protocol %r (supported: %s)",
-                    client_proto,
-                    sorted(SUPPORTED_PROTOCOLS),
-                )
-                await _safe_send(
-                    websocket,
-                    {
-                        "type": "auth_error",
-                        "code": "incompatible_protocol",
-                        "supported": sorted(SUPPORTED_PROTOCOLS),
-                        "appVersion": APP_VERSION,
-                        "message": "This scoreboard does not match the installed "
-                        "Valorant Overseer version. Reinstall the app.",
-                    },
-                )
-                await websocket.close(code=CLOSE_PROTOCOL, reason="Incompatible protocol")
-                return
-
-            await _safe_send(
-                websocket,
-                {
-                    "type": "auth_ok",
-                    "protocol": PROTOCOL_VERSION,
-                    "supported": sorted(SUPPORTED_PROTOCOLS),
-                    "appVersion": APP_VERSION,
-                    "capabilities": CAPABILITIES,
-                },
-            )
-            _CLIENTS.add(websocket)
-
-            try:
-                board = await loop.run_in_executor(None, board_provider)
-                await _safe_send(websocket, {"type": "state", "data": board})
-            except Exception:
-                # The client still gets the next broadcast.
-                LOG.exception("first board for a new client failed")
-
-            answering: set[asyncio.Task[None]] = set()
-
-            async def _answer(m: dict[str, Any]) -> None:
-                rtype = str(m.get("request") or "")
-                params = m.get("params") or {}
-                rid = m.get("id")
-                try:
-                    data = await loop.run_in_executor(
-                        None, functools.partial(request_handler, rtype, params)
-                    )
-                    await _safe_send(
-                        websocket, {"type": "response", "id": rid, "ok": True, "data": data}
-                    )
-                except Exception as e:
-                    LOG.exception("request %r failed", rtype)
-                    await _safe_send(
-                        websocket,
-                        {"type": "response", "id": rid, "ok": False, "error": str(e)},
-                    )
-
-            try:
-                async for raw in websocket:
-                    m = _parse(raw)
-                    mtype = m.get("type")
-                    if mtype == "ping":
-                        await _safe_send(websocket, {"type": "pong"})
-                    elif mtype == "request":
-                        # Each on its own task, so a clip download that takes
-                        # minutes doesn't hold History or a profile behind it.
-                        # Every answer carries its id, so the order they land
-                        # in doesn't matter.
-                        task = asyncio.create_task(_answer(m))
-                        answering.add(task)
-                        task.add_done_callback(answering.discard)
-            except ConnectionClosed:
-                pass
-            finally:
-                _CLIENTS.discard(websocket)
-
-        async def _broadcast_loop() -> None:
-            last = None
-            failing = ""
-            while True:
-                try:
-                    board = await loop.run_in_executor(None, board_provider)
-                    # Fields the window never reads but that change on every
-                    # build would otherwise send the whole board each time.
-                    shown = {k: v for k, v in board.items() if k not in _UNREAD}
-                    data_json = json.dumps(shown, sort_keys=True, default=str)
-                    if data_json != last:
-                        last = data_json
-                        await _broadcast({"type": "state", "data": board})
-                    failing = ""
-                except Exception as e:
-                    # The loop has to outlive a bad frame. A failure that
-                    # repeats every few seconds is logged once, not every time.
-                    if repr(e) != failing:
-                        failing = repr(e)
-                        LOG.exception("board broadcast failed")
-                # A moment's wait after an early wake lets the rest of a burst
-                # ride along, so ten players' K/D landing together is one
-                # board, not ten.
-                if await loop.run_in_executor(None, refresh.wait, pace(interval)):
-                    await asyncio.sleep(_SETTLE)
-                refresh.clear()
-
-        async def _heartbeat_loop() -> None:
-            while True:
-                await asyncio.sleep(30)
-                await _broadcast({"type": "ping"})
-
-        async def _main() -> None:
-            async with _ws_serve(
-                handler,
-                "127.0.0.1",
-                ws_port,
-                process_request=_process_request,
-                ping_interval=None,
-                max_queue=16,
-            ):
-                _log(
-                    f"listening on ws://127.0.0.1:{ws_port} "
-                    f"(protocol {PROTOCOL_VERSION}, local clients only)"
-                )
-                ready.set()
-                await asyncio.gather(_broadcast_loop(), _heartbeat_loop())
-
+    def run() -> None:
+        asyncio.set_event_loop(bridge.loop)
         try:
-            loop.run_until_complete(_main())
+            bridge.loop.run_until_complete(bridge.main(ws_port, up))
         except Exception as e:
-            boot_error.append(e)
-            LOG.exception("VG-WS-001 server stopped")
-            _log(f"server stopped: {e}")
-            ready.set()
+            failed.append(e)
+            LOG.exception("VG-WS-001 the bridge stopped")
+            _say(f"the bridge stopped: {e}")
+            up.set()
 
-    threading.Thread(target=_run, daemon=True, name="overseer-ws").start()
-
-    if not ready.wait(timeout=15) or boot_error:
-        reason = str(boot_error[0]) if boot_error else "timed out waiting for the listener"
-        msg = f"VG-WS-001 local WebSocket bridge failed to start on 127.0.0.1:{ws_port}: {reason}"
+    threading.Thread(target=run, daemon=True, name="overseer-ws").start()
+    where = f"127.0.0.1:{ws_port}"
+    if not up.wait(timeout=15) or failed:
+        why = str(failed[0]) if failed else "it never started listening"
+        msg = f"VG-WS-001 the bridge didn't start on {where}: {why}"
         raise RuntimeError(msg)
-
     try:
-        _self_handshake(ws_port)
-        LOG.info("authenticated self-handshake ok on port %s", ws_port)
+        _say_hello(ws_port, bridge.key)
     except Exception as e:
-        msg = f"VG-WS-001 WebSocket self-handshake failed on 127.0.0.1:{ws_port}: {e}"
+        msg = f"VG-WS-001 the bridge on {where} didn't answer a hello: {e}"
         raise RuntimeError(msg) from e
+    LOG.info("the bridge on %s answered a hello", where)
+    return bridge.key
 
-    return _STATE.session_token
+
+if __name__ == "__main__":
+    _bridge = _Bridge(dict, lambda _what, _with: {}, lambda every: every)
+    check(not _bridge.stuck(), "a fresh loop isn't stuck")
+    _bridge.passed -= _STUCK + 1
+    check(_bridge.stuck(), "a loop with no pass in three minutes is")
+    print("ws_server self-check OK (pings stop when the board loop hangs)")

@@ -1,8 +1,3 @@
-//! The detail panel: one player, in full. The board shows what fits and this
-//! shows the rest of what the backend knows, in a steep order on purpose: the
-//! name, then the one thing worth knowing, then the numbers, then the small
-//! print.
-
 use egui::{Align2, Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 
@@ -13,11 +8,8 @@ use overseer_ui::{
     Face, art, caps, caps_at, caps_text, caps_width, colour, hex, motion, rank, shape, size, space,
 };
 
-/// Where a value starts, so labels and values have a spine down the middle.
 const VALUE_X: f32 = 60.0;
 
-/// Draws the panel for a player, or says nobody is selected. True when the
-/// notes want saving to disk. `still` is the efficient tier, as on the board.
 pub(crate) fn show(
     ui: &mut Ui,
     player: Option<&Player>,
@@ -42,8 +34,6 @@ pub(crate) fn show(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add_space(space::LG);
-            // Two columns when there is room, so a screen of ordinary height
-            // needs no scrolling.
             if two {
                 ui.columns(2, |columns| {
                     if let [left, right] = columns {
@@ -60,10 +50,8 @@ pub(crate) fn show(
     save
 }
 
-/// Past this width the panel is two columns.
 const TWO_COLUMNS: f32 = 560.0;
 
-/// Who they are: everything that came with the board.
 fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: bool) -> bool {
     card(ui, player);
     if !player.smurf_reasons.is_empty() {
@@ -75,16 +63,12 @@ fn about(ui: &mut Ui, player: &Player, side: Side, store: &mut Notes, still: boo
     form(ui, player, side);
     mains(ui, player);
     numbers(ui, player, side);
-    // Under the rank and the numbers, which are what a glance at the panel
-    // is for. Tendencies is four curves tall and would push them out of sight.
     brief(ui, player);
     group(ui, player);
     met(ui, player);
     save
 }
 
-/// The history and then the skins. The history arrives late, so it goes under
-/// everything that should not move when it lands.
 fn lately(ui: &mut Ui, player: &Player, side: Side, career: &Career) {
     if let Some(puuid) = player.puuid.as_deref() {
         career::show(ui, career, puuid, side);
@@ -92,14 +76,10 @@ fn lately(ui: &mut Ui, player: &Player, side: Side, career: &Career) {
     loadout(ui, player);
 }
 
-/// Your own notes on them, written to the store on every keystroke. True when
-/// a box loses the keyboard and the notes want saving to disk.
 fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
     let Some(id) = player.puuid.as_deref() else {
         return false;
     };
-    // Shut until there is a note or somebody asks for one, so two empty boxes
-    // do not push the ranks down for everybody.
     let opened = egui::Id::new(("note-open", id));
     let mut note = store.get(id);
     if note.is_empty() && !ui.data(|d| d.get_temp::<bool>(opened)).unwrap_or(false) {
@@ -124,10 +104,6 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
         // box starts rather than from what is left after the spacing.
         let width = (ui.max_rect().right() - space::LG - ui.cursor().left()).max(120.0);
         ui.vertical(|ui| {
-            // Ids come from the account, not the position. Every player's
-            // box sits in the same spot, so a positional id hands the focused
-            // box to the next player when the pointer moves, and the rest of
-            // the sentence gets saved under their name.
             let prose = inset(
                 ui,
                 egui::TextEdit::multiline(&mut text)
@@ -167,7 +143,6 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
         store.set(id, note);
     }
     if done {
-        // Drop the raw text so the tidied tags show from the next frame.
         ui.data_mut(|d| d.remove::<String>(key));
     } else if touched {
         ui.data_mut(|d| d.insert_temp(key, tags));
@@ -175,8 +150,6 @@ fn notes(ui: &mut Ui, player: &Player, store: &mut Notes, side: Side) -> bool {
     done
 }
 
-/// A text box drawn as a dark slot, with a cream edge along
-/// its foot while it has the keyboard.
 fn inset(ui: &mut Ui, edit: egui::TextEdit<'_>) -> egui::Response {
     let ground = ui.painter().add(egui::Shape::Noop);
     let response =
@@ -197,8 +170,6 @@ fn inset(ui: &mut Ui, edit: egui::TextEdit<'_>) -> egui::Response {
     response
 }
 
-/// Tags offered under the box, from what the app read off this player and
-/// the ones you use most. Returns the one clicked.
 fn offers(
     ui: &mut Ui,
     player: &Player,
@@ -236,7 +207,6 @@ fn offers(
     picked
 }
 
-/// One suggested tag, as a small outlined chip with a plus: a click adds it.
 fn suggestion(
     ui: &mut Ui,
     tag: &str,
@@ -278,13 +248,11 @@ fn suggestion(
     }
 }
 
-/// Opens the note for an account and puts the keyboard in it, for the N key.
 pub(crate) fn write_note(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(("note-open", id)), true));
     ctx.memory_mut(|m| m.request_focus(egui::Id::new(("note-text", id))));
 }
 
-/// The faint line that stands in for the notes section until there is a note.
 fn invite(ui: &mut Ui) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::click());
@@ -307,8 +275,6 @@ fn invite(ui: &mut Ui) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// The bar that opens All Figures: its name, how many figures it holds and
-/// a chevron, across the panel so it reads as a control. True when open.
 fn figures_toggle(ui: &mut Ui, id: egui::Id, count: usize) -> bool {
     let open = ui.data(|store| store.get_temp::<bool>(id)).unwrap_or(false);
     ui.add_space(space::MD);
@@ -365,14 +331,12 @@ fn figures_toggle(ui: &mut Ui, id: egui::Id, count: usize) -> bool {
     open
 }
 
-/// Grey placeholder text, in the panel's own face.
 fn hint(text: &str) -> RichText {
     RichText::new(text)
         .color(colour::HINT)
         .font(Face::Body.at(size::MICRO))
 }
 
-/// How tall the player card is.
 const CARD: f32 = 120.0;
 
 /// A click on the card copies the Riot ID, the same as Ctrl+C.
@@ -389,8 +353,6 @@ fn copies(ui: &Ui, response: egui::Response, player: &Player) {
     }
 }
 
-/// The player as a broadcast card: their agent's art across the panel, fading
-/// dark at the foot so the name set there reads on any agent.
 fn card(ui: &mut Ui, player: &Player) {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), CARD), Sense::click());
     copies(ui, response, player);
@@ -406,8 +368,6 @@ fn card(ui: &mut Ui, player: &Player) {
     painter.rect_filled(card, 0, shape::blend(tint, colour::BG, 0.55));
     let named = player.agent.as_deref().unwrap_or("");
     if let Some(face) = art::card(ui.ctx(), named).or_else(|| art::killfeed(ui.ctx(), named)) {
-        // Fit the width, keep the top of the crop, which is where the eyes
-        // are, and let the chin go.
         let texture = face.size_vec2();
         let shown = (card.height() / card.width()) * (texture.x / texture.y.max(1.0));
         let mut mesh = egui::Mesh::with_texture(face.id());
@@ -418,8 +378,6 @@ fn card(ui: &mut Ui, player: &Player) {
         );
         painter.add(egui::Shape::mesh(mesh));
     } else if let Some(banner) = board::paint::banner(ui.ctx(), player) {
-        // No agent yet: their player card, cut to the card's shape from the
-        // middle of the banner, the way the row has it behind the name.
         let texture = banner.size_vec2();
         let shown = (card.width() / card.height()) / (texture.x / texture.y.max(1.0));
         let (left, right) = if shown < 1.0 {
@@ -466,8 +424,6 @@ fn card(ui: &mut Ui, player: &Player) {
     card_words(&painter, card, player);
 }
 
-/// The name and what is known about them, set in the dark at the foot of
-/// the card.
 fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
     let (name, tag, _standing_in) = board::shown_name(player);
     let room = 2.0f32.mul_add(-space::LG, card.width());
@@ -505,8 +461,6 @@ fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
     }
     about.extend(player.agent.iter().cloned());
     about.extend(player.role.iter().cloned());
-    // The role goes first when the card is narrow, then the agent, whose art
-    // is already behind the words.
     let font = Face::Number.at(size::BODY);
     let mut said = about.join("  \u{b7}  ");
     while about.len() > 1 && caps_width(painter, &said, font.clone()) > room {
@@ -522,8 +476,6 @@ fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
         colour::TEXT,
     );
     if let Some(title) = player.title.as_deref() {
-        // On its own chip, because over the art a title in cream is cream on
-        // whatever the agent's hair happens to be.
         let width = caps_width(painter, title, Face::Display.at(size::LABEL));
         let chip = Rect::from_min_size(
             pos2(
@@ -549,8 +501,6 @@ fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
     }
 }
 
-/// Why this account is worth a second look, in the backend's words. It is
-/// amber because amber is kept for claims about a person, not measurements.
 fn verdict(ui: &mut Ui, player: &Player) {
     ui.add_space(space::MD);
     let (rect, _response) =
@@ -595,12 +545,8 @@ fn verdict(ui: &mut Ui, player: &Player) {
     }
 }
 
-/// The flag's signals as rows, a label, the number in amber and what it is out
-/// of, so they scan like the stats under them and don't read as a sentence.
 fn evidence(ui: &mut Ui, rows: &[overseer_core::Evidence]) {
     let label_font = Face::Display.at(size::LABEL);
-    // The values share a spine past the longest label, which is wider than
-    // the panel's usual one when a row says Headshots.
     let spine = rows
         .iter()
         .map(|row| caps_width(ui.painter(), &row.label, label_font.clone()))
@@ -643,8 +589,6 @@ fn evidence(ui: &mut Ui, rows: &[overseer_core::Evidence]) {
     }
 }
 
-/// One reason, in the reading face, its numbers in the flag's amber. A long
-/// one wraps inside the panel.
 fn reason_line(ui: &mut Ui, reason: &str) {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = 2.0f32.mul_add(-space::LG, ui.available_width());
@@ -683,7 +627,6 @@ fn reason_line(ui: &mut Ui, reason: &str) {
     );
 }
 
-/// Where they are now, and the best they have ever been.
 fn ranks(ui: &mut Ui, player: &Player, side: Side, still: bool) {
     ui.add_space(space::MD);
     let (rect, _response) = ui.allocate_exact_size(
@@ -704,7 +647,6 @@ fn ranks(ui: &mut Ui, player: &Player, side: Side, still: bool) {
             size::BODY,
         );
     }
-    // The peak and the last act share a line, since both are about the past.
     let peak = player.peak_rank.as_deref().map(|peak| {
         player
             .peak_act
@@ -725,7 +667,6 @@ fn ranks(ui: &mut Ui, player: &Player, side: Side, still: bool) {
     }
 }
 
-/// The emblem, the rank, the rating and what the last match did to it.
 fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side, still: bool) {
     let painter = ui.painter().clone();
     let tier = player.rank_tier.unwrap_or(0);
@@ -784,7 +725,6 @@ fn rank_line(ui: &Ui, player: &Player, rect: Rect, side: Side, still: bool) {
             Face::Heavy.at(16.0),
             tint,
         );
-        // Only where the ladder moved by something else, as on a rank up.
         if let Some(actual) = player.rr_actual.filter(|a| *a != delta) {
             let _actual = caps_text(
                 &painter,
@@ -807,7 +747,6 @@ pub(crate) fn copy(ctx: &egui::Context, name: String) {
     ctx.request_repaint_after(std::time::Duration::from_secs_f64(SAID));
 }
 
-/// What was copied, while it is still worth saying.
 pub(crate) fn copied(ctx: &egui::Context) -> Option<String> {
     let now = ctx.input(|i| i.time);
     ctx.data(|d| d.get_temp::<(String, f64)>(egui::Id::new(COPIED)))
@@ -818,11 +757,8 @@ pub(crate) fn copied(ctx: &egui::Context) -> Option<String> {
 /// The egui data key for the last copy.
 const COPIED: &str = "overseer-copied";
 
-/// How long the footer says a copy worked, in seconds.
 const SAID: f64 = 1.8;
 
-/// Every tag the backend worked out, a row per kind with its name on the
-/// left, so a long list reads in pieces. The reason shows on hover.
 fn reads(ui: &mut Ui, player: &Player, side: Side) {
     let tags: Vec<(&str, &overseer_core::AutoTag)> = player
         .auto_tags
@@ -892,11 +828,8 @@ fn reads(ui: &mut Ui, player: &Player, side: Side) {
     }
 }
 
-/// One kind of tag and its words, in the order the row shows them.
 type Group<'a> = (&'a str, Vec<(&'a str, &'a overseer_core::AutoTag)>);
 
-/// The tags in runs of one kind each. They come sorted by kind, so a run
-/// ends where the kind changes, and a kind with no tags has no run.
 fn kinds<'a>(tags: &[(&'a str, &'a overseer_core::AutoTag)]) -> Vec<Group<'a>> {
     let mut out: Vec<Group<'a>> = Vec::new();
     for &(tag, whole) in tags {
@@ -912,21 +845,14 @@ fn kinds<'a>(tags: &[(&'a str, &'a overseer_core::AutoTag)]) -> Vec<Group<'a>> {
 /// Where the Reads rows go, measured from their top left corner.
 #[derive(Default)]
 struct Laid<'a> {
-    /// Each chip, with its word and the tag behind it.
     chips: Vec<(Rect, &'a str, &'a overseer_core::AutoTag)>,
-    /// Each kind's name, by its left middle.
     labels: Vec<(egui::Pos2, &'a str)>,
-    /// The lines between kinds, by their height.
     rules: Vec<f32>,
-    /// How tall the rows are.
     height: f32,
 }
 
-/// How wide the kind names' column is.
 const KIND_COLUMN: f32 = 72.0;
 
-/// One row per kind: its name on the left, its words wrapping beside it and
-/// a line between kinds.
 fn rows<'a>(painter: &egui::Painter, groups: &[Group<'a>], right: f32) -> Laid<'a> {
     let font = Face::Display.at(size::MICRO + 1.0);
     let mut laid = Laid::default();
@@ -958,26 +884,19 @@ fn rows<'a>(painter: &egui::Painter, groups: &[Group<'a>], right: f32) -> Laid<'
     laid
 }
 
-/// The pregame brief: at most two lines that earned their place, each the
-/// measurement with its direction and the plain count behind it, and what
-/// it allows. When nothing earned a place, it says so, with the matches
-/// reviewed, rather than pad.
 fn brief(ui: &mut Ui, player: &Player) {
-    let Some(tendencies) = player.tendencies.as_ref() else {
+    let Some(read) = player.tendencies.as_ref() else {
         return;
     };
-    heading(ui, tendencies.title.as_deref().unwrap_or("Tendencies"));
-    // Their pace in a word, with where they sit among peers on the curve.
-    if let Some(tag) = &tendencies.tag {
+    heading(ui, read.title.as_deref().unwrap_or("Tendencies"));
+    if let Some(tag) = &read.tag {
         if let Some(word) = tag.headline.as_deref() {
             caps_line(ui, word, Face::Display.at(size::TITLE), colour::TEXT_STRONG);
         }
         placed(ui, tag);
         ui.add_space(space::MD);
     }
-    // What they tend to do, each on the curve of their peers: the centre
-    // of the card, every readable player.
-    for habit in &tendencies.habits {
+    for habit in &read.habits {
         if let Some(words) = habit.headline.as_deref() {
             caps_line(ui, words, Face::Display.at(size::BODY), colour::TEXT_STRONG);
         }
@@ -987,14 +906,10 @@ fn brief(ui: &mut Ui, player: &Player) {
         }
         ui.add_space(space::MD);
     }
-    // One tactical callout: a weapon or buy habit, the words, the figures,
-    // what to do.
-    if let Some(main) = &tendencies.main {
+    if let Some(main) = &read.main {
         finding(ui, main, colour::TEXT_STRONG, size::BODY);
     }
-    // What they held on this kind of round: the family over its rounds,
-    // the guns, the armor. History, never a forecast.
-    if let Some(buy) = &tendencies.buy {
+    if let Some(buy) = &read.buy {
         if let Some(label) = buy.label.as_deref() {
             subheading(ui, label, colour::TEXT_DIM);
         }
@@ -1010,15 +925,12 @@ fn brief(ui: &mut Ui, player: &Player) {
         }
         ui.add_space(space::SM);
     }
-    // Spacing against peers, quieter, as the secondary line.
-    if let Some(style) = &tendencies.style {
+    if let Some(style) = &read.style {
         finding(ui, style, colour::TEXT, size::LABEL);
     }
-    if let Some(empty) = tendencies.empty.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(empty) = read.empty.as_deref().filter(|s| !s.is_empty()) {
         line(ui, empty, colour::TEXT_DIM, size::LABEL);
     }
-    // Every line the brief composed, shut until asked for. Not "History",
-    // which is the match history's name everywhere else in the window.
     if !player.brief.is_empty() {
         let id = ui
             .id()
@@ -1027,7 +939,7 @@ fn brief(ui: &mut Ui, player: &Player) {
             all_figures(ui, &player.brief);
         }
     }
-    if let Some(footer) = tendencies.footer.as_deref() {
+    if let Some(footer) = read.footer.as_deref() {
         line(ui, footer, colour::TEXT_FAINT, size::MICRO);
     }
 }
@@ -1048,8 +960,6 @@ fn held(text: &str) -> String {
         .join("\u{a0}· ")
 }
 
-/// Every line the brief composed, grouped by what it measures: each one's
-/// words, brighter when it stands out from peers, and its figures under it.
 fn all_figures(ui: &mut Ui, lines: &[overseer_core::BriefLine]) {
     const GROUPS: [&str; 3] = ["Against Peers", "Buys", "On Record"];
     let group = |line: &overseer_core::BriefLine| match line.kind.as_deref() {
@@ -1087,7 +997,6 @@ fn all_figures(ui: &mut Ui, lines: &[overseer_core::BriefLine]) {
     }
 }
 
-/// The words of a figure: the headline, else the whole line.
 fn figure_words(row: &overseer_core::BriefLine) -> &str {
     row.headline
         .as_deref()
@@ -1095,13 +1004,10 @@ fn figure_words(row: &overseer_core::BriefLine) -> &str {
         .unwrap_or("")
 }
 
-/// Where a share of peers sits along `track`, from its left end.
 fn along(track: Rect, pct: f32) -> f32 {
     pct.clamp(0.0, 1.0).mul_add(track.width(), track.left())
 }
 
-/// The scale behind a figure's place among peers: a thin rail with the
-/// median marked and the quartiles fainter.
 fn rail(painter: &egui::Painter, track: Rect) {
     painter.rect_filled(track, 0, colour::BG_INSET);
     for (quarter, tint) in [
@@ -1194,8 +1100,6 @@ fn figure_ladder(ui: &mut Ui, rows: &[&overseer_core::BriefLine]) {
     }
 }
 
-/// A caps line cut to `width` with an ellipsis, so a long name never pushes
-/// into the figures beside it.
 fn one_line(text: &str, font: egui::FontId, tint: Color32, width: f32) -> egui::text::LayoutJob {
     let mut job = caps(text, font, tint);
     job.wrap.max_width = width.max(0.0);
@@ -1221,13 +1125,10 @@ pub(crate) fn ordinal(pct: f32) -> String {
     format!("{n}{suffix}")
 }
 
-/// The curve of peers with the player's mark on it and the number printed
-/// on the chart, then the figures behind it, which a percentile alone hides.
-fn placed(ui: &mut Ui, found: &overseer_core::TendenciesFinding) {
+fn placed(ui: &mut Ui, found: &overseer_core::TendencyFinding) {
     let evidence = found.evidence.as_deref().unwrap_or("");
     match found.pos {
         Some(pos) => {
-            // The real shape of peers when the backend has one, else a normal.
             let (shape, lo, hi): (&[f32], f32, f32) = if found.curve.is_empty() {
                 (NORMAL_SHAPE.as_slice(), -BELL_SPAN, BELL_SPAN)
             } else {
@@ -1268,34 +1169,24 @@ fn placed(ui: &mut Ui, found: &overseer_core::TendenciesFinding) {
     }
 }
 
-/// How narrow at least and how tall the curve of peers is drawn, and the
-/// room above it for the number and under it for the words at its ends.
 const BELL_MIN_W: f32 = 48.0;
 const BELL_H: f32 = 24.0;
 const BELL_ENDS: f32 = 16.0;
 const BELL_TOP: f32 = 16.0;
-/// How many standard deviations a normal curve spans each way.
 const BELL_SPAN: f32 = 2.6;
 
-/// What a curve of peers is drawn from.
 struct Bell<'a> {
-    /// Heights sampled evenly from `lo` to `hi`.
     shape: &'a [f32],
     lo: f32,
     hi: f32,
-    /// Where the player sits, in the shape's units.
     pos: f32,
-    /// Printed above the mark: the percentile, read left to right.
     at_mark: &'a str,
-    /// Printed under the middle: the peers' figure, when the chart has one.
     at_middle: &'a str,
     left_word: &'a str,
     right_word: &'a str,
-    /// What the curve is of, for a screen reader, which cannot see it.
     named: &'a str,
 }
 
-/// Where a curve sits on the panel.
 struct Frame {
     left: f32,
     width: f32,
@@ -1304,7 +1195,6 @@ struct Frame {
 }
 
 impl Frame {
-    /// The x of a share `t` of the way along the curve.
     const fn x_at(&self, t: f32) -> f32 {
         t.mul_add(self.width, self.left)
     }
@@ -1320,11 +1210,8 @@ static NORMAL_SHAPE: std::sync::LazyLock<Vec<f32>> = std::sync::LazyLock::new(||
         .collect()
 });
 
-/// How many straight pieces a curve is drawn in.
 const BELL_SAMPLES: u8 = 48;
 
-/// The curve's height a share `t` of the way along it, the samples
-/// joined by straight lines, as a share of `peak`.
 fn shape_at(shape: &[f32], peak: f32, t: f32) -> f32 {
     let last = shape.len().saturating_sub(1);
     if last == 0 {
@@ -1339,9 +1226,6 @@ fn shape_at(shape: &[f32], peak: f32, t: f32) -> f32 {
     (to - from).mul_add(frac, from) / peak
 }
 
-/// The curve of the player's peers, the share below them tinted and
-/// their position marked, with the percentile above the mark and the
-/// ends named under it.
 fn bell(ui: &mut Ui, bell: &Bell<'_>) {
     let width = ui.available_width();
     let frame_width = 2.0f32.mul_add(-space::LG, width).max(BELL_MIN_W);
@@ -1376,8 +1260,6 @@ fn bell(ui: &mut Ui, bell: &Bell<'_>) {
         .max(f32::EPSILON);
     let height_at = |t: f32| shape_at(bell.shape, peak, t) * (BELL_H - 2.0);
     let mark = ((bell.pos - bell.lo) / span).clamp(0.0, 1.0);
-    // The share of peers below them, tinted under the curve as one mesh. A
-    // stroke per step overlapped its neighbours, which striped the tint.
     let tint = colour::EDGE.gamma_multiply(0.45);
     let mut fill = egui::Mesh::default();
     let samples = (0..=BELL_SAMPLES)
@@ -1408,7 +1290,6 @@ fn bell(ui: &mut Ui, bell: &Bell<'_>) {
         ],
         (1.0, colour::LINE),
     );
-    // The middle of the peers, a faint tick, and the player's mark.
     painter.line_segment(
         [
             pos2(frame.x_at(0.5), frame.base),
@@ -1426,8 +1307,6 @@ fn bell(ui: &mut Ui, bell: &Bell<'_>) {
     bell_words(painter, bell, &frame, mark);
 }
 
-/// The percentile above the mark, kept inside the chart, the ends named
-/// under it, and the peers' figure under the middle when there is one.
 fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32) {
     if !bell.at_mark.is_empty() {
         let font = Face::Heavy.at(size::BODY);
@@ -1481,7 +1360,7 @@ const GUN_WORDS: f32 = space::SM + size::TITLE + space::SM + size::MICRO;
 
 /// The guns of a buy block side by side: each one's picture, its odds or
 /// count in the panel's numerals under it, and its name in caps.
-fn gun_row(ui: &mut Ui, items: &[overseer_core::TendenciesGun]) {
+fn gun_row(ui: &mut Ui, items: &[overseer_core::TendencyGun]) {
     let width = ui.available_width();
     let (rect, _response) =
         ui.allocate_exact_size(vec2(width, GUN_H + GUN_WORDS + space::SM), Sense::hover());
@@ -1499,7 +1378,6 @@ fn gun_row(ui: &mut Ui, items: &[overseer_core::TendenciesGun]) {
             vec2(2.0f32.mul_add(-space::SM, cell), GUN_H),
         );
         if let Some(texture) = art::weapon(ui.ctx(), name) {
-            // Fit inside the slot, keeping the picture's shape.
             let size = texture.size_vec2();
             let scale = (slot.width() / size.x.max(1.0)).min(slot.height() / size.y.max(1.0));
             let drawn = Rect::from_center_size(slot.center(), size * scale);
@@ -1532,9 +1410,7 @@ fn gun_row(ui: &mut Ui, items: &[overseer_core::TendenciesGun]) {
     }
 }
 
-/// A finding as three lines: the words, the figures in small print, and
-/// what it allows, when there is one.
-fn finding(ui: &mut Ui, found: &overseer_core::TendenciesFinding, tint: Color32, points: f32) {
+fn finding(ui: &mut Ui, found: &overseer_core::TendencyFinding, tint: Color32, points: f32) {
     if let Some(words) = found.headline.as_deref() {
         caps_line(ui, words, Face::Display.at(points), tint);
     }
@@ -1547,13 +1423,10 @@ fn finding(ui: &mut Ui, found: &overseer_core::TendenciesFinding, tint: Color32,
     ui.add_space(space::SM);
 }
 
-/// One line of chips.
 const CHIP_ROW: f32 = 22.0;
 
-/// How big the emblem is in the panel.
 const EMBLEM: f32 = 52.0;
 
-/// How far through the tier they are, as a bar.
 fn rank_bar(ui: &mut Ui, player: &Player, still: bool) {
     let Some(rr) = player.rr else { return };
     let (rect, _response) =
@@ -1561,8 +1434,6 @@ fn rank_bar(ui: &mut Ui, player: &Player, still: bool) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    // One id for every player, so switching players slides the bar from the
-    // last one's rating.
     let share = ui.ctx().animate_value_with_time(
         egui::Id::new("panel-rr"),
         (rr as f32 / 100.0).clamp(0.0, 1.0),
@@ -1583,7 +1454,6 @@ fn rank_bar(ui: &mut Ui, player: &Player, still: bool) {
     painter.add(shape::pip(filled, rank(player.rank_tier)));
 }
 
-/// Recent results and the run they are on.
 fn form(ui: &mut Ui, player: &Player, side: Side) {
     if player.form.is_empty() {
         return;
@@ -1596,9 +1466,6 @@ fn form(ui: &mut Ui, player: &Player, side: Side) {
     }
 }
 
-/// What they play most, a row each with the agent's face, role and games,
-/// and a bar against their most played so the main reads at a glance. The
-/// heading names the role two of them share.
 fn mains(ui: &mut Ui, player: &Player) {
     let agents = player.mains();
     if agents.is_empty() {
@@ -1614,10 +1481,8 @@ fn mains(ui: &mut Ui, player: &Player) {
     }
 }
 
-/// How big a main's face is.
 const MAIN_FACE: f32 = 26.0;
 
-/// One agent they play: face, name over role, and games with a bar.
 fn main_row(ui: &mut Ui, agent: &overseer_core::TopAgent, most: u32) {
     let (rect, _response) = ui.allocate_exact_size(
         vec2(ui.available_width(), space::SM.mul_add(2.0, MAIN_FACE)),
@@ -1676,7 +1541,6 @@ fn main_row(ui: &mut Ui, agent: &overseer_core::TopAgent, most: u32) {
         Face::Number.at(size::BODY),
         colour::TEXT,
     );
-    // The bar starts after the longest name a main has, so the three line up.
     let from = (x + MAIN_TEXT).max(named.right().max(roled.right()) + space::MD);
     let to = count.left() - space::MD;
     if to - from < space::XL {
@@ -1692,14 +1556,10 @@ fn main_row(ui: &mut Ui, agent: &overseer_core::TopAgent, most: u32) {
     painter.rect_filled(filled, 0, colour::TEXT_DIM);
 }
 
-/// Room for a main's name or role before its bar.
 const MAIN_TEXT: f32 = 84.0;
 
-/// The last five results as pips, and the streak when it is two or more.
 fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
     let painter = ui.painter().clone();
-    // The row's own pips, at the panel's size: a win in the colour of what
-    // it means for you, a loss dim.
     board::paint::pips(
         &painter,
         &player.form,
@@ -1729,8 +1589,6 @@ fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
     );
 }
 
-/// The stats as one row, each saying how many games it is out of, since a
-/// bare K/D reads as a career average when it is only the last few matches.
 fn numbers(ui: &mut Ui, player: &Player, side: Side) {
     let out_of = |games: Option<u32>| games.map_or_else(String::new, |g| format!("\nOut of {g}"));
     let behind = player.form.len();
@@ -1790,8 +1648,6 @@ fn numbers(ui: &mut Ui, player: &Player, side: Side) {
     figures(ui, &figures_of(&owned));
 }
 
-/// A rate's colour by how many games are behind it: faint under `few`, the
-/// same rule the board's columns follow.
 fn sample(games: Option<u32>, few: u32) -> Color32 {
     if games.is_some_and(|g| g < few) {
         colour::TEXT_FAINT
@@ -1800,7 +1656,6 @@ fn sample(games: Option<u32>, few: u32) -> Color32 {
     }
 }
 
-/// Borrows a row of owned figures for [`figures`].
 fn figures_of(owned: &[(String, Color32, String, String)]) -> Vec<Figure<'_>> {
     owned
         .iter()
@@ -1808,14 +1663,8 @@ fn figures_of(owned: &[(String, Color32, String, String)]) -> Vec<Figure<'_>> {
         .collect()
 }
 
-/// One figure: the number, its colour, the words under it, and what it
-/// means, said when the pointer rests on it.
 pub(crate) type Figure<'a> = (&'a str, Color32, &'a str, &'a str);
 
-/// A row of figures across the panel, each a number with a word under it,
-/// and what it is out of on a line of its own after a newline. When the
-/// widest of them will not fit side by side they go onto more rows, evenly,
-/// so a label never runs into the figure beside it.
 pub(crate) fn figures(ui: &mut Ui, row: &[Figure<'_>]) {
     let value_font = Face::Heavy.at(size::DISPLAY);
     let under_font = Face::Display.at(size::MICRO);
@@ -1870,7 +1719,6 @@ pub(crate) fn figures(ui: &mut Ui, row: &[Figure<'_>]) {
                     vec2(caps_width(&painter, value, value_font.clone()), 20.0),
                 );
                 board::tip::mark_hovered(ui.ctx(), ui.layer_id(), line);
-                // One card for every figure, so the next one reuses it.
                 board::tip::say_under(ui.ctx(), ui.id().with("figure-card"), cell, about);
             }
             let _value = caps_text(
@@ -1899,7 +1747,6 @@ pub(crate) fn figures(ui: &mut Ui, row: &[Figure<'_>]) {
     }
 }
 
-/// Who they came with, and how sure we are.
 fn group(ui: &mut Ui, player: &Player) {
     if let Some(size) = player
         .party
@@ -1926,8 +1773,6 @@ fn group(ui: &mut Ui, player: &Player) {
         colour::TEXT_STRONG,
         size::BODY,
     );
-    // Always with the evidence, because this guess accuses strangers of
-    // queueing together.
     line(
         ui,
         &format!(
@@ -1941,7 +1786,6 @@ fn group(ui: &mut Ui, player: &Player) {
     );
 }
 
-/// How a group of that size is said out loud.
 fn stack_word(size: u32) -> String {
     match size {
         0 | 1 => "On their own".to_owned(),
@@ -1951,13 +1795,10 @@ fn stack_word(size: u32) -> String {
     }
 }
 
-/// What history you have with them.
 fn met(ui: &mut Ui, player: &Player) {
     let Some(encounter) = player.encounter.as_ref().filter(|e| e.total() > 0) else {
         return;
     };
-    // Neutral: having met somebody before is history, not a warning, and
-    // amber is the flag's.
     subheading(
         ui,
         &format!("Met {} Times Before", encounter.total()),
@@ -1993,7 +1834,6 @@ fn met(ui: &mut Ui, player: &Player) {
     }
 }
 
-/// A win, loss and draw record, said the way a player says it.
 fn record(wins: Option<u32>, losses: Option<u32>, draws: Option<u32>) -> String {
     let draws = draws.unwrap_or(0);
     let base = format!("{}W-{}L", wins.unwrap_or(0), losses.unwrap_or(0));
@@ -2004,7 +1844,6 @@ fn record(wins: Option<u32>, losses: Option<u32>, draws: Option<u32>) -> String 
     }
 }
 
-/// What they are carrying, when the backend could see it.
 fn loadout(ui: &mut Ui, player: &Player) {
     let skins: Vec<(String, String)> = player
         .weapons
@@ -2021,8 +1860,6 @@ fn loadout(ui: &mut Ui, player: &Player) {
     }
 }
 
-/// A label and a word on the same grid as [`stat`], with the word in the
-/// reading face because a word in mono looks like a file name.
 fn named(ui: &mut Ui, label: &str, value: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
@@ -2058,10 +1895,8 @@ fn named(ui: &mut Ui, label: &str, value: &str) {
     );
 }
 
-/// How tall a heading's line is.
 const HEADING: f32 = 22.0;
 
-/// A section heading: the word in caps with a double rule to the edge.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(space::LG);
     let (rect, _response) =
@@ -2085,8 +1920,6 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
     );
 }
 
-/// A heading for a part of a section: smaller and without the rule, so the
-/// big headings are what the panel reads as at a glance.
 pub(crate) fn subheading(ui: &mut Ui, text: &str, tint: Color32) {
     ui.add_space(space::MD);
     let (rect, _response) =
@@ -2104,19 +1937,15 @@ pub(crate) fn subheading(ui: &mut Ui, text: &str, tint: Color32) {
     );
 }
 
-/// One line of prose, at the panel's left margin. Text wider than the panel
-/// wraps, and every row past the first makes the line that much taller.
 pub(crate) fn line(ui: &mut Ui, text: &str, tint: Color32, points: f32) {
     let job = egui::text::LayoutJob::simple(text.to_owned(), Face::Body.at(points), tint, 0.0);
     laid(ui, job, tint);
 }
 
-/// A caps label that wraps like [`line()`], for headings too long for one row.
 fn caps_line(ui: &mut Ui, text: &str, font: egui::FontId, tint: Color32) {
     laid(ui, caps(text, font, tint), tint);
 }
 
-/// Sets a laid-out line at the left margin, wrapped to the panel.
 fn laid(ui: &mut Ui, mut job: egui::text::LayoutJob, tint: Color32) {
     let width = ui.available_width();
     job.wrap.max_width = 2.0f32.mul_add(-space::LG, width);
@@ -2139,7 +1968,6 @@ fn laid(ui: &mut Ui, mut job: egui::text::LayoutJob, tint: Color32) {
     );
 }
 
-/// A label, a value, and a quieter note after it.
 pub(crate) fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
@@ -2173,7 +2001,6 @@ pub(crate) fn stat(ui: &mut Ui, label: &str, value: &str, tint: Color32, note: &
     }
 }
 
-/// What a missing value looks like, in one place.
 fn dash() -> String {
     "-".to_owned()
 }
@@ -2189,8 +2016,6 @@ mod tests {
     use super::{Notes, held};
     use crate::notes::Note;
 
-    /// Each kind the player has gets one row, whatever case it comes in, and
-    /// a kind they have no tag of gets none.
     #[test]
     fn reads_take_a_row_per_kind_they_have() {
         let tag = |kind: &str| overseer_core::AutoTag {
@@ -2206,7 +2031,6 @@ mod tests {
         assert_eq!(rows, [("weapon", 2), ("Form", 1)]);
     }
 
-    /// A count splitting from its word left "games" alone on a row.
     #[test]
     fn short_figures_stay_on_one_row() {
         assert_eq!(
@@ -2215,8 +2039,6 @@ mod tests {
         );
     }
 
-    /// The boxes are redrawn from the store every frame, so a keystroke not
-    /// written back on the same frame vanishes.
     #[test]
     fn what_you_type_about_somebody_is_kept() {
         let player = Player {
@@ -2224,8 +2046,6 @@ mod tests {
             name: Some("Day#9932".to_owned()),
             ..Player::default()
         };
-        // Starts with a tag so the section is open. The invite that opens it
-        // is painted rather than a widget, so there is no node to click.
         let mut store = Notes::default();
         store.set(
             "p1",
@@ -2245,8 +2065,6 @@ mod tests {
                 },
                 (false, store),
             );
-        // Same first frame rule as every other harness here: the faces are
-        // bound on the frame after they are installed.
         overseer_ui::install_fonts(&harness.ctx);
         harness
             .ctx

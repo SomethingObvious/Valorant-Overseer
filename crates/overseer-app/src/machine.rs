@@ -9,7 +9,6 @@ const MEMORY_LEAST: u64 = 7 << 30;
 /// VALORANT's minimum and recommended specs has.
 const THREADS_MOST: usize = 4;
 
-/// What this PC has.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Machine {
     /// Its memory in bytes, when Windows says.
@@ -22,7 +21,6 @@ pub(crate) struct Machine {
 }
 
 impl Machine {
-    /// What this PC has, read once at start up. Nothing here starts a driver.
     pub(crate) fn detect() -> Self {
         Self {
             memory: overseer_native::memory(),
@@ -31,8 +29,6 @@ impl Machine {
         }
     }
 
-    /// Why it counts as slow, a few words for each reason, or nothing when it
-    /// doesn't.
     pub(crate) fn slow_because(&self) -> Vec<String> {
         let mut why = Vec::new();
         if let Some(memory) = self.memory.filter(|m| *m < MEMORY_LEAST) {

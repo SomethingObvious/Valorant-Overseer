@@ -1,8 +1,3 @@
-//! One player, as one slab. An enemy row is a broadcast lower third: the
-//! killfeed crop at its head, a name you can read across the room, the
-//! emblem in its own light, and the K/D as the largest numeral on the board.
-//! An ally row is the same row at two thirds the size, and quieter.
-
 use egui::{Align2, Color32, Rect, Response, Sense, Ui, pos2, vec2};
 use overseer_core::Player;
 use overseer_ui::{Face, caps_text, caps_width, colour, motion, shape, size, space};
@@ -11,26 +6,16 @@ use super::Side;
 use super::grid::{Grid, Placed};
 use super::paint;
 
-/// The measurements of one kind of row.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Metrics {
-    /// The slab's height.
     pub(crate) height: f32,
-    /// The name, in points.
     pub(crate) name: f32,
-    /// The emblem's side.
     pub(crate) emblem: f32,
-    /// The tier's name beside it.
     pub(crate) tier: f32,
-    /// The K/D numeral.
     pub(crate) kd: f32,
-    /// Every other statistic.
     pub(crate) stat: f32,
     /// One result pip's width.
     pub(crate) pip: f32,
-    /// Whether the line under the name gives the agent's place to the tags when there are
-    /// any. The overlay's cards are too narrow for both, and the face
-    /// already says who they play.
     pub(crate) tags_first: bool,
 }
 
@@ -42,7 +27,6 @@ impl Metrics {
     }
 }
 
-/// An enemy, in the window.
 pub(crate) const ENEMY: Metrics = Metrics {
     height: 56.0,
     name: 21.0,
@@ -54,7 +38,6 @@ pub(crate) const ENEMY: Metrics = Metrics {
     tags_first: false,
 };
 
-/// An ally, in the window: the same row, quieter.
 pub(crate) const ALLY: Metrics = Metrics {
     height: 42.0,
     name: 16.0,
@@ -66,7 +49,6 @@ pub(crate) const ALLY: Metrics = Metrics {
     tags_first: false,
 };
 
-/// An enemy, in a window too narrow for the full row.
 pub(crate) const SMALL: Metrics = Metrics {
     height: 44.0,
     name: 18.0,
@@ -78,34 +60,21 @@ pub(crate) const SMALL: Metrics = Metrics {
     tags_first: false,
 };
 
-/// The gap between two slabs.
 pub(crate) const GAP: f32 = space::SM;
 
-/// Everything about a row that is not the player.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Look<'a> {
-    /// Whose side it is on.
     pub(crate) side: Side,
-    /// Its measurements.
     pub(crate) metrics: Metrics,
-    /// Whether it is the one chosen.
     pub(crate) selected: bool,
-    /// Whether you have written about them.
     pub(crate) noted: bool,
-    /// The first tag you gave them, drawn after the name.
     pub(crate) tag: Option<&'a str>,
-    /// What you wrote about them, for the hover on your tag.
     pub(crate) note: Option<&'a str>,
-    /// How far the numerals have counted up, from nothing to all of it.
     pub(crate) counted: f32,
-    /// The efficient tier: no motion, no blur.
     pub(crate) still: bool,
-    /// What a row with nothing on it yet says: that its games are still
-    /// being read, or that there is nothing.
     pub(crate) nothing: &'static str,
 }
 
-/// What a row with nothing on it yet says on `board`.
 pub(crate) const fn nothing_yet(board: &overseer_core::Board) -> &'static str {
     if board.reading.is_some() {
         "Reading their games."
@@ -114,8 +83,6 @@ pub(crate) const fn nothing_yet(board: &overseer_core::Board) -> &'static str {
     }
 }
 
-/// A row as a screen reader says it: who, on what, their rank and K/D, the
-/// party they queued in, and whether they're worth a look and why.
 pub(crate) fn spoken(player: &Player) -> String {
     let mut said: Vec<String> = [&player.name, &player.agent, &player.rank]
         .into_iter()
@@ -123,7 +90,6 @@ pub(crate) fn spoken(player: &Player) -> String {
         .cloned()
         .collect();
     if let Some(kd) = player.kd {
-        // Faint on the row, so said with what it's from.
         let n = player.form.len();
         said.push(if few_games(player) {
             format!("K/D {kd:.2} from {n} game{}", if n == 1 { "" } else { "s" })
@@ -157,10 +123,6 @@ pub(crate) fn spoken(player: &Player) -> String {
     }
 }
 
-/// Draws one row, and hands back what the pointer did to it.
-///
-/// Every row is the same height, flagged or not, so a flag's reasons go on
-/// its hover and at the top of the panel rather than on a second line.
 pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) -> Response {
     let enemy = look.side == Side::Enemy;
     let flagged = player.smurf;
@@ -181,8 +143,6 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
         return response;
     }
     let painter = ui.painter_at(rect.expand2(vec2(space::XL, space::MD)));
-    // Keyed by the account rather than the slot, so the hover tint follows a
-    // player when a sort moves them.
     let key = response.id.with(player.puuid.as_deref().unwrap_or(""));
     let lift = motion::eased(ui.ctx().animate_bool_with_time(
         key,
@@ -217,8 +177,6 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
     if look.selected {
         brackets(&painter, rect);
     }
-    // The rail goes over the crop's left edge rather than pushing the crop
-    // right, so a flagged row's face and name line up with every other row.
     if flagged && enemy {
         painter.rect_filled(
             Rect::from_min_size(rect.min, vec2(4.0, rect.height())),
@@ -245,10 +203,6 @@ pub(crate) fn row(ui: &mut Ui, player: &Player, grid: &Grid, look: &Look<'_>) ->
     response
 }
 
-/// Opens the card for whichever of `hovers` the pointer is on. It goes on
-/// the row's own hover rather than on widgets of their own: a second widget
-/// over the row would take its hover, and the row's hover is what brings
-/// the panel to that player.
 pub(super) fn explain_at(
     response: &Response,
     hovers: &[(Rect, Hover<'_>)],
@@ -271,9 +225,6 @@ pub(super) fn explain_at(
     }
 }
 
-/// The row's numbers, one cell a column, or where nothing is known a line
-/// saying so where they would be, so an empty row reads as nothing to show
-/// rather than a row that broke.
 fn stats(inside: &egui::Painter, player: &Player, (rect, grid): (Rect, &Grid), look: &Look<'_>) {
     if known(player) {
         for placed in &grid.placed {
@@ -306,17 +257,12 @@ pub(super) const fn known(player: &Player) -> bool {
         || !player.form.is_empty()
 }
 
-/// Something on the row with more to say than fits on it.
 pub(super) enum Hover<'a> {
-    /// A tag the backend worked out.
     Auto(&'a overseer_core::AutoTag),
-    /// Your own tag.
     Yours(&'a str),
-    /// An account worth a look.
     Flag,
 }
 
-/// The card behind whatever the pointer is resting on.
 fn explain(ui: &mut Ui, what: &Hover<'_>, player: &Player, look: &Look<'_>) {
     let accent = paint::win(look.side);
     match what {
@@ -347,14 +293,10 @@ fn explain(ui: &mut Ui, what: &Hover<'_>, player: &Player, look: &Look<'_>) {
     }
 }
 
-/// Under this many games a win rate is drawn faint rather than hot.
 pub(super) const FEW_GAMES: u32 = 10;
 
-/// The same for one map, where five games is already a lot of somebody's
-/// history.
 pub(super) const FEW_MAP_GAMES: u32 = 5;
 
-/// What an account worth a look is tagged with.
 const FLAG: &str = "Worth a Look";
 
 /// What sits after the name, in the order it matters: the flag, the tag
@@ -403,9 +345,6 @@ pub(super) fn identity<'a>(
     } else if let Some(yours) = look.tag {
         Some(Mark::Yours(yours))
     } else if standing_in && player.hidden.name {
-        // Only when the agent is standing in for the name. A hidden name
-        // the backend knew anyway is just a name, and HIDDEN beside it reads
-        // as part of it.
         Some(Mark::Hidden)
     } else {
         None
@@ -416,8 +355,6 @@ pub(super) fn identity<'a>(
     let mut after = x + caps_width(painter, &text, font.clone()) + space::SM;
     let riot_wide = riot.as_ref().map_or(0.0, |k| mark_width(painter, k, m));
     let mark_wide = mark.as_ref().map_or(0.0, |k| mark_width(painter, k, m));
-    // The tag goes first when both fit. When only one does, the flag or your
-    // word keeps the room.
     let both = after + riot_wide + mark.as_ref().map_or(0.0, |_| space::SM + mark_wide) <= limit;
     let (riot, moved) = if both {
         (riot, None)
@@ -465,9 +402,6 @@ pub(super) fn identity<'a>(
     hovers
 }
 
-/// The name's colour. `amber` is a flag with no room for its words, so the
-/// name carries the amber alone, since the flag must not vanish at a narrow
-/// width.
 fn name_colour(player: &Player, side: Side, standing_in: bool, amber: bool) -> Color32 {
     if amber {
         colour::WARN
@@ -482,16 +416,10 @@ fn name_colour(player: &Player, side: Side, standing_in: bool, amber: bool) -> C
     }
 }
 
-/// Whether a tag changes how you play the next round: the guns they buy and
-/// whether they save. Those go first on the row, in a chip.
 fn valuable(tag: &overseer_core::AutoTag) -> bool {
     tier(tag) == 0
 }
 
-/// Where a tag comes on a crowded row, first to last. The guns and the
-/// economy change how you play the next round, and the agent and rank say
-/// what they really are. The duels come next, entry before clutch and aced
-/// as the backend lists them, and then form, history and the map.
 fn tier(tag: &overseer_core::AutoTag) -> u8 {
     let kind = tag.kind.as_deref().unwrap_or_default();
     let is = |name: &str| kind.eq_ignore_ascii_case(name);
@@ -506,12 +434,8 @@ fn tier(tag: &overseer_core::AutoTag) -> u8 {
     }
 }
 
-/// The words under the name in order, with the role that leads them before
-/// a pick. Plain words have no tag.
 fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>>) {
     let agent = player.agent.as_deref().filter(|_| !standing_in);
-    // Before a pick there is no agent to hide, and what they might pick is
-    // the one thing worth reading, so the mains show even where tags lead.
     let unpicked = player.agent.is_none();
     let role = player.main_role().filter(|_| unpicked);
     let mains: Vec<&str> = if unpicked {
@@ -542,7 +466,6 @@ fn line_words(player: &Player, standing_in: bool) -> (Option<&str>, Vec<Word<'_>
     (role, words)
 }
 
-/// A word under the name, and the tag it came from if it did.
 type Word<'a> = (&'a str, Option<&'a overseer_core::AutoTag>);
 
 /// The line under the name: the agent, faint, unless it already stands in
@@ -562,8 +485,6 @@ fn tag_line<'a>(
     let font = Face::Number.at(size::MICRO + 1.0);
     let riot = riot.map(|t| format!("#{t}"));
     let (role, mut words) = line_words(player, standing_in);
-    // The tag leads only when everything else still fits after it, since a
-    // main or a habit is worth more here than the tag is.
     let wide = |(word, tag): &Word<'_>| {
         let around = if tag.is_some_and(valuable) {
             space::MD * 3.0
@@ -588,8 +509,6 @@ fn tag_line<'a>(
     for (i, (word, tag)) in words.into_iter().enumerate() {
         let chip = tag.is_some_and(valuable);
         let pad = if chip { space::MD } else { 0.0 };
-        // A dot sits in the gap between two plain words. A chip's outline
-        // already separates it.
         let gap = if first {
             0.0
         } else if chip || last_chip {
@@ -603,7 +522,6 @@ fn tag_line<'a>(
         } else {
             2.0f32.mul_add(pad, caps_width(painter, word, font.clone()))
         };
-        // A shorter one further down may still fit.
         if x + gap + wide > limit {
             continue;
         }
@@ -647,7 +565,6 @@ fn tag_line<'a>(
     drawn_tags
 }
 
-/// How wide a mark is drawn.
 fn mark_width(painter: &egui::Painter, mark: &Mark<'_>, m: Metrics) -> f32 {
     match mark {
         Mark::Flag => caps_width(painter, FLAG, paint::label()),
@@ -669,7 +586,6 @@ fn mark_width(painter: &egui::Painter, mark: &Mark<'_>, m: Metrics) -> f32 {
     }
 }
 
-/// Draws a mark with its left edge at `at`, centred on the name's line.
 fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metrics) {
     let label = |text: &str, tint: Color32| {
         let _drawn = caps_text(painter, at, Align2::LEFT_CENTER, text, paint::label(), tint);
@@ -677,8 +593,6 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metric
     match mark {
         Mark::Flag => label(FLAG, colour::WARN),
         Mark::Hidden => label("Hidden", colour::TEXT_FAINT),
-        // Your word goes on a cream chip, the same cream as the side plate
-        // in the masthead.
         Mark::Yours(tag) => {
             let tag = crate::notes::shown_tag(tag);
             let wide = 2.0f32.mul_add(
@@ -708,8 +622,6 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark<'_>, at: egui::Pos2, m: Metric
     }
 }
 
-/// The matches behind the K/D and the headshots, so one good game reads as
-/// one game.
 fn games_of(player: &Player) -> (String, Color32) {
     match (player.kd, player.form.len()) {
         (Some(_), n) if n > 0 => (
@@ -724,9 +636,6 @@ fn games_of(player: &Player) -> (String, Color32) {
     }
 }
 
-/// The level and its colour. A low level on a ranked account is the first
-/// smurf tell, so it is the one level worth a colour. A level hidden in game
-/// is still exact here, so it is drawn faint and without a question mark.
 pub(super) fn level_of(player: &Player) -> (String, Color32) {
     match player.level {
         Some(l) if player.hidden.level => (
@@ -741,8 +650,6 @@ pub(super) fn level_of(player: &Player) -> (String, Color32) {
     }
 }
 
-/// One statistic in its column. `peak_under_rank` says the rank carries the
-/// peak, since it is wanted and has no column of its own.
 fn cell(
     painter: &egui::Painter,
     player: &Player,
@@ -827,8 +734,6 @@ fn cell(
     }
 }
 
-/// A win rate and its colour. Under `few` games it is mostly luck, so it is
-/// drawn faint rather than hot.
 pub(super) fn rate(
     side: Side,
     rate: Option<f64>,
@@ -845,7 +750,6 @@ pub(super) fn rate(
     }
 }
 
-/// The headshot rate and its colour, faint when there is none.
 pub(super) fn hs(side: Side, hs: Option<f64>) -> (String, Color32) {
     hs.map_or_else(
         || ("-".to_owned(), colour::TEXT_FAINT),
@@ -858,8 +762,6 @@ pub(super) fn hs(side: Side, hs: Option<f64>) -> (String, Color32) {
     )
 }
 
-/// The rank as its emblem alone, for a row too narrow for its word, with
-/// the peak as a small emblem on its corner when it was a full rank higher.
 fn emblem_only(
     painter: &egui::Painter,
     player: &Player,
@@ -888,17 +790,12 @@ fn emblem_only(
     }
 }
 
-/// Under this many matches a K/D is a game or two, not a pattern.
 const FEW_KD_GAMES: usize = 3;
 
-/// Whether the K/D rests on too few matches to be read as form. With no
-/// results at all the count is unknown, which is not the same as few.
 pub(crate) fn few_games(player: &Player) -> bool {
     (1..FEW_KD_GAMES).contains(&player.form.len())
 }
 
-/// What the K/D says under itself for a column gone for room. Thin games
-/// say so first, as they change how the K/D reads.
 fn under_kd(player: &Player, grid: &Grid, side: Side, few: bool) -> Option<(String, Color32)> {
     if few && !grid.games_shown {
         let n = player.form.len();
@@ -914,10 +811,6 @@ fn under_kd(player: &Player, grid: &Grid, side: Side, few: bool) -> Option<(Stri
     None
 }
 
-/// The K/D as the row's largest numeral, counting up while a lobby lands,
-/// sat on its cap height rather than its line box. Off one or two games it
-/// is drawn faint, the way a win rate off a few games is. `under` is what a
-/// column gone for room says beneath it, how many games or the win rate.
 fn kd_cell(
     painter: &egui::Painter,
     kd: f64,
@@ -950,8 +843,6 @@ fn kd_cell(
     }
 }
 
-/// The peak: a smaller emblem, the rank said the short way players say it,
-/// and the act under it, since a peak without its act reads as current.
 fn peak_cell(painter: &egui::Painter, player: &Player, at: egui::Pos2, look: &Look<'_>) {
     let m = look.metrics;
     let (Some(tier), Some(name)) = (
@@ -967,8 +858,6 @@ fn peak_cell(painter: &egui::Painter, player: &Player, at: egui::Pos2, look: &Lo
         );
         return;
     };
-    // The same emblem and type as the rank beside it, so the two compare at
-    // a glance.
     paint::emblem(
         painter,
         tier,
@@ -987,7 +876,6 @@ fn peak_cell(painter: &egui::Painter, player: &Player, at: egui::Pos2, look: &Lo
     } else {
         at.y
     };
-    // A full rank above today is the fact worth the brighter ink.
     let above = tier >= player.rank_tier.unwrap_or(0) + 3;
     let _drawn = caps_text(
         painter,
@@ -1037,7 +925,6 @@ fn act_short(act: &str) -> String {
     }
 }
 
-/// The emblem, the tier, and the peak under it when `peak_under_rank` asks.
 fn rank_cell(
     painter: &egui::Painter,
     player: &Player,
@@ -1127,9 +1014,6 @@ pub(crate) fn fit(painter: &egui::Painter, name: &str, font: &egui::FontId, room
     if total <= 4 || caps_width(painter, name, font.clone()) <= room {
         return name.to_owned();
     }
-    // Halving the length to try rather than taking a letter off at a time,
-    // since each try lays the text out and this runs for every row each
-    // frame. Four letters is the least it keeps, fitting or not.
     let (mut low, mut high) = (4, total - 1);
     while low < high {
         let mid = (low + high).div_ceil(2);
@@ -1142,7 +1026,6 @@ pub(crate) fn fit(painter: &egui::Painter, name: &str, font: &egui::FontId, room
     clip(name, low)
 }
 
-/// A name cut to a length, with an ellipsis if it had to be.
 fn clip(name: &str, keep: usize) -> String {
     if name.chars().count() <= keep {
         return name.to_owned();
@@ -1180,8 +1063,6 @@ fn brackets(painter: &egui::Painter, rect: Rect) {
 mod tests {
     use overseer_core::{AutoTag, Player};
 
-    /// A gun or the economy comes before entry, clutch and aced however the
-    /// backend listed them, and a kind it doesn't know goes last.
     #[test]
     fn tags_come_in_tiers() {
         let tag = |word: &str, kind: &str| AutoTag {

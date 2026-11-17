@@ -1,7 +1,3 @@
-//! The wizard's window and its three steps. The last one shows the installer's
-//! own log rather than a spinner, because when an install fails the line where
-//! it failed is what somebody needs.
-
 use std::path::PathBuf;
 
 use eframe::{App, CreationContext, Frame};
@@ -12,21 +8,15 @@ use overseer_ui::{Face, art, caps_at, caps_text, colour, shape, size, space};
 use crate::plan::{self, Finding, REGIONS, Survey};
 use crate::run::{self, Line, Running};
 
-/// Which step is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// What this machine has.
     Look,
-    /// Where you play.
     Choose,
-    /// Doing it, with the log.
     Install,
 }
 
-/// The wizard's state.
 pub(crate) struct Wizard {
     root: PathBuf,
-    /// This setup's own exe, when the app is inside it.
     carried: Option<PathBuf>,
     survey: Survey,
     step: Step,
@@ -46,7 +36,6 @@ impl std::fmt::Debug for Wizard {
 }
 
 impl Wizard {
-    /// Looks at the machine and opens on what it found.
     pub(crate) fn new(cc: &CreationContext<'_>, root: PathBuf, carried: Option<PathBuf>) -> Self {
         overseer_ui::install_fonts(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
@@ -65,7 +54,6 @@ impl Wizard {
         }
     }
 
-    /// Takes whatever the installer has said since the last frame.
     fn pump(&mut self) {
         let Some(running) = self.running.as_ref() else {
             return;
@@ -83,7 +71,6 @@ impl Wizard {
         }
     }
 
-    /// Starts the installer and moves to the last step.
     fn begin(&mut self, ctx: &egui::Context) {
         let region = REGIONS.get(self.region).map_or("na", |r| r.0);
         let waker = ctx.clone();
@@ -153,14 +140,10 @@ impl App for Wizard {
     }
 }
 
-/// What the footer's button does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
-    /// On to the choice.
     Choose,
-    /// Back to the findings.
     Back,
-    /// Start installing.
     Install,
     /// Installed, so open the app and close this.
     Open,
@@ -168,11 +151,9 @@ pub(crate) enum Action {
     Close,
     /// Look at the machine again, after fixing what blocked the install.
     Recheck,
-    /// Put the installer's log on the clipboard.
     CopyLog,
 }
 
-/// How tall the title bar is.
 const HEAD: f32 = space::XXL + space::XL;
 
 /// The wizard's title bar: the mark and the name, where you are in it, then
@@ -181,7 +162,6 @@ const HEAD: f32 = space::XXL + space::XL;
 pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
     let (rect, bar) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEAD), Sense::click_and_drag());
-    // The window has one size, so a double click has nothing to fill.
     let _fills = chrome::drag(ui, &bar);
     if !ui.is_rect_visible(rect) {
         return None;
@@ -197,8 +177,6 @@ pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
     let font = Face::Display.at(size::TITLE);
     let mut start = rect.left() + space::XL;
     if let Some(mark) = art::mark(ui.ctx()) {
-        // Centred on the capitals beside it and a little taller than them,
-        // the way the window's own title sets it.
         let galley = painter.layout_job(overseer_ui::caps(
             "Valorant",
             font.clone(),
@@ -245,8 +223,6 @@ pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
         colour::TEXT_DIM,
     );
 
-    // One mark per step, filled up to where you are, because a progress bar
-    // would claim to know how long this takes.
     let mut x = buttons_at - space::XL;
     for at in [Step::Install, Step::Choose, Step::Look] {
         let done = step_index(step) >= step_index(at);
@@ -258,7 +234,6 @@ pub(crate) fn header(ui: &mut Ui, step: Step) -> Option<Button> {
     clicked
 }
 
-/// How far along a step is, for the marks.
 const fn step_index(step: Step) -> u8 {
     match step {
         Step::Look => 0,
@@ -267,7 +242,6 @@ const fn step_index(step: Step) -> u8 {
     }
 }
 
-/// Step one: what the machine has.
 pub(crate) fn look(ui: &mut Ui, survey: &Survey) {
     title(
         ui,
@@ -292,7 +266,6 @@ pub(crate) fn look(ui: &mut Ui, survey: &Survey) {
         });
 }
 
-/// One finding: a mark, what was looked at, and what was found.
 fn row(ui: &mut Ui, finding: &Finding) {
     let width = ui.available_width();
     // Wrapped inside its own column, because a folder path or a Windows error
@@ -317,7 +290,6 @@ fn row(ui: &mut Ui, finding: &Finding) {
     } else {
         colour::ALLY
     };
-    // Level with the first line, which is where a one line finding sits.
     let middle = rect.top() + space::ROW / 2.0;
     let mark = Rect::from_min_size(pos2(rect.left() + space::XL, middle - 4.0), vec2(8.0, 8.0));
     painter.rect_filled(mark, 0, tint);
@@ -335,7 +307,6 @@ fn row(ui: &mut Ui, finding: &Finding) {
     );
 }
 
-/// Step two: which region.
 pub(crate) fn choose(ui: &mut Ui, region: &mut usize) {
     title(
         ui,
@@ -353,7 +324,6 @@ pub(crate) fn choose(ui: &mut Ui, region: &mut usize) {
         });
 }
 
-/// Step three: the installer's own words.
 pub(crate) fn install(ui: &mut Ui, log: &[String], outcome: Option<bool>) {
     let (heading_text, detail) = match outcome {
         None => (
@@ -392,9 +362,6 @@ pub(crate) fn install(ui: &mut Ui, log: &[String], outcome: Option<bool>) {
     });
 }
 
-/// One line of the installer's log. Its own marks become drawn ones: a
-/// step's heading in capitals, a tick for done, a cross for failed and a dot
-/// for a warning, with the words after them in Inter.
 fn log_line(painter: &egui::Painter, rect: Rect, line: &str) {
     let trimmed = line.trim_start();
     let middle = rect.center().y;
@@ -449,7 +416,6 @@ fn log_line(painter: &egui::Painter, rect: Rect, line: &str) {
     );
 }
 
-/// A log line's colour, from the mark the installer puts at its start.
 fn tint_for(line: &str) -> egui::Color32 {
     let trimmed = line.trim_start();
     if trimmed.starts_with("x ") {
@@ -465,7 +431,6 @@ fn tint_for(line: &str) -> egui::Color32 {
     }
 }
 
-/// The step's title and the sentence under it.
 fn title(ui: &mut Ui, text: &str, about: &str) {
     ui.add_space(space::LG);
     let (rect, _response) =
@@ -484,7 +449,6 @@ fn title(ui: &mut Ui, text: &str, about: &str) {
     ui.add_space(space::MD);
 }
 
-/// A line of explanation.
 fn note(ui: &mut Ui, text: &str, tint: egui::Color32) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::XL), Sense::hover());
@@ -500,12 +464,10 @@ fn note(ui: &mut Ui, text: &str, tint: egui::Color32) {
     );
 }
 
-/// One choice. True when it was clicked.
 fn option_row(ui: &mut Ui, name: &str, about: &str, chosen: bool) -> bool {
     overseer_ui::choice(ui, name, about, chosen, true, false)
 }
 
-/// The footer: what happens next, and the button that does it.
 pub(crate) fn footer(
     ui: &mut Ui,
     step: Step,
@@ -522,8 +484,6 @@ pub(crate) fn footer(
     ui.painter()
         .hline(rect.x_range(), rect.top(), (1.0, colour::LINE));
 
-    // An install already here updates with the region it has, so the
-    // question is one click away rather than in the way.
     let (label, action, enabled) = match step {
         Step::Look if blocked => ("Check Again", Action::Recheck, true),
         Step::Look if updating => ("Update", Action::Install, true),
@@ -551,10 +511,7 @@ pub(crate) fn footer(
     }
 }
 
-/// A button in the footer, counted from the right.
 fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) -> bool {
-    // The buttons to its left step along by the narrow width, and only the
-    // last step's button is ever wider, with nothing beside it.
     let narrow = 108.0;
     let font = Face::Display.at(size::LABEL);
     let width = space::XL
@@ -586,7 +543,6 @@ fn button(ui: &Ui, footer: Rect, label: &str, from_right: usize, enabled: bool) 
     } else if response.hovered() {
         (colour::TEXT_STRONG, colour::VOID)
     } else if from_right == 0 {
-        // Cream, since red in this world means the enemy.
         (colour::TEXT, colour::VOID)
     } else {
         (colour::BG_INSET, colour::TEXT)
@@ -620,8 +576,6 @@ mod tests {
     use super::tint_for;
     use overseer_ui::colour;
 
-    /// The installer marks its own lines and the log reads them, so a
-    /// failure is red without anybody parsing English.
     #[test]
     fn the_log_reads_the_installers_own_marks() {
         assert_eq!(

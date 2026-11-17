@@ -57,7 +57,6 @@ fn the_backends_own_answers_read() {
     );
 }
 
-/// What `DUMP` prints.
 #[derive(serde::Deserialize)]
 struct Sent {
     boards: Vec<Board>,

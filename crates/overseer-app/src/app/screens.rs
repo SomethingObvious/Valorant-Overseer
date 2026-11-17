@@ -1,13 +1,10 @@
-//! The screens the window can show: the board with its detail panel,
-//! settings, history, lineups and the overlay's own board.
-
 use egui::{CentralPanel, Panel, Rect, Ui};
 use overseer_core::Status;
 
 use crate::board::{self, Place, Scene, Side};
 use crate::notes;
 use crate::overlay;
-use crate::settings::{self, Quality, Welcome};
+use crate::settings::{self, Discord, Quality, Welcome};
 use crate::{panel, view};
 use overseer_ui::{self, colour, motion, space};
 
@@ -16,8 +13,6 @@ use super::{Empty, Overseer, RESTATE, Screen, panel_width};
 use crate::board::Asked;
 
 impl Overseer {
-    /// The detail panel down the right: one surface, lifted off the board.
-    /// Returns where it went.
     pub(super) fn detail(&mut self, ui: &mut Ui, width: f32) -> Rect {
         Panel::right("detail")
             .exact_size(panel_width(width, self.settings.panel_width))
@@ -31,24 +26,17 @@ impl Overseer {
                 ));
                 ui.painter()
                     .vline(all.left(), all.y_range(), (1.0, colour::VOID));
-                // A dark stroke and a light one, the same cut that separates
-                // the rows, so the panel reads as standing beside the board.
                 ui.painter().vline(
                     all.left() + 1.0,
                     all.y_range(),
                     (1.0, colour::TEXT_STRONG.gamma_multiply(0.07)),
                 );
-                // Show My Last Stats has no board of its own, so the panel is
-                // about the one row it shows, you.
                 let kept = self.kept();
                 let board = kept.as_ref().unwrap_or(&self.board);
                 let wanted = kept
                     .as_ref()
                     .map_or_else(|| self.current(), |kept| kept.players.first())
                     .and_then(|p| p.puuid.clone());
-                // The subject changes whenever the pointer crosses a row, and
-                // snapping between people reads as flicker. So the old one
-                // fades out before the new one fades in.
                 let settled = ui.ctx().animate_value_with_time(
                     egui::Id::new("panel-subject"),
                     f32::from(wanted == self.panel_showing),
@@ -56,14 +44,10 @@ impl Overseer {
                 );
                 if settled <= 0.02 && wanted != self.panel_showing {
                     self.panel_showing = wanted;
-                    // The fade back in starts next frame, and nothing else
-                    // asks for one on a still board.
                     ui.ctx().request_repaint();
                 }
                 ui.multiply_opacity(0.92f32.mul_add(settled, 0.08));
                 ui.add_space(space::MD);
-                // Taken out of self, because the panel edits the notes while
-                // it reads the player from the same struct.
                 let mut lent = std::mem::take(&mut self.notes);
                 let showing = kept.as_ref().map_or_else(
                     || {
@@ -74,8 +58,10 @@ impl Overseer {
                 );
                 let side = showing.map_or(Side::Enemy, |p| board::side_of(board, p));
                 let still = self.quality() == Quality::Efficient;
-                if panel::show(ui, showing, side, &mut lent, &self.career, still) {
-                    notes::save(&self.root, &lent);
+                if panel::show(ui, showing, side, &mut lent, &self.career, still)
+                    && !notes::save(&self.root, notes::About::Players, &lent)
+                {
+                    self.said = Some((super::UNSAVED.to_owned(), ui.input(|i| i.time)));
                 }
                 self.notes = lent;
             })
@@ -83,10 +69,8 @@ impl Overseer {
             .rect
     }
 
-    /// Every switch there is, and what could not be switched on.
     fn settings_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
         let quality = self.quality();
-        // Why it's on Efficient, when that wasn't what was picked.
         let why = if self.budget.calm == super::Calm::Software {
             Some(
                 "Staying on Efficient because no graphics card is drawing the window, and Full would take most of a second a frame.",
@@ -104,7 +88,6 @@ impl Overseer {
         } else {
             None
         };
-        // Shown on the screen, or a dead key would give no clue.
         let trouble = view::Trouble {
             hotkey: self
                 .hotkey
@@ -153,8 +136,6 @@ impl Overseer {
             .request_repaint_after(std::time::Duration::from_secs_f64(crate::offline::POLL));
     }
 
-    /// Draws whichever screen is showing in place of the board. True when
-    /// one did, since the board and its panel are then not drawn at all.
     pub(super) fn other_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) -> bool {
         let live = self.status == Status::Live;
         match self.screen_showing {
@@ -203,17 +184,19 @@ impl Overseer {
         true
     }
 
-    /// Your past games, with the count to show at the top.
     fn history_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
         let now_ms = now_ms();
         let live = self.status == Status::Live;
-        let mut picked = None;
+        let (mut picked, mut noted) = (None, false);
         CentralPanel::default().frame(chrome).show(ui, |ui| {
             ui.multiply_opacity(0.90f32.mul_add(turning, 0.10));
-            picked = self
+            (picked, noted) = self
                 .history
                 .show(ui, self.settings.history_games, now_ms, live);
         });
+        if noted && !notes::save(&self.root, notes::About::Games, &self.history.notes) {
+            self.said = Some((super::UNSAVED.to_owned(), ui.input(|i| i.time)));
+        }
         if let Some(count) = picked {
             self.settings.history_games = count;
             settings::save(&self.root, &self.settings);
@@ -221,33 +204,22 @@ impl Overseer {
         }
     }
 
-    /// The overlay's contents and the height they took: the enemy rows, or
-    /// one line while there are none. The window's empty state is too big to
-    /// sit over a game.
     fn overlay_view(&self, ui: &mut Ui) -> (f32, bool) {
         if self.board.players.is_empty() {
             return (overlay::greeting(ui), false);
         }
         let corner = ui.max_rect();
-        // No session foot here. It belongs in the window, and the overlay is
-        // exactly as tall as its rows.
         let drew = self.rows(ui, Place::Overlay).drew;
         (drew, overlay::hide_button(ui, corner))
     }
 
-    /// The overlay's window, while it is up.
     pub(super) fn overlay(&mut self, ctx: &egui::Context, now: f64) {
-        // Woken when a peek runs out, so it goes away on time with nothing
-        // else happening.
         if let Some(until) = self.shown.peek_until.filter(|t| *t > now) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(until - now));
         }
         if !self.overlay_up(now) {
             return;
         }
-        // Drawn before this window, so a frame where the board changed
-        // reaches both. The last height it drew is kept between showings,
-        // so a bottom corner is usually placed right the first time.
         let last = self.overlay_drew.unwrap_or(overlay::DESIGNED);
         let mut drew = last;
         let mut hidden = false;
@@ -257,15 +229,11 @@ impl Overseer {
                 (drew, hidden) = this.overlay_view(ui);
             });
         }
-        // A click on it, the hide button's included, would otherwise take
-        // the focus from the game.
         overseer_native::never_activate(overlay::TITLE);
         if hidden {
             self.hide_overlay();
             ctx.request_repaint();
         }
-        // Sized to what the board really drew, which cannot go stale the
-        // way a height kept by hand can.
         let monitor = ctx
             .input(|i| i.viewport().monitor_size)
             .map_or(0.0, |m| m.y);
@@ -276,8 +244,6 @@ impl Overseer {
         }
     }
 
-    /// Tells the backend how many games each row reads. The backend keeps
-    /// it only while it runs, so it is told again on every connection.
     pub(super) fn tell_games_read(&self) {
         let _asked = self.bridge.ask(
             "games_read",
@@ -287,9 +253,12 @@ impl Overseer {
                 "keep": self.settings.party_kept,
             }),
         );
+        let _told = self.bridge.ask(
+            "discord",
+            serde_json::json!({ "on": self.settings.discord == Discord::On }),
+        );
     }
 
-    /// The board, both teams, with the headings each side needs.
     pub(super) fn board_view(&mut self, ui: &mut Ui) {
         if self.settings.welcome == Welcome::Due
             && !self.board.players.is_empty()
@@ -300,20 +269,13 @@ impl Overseer {
         }
         let touched = self.rows(ui, Place::Window);
         let typing = ui.memory(egui::Memory::focused).is_some();
-        // Read a frame late, which nobody can see: the panel is drawn before
-        // the board, so what the pointer was on last frame is what the panel
-        // shows this one.
         let now = ui.input(|i| i.time);
         if !self.keyboard_owns && !typing && touched.hovered != self.hovered {
             self.hovered = touched.hovered;
             self.hovered_at = now;
-            // The wake in `window` already ran this frame, before the change.
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs_f64(super::DWELL));
         }
-        // Resting on a row only previews it. A click picks it, so a pick made
-        // with W, the arrows or the opening pick stays put as the pointer
-        // crosses the board.
         if touched.clicked.is_some() {
             self.selected = touched.clicked;
         }
@@ -323,7 +285,6 @@ impl Overseer {
         if let Some(team) = touched.worth {
             self.next_flagged(Some(&team));
         }
-        // Your last stats stay up until a board with players on it comes.
         match touched.waiting {
             Some(Asked::LastStats) => self.empty = Empty::LastStats,
             Some(Asked::Reconnect) => self.reconnect(ui.ctx()),
@@ -332,13 +293,10 @@ impl Overseer {
         }
     }
 
-    /// Whether Show My Last Stats stands in for the board, which needs no
-    /// copy of your row to tell.
     pub(super) fn showing_kept(&self) -> bool {
         self.board.players.is_empty() && self.empty == Empty::LastStats && self.board.you.is_some()
     }
 
-    /// Your row alone, while Show My Last Stats stands in for the board.
     pub(super) fn kept(&self) -> Option<overseer_core::Board> {
         self.board
             .you
@@ -347,8 +305,6 @@ impl Overseer {
             .map(super::waiting::kept_board)
     }
 
-    /// Draws the board, or what to say instead. Read only, so the overlay can
-    /// call it too without the two windows disagreeing about the selection.
     fn rows(&self, ui: &mut Ui, place: Place) -> board::Touched {
         let kept;
         let shown = if self.board.players.is_empty() {
@@ -359,14 +315,14 @@ impl Overseer {
                     (&self.status, &self.board),
                     self.reason(),
                     self.pace(RESTATE),
-                    (place == Place::Window).then_some(self.stopped.is_some()),
+                    (place == Place::Window)
+                        .then_some(self.stopped.is_some() || self.broken.is_some()),
                 );
                 return board::Touched {
                     waiting,
                     ..board::Touched::default()
                 };
             };
-            // Asked for, so said plainly and not as a warning.
             view::note(
                 ui,
                 &format!(
@@ -380,31 +336,6 @@ impl Overseer {
             &self.board
         };
         let now = ui.input(|i| i.time);
-        // A board that stopped updating says so, and fades, so nobody reads
-        // it as the round in front of them.
-        if let Some(lost) = self.lost_at {
-            let still = self.quality() == Quality::Efficient;
-            let gone = super::waiting::since_text(now - lost, still);
-            view::warning(
-                ui,
-                &format!(
-                    "Lost the connection {gone} ago. This board is from then, and Overseer is reconnecting."
-                ),
-            );
-            let step = super::waiting::tick(now - lost, still);
-            ui.ctx()
-                .request_repaint_after(motion::turn_over(step - (now - lost).rem_euclid(step)));
-            ui.multiply_opacity(0.45);
-        } else if let Some(at) = shown.held_since.filter(|_| place == Place::Window) {
-            // Not faded, since it is still the match being played.
-            view::warning(
-                ui,
-                &format!(
-                    "Can't reach VALORANT right now. This board is from {}, and it stays up until the match is seen to end.",
-                    crate::history::kept_ago(now_ms(), Some(at))
-                ),
-            );
-        }
         let scene = Scene {
             board: shown,
             sort: &self.sort,
@@ -415,6 +346,7 @@ impl Overseer {
             place,
             still: self.quality() == Quality::Efficient,
             since: (now - self.roster_at) as f32,
+            lost: self.lost_at.is_some(),
         };
         board::draw(ui, &scene)
     }

@@ -7,25 +7,11 @@ param(
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs = @()
 )
 
-# Strips attribution trailers out of a commit message before commit-msg reads
-# it. Some tooling appends a co-author trailer and a session link to every
-# message it writes, and without this the commit dies on a line nobody typed.
-#
-# The patterns come from .git\info\banned-patterns.txt, the same list
-# commit-msg, pre-push and the tracked-file scan read, so this file carries none
-# of the words.
-#
-# Only a line that is both attribution and shaped like a trailer is removed:
-# `Key: value`, or a bare URL on its own. Attribution in the prose stays where it
-# is for commit-msg to reject, because a hook that quietly rewrites what somebody
-# actually wrote is worse than one that says no.
-
 $ErrorActionPreference = "Stop"
 
 if ($env:OVERSEER_SKIP_HOOKS -eq "1") { exit 0 }
 if (-not (Test-Path -LiteralPath $MessageFile)) { exit 0 }
 
-# A merge or squash message is git's own writing, not a tool's. Leave it be.
 if ($GitArgs.Count -gt 0 -and @('merge', 'squash') -contains $GitArgs[0]) { exit 0 }
 
 $PatternFile = Join-Path (& git rev-parse --absolute-git-dir).Trim() "info\banned-patterns.txt"
@@ -41,9 +27,6 @@ if ($patterns.Count -eq 0) { exit 0 }
 $raw = [System.IO.File]::ReadAllText($MessageFile)
 $lines = @($raw -split "`r?`n")
 
-# `git commit --verbose` puts a scissors line and a diff below the message. Git
-# discards that itself, and a diff may legitimately contain any of these words,
-# so stop at the marker rather than editing somebody's patch.
 $comment = (& git config --get core.commentChar)
 if (-not $comment -or $comment -eq "auto") { $comment = "#" }
 $scissors = [regex]::Escape($comment) + " -{6,} >8 -{6,}"
@@ -52,7 +35,6 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($lines[$i] -match $scissors) { $cut = $i; break }
 }
 
-# `Key: value`, or a line that is nothing but a link.
 $trailerShape = "^\s*[A-Za-z][A-Za-z0-9-]*:\s*\S"
 $bareUrl = "^\s*https?://\S+\s*$"
 
@@ -72,7 +54,6 @@ for ($i = 0; $i -lt $cut; $i++) {
 
 if ($removed -eq 0) { exit 0 }
 
-# Taking trailers off the end leaves the blank line that separated them.
 while ($head.Count -gt 0 -and [string]::IsNullOrWhiteSpace($head[$head.Count - 1])) {
     $head = @($head[0..($head.Count - 2)])
 }

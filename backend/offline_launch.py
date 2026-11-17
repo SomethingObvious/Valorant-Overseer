@@ -1,11 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Offline mode: appear offline, away or on mobile to friends while still playing.
-
-The Riot client is started with its config URL pointed at a local server that
-swaps the chat host for a TLS proxy here, and that proxy rewrites this account's
-outgoing presence before it reaches Riot's XMPP server. It runs in a detached
-relay process, so the backend talks to it over a token-guarded 127.0.0.1 port.
-"""
+"""Appear Offline: friends see you offline, away or on mobile while you play."""
 
 from __future__ import annotations
 
@@ -26,37 +20,64 @@ import threading
 import time
 import uuid
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import requests
+from common.check import check, present
+from common.system import TASKKILL, process_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from cryptography import x509
 
-import requests
-from common.check import check, present
-from common.system import TASKKILL, process_names
-
+# A public name that resolves to 127.0.0.1, with a certificate anyone can
+# download. The Riot Client checks the chat host's certificate against its
+# name, so the proxy needs a real one.
 CHAT_DOMAIN = "deceive-localhost.molenzwiebel.xyz"
-
-RIOT_CONFIG_URL = "https://clientconfig.rpg.riotgames.com"
-
-GEO_PAS_URL = "https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat"
-
-_OFFLINE_DIR = (
-    Path(os.getenv("LOCALAPPDATA", str(Path("~").expanduser()))) / "Valorant Overseer" / "offline"
-)
-
 CERT_URL = os.getenv("OVERSEER_OFFLINE_CERT_URL", "https://mln.cx/deceive/localhost.pfx")
-_CACHED_CERT = str(_OFFLINE_DIR / "chat.pem")
-_CERT_CACHE_TTL = 7 * 86400
+RIOT_CONFIG = "https://clientconfig.rpg.riotgames.com"
+CHAT_AFFINITY = "https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat"
 
-RIOT_INSTALLS = str(
+_HOME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "Valorant Overseer" / "offline"
+_CERT = _HOME / "chat.pem"
+# A download a week keeps up with a certificate replaced every two months.
+_CERT_FRESH = 7 * 86400
+_LOG = _HOME / "engine.log"
+_LOOK_FILE = _HOME / "status"
+_HELPER_FILE = Path(os.getenv("OVERSEER_OFFLINE_HELPER_STATE", str(_HOME / "helper.json")))
+_IS_HELPER = os.getenv("OVERSEER_OFFLINE_HELPER") == "1"
+_HELPER_SPEAKS = 2
+_HELPER_STARTING = threading.Lock()
+_INSTALLS = (
     Path(os.getenv("PROGRAMDATA", r"C:\ProgramData")) / "Riot Games" / "RiotClientInstalls.json"
 )
 
-_LOG_PATH = str(_OFFLINE_DIR / "engine.log")
+LOOKS = ("online", "offline", "away", "mobile")
+_FIRST_LOOK = "offline"
+_RIOT_EXES = (
+    "RiotClientServices.exe",
+    "VALORANT.exe",
+    "VALORANT-Win64-Shipping.exe",
+    "RiotClientCrashHandler.exe",
+)
+_GAMES = re.compile(
+    r"<(valorant|league_of_legends|bacon|lion|keystone|riot_client)\b[^>]*?(?:/>|>.*?</\1>)",
+    re.DOTALL,
+)
+_STATUS = re.compile(r"<status\s*/>|<status>.*?</status>", re.DOTALL)
+_SHOW = re.compile(r"<show\s*/>|<show>.*?</show>", re.DOTALL)
+_BODY = re.compile(r"<body>(.*?)</body>", re.DOTALL)
+_ROSTER = re.compile(rb"<query xmlns=['\"]jabber:iq:riotgames:roster['\"]>")
+_PRIVATE = re.compile(r"<valorant\b[^>]*>.*?<p>([A-Za-z0-9+/=]+)</p>.*?</valorant>", re.DOTALL)
+
+_STAND_IN = "0b5e55ed-6a3e-4f1a-9c00-00000000a11e"
+_STAND_IN_JID = f"{_STAND_IN}@eu1.pvp.net"
+_STAND_IN_FROM = f"{_STAND_IN_JID}/overseer"
+_STAND_IN_NAME = "&#9;Valorant Overseer Active"
+_NOBODY = "00000000-0000-0000-0000-000000000000"
 
 
 @functools.cache
@@ -64,370 +85,285 @@ def _http() -> requests.Session:
     return requests.Session()
 
 
-def _dbg(msg: str, *, echo: bool = False) -> None:
-    # ValueError is the UnicodeEncodeError a lone surrogate from Riot's JSON
-    # raises. The log is the last place an error can go, so it must not raise.
+def _note(text: str, *, loud: bool = False) -> None:
+    # ValueError is the UnicodeEncodeError a lone surrogate from Riot raises,
+    # and this is where failures go, so it can't fail itself.
     try:
-        Path(_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with Path(_LOG_PATH).open("a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        # The helper can run for weeks between proxy starts, which clear it.
+        mode = "w" if _LOG.is_file() and _LOG.stat().st_size > 2_000_000 else "a"
+        with _LOG.open(mode, encoding="utf-8") as log:
+            log.write(f"{time.strftime('%H:%M:%S')} {text}\n")
     except (OSError, ValueError):
         pass
-    if echo:
+    if loud:
         with contextlib.suppress(OSError, ValueError):
-            print(f"[offline] {msg}", flush=True)
+            print(f"[offline] {text}", flush=True)
 
 
-def _reset_log() -> None:
+def _saved_look() -> str:
     try:
-        Path(_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(_LOG_PATH).open("w", encoding="utf-8").close()
-    except OSError:
-        pass
-
-
-_VALID_STATUS = ("online", "offline", "away", "mobile")
-_DEFAULT_STATUS = "offline"
-_STATUS_PATH = str(_OFFLINE_DIR / "status")
-
-_RELAY_PROTOCOL = 1
-_IN_RELAY = os.getenv("OVERSEER_OFFLINE_HELPER") == "1"
-_RELAY_STATE_PATH = os.getenv("OVERSEER_OFFLINE_HELPER_STATE", str(_OFFLINE_DIR / "helper.json"))
-_RELAY_START_LOCK = threading.Lock()
-
-
-def _load_status() -> str:
-    # A missing file is the first run, so this stays quiet.
-    try:
-        with Path(_STATUS_PATH).open(encoding="utf-8") as fh:
-            s = fh.read().strip().lower()
+        look = _LOOK_FILE.read_text(encoding="utf-8").strip().lower()
     except (OSError, ValueError):
-        return _DEFAULT_STATUS
-    else:
-        return s if s in _VALID_STATUS else _DEFAULT_STATUS
+        return _FIRST_LOOK
+    return look if look in LOOKS else _FIRST_LOOK
 
 
-def _save_status(status: str) -> None:
+def _save_look(look: str) -> None:
     try:
-        Path(_STATUS_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with Path(_STATUS_PATH).open("w", encoding="utf-8") as f:
-            f.write(status)
+        _LOOK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LOOK_FILE.write_text(look, encoding="utf-8")
     except OSError as e:
-        _dbg(f"status: could not save {status!r} to {_STATUS_PATH} ({e!r})")
+        _note(f"look: {look} wasn't saved to {_LOOK_FILE} ({e!r})")
 
 
-def _roster_name(status: str) -> str:
-    return f"{status.capitalize()} Mode Active"
+def _told(look: str) -> str:
+    if look == "online":
+        return "Appear Offline is paused, so your friends see you ONLINE again."
+    if look == "away":
+        return "Your friends now see you as AWAY."
+    return f"Your friends now see you as {look.upper()}."
 
 
-def _status_line(status: str) -> str:
-    return {
-        "online": "Valorant Overseer paused. You're now appearing ONLINE again.",
-        "offline": "You're now appearing OFFLINE to your friends.",
-        "away": "You're now appearing AWAY (idle) to your friends.",
-        "mobile": "You're now appearing on MOBILE to your friends.",
-    }.get(status, f"You're now appearing {status}.")
-
-
-_RIOT_PROCS = [
-    "RiotClientServices.exe",
-    "VALORANT.exe",
-    "VALORANT-Win64-Shipping.exe",
-    "RiotClientCrashHandler.exe",
-]
-
-
-_GAME_ELEMENTS = (
-    "valorant",
-    "league_of_legends",
-    "bacon",
-    "lion",
-    "keystone",
-    "riot_client",
-)
-
-
-def _rewrite_presence(xml_text: str, target: str = "offline") -> str:
-    # A presence with to= goes to one room or person, a MUC join for example.
-    # Friends only ever see the broadcast one, so that is all this touches.
-    if "<presence" not in xml_text or _is_directed(xml_text):
-        return xml_text
-
-    s = xml_text
-    if "<show>" in s:
-        s = re.sub(r"<show>.*?</show>", f"<show>{target}</show>", s, count=1, flags=re.DOTALL)
-    else:
-        s = re.sub(r"<show\s*/>", f"<show>{target}</show>", s, count=1)
-    s = re.sub(r"<status>.*?</status>", "", s, flags=re.DOTALL)
-    s = re.sub(r"<status\s*/>", "", s)
-    for tag in _GAME_ELEMENTS:
-        s = re.sub(rf"<{tag}\b[^>]*>.*?</{tag}>", "", s, flags=re.DOTALL)
-        s = re.sub(rf"<{tag}\b[^>]*/>", "", s)
-    if s != xml_text:
-        _dbg(f"presence: offline-rewrote ({len(xml_text)}->{len(s)}b)")
-    return s
-
-
-def _is_directed(stanza: str) -> bool:
-    return bool(re.search(r"\bto=", stanza[: stanza.find(">") + 1]))
-
-
-def process_c2s(
-    buf: str,
-    target: str = "offline",
-    on_presence: Callable[[str], None] | None = None,
-    *,
-    rewrite: bool = True,
-) -> tuple[str, str]:
-    """Rewrite every complete presence in `buf`, returning (output, unconsumed tail)."""
-    out = []
-    i = 0
-    while True:
-        start = buf.find("<presence", i)
-        if start == -1:
-            tail = _pending_prefix(buf, i)
-            out.append(buf[i : len(buf) - len(tail)])
-            return "".join(out), tail
-        out.append(buf[i:start])
-        end = _element_end(buf, start, "presence")
-        if end == -1:
-            return "".join(out), buf[start:]
-        raw = buf[start:end]
-        if on_presence is not None and not _is_directed(raw):
-            on_presence(raw)
-        out.append(_rewrite_presence(raw, target) if rewrite else raw)
-        i = end
-
-
-def _element_end(buf: str, start: int, name: str) -> int:
-    gt = buf.find(">", start)
-    if gt == -1:
+def _close_of(text: str, start: int, name: str) -> int:
+    head = text.find(">", start)
+    if head < 0:
         return -1
-    if buf[gt - 1] == "/":
-        return gt + 1
-    close = buf.find(f"</{name}>", gt)
-    if close == -1:
-        return -1
-    return close + len(name) + 3
+    if text[head - 1] == "/":
+        return head + 1
+    shut = text.find(f"</{name}>", head)
+    return -1 if shut < 0 else shut + len(name) + 3
 
 
-def _pending_prefix(buf: str, i: int) -> str:
-    tag = "<presence"
-    tail = buf[max(i, len(buf) - len(tag)) :]
-    for k in range(len(tail), 0, -1):
-        if tag.startswith(tail[-k:]):
-            return tail[-k:]
+def _partial_open(text: str, names: tuple[str, ...]) -> str:
+    for size in range(min(len(text), max(map(len, names)) + 1), 0, -1):
+        end = text[-size:]
+        if any(f"<{name}".startswith(end) for name in names):
+            return end
     return ""
 
 
-_FAKE_PUUID = "5ca07a5c-0ff1-4c0d-9e00-000000000001"
-_FAKE_JID = f"{_FAKE_PUUID}@eu1.pvp.net"
-_FAKE_RES = "RC-Overseer"
-
-_ROSTER_MARKER = b"<query xmlns='jabber:iq:riotgames:roster'>"
-
-_FAKE_ROSTER_ITEM = (
-    f"<item jid='{_FAKE_JID}' name='&#9;Valorant Overseer Active' "
-    f"subscription='both' puuid='{_FAKE_PUUID}'>"
-    "<group priority='9999'>Valorant Overseer</group>"
-    "<state>online</state>"
-    "<id name='&#9;Valorant Overseer Active' tagline='OFFLINE'/>"
-    "<lol name='&#9;Valorant Overseer Active'/>"
-    "<platforms><riot name='&#9;Valorant Overseer Active' tagline='OFFLINE'/></platforms>"
-    "</item>"
-).encode()
-
-
-def inject_fake_roster(data: bytes) -> bytes | None:
-    """Return the roster with the stand-in contact added, or None when it has no roster."""
-    idx = data.find(_ROSTER_MARKER)
-    if idx == -1:
-        return None
-    pos = idx + len(_ROSTER_MARKER)
-    return data[:pos] + _FAKE_ROSTER_ITEM + data[pos:]
-
-
-def strip_fake_stanzas(text: str) -> str:
-    """Return the chat stream with every stanza addressed to the stand-in contact taken out."""
-    out = []
-    i = 0
+def _cut(text: str, names: tuple[str, ...]) -> tuple[list[tuple[str, str]], str]:
+    parts: list[tuple[str, str]] = []
+    at = 0
     while True:
-        start, name = -1, ""
-        for tag in ("message", "iq", "presence"):
-            k = text.find(f"<{tag}", i)
-            if k != -1 and (start == -1 or k < start):
-                start, name = k, tag
-        if start == -1:
-            break
-        end = _element_end(text, start, name)
-        if end == -1:
-            break
-        out.append(text[i:start] if _FAKE_PUUID in text[start:end] else text[i:end])
-        i = end
-    out.append(text[i:])
-    return "".join(out)
+        found = [(k, name) for name in names if (k := text.find(f"<{name}", at)) >= 0]
+        if not found:
+            held = _partial_open(text[at:], names)
+            parts.append(("", text[at : len(text) - len(held)]))
+            return parts, held
+        start, name = min(found)
+        parts.append(("", text[at:start]))
+        end = _close_of(text, start, name)
+        if end < 0:
+            return parts, text[start:]
+        parts.append((name, text[start:end]))
+        at = end
 
 
-def _extract_valorant_version(text: str) -> str | None:
-    party = (_extract_valorant_private(text) or {}).get("partyPresenceData")
-    v = party.get("partyClientVersion") if isinstance(party, dict) else None
-    return v if isinstance(v, str) and v else None
+def _addressed(stanza: str) -> bool:
+    return re.search(r"\bto=", stanza[: stanza.find(">") + 1]) is not None
 
 
-def _extract_valorant_private(text: str) -> dict[str, Any] | None:
-    m = re.search(
-        r"<valorant\b[^>]*>.*?<p>([A-Za-z0-9+/=]+)</p>.*?</valorant>", text or "", re.DOTALL
-    )
-    if not m:
+def _disguise(stanza: str, look: str) -> str:
+    if "<presence" not in stanza or _addressed(stanza):
+        return stanza
+    shown = _SHOW.sub(f"<show>{look}</show>", stanza, count=1)
+    plain = _GAMES.sub("", _STATUS.sub("", shown))
+    if plain != stanza:
+        _note(f"presence: shown as {look} ({len(stanza)} to {len(plain)} bytes)")
+    return plain
+
+
+def hide_presences(
+    text: str,
+    look: str = _FIRST_LOOK,
+    seen: Callable[[str], None] | None = None,
+    *,
+    rewrite: bool = True,
+) -> tuple[str, str]:
+    """Disguise every whole presence in `text`. Returns what to send and what to hold back."""
+    parts, held = _cut(text, ("presence",))
+    sent = []
+    for name, part in parts:
+        if name and seen is not None and not _addressed(part):
+            seen(part)
+        sent.append(_disguise(part, look) if name and rewrite else part)
+    return "".join(sent), held
+
+
+def drop_stand_in(text: str) -> str:
+    """Return the client's chat without the stanzas for the stand-in, whom Riot never heard of."""
+    parts, held = _cut(text, ("message", "iq", "presence"))
+    return "".join(part for name, part in parts if not (name and _STAND_IN in part)) + held
+
+
+def add_stand_in(data: bytes) -> bytes | None:
+    """Return the friend list with the stand-in at the top, or None when `data` has no list."""
+    found = _ROSTER.search(data)
+    if found is None:
         return None
-    # Runs on every presence the client sends, so a bad blob is skipped quietly.
-    # binascii.Error, JSONDecodeError and UnicodeDecodeError are all ValueError.
+    entry = (
+        f"<item jid='{_STAND_IN_JID}' name='{_STAND_IN_NAME}' subscription='both'"
+        f" puuid='{_STAND_IN}'><group priority='9999'>Valorant Overseer</group>"
+        f"<state>online</state><id name='{_STAND_IN_NAME}' tagline='OFFLINE'/>"
+        f"<lol name='{_STAND_IN_NAME}'/><platforms><riot name='{_STAND_IN_NAME}'"
+        " tagline='OFFLINE'/></platforms></item>"
+    ).encode()
+    return data[: found.end()] + entry + data[found.end() :]
+
+
+def _private_of(stanza: str) -> dict[str, Any] | None:
+    blob = _PRIVATE.search(stanza or "")
+    if blob is None:
+        return None
+    # Read on every presence the client sends, so a bad one is passed over.
+    # A bad base64, JSON or UTF-8 error is a ValueError each.
     try:
-        data = json.loads(base64.b64decode(m.group(1)))
+        got = json.loads(base64.b64decode(blob.group(1)))
     except ValueError:
         return None
-    return data if isinstance(data, dict) else None
+    return got if isinstance(got, dict) else None
 
 
-def _fake_presence(version: str | None = None, status: str = _DEFAULT_STATUS) -> bytes:
-    ts = int(time.time() * 1000)
-    val = base64.b64encode(
-        json.dumps(
-            {
-                "isValid": True,
-                "isIdle": False,
-                "queueId": "competitive",
-                "provisioningFlow": "Invalid",
-                "partyId": "00000000-0000-0000-0000-000000000000",
-                "partySize": 1,
-                "maxPartySize": 5,
-                "partyOwnerMatchScoreAllyTeam": 0,
-                "partyOwnerMatchScoreEnemyTeam": 0,
-                "premierPresenceData": {
-                    "rosterId": "",
-                    "rosterName": _roster_name(status),
-                    "rosterTag": "Valorant Overseer Active",
-                    "rosterType": "VCT",
-                    "division": 0,
-                    "score": 0,
-                    "plating": 0,
-                    "showAura": False,
-                    "showTag": True,
-                    "showPlating": False,
-                },
-                "matchPresenceData": {
-                    "sessionLoopState": "MENUS",
-                    "provisioningFlow": "Invalid",
-                    "matchMap": "",
-                    "queueId": "competitive",
-                },
-                "partyPresenceData": {
-                    "partyId": "00000000-0000-0000-0000-000000000000",
-                    "isPartyOwner": True,
-                    "partyState": "DEFAULT",
-                    "partyAccessibility": "CLOSED",
-                    "partyLFM": False,
-                    "partyClientVersion": version or "unknown",
-                    "partyVersion": ts,
-                    "partySize": 1,
-                    "maxPartySize": 5,
-                    "queueEntryTime": "0001.01.01-00.00.00",
-                    "isPartyCrossPlayEnabled": False,
-                    "isPlayerCrossPlayEnabled": False,
-                    "partyPrecisePlatformTypes": 1,
-                    "customGameName": "Valorant Overseer Active",
-                    "customGameTeam": "",
-                    "tournamentId": "",
-                    "rosterId": "",
-                    "partyOwnerSessionLoopState": "MENUS",
-                    "partyOwnerMatchMap": "",
-                    "partyOwnerProvisioningFlow": "Invalid",
-                    "partyOwnerMatchScoreAllyTeam": 0,
-                    "partyOwnerMatchScoreEnemyTeam": 0,
-                },
-                "playerPresenceData": {
-                    "playerCardId": "d93ad22d-4db7-b6bc-5e9c-e5959bb9dd76",
-                    "playerTitleId": "e3ca05a4-4e44-9afe-3791-7d96ca8f71fa",
-                    "accountLevel": 999,
-                    "competitiveTier": 27,
-                    "leaderboardPosition": 1,
-                },
-            }
-        ).encode("utf-8")
-    ).decode("ascii")
-    sid = uuid.uuid4()
+def _client_version(stanza: str) -> str | None:
+    party = (_private_of(stanza) or {}).get("partyPresenceData")
+    version = party.get("partyClientVersion") if isinstance(party, dict) else None
+    return version if isinstance(version, str) and version else None
+
+
+def _stand_in_private(version: str | None, look: str, now_ms: int) -> dict[str, Any]:
+    owner = {
+        "partyOwnerSessionLoopState": "MENUS",
+        "partyOwnerMatchMap": "",
+        "partyOwnerProvisioningFlow": "Invalid",
+        "partyOwnerMatchScoreAllyTeam": 0,
+        "partyOwnerMatchScoreEnemyTeam": 0,
+    }
+    party = {
+        "partyId": _NOBODY,
+        "isPartyOwner": True,
+        "partyState": "DEFAULT",
+        "partyAccessibility": "CLOSED",
+        "partyLFM": False,
+        "partyClientVersion": version or "unknown",
+        "partyVersion": now_ms,
+        "partySize": 1,
+        "maxPartySize": 5,
+        "queueEntryTime": "0001.01.01-00.00.00",
+        "isPartyCrossPlayEnabled": False,
+        "isPlayerCrossPlayEnabled": False,
+        "partyPrecisePlatformTypes": 1,
+        "customGameName": "Valorant Overseer Active",
+        "customGameTeam": "",
+        "tournamentId": "",
+        "rosterId": "",
+        **owner,
+    }
+    premier = {
+        "rosterId": "",
+        "rosterName": f"{look.capitalize()} Mode Active",
+        "rosterTag": "Valorant Overseer Active",
+        "rosterType": "VCT",
+        "division": 0,
+        "score": 0,
+        "plating": 0,
+        "showAura": False,
+        "showTag": True,
+        "showPlating": False,
+    }
+    return {
+        "isValid": True,
+        "isIdle": False,
+        "queueId": "competitive",
+        "provisioningFlow": "Invalid",
+        "partyId": _NOBODY,
+        "partySize": 1,
+        "maxPartySize": 5,
+        "partyOwnerMatchScoreAllyTeam": 0,
+        "partyOwnerMatchScoreEnemyTeam": 0,
+        "premierPresenceData": premier,
+        "matchPresenceData": {
+            "sessionLoopState": "MENUS",
+            "provisioningFlow": "Invalid",
+            "matchMap": "",
+            "queueId": "competitive",
+        },
+        "partyPresenceData": party,
+        "playerPresenceData": {
+            "playerCardId": "d93ad22d-4db7-b6bc-5e9c-e5959bb9dd76",
+            "playerTitleId": "e3ca05a4-4e44-9afe-3791-7d96ca8f71fa",
+            "accountLevel": 999,
+            "competitiveTier": 27,
+            "leaderboardPosition": 1,
+        },
+    }
+
+
+def _stand_in_presence(version: str | None, look: str) -> bytes:
+    now = int(time.time() * 1000)
+    private = base64.b64encode(json.dumps(_stand_in_private(version, look, now)).encode())
+    games = (
+        f"<keystone><st>chat</st><s.t>{now}</s.t><s.p>keystone</s.p><pty/></keystone>"
+        f"<league_of_legends><st>chat</st><s.t>{now}</s.t><s.p>league_of_legends</s.p>"
+        "<s.c>live</s.c><p>{&quot;pty&quot;:true}</p></league_of_legends>"
+        f"<valorant><st>chat</st><s.t>{now}</s.t><s.p>valorant</s.p><s.r>PC</s.r>"
+        f"<p>{private.decode('ascii')}</p><pty/></valorant>"
+        f"<bacon><st>chat</st><s.t>{now}</s.t><s.l>bacon_availability_online</s.l>"
+        "<s.p>bacon</s.p></bacon>"
+    )
     return (
-        f"<presence from='{_FAKE_JID}/{_FAKE_RES}' id='b-{sid}'>"
-        "<games>"
-        f"<keystone><st>chat</st><s.t>{ts}</s.t><s.p>keystone</s.p><pty/></keystone>"
-        f"<league_of_legends><st>chat</st><s.t>{ts}</s.t><s.p>league_of_legends</s.p>"
-        f"<s.c>live</s.c><p>{{&quot;pty&quot;:true}}</p></league_of_legends>"
-        f"<valorant><st>chat</st><s.t>{ts}</s.t><s.p>valorant</s.p><s.r>PC</s.r>"
-        f"<p>{val}</p><pty/></valorant>"
-        f"<bacon><st>chat</st><s.t>{ts}</s.t><s.l>bacon_availability_online</s.l>"
-        f"<s.p>bacon</s.p></bacon>"
-        "</games>"
-        "<show>chat</show><platform>riot</platform><status/>"
-        "</presence>"
+        f"<presence from='{_STAND_IN_FROM}' id='b-{uuid.uuid4()}'><games>{games}</games>"
+        "<show>chat</show><platform>riot</platform><status/></presence>"
     ).encode()
 
 
-def _fake_message(text: str) -> bytes:
-    stamp = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime())
+def _from_stand_in(text: str) -> bytes:
+    sent = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime())
     return (
-        f"<message from='{_FAKE_JID}/{_FAKE_RES}' stamp='{stamp}' "
-        f"id='overseer-{uuid.uuid4()}' type='chat'><body>{text}</body></message>"
+        f"<message from='{_STAND_IN_FROM}' stamp='{sent}' id='overseer-{uuid.uuid4()}'"
+        f" type='chat'><body>{text}</body></message>"
     ).encode()
 
 
-def find_riot_client() -> str | None:
-    """Return the Riot client's path from RiotClientInstalls.json, or None."""
+def _riot_client() -> str | None:
     try:
-        with Path(RIOT_INSTALLS).open(encoding="utf-8") as f:
-            data = json.load(f)
+        installs = json.loads(_INSTALLS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    for key in ("rc_default", "rc_live", "rc_beta"):
-        p = data.get(key)
-        if p and Path(p).is_file():
-            return p
-    return None
+    paths = [installs.get(k) for k in ("rc_default", "rc_live", "rc_beta")]
+    return next((p for p in paths if isinstance(p, str) and Path(p).is_file()), None)
 
 
-def kill_riot() -> None:
-    """Close the Riot client and VALORANT, so the next launch goes through the proxy."""
-    # taskkill exits non-zero for a process that is not running, which is most
-    # of this list most of the time, so the exit code is not checked.
-    for name in _RIOT_PROCS:
+def _close_riot() -> None:
+    for exe in _RIOT_EXES:
+        # taskkill fails for a program that isn't running, which is most of
+        # these most of the time, so its exit code says nothing.
         try:
             subprocess.run(
-                [TASKKILL, "/F", "/IM", name],
+                [TASKKILL, "/F", "/IM", exe],
                 capture_output=True,
                 timeout=10,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as e:
-            _dbg(f"launch: taskkill {name} failed ({e!r})")
+            _note(f"launch: closing {exe} failed ({e!r})")
 
 
-def _hidden_riot_process_kwargs() -> dict[str, Any]:
-    startup = subprocess.STARTUPINFO()
-    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startup.wShowWindow = subprocess.SW_HIDE
+def _quiet(**more: Any) -> dict[str, Any]:
+    # The backend runs below normal, and a child given no class of its own
+    # takes that, so the Riot Client and VALORANT would run below it too.
     return {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
-        # The backend runs below normal, and a child without its own class
-        # takes that, so the Riot client and VALORANT would run below it too.
         "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.NORMAL_PRIORITY_CLASS,
-        "startupinfo": startup,
+        **more,
     }
 
 
 def _cert_fault(cert: x509.Certificate) -> str | None:
-    """Return why a certificate can't be the chat proxy's, or None when it can."""
     from cryptography import x509
 
     try:
@@ -445,17 +381,6 @@ def _cert_fault(cert: x509.Certificate) -> str | None:
 
 
 def _pem_from(pfx: bytes) -> bytes | None:
-    """Return the downloaded pfx as a PEM chain and key, or None when it isn't the chat proxy's.
-
-    The file is a certificate and its private key, which terminate TLS for the
-    Riot client on this machine, and it comes from a host nobody here
-    controls. It is a 90-day certificate that the host replaces every two
-    months, so its bytes can't be pinned for longer than that. What is checked
-    is that it is the certificate for CHAT_DOMAIN and in date. The Riot client
-    turns away one with that name that no authority signed, so a wrong file
-    leaves chat unconnected and nothing more, and the key was never a secret,
-    as anyone can download it.
-    """
     try:
         from cryptography.hazmat.primitives.serialization import (
             Encoding,
@@ -464,86 +389,77 @@ def _pem_from(pfx: bytes) -> bytes | None:
             pkcs12,
         )
 
-        key, cert, extra = pkcs12.load_key_and_certificates(pfx, None)
+        key, cert, chain = pkcs12.load_key_and_certificates(pfx, None)
         if key is None or cert is None:
-            _dbg("cert: pfx missing key or leaf cert; ignoring")
+            _note("cert: the download has no key or no certificate")
             return None
         fault = _cert_fault(cert)
         if fault:
-            _dbg(f"cert: REFUSED, {fault}")
+            _note(f"cert: turned down, as {fault}")
             return None
-        pem = cert.public_bytes(Encoding.PEM)
-        for c in extra or []:
-            pem += c.public_bytes(Encoding.PEM)
+        pem = b"".join(c.public_bytes(Encoding.PEM) for c in [cert, *(chain or [])])
         return pem + key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
     except Exception as e:
-        # cryptography can be missing, or can reject the pfx with several
-        # different exception types, and every one of them means no cert.
-        _dbg(f"cert: pfx->pem conversion failed ({e!r})")
+        # cryptography can be missing, or can refuse the pfx with several
+        # kinds of exception, and every one of them means no certificate.
+        _note(f"cert: the pfx didn't convert ({e!r})")
         return None
 
 
 def _fetch_cert() -> bool:
     try:
-        r = _http().get(CERT_URL, timeout=15)
-        r.raise_for_status()
+        got = _http().get(CERT_URL, timeout=15)
+        got.raise_for_status()
     except requests.RequestException as e:
-        _dbg(f"cert: fetch failed ({e})")
+        _note(f"cert: the download failed ({e})")
         return False
-    pem = _pem_from(r.content)
+    pem = _pem_from(got.content)
     if pem is None:
         return False
-    tmp = _CACHED_CERT + ".tmp"
+    fresh = _CERT.with_suffix(".tmp")
     try:
-        Path(_CACHED_CERT).parent.mkdir(parents=True, exist_ok=True)
-        with Path(tmp).open("wb") as f:
-            f.write(pem)
-        # Load it before it replaces the cache, so a PEM the ssl module rejects
-        # never becomes the cert the chat proxy starts with. This is also what
-        # says the key is the certificate's own.
-        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(tmp)
-        Path(tmp).replace(_CACHED_CERT)
-        _dbg("cert: fetched Deceive pfx + cached as PEM")
+        _CERT.parent.mkdir(parents=True, exist_ok=True)
+        fresh.write_bytes(pem)
+        # Loaded before it replaces the saved one, so a PEM the ssl module
+        # refuses never becomes the one the proxy starts with. This is also
+        # what says the key is the certificate's own.
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(fresh)
+        fresh.replace(_CERT)
     except ssl.SSLError as e:
-        # SSLError is an OSError too, so it has to come first.
-        _dbg(f"cert: converted PEM unusable ({e})")
+        _note(f"cert: the converted PEM won't load ({e})")
     except OSError as e:
-        _dbg(f"cert: could not save the converted PEM to {_CACHED_CERT} ({e!r})")
+        _note(f"cert: the converted PEM wasn't saved to {_CERT} ({e!r})")
     else:
+        _note("cert: downloaded and saved")
         return True
     with contextlib.suppress(OSError):
-        Path(tmp).unlink()
+        fresh.unlink()
     return False
 
 
-def _cached_cert_fits() -> bool:
-    """Whether the saved certificate is still one the Riot client would take."""
+def _saved_cert_fits() -> bool:
     try:
         from cryptography import x509
 
-        cert = x509.load_pem_x509_certificate(Path(_CACHED_CERT).read_bytes())
+        cert = x509.load_pem_x509_certificate(_CERT.read_bytes())
     except (OSError, ValueError, ImportError):
         return False
     return _cert_fault(cert) is None
 
 
-def ensure_cert() -> str:
-    """Return the chat proxy's certificate file: the saved one, downloaded again each week.
-
-    A download that fails falls back on the saved one for as long as it is in
-    date. With neither, offline mode says so before the Riot client is touched.
-    """
+def ensure_cert() -> Path:
+    """Return the chat proxy's certificate file: the saved one, downloaded again each week."""
     try:
-        fresh = 0 <= time.time() - Path(_CACHED_CERT).stat().st_mtime < _CERT_CACHE_TTL
+        fresh = 0 <= time.time() - _CERT.stat().st_mtime < _CERT_FRESH
     except OSError:
         fresh = False
-    if fresh and _cached_cert_fits():
-        return _CACHED_CERT
+    if fresh and _saved_cert_fits():
+        return _CERT
     if _fetch_cert():
-        return _CACHED_CERT
-    if _cached_cert_fits():
-        _dbg("cert: fetch failed, using the saved one, which is still in date")
-        return _CACHED_CERT
+        return _CERT
+    if _saved_cert_fits():
+        _note("cert: the download failed, so the saved one stands in while it is in date")
+        return _CERT
     msg = (
         "Appear Offline couldn't get its certificate. The download from "
         f"{CERT_URL} failed and the saved copy is missing or out of date. "
@@ -552,706 +468,685 @@ def ensure_cert() -> str:
     raise RuntimeError(msg)
 
 
-class _Target:
-    """The real chat server, learned from the client config as it passes through."""
-
-    host: str | None = None
-    port: int = 5223
-    affinity_resolved: bool = False
-
-
-class _Conn:
-    def __init__(self, client_writer: Any, up_writer: Any) -> None:
-        self.client_writer = client_writer
-        self.up_writer = up_writer
+class _Link:
+    def __init__(self, to_client: Any, to_riot: Any) -> None:
+        self.to_client = to_client
+        self.to_riot = to_riot
         self.version: str | None = None
-        self.inserted = False
-        self.presence_sent = False
-        self.last_presence: str | None = None
-        self.last_private: dict[str, Any] | None = None
-        self.captured_at = 0.0
+        self.listed = False
+        self.shown = False
+        # Your last broadcast presence as the client wrote it, and the
+        # VALORANT block from it.
+        self.presence: str | None = None
+        self.private: dict[str, Any] | None = None
+        self.private_at = 0.0
 
-    def capture(self, raw: str) -> None:
-        self.last_presence = raw
-        private = _extract_valorant_private(raw)
+    def saw(self, stanza: str) -> None:
+        self.presence = stanza
+        private = _private_of(stanza)
         if private:
-            self.last_private = private
-            self.captured_at = time.time()
+            self.private, self.private_at = private, time.time()
+
+    async def tell(self, data: bytes, what: str) -> None:
+        try:
+            self.to_client.write(data)
+            await self.to_client.drain()
+        except OSError as e:
+            _note(f"chat: the {what} didn't reach the client ({e!r})")
 
 
-class _Engine:
+class _Proxy:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.started = False
+        self.starting = threading.Lock()
+        self.up = False
         self.config_port: int | None = None
         self.chat_port: int | None = None
-        self.target = _Target()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self.status = _DEFAULT_STATUS
-        self.connected = False
-        self.friends_loaded = False
-        self.conns: list[_Conn] = []
-        # asyncio only holds a weak reference to a running task, so a greeting
-        # left un-referenced can be collected mid-await and simply never arrive.
-        self._greet_tasks: set[Any] = set()
+        # Riot's chat server, learned from the config as it passes through.
+        # Once this account's own host is looked up it stays.
+        self.riot_host: str | None = None
+        self.riot_port = 5223
+        self.host_pinned = False
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.look = _FIRST_LOOK
+        self.links: list[_Link] = []
+        self.later: set[asyncio.Task[None]] = set()
 
     def start(self) -> None:
-        with self._lock:
-            if self.started:
+        with self.starting:
+            if self.up:
                 return
             cert = ensure_cert()
-            _reset_log()
-            saved = _load_status()
-            self.status = saved if saved != "online" else _DEFAULT_STATUS
-            self.connected = False
-            self.friends_loaded = False
-            self._start_chat(cert)
-            self._start_config()
-            self.started = True
-            _dbg(
-                f"engine started: config_port={self.config_port} chat_port={self.chat_port}",
-                echo=True,
-            )
+            with contextlib.suppress(OSError):
+                _LOG.parent.mkdir(parents=True, exist_ok=True)
+                _LOG.write_text("", encoding="utf-8")
+            saved = _saved_look()
+            self.look = _FIRST_LOOK if saved == "online" else saved
+            self._serve_chat(cert)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _ConfigServer)
+            self.config_port = server.server_address[1]
+            threading.Thread(
+                target=server.serve_forever, name="offline-config", daemon=True
+            ).start()
+            self.up = True
+            _note(f"proxy up, config on {self.config_port}, chat on {self.chat_port}", loud=True)
 
-    def _start_chat(self, cert: str) -> None:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert)
-        loop = asyncio.new_event_loop()
-        self._loop = loop
-        ready = threading.Event()
+    def _serve_chat(self, cert: Path) -> None:
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(cert)
+        loop = self.loop = asyncio.new_event_loop()
+        opened = threading.Event()
 
-        def run() -> None:
-            asyncio.set_event_loop(loop)
-            server = loop.run_until_complete(
-                asyncio.start_server(self._handle_chat, "127.0.0.1", 0, ssl=ctx)
-            )
+        async def listen() -> None:
+            server = await asyncio.start_server(self._link, "127.0.0.1", 0, ssl=tls)
             self.chat_port = server.sockets[0].getsockname()[1]
-            ready.set()
-            loop.run_forever()
+            opened.set()
+            await server.serve_forever()
 
-        threading.Thread(target=run, name="offline-chat", daemon=True).start()
-        if not ready.wait(10):
-            msg = "The offline chat proxy couldn't open a port on 127.0.0.1."
+        threading.Thread(
+            target=loop.run_until_complete, args=(listen(),), name="offline-chat", daemon=True
+        ).start()
+        if not opened.wait(10):
+            msg = "Appear Offline couldn't open its chat port on 127.0.0.1."
             raise RuntimeError(msg)
 
-    async def _handle_chat(self, c_reader: Any, c_writer: Any) -> None:
-        host, port = self.target.host, self.target.port
-        _dbg(f"chat: client connected, relaying to upstream {host}:{port}", echo=True)
+    def _soon(self, work: Any) -> None:
+        task = asyncio.create_task(work)
+        self.later.add(task)
+        task.add_done_callback(self.later.discard)
+
+    async def _link(self, from_client: Any, to_client: Any) -> None:
+        host, port = self.riot_host, self.riot_port
         if not host:
-            _dbg("chat: NO upstream host captured yet, closing (config not fetched?)", echo=True)
-            c_writer.close()
+            _note("chat: the client came before its config named a chat host", loud=True)
+            to_client.close()
             return
-        # ValueError covers a host name that will not IDNA-encode.
         try:
-            up_ctx = ssl.create_default_context()
-            u_reader, u_writer = await asyncio.open_connection(
-                host, port, ssl=up_ctx, server_hostname=host
+            from_riot, to_riot = await asyncio.open_connection(
+                host, port, ssl=ssl.create_default_context(), server_hostname=host
             )
         except (OSError, ValueError) as e:
-            _dbg(f"chat: upstream {host}:{port} unreachable ({e!r})")
-            c_writer.close()
+            _note(f"chat: Riot's {host}:{port} didn't answer ({e!r})")
+            to_client.close()
             return
-        if not self.conns:
-            self.friends_loaded = False
-        self.connected = True
-        conn = _Conn(c_writer, u_writer)
-        self.conns.append(conn)
+        _note(f"chat: passing the client through to {host}:{port}", loud=True)
+        link = _Link(to_client, to_riot)
+        self.links.append(link)
+
+        async def then_close(pump: Any, other: Any) -> None:
+            # Either side hanging up ends the other, or a closed client would
+            # leave a session open on Riot's chat server with its last
+            # presence, and Riot hanging up would go unnoticed by the client.
+            try:
+                await pump
+            finally:
+                other.close()
+
         try:
-            results = await asyncio.gather(
-                self._pump_c2s(c_reader, u_writer, conn),
-                self._pump_s2c(u_reader, c_writer, conn),
+            ended = await asyncio.gather(
+                then_close(self._outbound(from_client, link), to_riot),
+                then_close(self._inbound(from_riot, link), to_client),
                 return_exceptions=True,
             )
         finally:
-            if conn in self.conns:
-                self.conns.remove(conn)
-        errs = [repr(r) for r in results if isinstance(r, Exception)]
-        _dbg("chat: connection closed" + (f" errors={errs}" if errs else ""))
-        for w in (c_writer, u_writer):
+            with contextlib.suppress(ValueError):
+                self.links.remove(link)
+        faults = [repr(e) for e in ended if isinstance(e, Exception)]
+        _note("chat: the connection ended" + (f" with {faults}" if faults else ""))
+        for stream in (to_client, to_riot):
             try:
-                w.close()
+                stream.close()
             except Exception as e:
-                _dbg(f"chat: closing a stream failed ({e!r})")
+                _note(f"chat: a stream wouldn't close ({e!r})")
 
-    async def _pump_c2s(self, reader: Any, writer: Any, conn: _Conn) -> None:
-        dec = codecs.getincrementaldecoder("utf-8")()
-        buf = ""
-        while True:
-            data = await reader.read(65536)
-            if not data:
-                buf += dec.decode(b"", final=True)
-                break
-            chunk = dec.decode(data)
-            if _FAKE_JID in chunk:
-                await self._handle_fake_command(chunk, conn)
-                chunk = strip_fake_stanzas(chunk)
-                if not chunk:
-                    continue
-            if conn.version is None:
-                v = _extract_valorant_version(chunk)
-                if v:
-                    conn.version = v
-                    _dbg(f"c2s: learned VALORANT version {v}")
-                    if conn.presence_sent:
-                        await self._send_fake_presence(conn)
-            buf += chunk
-            hide = self.status != "online"
-            out, buf = process_c2s(
-                buf,
-                target=self.status if hide else "offline",
-                on_presence=conn.capture,
-                rewrite=hide,
+    async def _outbound(self, reader: Any, link: _Link) -> None:
+        text = codecs.getincrementaldecoder("utf-8")()
+        held = ""
+        while data := await reader.read(65536):
+            chunk = text.decode(data)
+            if _STAND_IN_JID in chunk:
+                await self._command(chunk, link)
+                chunk = drop_stand_in(chunk)
+            if link.version is None and (version := _client_version(chunk)):
+                link.version = version
+                _note(f"c2s: the client is VALORANT {version}")
+                if link.shown:
+                    await self._show_stand_in(link)
+            hiding = self.look != "online"
+            sent, held = hide_presences(
+                held + chunk, self.look if hiding else _FIRST_LOOK, link.saw, rewrite=hiding
             )
-            if out:
-                writer.write(out.encode("utf-8"))
-                await writer.drain()
-            if conn.inserted and not conn.presence_sent:
-                await self._send_fake_presence(conn)
-        if buf:
-            writer.write(buf.encode("utf-8"))
-            await writer.drain()
+            if sent:
+                link.to_riot.write(sent.encode("utf-8"))
+                await link.to_riot.drain()
+            if link.listed and not link.shown:
+                await self._show_stand_in(link)
+        held += text.decode(b"", final=True)
+        if held:
+            link.to_riot.write(held.encode("utf-8"))
+            await link.to_riot.drain()
 
-    async def _pump_s2c(self, reader: Any, writer: Any, conn: _Conn) -> None:
-        while True:
-            data = await reader.read(65536)
-            if not data:
-                break
-            if not conn.inserted:
-                hacked = inject_fake_roster(data)
-                if hacked is not None:
-                    conn.inserted = True
-                    self.friends_loaded = True
-                    writer.write(hacked)
-                    await writer.drain()
-                    _dbg("s2c: injected fake 'Valorant Overseer Active' friend", echo=True)
-                    greet = asyncio.create_task(self._greet_later(conn))
-                    self._greet_tasks.add(greet)
-                    greet.add_done_callback(self._greet_tasks.discard)
-                    continue
-            writer.write(data)
-            await writer.drain()
+    async def _inbound(self, reader: Any, link: _Link) -> None:
+        while data := await reader.read(65536):
+            if not link.listed:
+                listed = add_stand_in(data)
+                if listed is not None:
+                    data, link.listed = listed, True
+                    _note("s2c: the stand-in is at the top of the friend list", loud=True)
+                    self._soon(self._welcome(link))
+            link.to_client.write(data)
+            await link.to_client.drain()
 
-    async def _send_fake_presence(self, conn: _Conn) -> None:
-        conn.presence_sent = True
-        try:
-            conn.client_writer.write(_fake_presence(conn.version, self.status))
-            await conn.client_writer.drain()
-        except OSError as e:
-            _dbg(f"chat: fake presence not delivered ({e!r})")
+    async def _show_stand_in(self, link: _Link) -> None:
+        link.shown = True
+        await link.tell(_stand_in_presence(link.version, self.look), "stand-in's presence")
 
-    async def _greet_later(self, conn: _Conn) -> None:
-        try:
-            await asyncio.sleep(6)
-            conn.client_writer.write(
-                _fake_message(
-                    f"Valorant Overseer is active. Friends see you as {self.status.upper()}. "
-                    "Message me 'online', 'offline', 'away' or 'mobile' to switch anytime."
-                )
+    async def _welcome(self, link: _Link) -> None:
+        await asyncio.sleep(6)
+        await link.tell(
+            _from_stand_in(
+                f"Valorant Overseer is on, and your friends see you as {self.look.upper()}. "
+                "Message me online, offline, away or mobile to change it."
+            ),
+            "welcome",
+        )
+
+    async def _command(self, chunk: str, link: _Link) -> None:
+        body = _BODY.search(chunk)
+        if body is None:
+            return
+        said = body.group(1).strip().lower()
+        look = next(
+            (look for look in ("offline", "away", "mobile", "online") if look in said), None
+        )
+        if look:
+            self.set_look(look)
+            return
+        if "status" in said:
+            reply = f"Your friends see you as {self.look.upper()}."
+        elif "help" in said:
+            reply = (
+                "Send online, offline, away or mobile to change how you show, or status to check."
             )
-            await conn.client_writer.drain()
-        except OSError as e:
-            _dbg(f"chat: greeting not delivered ({e!r})")
+        else:
+            reply = "I only know online, offline, away, mobile, status and help."
+        await link.tell(_from_stand_in(reply), f"reply to {said!r}")
 
-    def set_status(self, status: str) -> dict[str, Any]:
-        status = (status or "").strip().lower()
-        if status not in _VALID_STATUS:
+    def set_look(self, look: str) -> dict[str, Any]:
+        look = (look or "").strip().lower()
+        if look not in LOOKS:
             return {
                 "ok": False,
-                "message": f"Unknown status '{status}'. Use online, offline, away or mobile.",
+                "message": f"There's no '{look}'. Pick online, offline, away or mobile.",
             }
-        self.status = status
-        _save_status(status)
-        _dbg(f"status: -> {status}")
-        self._push_status()
-        return {"ok": True, "status": status, "enabled": status != "online"}
+        self.look = look
+        _save_look(look)
+        _note(f"look: now {look}")
+        if self.loop is not None:
+            for link in list(self.links):
+                asyncio.run_coroutine_threadsafe(self._announce(link), self.loop)
+        return {"ok": True, "status": look, "enabled": look != "online"}
 
-    def set_enabled(self, *, enabled: bool) -> dict[str, Any]:
-        if enabled:
-            target = self.status if self.status != "online" else _load_status()
-            return self.set_status(target if target != "online" else _DEFAULT_STATUS)
-        return self.set_status("online")
+    def switch(self, *, enabled: bool) -> dict[str, Any]:
+        if not enabled:
+            return self.set_look("online")
+        if self.look != "online":
+            return self.set_look(self.look)
+        saved = _saved_look()
+        return self.set_look(_FIRST_LOOK if saved == "online" else saved)
 
-    def _push_status(self) -> None:
-        if self._loop is not None:
-            for conn in list(self.conns):
-                asyncio.run_coroutine_threadsafe(self._resend_presence(conn), self._loop)
-
-    async def _resend_presence(self, conn: _Conn) -> None:
+    async def _announce(self, link: _Link) -> None:
         try:
-            raw = conn.last_presence
-            if raw:
-                payload = raw if self.status == "online" else _rewrite_presence(raw, self.status)
-                conn.up_writer.write(payload.encode("utf-8"))
-                await conn.up_writer.drain()
-            if conn.presence_sent:
-                conn.client_writer.write(_fake_presence(conn.version, self.status))
-            conn.client_writer.write(_fake_message(_status_line(self.status)))
-            await conn.client_writer.drain()
+            if link.presence:
+                again = (
+                    link.presence if self.look == "online" else _disguise(link.presence, self.look)
+                )
+                link.to_riot.write(again.encode("utf-8"))
+                await link.to_riot.drain()
         except OSError as e:
-            _dbg(f"chat: presence resend to {self.status} failed ({e!r})")
+            _note(f"chat: your presence as {self.look} didn't reach Riot ({e!r})")
+        if link.shown:
+            await link.tell(_stand_in_presence(link.version, self.look), "stand-in's presence")
+        await link.tell(_from_stand_in(_told(self.look)), "change of look")
 
-    async def _handle_fake_command(self, chunk: str, conn: _Conn) -> None:
-        m = re.search(r"<body>(.*?)</body>", chunk, re.DOTALL)
-        if not m:
-            return
-        body = m.group(1).strip().lower()
-        for kw in ("offline", "away", "mobile", "online"):
-            if kw in body:
-                self.set_status(kw)
-                return
-        if "status" in body:
-            reply = f"You're currently appearing {self.status.upper()}."
-        elif "help" in body:
-            reply = "Send online, offline, away or mobile to switch, or status to check."
-        else:
-            reply = "Didn't catch that. Send online, offline, away, mobile, status or help."
-        try:
-            conn.client_writer.write(_fake_message(reply))
-            await conn.client_writer.drain()
-        except OSError as e:
-            _dbg(f"chat: reply to {body!r} not delivered ({e!r})")
-
-    def _start_config(self) -> None:
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-        engine = self
-
-        class Handler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def log_message(self, *_: Any) -> None:
-                pass
-
-            def do_GET(self) -> None:
-                fwd = {}
-                for h in ("Authorization", "X-Riot-Entitlements-JWT", "User-Agent"):
-                    if h in self.headers:
-                        fwd[h] = self.headers[h]
-                _dbg(f"config: GET {self.path[:80]} (auth={'Authorization' in fwd})")
-                try:
-                    up = _http().get(RIOT_CONFIG_URL + self.path, headers=fwd, timeout=20)
-                except requests.RequestException as e:
-                    _dbg(f"config: upstream GET {self.path[:80]} failed ({e!r})")
-                    self.send_error(502)
-                    return
-                body = up.content
-                ctype = up.headers.get("Content-Type", "application/json")
-                if "json" in ctype.lower():
-                    try:
-                        body = engine._rewrite_config(up.json(), fwd.get("Authorization"))
-                        body = json.dumps(body).encode("utf-8")
-                    except (ValueError, TypeError) as e:
-                        _dbg(f"config: {self.path[:80]} passed through unrewritten ({e!r})")
-                        body = up.content
-                self.send_response(up.status_code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.config_port = srv.server_address[1]
-        threading.Thread(target=srv.serve_forever, name="offline-config", daemon=True).start()
-
-    def _rewrite_config(self, cfg: dict[str, Any], auth: str | None = None) -> dict[str, Any]:
-        if not isinstance(cfg, dict):
-            return cfg
-        host = cfg.get("chat.host")
+    def redirect(self, config: Any, auth: str | None) -> Any:
+        if not isinstance(config, dict):
+            return config
+        host = config.get("chat.host")
         if isinstance(host, str):
-            if not self.target.affinity_resolved:
-                self.target.host = host
-            cfg["chat.host"] = CHAT_DOMAIN
-            _dbg(f"config: rewrote chat.host {host} -> {CHAT_DOMAIN}")
-        if isinstance(cfg.get("chat.port"), int):
-            self.target.port = cfg["chat.port"]
-            cfg["chat.port"] = self.chat_port
-        aff = cfg.get("chat.affinities")
-        if isinstance(aff, dict):
-            if cfg.get("chat.affinity.enabled") and auth and not self.target.affinity_resolved:
-                resolved = self._resolve_affinity_host(aff, auth)
-                if resolved:
-                    self.target.host = resolved
-                    self.target.affinity_resolved = True
-            cfg["chat.affinities"] = dict.fromkeys(aff, CHAT_DOMAIN)
-        return cfg
-
-    def _resolve_affinity_host(self, affinities: dict[str, Any], auth: str) -> str | None:
-        # The PAS answer is a bare JWT, and its payload names this account's
-        # chat affinity. The response is not logged because it is a signed
-        # token for this account.
-        try:
-            r = _http().get(GEO_PAS_URL, headers={"Authorization": auth}, timeout=15)
-            payload = r.text.split(".")[1]
-            payload += "=" * (-len(payload) % 4)
-            data = json.loads(base64.urlsafe_b64decode(payload))
-            affinity = data.get("affinity")
-            host = affinities.get(affinity) if affinity else None
-            _dbg(f"config: affinity {affinity} -> {host}")
-            return host if isinstance(host, str) else None
-        except (
-            requests.RequestException,
-            IndexError,
-            ValueError,
-            AttributeError,
-            TypeError,
-        ) as e:
-            _dbg(f"config: affinity lookup failed ({e!r}), using the default host")
-            return None
+            if not self.host_pinned:
+                self.riot_host = host
+            config["chat.host"] = CHAT_DOMAIN
+            _note(f"config: chat goes to {CHAT_DOMAIN} in place of {host}")
+        if isinstance(config.get("chat.port"), int):
+            self.riot_port, config["chat.port"] = config["chat.port"], self.chat_port
+        affinities = config.get("chat.affinities")
+        if isinstance(affinities, dict):
+            if config.get("chat.affinity.enabled") and auth and not self.host_pinned:
+                own = _own_chat_host(affinities, auth)
+                if own:
+                    self.riot_host, self.host_pinned = own, True
+            config["chat.affinities"] = dict.fromkeys(affinities, CHAT_DOMAIN)
+        return config
 
 
-_engine = _Engine()
-
-
-def _read_relay_info() -> dict[str, Any] | None:
+def _own_chat_host(affinities: dict[str, Any], auth: str) -> str | None:
+    # The answer is a bare JWT whose payload names the account's affinity.
+    # It is a signed token for this account, so it is never logged.
     try:
-        with Path(_RELAY_STATE_PATH).open(encoding="utf-8") as f:
-            info = json.load(f)
-        if (
-            not isinstance(info, dict)
-            or info.get("protocol") != _RELAY_PROTOCOL
-            or not isinstance(info.get("port"), int)
-            or not info.get("token")
-        ):
-            return None
-    except (OSError, ValueError, TypeError):
+        token = _http().get(CHAT_AFFINITY, headers={"Authorization": auth}, timeout=15).text
+        claims = token.split(".")[1]
+        affinity = json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4)))[
+            "affinity"
+        ]
+        host = affinities.get(affinity)
+    except (requests.RequestException, IndexError, KeyError, ValueError, TypeError) as e:
+        _note(f"config: this account's chat host wasn't found ({e!r}), so the default stands")
         return None
-    else:
-        return info
+    _note(f"config: this account's chat is {affinity} on {host}")
+    return host if isinstance(host, str) else None
 
 
-def _remove_relay_info(expected_token: str | None = None) -> None:
-    """Delete the relay's state file, unless another relay has since written its own."""
-    try:
-        if expected_token:
-            current = _read_relay_info()
-            if current and current.get("token") != expected_token:
-                return
-        Path(_RELAY_STATE_PATH).unlink()
-    except OSError:
-        pass
+# What the Riot Client sends that Riot's config server needs to see too.
+_PASSED_ON = ("Authorization", "X-Riot-Entitlements-JWT", "User-Agent")
 
 
-def _write_relay_info(port: int, token: str) -> None:
-    folder = Path(_RELAY_STATE_PATH).parent
-    folder.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "protocol": _RELAY_PROTOCOL,
-        "pid": os.getpid(),
-        "port": int(port),
-        "token": token,
-    }
-    tmp = folder / f".helper-{os.getpid()}-{uuid.uuid4().hex}.tmp"
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        tmp.replace(_RELAY_STATE_PATH)
-    finally:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
+class _ConfigServer(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
 
+    def log_message(self, *_args: Any) -> None:
+        """Quiet, as engine.log says what matters."""
 
-def _relay_request(
-    command: str, payload: dict[str, Any] | None = None, timeout: float = 3.0
-) -> dict[str, Any] | None:
-    """Ask the running relay to do something, or None if there is no relay to ask."""
-    info = _read_relay_info()
-    if not info:
-        return None
-    body = json.dumps(
-        {
-            "token": info["token"],
-            "command": command,
-            "payload": payload or {},
-        }
-    ).encode("utf-8")
-    # Straight to the relay on this PC. A connection to one host and port can't
-    # be pointed at a file the way a URL can.
-    connection = http.client.HTTPConnection("127.0.0.1", int(info["port"]), timeout=timeout)
-    # A stale state file left by a relay that died is the usual failure, and
-    # status is polled, so this stays quiet. Refusals and timeouts are OSError.
-    try:
-        connection.request(
-            "POST", "/control", body=body, headers={"Content-Type": "application/json"}
-        )
-        result = json.loads(connection.getresponse().read().decode("utf-8"))
-        return result if isinstance(result, dict) else None
-    except (OSError, http.client.HTTPException, ValueError):
-        return None
-    finally:
-        connection.close()
-
-
-def _hidden_relay_process_kwargs() -> dict[str, Any]:
-    return {
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "close_fds": True,
-        # Normal, as the Riot client the relay starts inherits its class.
-        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.NORMAL_PRIORITY_CLASS,
-    }
-
-
-def _relay_python() -> str:
-    # pythonw.exe so the broker does not flash a console window. A venv without
-    # it (an embedded or stripped install) falls back to the console build.
-    candidate = Path(sys.executable).parent / "pythonw.exe"
-    return str(candidate) if candidate.is_file() else sys.executable
-
-
-def _spawn_relay_broker() -> None:
-    subprocess.Popen(
-        [_relay_python(), str(Path(__file__).resolve()), "--offline-helper-broker"],
-        cwd=str(Path(__file__).resolve().parent),
-        **_hidden_relay_process_kwargs(),
-    )
-
-
-def _broker_main() -> int:
-    """Start the relay and exit, so the relay is not a child of the backend."""
-    env = os.environ.copy()
-    env["OVERSEER_OFFLINE_HELPER"] = "1"
-    try:
-        subprocess.Popen(
-            [_relay_python(), str(Path(__file__).resolve()), "--offline-helper"],
-            cwd=str(Path(__file__).resolve().parent),
-            env=env,
-            **_hidden_relay_process_kwargs(),
-        )
-    except (OSError, ValueError) as e:
-        _dbg(f"helper broker failed: {e}", echo=True)
-        return 1
-    else:
-        return 0
-
-
-def _riot_process_running() -> bool:
-    # Broad because this is the monitor thread's only call that can fail, and
-    # if that thread dies the relay never shuts down. A failed check counts
-    # as running, so the relay stays up when in doubt.
-    try:
-        names = process_names()
-        return any(name.lower() in names for name in _RIOT_PROCS)
-    except Exception as e:
-        _dbg(f"helper: process list failed ({e!r}), taking Riot to be running")
-        return True
-
-
-def _relay_monitor(server: Any) -> None:
-    """Shut the relay down once Riot has been gone for 45 s, after a 90 s grace period."""
-    launched_at = time.monotonic()
-    saw_riot = False
-    gone_since = None
-    while True:
-        time.sleep(10)
-        running = _riot_process_running()
-        if running:
-            saw_riot = True
-            gone_since = None
-            continue
-        if not saw_riot or time.monotonic() - launched_at < 90:
-            continue
-        if gone_since is None:
-            gone_since = time.monotonic()
-            continue
-        if time.monotonic() - gone_since >= 45:
-            _dbg("helper: Riot/VALORANT closed; shutting down detached relay")
-            server.shutdown()
+    def do_GET(self) -> None:
+        # Pasted onto Riot's host, a target like @other.host/ would send the
+        # account's tokens to another server.
+        if not self.path.startswith("/"):
+            self.send_error(400)
             return
-
-
-def _relay_main() -> int:
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    token = secrets.token_urlsafe(32)
-
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *_: Any) -> None:
-            pass
-
-        def do_POST(self) -> None:
-            if self.path != "/control":
-                self.send_error(404)
-                return
-            try:
-                length = min(int(self.headers.get("Content-Length") or 0), 1024 * 1024)
-                request = json.loads(self.rfile.read(length).decode("utf-8"))
-                if not secrets.compare_digest(str(request.get("token") or ""), token):
-                    self.send_error(403)
-                    return
-                command = request.get("command")
-                payload = request.get("payload") or {}
-                if command == "status":
-                    result = _status_local()
-                elif command == "launch":
-                    result = _launch_local(payload.get("status"))
-                elif command == "set_enabled":
-                    result = _set_enabled_local(enabled=bool(payload.get("enabled", True)))
-                elif command == "presence":
-                    result = {"private": _captured_presence_private_local()}
-                else:
-                    result = {"ok": False, "message": "Unknown helper command."}
-            except Exception as e:
-                # The backend waits on this answer, so every failure still
-                # gets one.
-                _dbg(f"helper: control request failed ({e!r})")
-                result = {"ok": False, "message": str(e)}
-            body = json.dumps(result).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    _write_relay_info(server.server_address[1], token)
-    _dbg(f"helper: ready pid={os.getpid()} port={server.server_address[1]}")
-    threading.Thread(
-        target=_relay_monitor, args=(server,), name="offline-helper-monitor", daemon=True
-    ).start()
-    try:
-        server.serve_forever(poll_interval=0.5)
-    finally:
-        server.server_close()
-        _remove_relay_info(token)
-    return 0
-
-
-def _ensure_relay() -> bool:
-    if _relay_request("status") is not None:
-        return True
-    with _RELAY_START_LOCK:
-        if _relay_request("status") is not None:
-            return True
+        passed = {name: self.headers[name] for name in _PASSED_ON if name in self.headers}
+        _note(f"config: {self.path[:80]} asked for")
         try:
-            _spawn_relay_broker()
-        except (OSError, ValueError) as e:
-            _dbg(f"helper spawn failed: {e}", echo=True)
-            return False
-        deadline = time.monotonic() + 12
-        while time.monotonic() < deadline:
-            time.sleep(0.1)
-            if _relay_request("status", timeout=1.0) is not None:
-                return True
-    return False
+            riot = _http().get(RIOT_CONFIG + self.path, headers=passed, timeout=20)
+        except requests.RequestException as e:
+            _note(f"config: Riot didn't answer for {self.path[:80]} ({e!r})")
+            self.send_error(502)
+            return
+        kind = riot.headers.get("Content-Type", "application/json")
+        body = riot.content
+        if "json" in kind.lower():
+            try:
+                redirected = _proxy.redirect(riot.json(), passed.get("Authorization"))
+                body = json.dumps(redirected).encode("utf-8")
+            except (ValueError, TypeError) as e:
+                _note(f"config: {self.path[:80]} went through as it was ({e!r})")
+        self.send_response(riot.status_code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
-def _launch_local(status_: str | None = None) -> dict[str, Any]:
-    _dbg(f"launch: requested (status={status_!r})", echo=True)
-    rc = find_riot_client()
-    if not rc:
+_proxy = _Proxy()
+
+
+def _launch_here(look: str | None) -> dict[str, Any]:
+    _note(f"launch: asked for, as {look!r}", loud=True)
+    client = _riot_client()
+    if not client:
         return {"ok": False, "message": "Couldn't find the Riot Client. Is VALORANT installed?"}
-
-    s = (status_ or "").strip().lower()
-    if s in _VALID_STATUS and s != "online":
-        _save_status(s)
-
-    # Broad because the answer goes back to the bridge, and "no cert", a port
-    # that will not bind and a bad PEM all raise different types.
+    look = (look or "").strip().lower()
+    wanted = look in LOOKS and look != "online"
+    if wanted:
+        _save_look(look)
+    # Broad, as the answer goes back to the window and a missing certificate,
+    # a port that won't open and a bad PEM all fail differently.
     try:
-        _engine.start()
+        _proxy.start()
     except Exception as e:
-        _dbg(f"launch: engine did not start ({e!r})")
+        _note(f"launch: the proxy didn't start ({e!r})")
         return {"ok": False, "message": str(e)}
-    if s in _VALID_STATUS and s not in ("online", _engine.status):
-        _engine.set_status(s)
-
-    _dbg(f"launch: killing Riot, then starting {rc}", echo=True)
-    kill_riot()
+    if wanted and look != _proxy.look:
+        _proxy.set_look(look)
+    _note(f"launch: closing Riot, then starting {client}", loud=True)
+    _close_riot()
+    # Riot's processes take a moment to let go of their files.
     time.sleep(3.0)
-
-    args = [
-        rc,
-        f"--client-config-url=http://127.0.0.1:{_engine.config_port}",
+    hidden = subprocess.STARTUPINFO()
+    hidden.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    hidden.wShowWindow = subprocess.SW_HIDE
+    argv = [
+        client,
+        f"--client-config-url=http://127.0.0.1:{_proxy.config_port}",
         "--launch-product=valorant",
         "--launch-patchline=live",
     ]
     try:
-        subprocess.Popen(args, **_hidden_riot_process_kwargs())
-        _dbg("launch: Popen'd Riot Client with " + " ".join(args[1:]))
+        subprocess.Popen(argv, **_quiet(startupinfo=hidden))
     except (OSError, ValueError) as e:
-        _dbg(f"launch: could not start {rc} ({e!r})")
+        _note(f"launch: {client} didn't start ({e!r})")
         return {"ok": False, "message": f"Couldn't start the Riot Client: {e}"}
-
+    _note("launch: started the Riot Client with " + " ".join(argv[1:]))
     return {
         "ok": True,
-        "message": "Launching VALORANT in offline mode. Sign in as usual. "
-        f"Your friends will see you as {_engine.status}.",
+        "message": "Starting VALORANT with Appear Offline. Sign in as usual, and your friends "
+        f"will see you as {_proxy.look}.",
     }
 
 
-def launch(status_: str | None = None) -> dict[str, Any]:
-    """Start the Riot client through the chat proxy, appearing as `status_`."""
-    if _IN_RELAY:
-        return _launch_local(status_)
-    if not _ensure_relay():
-        return {"ok": False, "message": "Couldn't start the offline-mode relay helper."}
-    return _relay_request("launch", {"status": status_}, timeout=60.0) or {
+def _switch_here(*, enabled: bool) -> dict[str, Any]:
+    if not _proxy.up:
+        return {"ok": False, "message": "Appear Offline isn't running."}
+    return _proxy.switch(enabled=enabled)
+
+
+def _status_here() -> dict[str, Any]:
+    return {
+        "running": _proxy.up,
+        "status": _proxy.look,
+        "enabled": _proxy.look != "online",
+        "connected": bool(_proxy.links),
+    }
+
+
+def _private_here() -> dict[str, Any] | None:
+    links = [link for link in list(_proxy.links) if link.private]
+    newest = max(links, key=lambda link: link.private_at, default=None)
+    return dict(newest.private or {}) if newest else None
+
+
+# The helper, a process of its own that holds the proxy. Its file names the
+# port it answers on and the key a question needs.
+
+
+def _helper() -> dict[str, Any] | None:
+    try:
+        found = json.loads(_HELPER_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    fits = (
+        isinstance(found, dict)
+        and found.get("speaks") == _HELPER_SPEAKS
+        and isinstance(found.get("port"), int)
+        and found.get("key")
+    )
+    return found if fits else None
+
+
+def _forget_helper(key: str | None = None) -> None:
+    current = _helper()
+    if key and current and current.get("key") != key:
+        return
+    with contextlib.suppress(OSError):
+        _HELPER_FILE.unlink()
+
+
+def _write_helper(port: int, key: str) -> None:
+    _HELPER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fresh = _HELPER_FILE.with_name(f".helper-{os.getpid()}-{uuid.uuid4().hex}.tmp")
+    try:
+        fresh.write_text(
+            json.dumps({"speaks": _HELPER_SPEAKS, "pid": os.getpid(), "port": port, "key": key}),
+            encoding="utf-8",
+        )
+        fresh.replace(_HELPER_FILE)
+    finally:
+        with contextlib.suppress(OSError):
+            fresh.unlink()
+
+
+def _ask_helper(what: str, given: dict[str, Any] | None = None, wait: float = 3.0) -> Any:
+    found = _helper()
+    if not found:
+        return None
+    line = http.client.HTTPConnection("127.0.0.1", found["port"], timeout=wait)
+    try:
+        line.request(
+            "POST",
+            "/",
+            body=json.dumps({"do": what, **(given or {})}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Overseer-Key": found["key"]},
+        )
+        answer = json.loads(line.getresponse().read().decode("utf-8"))
+    except ConnectionRefusedError:
+        # Nothing listens there, so the helper that wrote the file was ended
+        # without cleaning up. Windows takes two seconds to refuse, and the
+        # status is asked for with every board.
+        _forget_helper(found["key"])
+        return None
+    except (OSError, http.client.HTTPException, ValueError):
+        return None
+    finally:
+        line.close()
+    return answer if isinstance(answer, dict) else None
+
+
+def _helper_python() -> str:
+    windowless = Path(sys.executable).with_name("pythonw.exe")
+    return str(windowless) if windowless.is_file() else sys.executable
+
+
+def _run_self(flag: str, **more: Any) -> None:
+    here = Path(__file__).resolve()
+    subprocess.Popen(
+        [_helper_python(), str(here), flag],
+        cwd=str(here.parent),
+        **_quiet(close_fds=True, **more),
+    )
+
+
+def _start_helper() -> int:
+    try:
+        _run_self("--helper", env={**os.environ, "OVERSEER_OFFLINE_HELPER": "1"})
+    except (OSError, ValueError) as e:
+        _note(f"helper: it didn't start ({e})", loud=True)
+        return 1
+    return 0
+
+
+def _riot_open() -> bool:
+    # Broad, as the watch thread's one call that can fail, and the helper
+    # never ends if that thread dies. Not knowing counts as open, so the
+    # helper stays when in doubt.
+    try:
+        names = process_names()
+    except Exception as e:
+        _note(f"helper: the process list failed ({e!r}), so Riot counts as open")
+        return True
+    return any(exe.lower() in names for exe in _RIOT_EXES)
+
+
+def _watch_riot(server: ThreadingHTTPServer) -> None:
+    began = time.monotonic()
+    seen = False
+    closed_at: float | None = None
+    while True:
+        time.sleep(10)
+        if _riot_open():
+            seen, closed_at = True, None
+            continue
+        now = time.monotonic()
+        if not seen or now - began < 90:
+            continue
+        closed_at = closed_at or now
+        if now - closed_at >= 45:
+            _note("helper: Riot and VALORANT are closed, so the helper ends")
+            server.shutdown()
+            return
+
+
+_DOINGS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "status": lambda _given: _status_here(),
+    "launch": lambda given: _launch_here(given.get("status")),
+    "switch": lambda given: _switch_here(enabled=bool(given.get("enabled", True))),
+    "presence": lambda _given: {"private": _private_here()},
+}
+
+
+def _helper_main() -> int:
+    key = secrets.token_urlsafe(32)
+
+    class Questions(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args: Any) -> None:
+            """Quiet, as engine.log says what matters."""
+
+        def answer(self, code: int, body: dict[str, Any]) -> None:
+            data = json.dumps(body).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self) -> None:
+            sent = str(self.headers.get("X-Overseer-Key") or "")
+            if self.path != "/" or not secrets.compare_digest(sent.encode(), key.encode()):
+                self.answer(403, {"ok": False, "message": "Not for you."})
+                return
+            try:
+                size = min(int(self.headers.get("Content-Length") or 0), 1 << 20)
+                asked = json.loads(self.rfile.read(size).decode("utf-8"))
+                doing = _DOINGS.get(str(asked.get("do")))
+                if doing is None:
+                    result = {"ok": False, "message": "The helper doesn't know that."}
+                else:
+                    result = doing(asked)
+            except Exception as e:
+                _note(f"helper: a question failed ({e!r})")
+                result = {"ok": False, "message": str(e)}
+            self.answer(200, result)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Questions)
+    _write_helper(server.server_address[1], key)
+    _note(f"helper: up as {os.getpid()} on {server.server_address[1]}")
+    threading.Thread(target=_watch_riot, args=(server,), name="offline-watch", daemon=True).start()
+    try:
+        server.serve_forever(poll_interval=0.5)
+    finally:
+        server.server_close()
+        _forget_helper(key)
+    return 0
+
+
+def _helper_up() -> bool:
+    if _ask_helper("status") is not None:
+        return True
+    with _HELPER_STARTING:
+        if _ask_helper("status") is not None:
+            return True
+        try:
+            _run_self("--start-helper")
+        except (OSError, ValueError) as e:
+            _note(f"helper: it couldn't be started ({e})", loud=True)
+            return False
+        until = time.monotonic() + 12
+        while time.monotonic() < until:
+            time.sleep(0.1)
+            if _ask_helper("status", wait=1.0) is not None:
+                return True
+    return False
+
+
+def launch(look: str | None = None) -> dict[str, Any]:
+    """Restart the Riot Client through the chat proxy, showing friends `look`."""
+    if _IS_HELPER:
+        return _launch_here(look)
+    if not _helper_up():
+        return {"ok": False, "message": "Appear Offline couldn't start its helper."}
+    return _ask_helper("launch", {"status": look}, wait=60.0) or {
         "ok": False,
-        "message": "Offline-mode relay stopped unexpectedly.",
+        "message": "Appear Offline's helper stopped part way.",
     }
-
-
-def _set_enabled_local(*, enabled: bool) -> dict[str, Any]:
-    if not _engine.started:
-        return {"ok": False, "message": "Offline mode isn't running."}
-    return _engine.set_enabled(enabled=enabled)
 
 
 def set_enabled(*, enabled: bool) -> dict[str, Any]:
-    """Turn the chat proxy's offline mode on or off."""
-    if not _IN_RELAY:
-        remote = _relay_request("set_enabled", {"enabled": enabled})
-        if remote is not None:
-            return remote
-    return _set_enabled_local(enabled=enabled)
-
-
-def _status_local() -> dict[str, Any]:
-    live = bool(_engine.conns)
-    active = bool(_engine.connected and live)
-    return {
-        "running": _engine.started,
-        "active": active,
-        "status": _engine.status,
-        "enabled": _engine.status != "online",
-        "connected": active,
-        "friendsLoaded": _engine.friends_loaded and live,
-        "configPort": _engine.config_port,
-        "chatPort": _engine.chat_port,
-    }
+    """Hide you from friends, or show you again."""
+    asked = None if _IS_HELPER else _ask_helper("switch", {"enabled": enabled})
+    return asked if asked is not None else _switch_here(enabled=enabled)
 
 
 def status() -> dict[str, Any]:
-    """Return whether the proxy is running, connected and hiding you."""
-    if not _IN_RELAY:
-        remote = _relay_request("status")
-        if remote is not None:
-            return remote
-    return _status_local()
-
-
-def _captured_presence_private_local() -> dict[str, Any] | None:
-    candidates = [c for c in list(_engine.conns) if c.last_private]
-    if not (_engine.connected and candidates):
-        return None
-    return dict(max(candidates, key=lambda c: c.captured_at).last_private or {})
+    """Return whether the proxy is running, carrying chat and hiding you."""
+    asked = None if _IS_HELPER else _ask_helper("status")
+    return asked if asked is not None else _status_here()
 
 
 def captured_presence_private() -> dict[str, Any] | None:
-    """Return your own chat presence as the proxy last saw it, or None."""
-    if not _IN_RELAY:
-        remote = _relay_request("presence")
-        if remote is not None:
-            private = remote.get("private")
-            return private if isinstance(private, dict) else None
-    return _captured_presence_private_local()
+    """Return your own VALORANT presence as the proxy last saw it, or None."""
+    if _IS_HELPER:
+        return _private_here()
+    asked = _ask_helper("presence")
+    private = asked.get("private") if asked else _private_here()
+    return private if isinstance(private, dict) else None
+
+
+def _check_stream() -> None:
+    games = (
+        "<games><valorant><st>in game</st><p>YWJj</p></valorant>"
+        "<league_of_legends><st>online</st></league_of_legends>"
+        "<keystone><st>online</st></keystone></games>"
+    )
+    mine = f'<presence from="x"><show>chat</show><status>hi</status>{games}</presence>'
+    sent, held = hide_presences(mine)
+    check(held == "", held)
+    check("<show>offline</show>" in sent and "<status" not in sent, sent)
+    check(not any(f"<{g}" in sent for g in ("valorant", "keystone", "league_of_legends")), sent)
+
+    room = f"<presence to='room@muc' from='x'><show>chat</show>{games}</presence>"
+    check(hide_presences(room) == (room, ""), "a room's presence changed")
+
+    # Cut mid-stanza, nothing goes until the rest arrives, and then it is
+    # disguised as one.
+    first, rest = mine[:40], mine[40:]
+    sent, held = hide_presences(first)
+    check(sent == "" and held == first, (sent, held))
+    sent, held = hide_presences(held + rest)
+    check(held == "" and "<valorant" not in sent and "<keystone" not in sent, sent)
+    sent, held = hide_presences("<iq/><pres")
+    check((sent, held) == ("<iq/>", "<pres"), (sent, held))
+
+    sent, held = hide_presences('<presence type="unavailable"/>')
+    check(held == "" and sent.startswith("<presence"), sent)
+
+    seen: list[str] = []
+    hide_presences(mine, seen=seen.append)
+    hide_presences(room, seen=seen.append)
+    check(len(seen) == 1 and seen[0] == mine, seen)
+    for look in ("away", "mobile"):
+        sent, _ = hide_presences(mine, look)
+        check(f"<show>{look}</show>" in sent and "<valorant" not in sent, (look, sent))
+    sent, _ = hide_presences(mine, rewrite=False)
+    check(sent == mine, "online changed a presence")
+
+
+def _check_stand_in() -> None:
+    roster = (
+        b"<iq type='result'><query xmlns='jabber:iq:riotgames:roster'>"
+        b"<item jid='real@pvp.net'/></query></iq>"
+    )
+    listed = present(add_stand_in(roster))
+    check(listed.index(b"Valorant Overseer Active") < listed.index(b"real@pvp.net"))
+    check(add_stand_in(b"<iq><nothing/></iq>") is None)
+
+    to_it = f"<message to='{_STAND_IN_JID}' type='chat'><body>offline</body></message>"
+    real = "<message to='someone@eu1.pvp.net' type='chat'><body>hi</body></message>"
+    check(drop_stand_in(to_it) == "")
+    check(drop_stand_in(to_it + real) == real)
+    check(drop_stand_in(f"<iq to='{_STAND_IN_JID}' id='1'><q/></iq>{real}") == real)
+    check(drop_stand_in(real + "<message to='x'") == real + "<message to='x'")
+
+    blob = base64.b64encode(
+        json.dumps({"partyPresenceData": {"partyClientVersion": "release-10.11"}}).encode()
+    ).decode()
+    check(
+        _client_version(f"<presence><valorant><p>{blob}</p></valorant></presence>")
+        == "release-10.11"
+    )
+    check(_client_version(_stand_in_presence("release-10.11", "away").decode()) == "release-10.11")
+    check(_client_version("<presence><show>chat</show></presence>") is None)
 
 
 def _check_cert() -> None:
-    """Check the chat certificate is taken for its name and dates, and the saved one too."""
     import tempfile
     from datetime import timedelta
     from unittest import mock
@@ -1263,7 +1158,7 @@ def _check_cert() -> None:
     from cryptography.x509.oid import NameOID
 
     def made(name: str, *, began: int = -1, ends: int = 30) -> tuple[bytes, bytes]:
-        # A certificate for `name` as a pfx and as PEM, valid from `began`
+        # A certificate for `name` as a pfx and as PEM, in date from `began`
         # days from now to `ends` days from now.
         key = ec.generate_private_key(ec.SECP256R1())
         who = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
@@ -1282,110 +1177,59 @@ def _check_cert() -> None:
         pfx = pkcs12.serialize_key_and_certificates(None, key, cert, None, NoEncryption())
         return pfx, cert.public_bytes(Encoding.PEM)
 
-    with mock.patch(f"{__name__}._dbg"):
+    with mock.patch(f"{__name__}._note"):
         check(_pem_from(made(CHAT_DOMAIN)[0]) is not None, "the chat domain's own was refused")
         check(_pem_from(made("elsewhere.example")[0]) is None, "another name's was taken")
         check(_pem_from(made(CHAT_DOMAIN, began=-100, ends=-10)[0]) is None, "a lapsed one")
         check(_pem_from(made(CHAT_DOMAIN, began=5)[0]) is None, "one not yet in date")
         check(_pem_from(b"not a pfx") is None)
 
-        # With no download to be had, a saved copy still in date is used
-        # however old the file is, and one that has run out is not.
         with tempfile.TemporaryDirectory() as tmp:
             saved = Path(tmp) / "chat.pem"
             with (
-                mock.patch(f"{__name__}._CACHED_CERT", str(saved)),
+                mock.patch(f"{__name__}._CERT", saved),
                 mock.patch(f"{__name__}._fetch_cert", return_value=False),
             ):
                 saved.write_bytes(made(CHAT_DOMAIN)[1])
                 os.utime(saved, (0, 0))
-                check(ensure_cert() == str(saved))
+                check(ensure_cert() == saved)
                 saved.write_bytes(made(CHAT_DOMAIN, began=-100, ends=-10)[1])
                 try:
-                    lapsed: str | None = ensure_cert()
+                    lapsed: Path | None = ensure_cert()
                 except RuntimeError:
                     lapsed = None
                 check(lapsed is None, "a saved certificate that ran out was used")
 
 
-if __name__ == "__main__" and "--offline-helper-broker" in sys.argv:
-    raise SystemExit(_broker_main())
+def _check_dead_helper() -> None:
+    import socket
+    import tempfile
+    from unittest import mock
 
-if __name__ == "__main__" and "--offline-helper" in sys.argv:
-    raise SystemExit(_relay_main())
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "helper.json"
+        with mock.patch(f"{__name__}._HELPER_FILE", state):
+            _write_helper(port, "gone")
+            check(_ask_helper("status") is None and not state.exists(), "asked again")
+            _write_helper(port, "newer")
+            _forget_helper("gone")
+            check(state.exists(), "a newer helper's file was deleted")
+            state.write_text('{"speaks": 1, "port": 1, "key": "old"}', encoding="utf-8")
+            check(_helper() is None, "an older version's helper was taken")
+
+
+if __name__ == "__main__" and "--start-helper" in sys.argv:
+    raise SystemExit(_start_helper())
+
+if __name__ == "__main__" and "--helper" in sys.argv:
+    raise SystemExit(_helper_main())
 
 if __name__ == "__main__":
-    p = (
-        '<presence from="x"><show>chat</show><status>hi</status>'
-        "<games><valorant><st>in game</st><p>YWJj</p></valorant>"
-        "<league_of_legends><st>online</st></league_of_legends>"
-        "<keystone><st>online</st></keystone></games></presence>"
-    )
-    out, rem = process_c2s(p)
-    check(rem == "", rem)
-    check("<valorant" not in out, out)
-    check("<keystone" not in out, out)
-    check("<league_of_legends" not in out, out)
-    check("<show>offline</show>" in out, out)
-    check("<status" not in out, out)
-
-    muc = (
-        "<presence to='room@muc' from='x'><show>chat</show>"
-        "<games><valorant><st>x</st></valorant></games></presence>"
-    )
-    out, rem = process_c2s(muc)
-    check(out == muc and rem == "", (out, rem))
-
-    a, b = p[:40], p[40:]
-    out1, rem1 = process_c2s(a)
-    check(out1 == "" and rem1, (out1, rem1))
-    out2, rem2 = process_c2s(rem1 + b)
-    check(rem2 == "" and "<valorant" not in out2 and "<keystone" not in out2, (out2, rem2))
-
-    out, rem = process_c2s('<presence type="unavailable"/>')
-    check(rem == "" and out.startswith("<presence"), (out, rem))
-
-    roster = (
-        b"<iq type='result'><query xmlns='jabber:iq:riotgames:roster'>"
-        b"<item jid='real@pvp.net'/></query></iq>"
-    )
-    hacked = inject_fake_roster(roster)
-    hacked = present(hacked)
-    check(hacked.index(b"Valorant Overseer Active") < hacked.index(b"real@pvp.net"))
-    check(inject_fake_roster(b"<iq><nothing/></iq>") is None)
-
-    ver_blob = base64.b64encode(
-        json.dumps(
-            {"partyPresenceData": {"partyClientVersion": "release-10.11-shipping-9-9"}}
-        ).encode()
-    ).decode()
-    pv = (
-        f'<presence from="me"><games><valorant><st>x</st>'
-        f"<p>{ver_blob}</p></valorant></games></presence>"
-    )
-    check(_extract_valorant_version(pv) == "release-10.11-shipping-9-9")
-    _fp = _fake_presence("release-10.11-shipping-9-9").decode()
-    check(_extract_valorant_version(_fp) == "release-10.11-shipping-9-9")
-    check(_extract_valorant_version("<presence><show>chat</show></presence>") is None)
-
-    seen: list[str] = []
-    out, rem = process_c2s(p, on_presence=seen.append)
-    check(seen and seen[0].startswith("<presence") and "to=" not in seen[0][:60])
-    seen2: list[str] = []
-    process_c2s(muc, on_presence=seen2.append)
-    check(seen2 == [])
-
-    for st in ("offline", "away", "mobile"):
-        out, _ = process_c2s(p, target=st)
-        check(f"<show>{st}</show>" in out, (st, out))
-        check("<valorant" not in out and "<keystone" not in out, (st, out))
-
-    dm = f"<message to='{_FAKE_JID}' type='chat'><body>offline</body></message>"
-    real = "<message to='someone@eu1.pvp.net' type='chat'><body>hi</body></message>"
-    check(strip_fake_stanzas(dm) == "")
-    check(strip_fake_stanzas(dm + real) == real)
-    check(strip_fake_stanzas(f"<iq to='{_FAKE_JID}' id='1'><q/></iq>{real}") == real)
-    check(strip_fake_stanzas(real + "<message to='x'") == real + "<message to='x'")
-
+    _check_stream()
+    _check_stand_in()
     _check_cert()
+    _check_dead_helper()
     print("offline_launch self-check OK")

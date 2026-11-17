@@ -23,15 +23,10 @@ SAME_TEAM_ODDS = 4 / 9
 # same side lands at p = 0.09. Two can never clear any threshold.
 MIN_SHARED = 3
 
-# The chance of calling a stack that is not there, for the whole lobby. A lobby
-# has twenty pairs to test, so one in ten per pair would make two false calls a
-# lobby, and a false call says something untrue about a real person.
-# likely_stacks divides this between the pairs.
 FALSE_CALL_BUDGET = 0.05
 
 
 def _tail(hits: int, trials: int, odds: float) -> float:
-    """P(X >= hits) for X binomial over `trials` at `odds`. The luck of a run."""
     return sum(
         math.comb(trials, i) * odds**i * (1 - odds) ** (trials - i) for i in range(hits, trials + 1)
     )
@@ -40,7 +35,6 @@ def _tail(hits: int, trials: int, odds: float) -> float:
 def _pair_history(
     rosters: list[dict[str, Any]], a: str, b: str, skip: str | None
 ) -> tuple[int, int]:
-    """How many lobbies held both accounts, and how many put them on one side."""
     shared = same = 0
     for roster in rosters:
         if roster.get("matchId") == skip:
@@ -59,9 +53,6 @@ def likely_stacks(
     board: dict[str, Any], rosters: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
     """Guess who queued together, keyed by puuid."""
-    # Only teammates in the current lobby are compared. A stack is always on
-    # one side, and comparing across the map would turn two opponents who keep
-    # meeting into a party.
     sides: dict[str, list[str]] = {}
     for player in board.get("players") or []:
         if not isinstance(player, dict):
@@ -72,7 +63,6 @@ def likely_stacks(
 
     skip = board.get("matchId")
 
-    # Count the pairs first so the budget can be split between them.
     tests = sum(len(m) * (len(m) - 1) // 2 for m in sides.values())
     limit = FALSE_CALL_BUDGET / max(1, tests)
 
@@ -87,8 +77,6 @@ def likely_stacks(
                 if p <= limit:
                     flagged.append((a, b, p, shared, same))
 
-    # A pair that shares an account with another pair is one stack, not two:
-    # if A queues with B and B queues with C, the three of them are a trio.
     groups: list[dict[str, Any]] = []
     for a, b, p, shared, same in flagged:
         touching = [g for g in groups if a in g["members"] or b in g["members"]]
@@ -104,7 +92,6 @@ def likely_stacks(
             target = {"members": set(), "p": 0.0, "shared": 0, "same": 0}
             groups.append(target)
         target["members"] |= {a, b}
-        # A stack is only as certain as its least certain link.
         target["p"] = max(target["p"], p)
         target["shared"] = max(target["shared"], shared)
         target["same"] = max(target["same"], same)
@@ -165,7 +152,6 @@ def _self_check() -> None:
     check(stacks["b0"]["id"] == stacks["b2"]["id"], stacks)
     check(stacks["b0"]["confidence"] >= 99, stacks["b0"])
 
-    # Thin evidence and plain luck both stay out of it.
     check("b3" not in stacks, stacks)
     check("b4" not in stacks, stacks)
 
@@ -175,7 +161,6 @@ def _self_check() -> None:
     check(likely_stacks(board_of(), rosters[:5]) == {})
     check(likely_stacks(board_of(), rosters[:7]) == {})
 
-    # The current lobby is not evidence for itself.
     only_now = [{"matchId": "now", "teams": {"b0": "Red", "b1": "Red"}}]
     check(likely_stacks(board_of(), only_now) == {})
 

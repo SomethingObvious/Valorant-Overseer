@@ -1,45 +1,23 @@
-//! Which statistics a row shows at this width, and where each one sits.
-//! Every column's width and priority are in one table, and the heads and the
-//! rows read their x from one [`Grid`] built once a frame, so a head cannot
-//! drift off its own numbers. The face and the name are not a column, and
-//! they always get their room first.
-
 use overseer_ui::space;
 
-/// How much a column matters when the window is too narrow for all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
-    /// Never dropped. Without these there is no board.
     Core,
-    /// The rest of the first glance.
     High,
-    /// Worth a look once those are in.
     Mid,
-    /// Interesting, and first to go.
     Low,
 }
 
-/// One statistic a row can show.
 #[derive(Debug)]
 pub(crate) struct Column {
-    /// The key a person switches it off by, and the sort key.
     pub(crate) head: &'static str,
-    /// What its head says. `head` is what settings save to disk, so it stays
-    /// short and fixed, and this can say what the column is.
     pub(crate) label: &'static str,
-    /// Drawn width in points at the window's size.
     pub(crate) width: f32,
-    /// When it is dropped.
     pub(crate) priority: Priority,
-    /// Whether it is a number, which sits right against its edge so the
-    /// digits line up down the column.
     pub(crate) numeric: bool,
-    /// What the column answers, for the settings screen.
     pub(crate) about: &'static str,
 }
 
-/// Every statistic, in reading order: where they are, how they play, how
-/// new the account is, what history you have with them, how it is going.
 pub(crate) const COLUMNS: [Column; 11] = [
     Column {
         head: "rank",
@@ -69,7 +47,6 @@ pub(crate) const COLUMNS: [Column; 11] = [
         head: "games",
         label: "Games",
         width: 48.0,
-        // Behind Win, as the K/D says its games under itself when they're few.
         priority: Priority::Low,
         numeric: true,
         about: "Games the K/D is based on",
@@ -132,54 +109,31 @@ pub(crate) const COLUMNS: [Column; 11] = [
     },
 ];
 
-/// The room at the right of every row for the note mark, so the last
-/// column never runs into it.
 const TAIL: f32 = space::XL;
 
-/// What every column needs, the gaps and the tail included.
 pub(crate) fn full() -> f32 {
     COLUMNS.iter().map(|c| c.width + GAP).sum::<f32>() + TAIL
 }
 
-/// Where one column sits in a row, in points from the row's left edge.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Placed {
-    /// Which column.
     pub(crate) column: &'static Column,
-    /// Its left edge.
     pub(crate) left: f32,
-    /// Its right edge.
     pub(crate) right: f32,
 }
 
-/// The columns a board shows at one width, with their places.
 #[derive(Debug, Clone)]
 pub(crate) struct Grid {
-    /// Every column shown, left to right.
     pub(crate) placed: Vec<Placed>,
-    /// Whether the rank says the peak under it: when the peak is wanted but
-    /// has no column of its own at this width.
     pub(crate) peak_under_rank: bool,
-    /// The Games column made it onto the row.
     pub(crate) games_shown: bool,
-    /// Whether the K/D says the win rate under it: when Win is wanted but
-    /// has no column of its own at this width, which is most windows with
-    /// the panel open.
     pub(crate) win_under_kd: bool,
-    /// What a column switched on but without the room is called, so the
-    /// heads can say it is missing rather than leave it to be remembered.
     pub(crate) dropped: Vec<&'static str>,
 }
 
 impl Grid {
-    /// The grid for a row this wide, with the identity this wide and these
-    /// columns switched off.
     pub(crate) fn new(width: f32, identity: f32, hidden: &[String]) -> Self {
         let room = width - identity - TAIL;
-        // When the rank's word would cost a column that matters more, the
-        // rank gives up its word and keeps its emblem. The emblem is the
-        // rank to anybody who plays, and the level and the last five results
-        // are not said anywhere else on the row.
         let wanted: f32 = COLUMNS
             .iter()
             .filter(|c| c.priority <= Priority::High && !hidden.iter().any(|h| h == c.head))
@@ -223,23 +177,17 @@ impl Grid {
         }
     }
 
-    /// Where the first column starts and the last one ends, from the row's
-    /// left edge.
     pub(crate) fn span(&self) -> Option<(f32, f32)> {
         Some((self.placed.first()?.left, self.placed.last()?.right))
     }
 }
 
-/// The air between two columns.
 const GAP: f32 = space::LG;
 
-/// The rank when room is tight: the emblem alone.
 const RANK_EMBLEM: f32 = 44.0;
 
-/// The peak column: the same emblem and name as the rank, and its act.
 const PEAK: f32 = 164.0;
 
-/// How wide a column is drawn, which for the rank depends on the room.
 fn drawn_width(column: &Column, tight: bool) -> f32 {
     if tight && column.head == "rank" {
         RANK_EMBLEM
@@ -248,17 +196,10 @@ fn drawn_width(column: &Column, tight: bool) -> f32 {
     }
 }
 
-/// What a set of columns needs.
 fn width_of(keep: &[&Column], tight: bool) -> f32 {
     keep.iter().map(|c| drawn_width(c, tight) + GAP).sum()
 }
 
-/// Which columns fit in the room available, after the ones switched off.
-///
-/// Built by adding rather than by shedding, since dropping a wide column to
-/// save a few points leaves room nothing is ever offered. The first pass
-/// ignores `hidden`, so switching one column off can never take a different
-/// one away with it.
 fn columns_for(room: f32, hidden: &[String], tight: bool) -> Vec<&'static Column> {
     let shown = fill(room, &[], &[], tight);
     let kept: Vec<&Column> = shown
@@ -268,8 +209,6 @@ fn columns_for(room: f32, hidden: &[String], tight: bool) -> Vec<&'static Column
     fill(room, &kept, hidden, tight)
 }
 
-/// Adds columns in priority order, keeping any that still fit, and returns
-/// them in table order.
 fn fill(
     room: f32,
     start: &[&'static Column],
@@ -279,8 +218,6 @@ fn fill(
     let visible = |c: &&Column| !hidden.iter().any(|h| h == c.head);
     let order = |c: &&Column| COLUMNS.iter().position(|o| o.head == c.head).unwrap_or(0);
     let mut keep: Vec<&Column> = start.to_vec();
-    // The core columns are not negotiable: a window too narrow for them is a
-    // window that gets a wide row, not a board without a rank.
     for column in COLUMNS.iter().filter(|c| c.priority == Priority::Core) {
         if visible(&column) && !keep.iter().any(|c| c.head == column.head) {
             keep.push(column);
@@ -318,8 +255,6 @@ mod tests {
             .collect()
     }
 
-    /// Switching a column off can only give room to others, never take away
-    /// a column that was showing.
     #[test]
     fn hiding_one_column_never_hides_another() {
         for room in (200..900).step_by(20) {
@@ -343,8 +278,6 @@ mod tests {
         }
     }
 
-    /// The places never overlap and never pass the edge of the row, at any
-    /// width that has room for the core at all.
     #[test]
     fn places_run_left_to_right_inside_the_row() {
         for width in (600..1400).step_by(50) {

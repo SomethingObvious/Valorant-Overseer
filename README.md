@@ -5,8 +5,8 @@
 Valorant Overseer is a match tracker for VALORANT on Windows that runs entirely
 on your PC. It shows all ten players in your match with their rank, peak rank,
 K/D and win rate, who queued together, and whether an account looks like a
-smurf, and Tendencies sets each player's habits against others on the same agent at
-about the same rank. It also keeps your match history, has a lineup planner with clips for
+smurf, and its Tendencies section sets each player's habits against others on
+the same agent at about the same rank. It also keeps your match history, has a lineup planner with clips for
 every map, puts an overlay over the game in agent select, and can hide you
 from your friends in Riot chat.
 
@@ -105,8 +105,9 @@ that ships with the app, so it doesn't crawl anyone else's history. That
 baseline was sampled through one account, which means its percentiles describe
 that sample and not every ranked player. Keep in settings holds your party's
 games on disk for 7, 14 or 30 days, so a restart doesn't ask Riot for them
-again. It keeps at most 200 matches or 64 MiB and drops the oldest first, and
-setting it to Off clears it.
+again, and games with somebody you have met more than 3 times in a month stay
+for a month. It keeps at most 400 matches or 64 MiB and drops the oldest
+first, and setting it to Off clears it.
 
 ## Installing
 

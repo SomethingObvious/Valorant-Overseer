@@ -9,22 +9,15 @@ use std::sync::mpsc::{Receiver, TryIter, channel};
 use tray_icon::menu::{IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-/// What somebody asked the tray for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
-    /// Put the ordinary window back on screen.
     Window,
-    /// Put the overlay back on screen.
     Overlay,
-    /// Stop.
     Quit,
 }
 
-/// The tray icon. Dropping it removes the icon.
 pub(crate) struct Tray {
-    /// Holds the icon on the taskbar. Never read.
     _icon: TrayIcon,
-    /// What has been clicked since the last look.
     actions: Receiver<Action>,
 }
 
@@ -35,7 +28,6 @@ impl std::fmt::Debug for Tray {
 }
 
 impl Tray {
-    /// Everything clicked since the last look.
     pub(crate) fn actions(&self) -> TryIter<'_, Action> {
         self.actions.try_iter()
     }
@@ -83,8 +75,6 @@ pub(crate) fn start(root: &Path, wake: impl Fn() + Send + Sync + 'static) -> Res
         }
     }));
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-        // Only a finished left click. Move and enter events fire whenever the
-        // cursor crosses the icon, and none of them is worth a frame.
         if !matches!(
             event,
             TrayIconEvent::Click {

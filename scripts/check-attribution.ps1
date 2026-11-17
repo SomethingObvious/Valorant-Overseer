@@ -34,8 +34,6 @@ $Root = (& git rev-parse --show-toplevel)
 if ($LASTEXITCODE -ne 0) { Write-Host "This isn't a git repository." -ForegroundColor Red; exit 2 }
 $Root = $Root.Trim()
 
-# The list lives inside .git, so it is never pushed. Naming what it bans in a
-# tracked file would be the very thing it is there to keep out.
 $gitDir = (& git rev-parse --absolute-git-dir).Trim()
 $patternFile = Join-Path $gitDir "info\banned-patterns.txt"
 if (-not (Test-Path $patternFile)) {
@@ -43,7 +41,6 @@ if (-not (Test-Path $patternFile)) {
     exit 2
 }
 
-# This file is exempt from the -Files scan, since it defines it.
 $SelfExempt = '^scripts/check-attribution\.ps1$'
 
 $Patterns = @()

@@ -48,9 +48,6 @@ function Test-Tool([string]$Name) {
     return $false
 }
 
-# Out-Host, not the pipeline: a tool's own output belongs on the screen, and
-# letting it flow back would mean Invoke-Step casting an array of stdout lines
-# to a boolean instead of the exit status it asked for.
 function Invoke-Native([string]$Exe, [string[]]$Arguments) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -58,7 +55,6 @@ function Invoke-Native([string]$Exe, [string[]]$Arguments) {
     finally { $ErrorActionPreference = $prev }
 }
 
-# --- the file list -------------------------------------------------------------
 if ($Script:StagedOnly) {
     $TrackedFiles = @(& git -C $Root diff --cached --name-only --diff-filter=ACMR)
 }
@@ -67,10 +63,6 @@ else {
 }
 $TrackedFiles = @($TrackedFiles | Where-Object { $_ })
 
-
-# git lists paths with forward slashes. A step whose paths don't resolve checks
-# nothing and still passes, so every step maps them here, and the next line
-# makes sure the mapping finds this script.
 function Get-FullPath([string]$Rel) { return (Join-Path $Root ($Rel -replace '/', '\')) }
 if (-not (Test-Path -LiteralPath (Get-FullPath "scripts/lint.ps1"))) { throw "Get-FullPath can't find scripts/lint.ps1." }
 
@@ -98,10 +90,6 @@ function Test-BinaryFile([string]$Rel) {
     return $false
 }
 
-# --- policy checks -------------------------------------------------------------
-
-# Only this file and the two lint configs may name a suppression form,
-# because they are what define the rule.
 $SuppressionAllowlist = '^(scripts/lint\.ps1|pyproject\.toml|scripts/PSScriptAnalyzerSettings\.psd1)$'
 $SuppressionPattern =
 '#\s*(noqa|nosec|type:\s*ignore|ruff:\s*noqa|pylint:\s*disable|fmt:\s*(off|skip))' +
@@ -165,8 +153,6 @@ function Test-NoNestedConfig {
     return $false
 }
 
-# Nothing here may cause the maintainer's inbox to fill up. No workflows, no
-# Dependabot config, no CODEOWNERS, and no address to send anything to.
 function Test-NoMail {
     $hits = @()
     foreach ($rel in $TrackedFiles) {
@@ -200,51 +186,44 @@ function Test-NoMail {
     return $false
 }
 
-# This tree came from another project, and these are the names that would tie
-# it back to it: the old product name, the old env-var prefix, the old state
-# directory, the upstream owner. A rename that reintroduces any of them is how
-# a helpful pass at 'restoring compatibility' quietly puts a remote, an updater
-# or a host back.
-#
-# README.md and this file are exempt, because they name the origin
-# only to warn about it. The build is private and never distributed, so no
-# attribution is owed anywhere else.
-$UpstreamNames = @(
-    'valorant[-_ ]?tendencies', 'otherauthor', 'othertool',
-    'othertool', 'TendenciesDir', 'TENDENCIES_[A-Z_]+', 'tendencieslog', 'tendencies_commands'
-)
+$ForeignNameFile = Join-Path (& git -C $Root rev-parse --absolute-git-dir).Trim() "info\foreign-names.txt"
 
-function Test-NoUpstreamCoupling {
+function Test-NoForeignNames {
+    if (-not (Test-Path -LiteralPath $ForeignNameFile)) {
+        Write-Host "  x the list of names to keep out is missing. Put it at $ForeignNameFile, one pattern a line." -ForegroundColor Red
+        return $false
+    }
+    $names = @(Get-Content -LiteralPath $ForeignNameFile -Encoding UTF8 |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith("#") })
     $hits = @()
     foreach ($rel in $TrackedFiles) {
-        if ($rel -match '^(README\.md|scripts/lint\.ps1)$') { continue }
         if (Test-BinaryFile $rel) { continue }
         $n = 0
         foreach ($line in ((Get-TrackedText $rel) -split "`r?`n")) {
             $n++
-            foreach ($name in $UpstreamNames) {
+            foreach ($name in $names) {
                 if ($line -match $name) { $hits += "${rel}:${n}: $($line.Trim())" }
             }
         }
     }
 
-    # A remote is the other half of coupling, and it lives outside the tree.
+    # A remote lives outside the tree, so it is read from git.
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try { $remotes = @(& git -C $Root remote -v 2>$null) } finally { $ErrorActionPreference = $prev }
     foreach ($r in $remotes) {
-        foreach ($name in $UpstreamNames) {
+        foreach ($name in $names) {
             if ($r -match $name) { $hits += "git remote: $r" }
         }
     }
 
     if ($hits.Count -eq 0) {
-        Write-Host "  + nothing ties this tree to where it came from" -ForegroundColor Green
+        Write-Host "  + none of the names kept out" -ForegroundColor Green
         return $true
     }
-    Write-Host "  x this tree must stay detached from the project it came from:" -ForegroundColor Red
+    Write-Host "  x names kept out of this tree turned up:" -ForegroundColor Red
     foreach ($h in $hits) { Write-Host "      $h" -ForegroundColor Red }
-    Write-Host "    Remove the coupling rather than the check." -ForegroundColor Red
+    Write-Host "    Take the name out rather than the check." -ForegroundColor Red
     return $false
 }
 
@@ -260,8 +239,6 @@ $AllowedHosts = @(
     # Riot's own APIs. Talking to these is what the program is for.
     'pd\.', 'glz-?', 'shared\.', '.*\.a\.pvp\.net', '.*\.riotgames\.com',
     'riot-geo\.pas\.si\.riotgames\.com', 'clientconfig\.rpg\.riotgames\.com',
-    # Read-only art and metadata: agent portraits, rank icons, skin names.
-    # Nothing about the player is sent, and nothing it returns is executed.
     'valorant-api\.com', 'media\.valorant-api\.com',
     # The CPython installer, pinned by SHA-256 and Authenticode in
     # runtime.json before it is ever run.
@@ -286,7 +263,6 @@ function Test-NoNewHosts {
             foreach ($m in [regex]::Matches($line, 'https?://([^/\s"'')]+)')) {
                 $found = $m.Groups[1].Value
                 if ($found -match '[{}$]') { continue }
-                # A port is not part of the host.
                 $found = ($found -split ':')[0]
                 $ok = $found -eq 'github.com' -and $rel -eq $ReleaseCheck
                 foreach ($alw in $AllowedHosts) {
@@ -328,8 +304,6 @@ function Test-NoSelfUpdate {
     $hits = @()
     foreach ($rel in $TrackedFiles) {
         if ($rel -notmatch '\.(py|ps1|bat|cmd)$') { continue }
-        # The release builder unpacks the zip it just made, to verify it. That
-        # is a build step on the maintainer's machine, not a runtime path.
         if ($rel -match '^scripts/(lint|build-release|verify-release)\.ps1$') { continue }
         $asking = $rel -eq $ReleaseCheck
         $n = 0
@@ -408,8 +382,6 @@ function Test-Encodings {
     return $false
 }
 
-# --- tools ---------------------------------------------------------------------
-
 # Lint and format are one step because they are one tool reading one config, and
 # a formatter that is merely available is a formatter half the tree has never
 # been through. `check --fix` runs before `format`, which is ruff's own order: a
@@ -438,8 +410,6 @@ function Invoke-ScriptAnalyzerCheck {
             Where-Object { Test-Path -LiteralPath $_ })
     if ($target.Count -eq 0) { Write-Host "  + no PowerShell files in scope" -ForegroundColor Green; return $true }
     $settings = Join-Path $PSScriptRoot "PSScriptAnalyzerSettings.psd1"
-    # One file at a time: -Path takes a single string, and handing it an
-    # array fails with a type error rather than scanning anything.
     $found = @()
     foreach ($file in $target) { $found += @(Invoke-ScriptAnalyzer -Path $file -Settings $settings) }
     if ($found.Count -eq 0) { Write-Host "  + clean" -ForegroundColor Green; return $true }
@@ -509,17 +479,12 @@ function Invoke-Typos {
 function Invoke-Gitleaks {
     if (-not (Test-Tool "gitleaks")) { return $false }
     $cfg = Join-Path $Root ".gitleaks.toml"
-    # The build tree is excluded in .gitleaks.toml rather than here, because the
-    # two scans below take different path shapes and one config covers both.
     $ok = Invoke-Native "gitleaks" @("dir", "--no-banner", "--redact", "--exit-code", "1",
         "-c", $cfg, $Root)
     return (Invoke-Native "gitleaks" @("git", "--no-banner", "--redact", "--exit-code", "1",
             "-c", $cfg, $Root)) -and $ok
 }
 
-# The dependency policy: pinned is not the same as safe. It resolves the pins
-# against PyPI, so it is the second of the two checks here that needs the
-# network.
 function Invoke-PipAudit {
     if (-not (Test-Tool "pip-audit")) { return $false }
     return (Invoke-Native "pip-audit" @("-r", (Join-Path $Root "backend\requirements.txt"),
@@ -556,18 +521,14 @@ function Test-PowerShellFormat {
     return $false
 }
 
-# The modules with an `if __name__ == "__main__"` self-check.
 $SelfChecks = @("backend\encounter_log.py", "backend\history.py",
     "backend\live_match.py", "backend\rounds.py", "backend\smurf.py", "backend\career.py",
     "backend\offline_launch.py", "backend\party_detector.py", "backend\past_games.py",
     "backend\overseerlog.py", "backend\tags.py", "backend\cards.py",
     "backend\session_tracker.py", "backend\newest.py", "backend\agents.py", "backend\art.py",
-    "backend\riot_client.py", "backend\brief.py", "backend\match_cache.py")
+    "backend\riot_client.py", "backend\brief.py", "backend\match_cache.py", "backend\valapi.py",
+    "backend\presence.py", "backend\ws_server.py")
 
-# Run plainly, app.py starts the WebSocket bridge and run.py the backend, so
-# both take a flag. app.py's drives the bridge's request router in demo mode,
-# which is the whole data surface. run.py's covers the launcher, which decides
-# whether any of the rest ever runs.
 $SelfCheckArgs = @{
     "backend\app.py"     = @("--self-check")
     "backend\run.py"     = @("--self-check")
@@ -611,11 +572,6 @@ function Invoke-SelfChecks {
     return $ok
 }
 
-# The release build strips every comment and docstring from a staged copy of the
-# tree, then byte-compiles what is left. If that fails, it fails at release
-# time, with a tag already cut. Running the same two strippers over a throwaway
-# copy here means a comment can never be the thing that breaks a release, which
-# is what makes it safe to write comments in the first place.
 function Test-StripRoundTrip {
     $py = $VenvPy
     if (-not (Test-Path $py)) {
@@ -657,9 +613,6 @@ function Invoke-Verifier([string]$Script) {
             (Join-Path $PSScriptRoot $Script)))
 }
 
-# --- the window ----------------------------------------------------------------
-
-# Cargo is not on PATH in every shell that runs this.
 function Get-Cargo {
     $onPath = Get-Command cargo -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
@@ -671,7 +624,6 @@ function Get-Cargo {
     return $null
 }
 
-# The workspace, its toolchain pin and its lint configs are all in crates.
 function Invoke-Cargo([string[]]$Arguments) {
     $cargo = Get-Cargo
     if (-not $cargo) {
@@ -712,8 +664,6 @@ function Invoke-CargoDeny {
     return (Invoke-Cargo @("deny", "check"))
 }
 
-# --- run -----------------------------------------------------------------------
-
 Invoke-Step "no inline suppressions" { Test-NoSuppressions }
 Invoke-Step "no nested lint config" { Test-NoNestedConfig }
 Invoke-Step "nothing that emails anybody" { Test-NoMail }
@@ -722,7 +672,7 @@ Invoke-Step "no attribution in tracked files" {
         (Join-Path $PSScriptRoot "check-attribution.ps1"), "-Files")
 }
 Invoke-Step "windows is the only target" { Test-WindowsOnly }
-Invoke-Step "detached from upstream" { Test-NoUpstreamCoupling }
+Invoke-Step "no foreign names" { Test-NoForeignNames }
 Invoke-Step "no host outside the allowlist" { Test-NoNewHosts }
 Invoke-Step "nothing can update itself" { Test-NoSelfUpdate }
 Invoke-Step "encodings" { Test-Encodings }

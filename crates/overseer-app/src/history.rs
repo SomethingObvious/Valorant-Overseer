@@ -1,36 +1,23 @@
-//! The History screen: your last few matches, newest first. Each is a strip
-//! with its map behind it, the result and your own line, and a click opens
-//! its end-of-game scoreboard under it.
-
 use std::collections::HashSet;
 
 use egui::{Align2, Color32, Pos2, Rect, ScrollArea, Sense, Stroke, Ui, pos2, vec2};
-use overseer_core::{Bridge, Game, Line, Player, Recent};
+use overseer_core::{Bridge, Game, Line, Player, Recent, Usual};
 use overseer_ui::{Face, caps_text, caps_width, colour, motion, size, space};
 
 use crate::board::{self, Side, paint};
-use crate::{header, view};
+use crate::notes::Notes;
+use crate::{controls, header, view};
 
-/// How many games the screen can be set to show.
 const COUNTS: [u32; 3] = [5, 10, 20];
 
-/// How tall a match's strip is.
 const STRIP: f32 = 60.0;
-/// How tall one line of a scoreboard is.
 const ROW: f32 = 30.0;
-/// How wide the agent's crop is on a scoreboard line, two across one down.
 const CROP: f32 = 60.0;
-/// The least room a name keeps before a column is dropped for it.
 const NAME: f32 = 150.0;
 
-/// A scoreboard column: its heading, how wide it is, what it shows, and how
-/// good a figure is.
 struct Column {
-    /// The heading, in caps.
     head: &'static str,
-    /// Its width, numbers set right against the right edge.
     width: f32,
-    /// The figure for one player, or `None` when there isn't one.
     cell: fn(&Line) -> Option<String>,
     /// How good the figure is, from ordinary at 0 to as good as it gets at 1,
     /// or `None` for one left plain. Only K/D and ACS are coloured, since a
@@ -38,13 +25,10 @@ struct Column {
     good: fn(&Line) -> Option<f32>,
 }
 
-/// Where a figure sits between ordinary and excellent.
 fn scale(value: f64, ordinary: f64, excellent: f64) -> f32 {
     ((value - ordinary) / (excellent - ordinary)) as f32
 }
 
-/// Every column, left to right. A narrow window drops them from the right,
-/// so the rarer figures go before kills and deaths do.
 const COLUMNS: [Column; 9] = [
     Column {
         head: "K",
@@ -102,33 +86,22 @@ const COLUMNS: [Column; 9] = [
     },
 ];
 
-/// The games, or where the request for them has got to.
 #[derive(Debug, Default)]
 enum Past {
-    /// Nothing asked yet.
     #[default]
     Idle,
-    /// Asked, with the last answer kept on screen until the new one lands.
     Asking {
-        /// The bridge's id for the question.
         id: u64,
-        /// What was showing when it was asked.
         kept: Option<Box<Recent>>,
     },
-    /// The answer.
     Have(Box<Recent>),
-    /// Why no new games came, in words for a player, with the ones that were
-    /// showing kept on screen.
     Refused {
-        /// What went wrong.
         why: String,
-        /// The games from before, if there were any.
         kept: Option<Box<Recent>>,
     },
 }
 
 impl Past {
-    /// The games on screen, whatever the question is doing.
     fn shown(&self) -> Option<&Recent> {
         match self {
             Self::Have(games) => Some(games),
@@ -137,7 +110,6 @@ impl Past {
         }
     }
 
-    /// [`Past::shown`], taken.
     fn into_kept(self) -> Option<Box<Recent>> {
         match self {
             Self::Have(games) => Some(games),
@@ -147,21 +119,22 @@ impl Past {
     }
 }
 
-/// The screen's state: the games, and which of them are open.
 #[derive(Debug, Default)]
 pub(crate) struct History {
-    /// The games, or where the request for them has got to.
     past: Past,
-    /// The matches whose scoreboards are open, by id.
     open: HashSet<String>,
+    pub(crate) notes: Notes,
 }
 
 impl History {
-    /// Asks for the newest `count`, keeping what is on screen until the
-    /// answer lands.
+    pub(crate) fn new(notes: Notes) -> Self {
+        Self {
+            notes,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn ask(&mut self, bridge: &Bridge, count: u32, live: bool) {
-        // A question sent into a dead socket is queued until it reconnects,
-        // and by then nobody is looking at the screen.
         if !live {
             return;
         }
@@ -170,13 +143,10 @@ impl History {
         self.past = Past::Asking { id, kept };
     }
 
-    /// Whether the answer with this id is the one being waited on.
     pub(crate) const fn waiting_on(&self, id: u64) -> bool {
         matches!(self.past, Past::Asking { id: waiting, .. } if waiting == id)
     }
 
-    /// Takes the answer. The newest match opens by itself the first time,
-    /// so the screen shows a scoreboard without a click.
     pub(crate) fn answered(&mut self, result: Result<serde_json::Value, String>) {
         let read = result.and_then(|value| {
             serde_json::from_value::<Recent>(value)
@@ -196,7 +166,6 @@ impl History {
         };
     }
 
-    /// A screen already holding `recent`, for the snapshot.
     #[cfg(test)]
     pub(crate) fn showing(recent: serde_json::Value) -> Self {
         let mut history = Self::default();
@@ -212,9 +181,14 @@ impl History {
         }
     }
 
-    /// Draws the screen, and returns a new count when one was picked.
-    pub(crate) fn show(&mut self, ui: &mut Ui, count: u32, now_ms: i64, live: bool) -> Option<u32> {
-        let mut picked = None;
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut Ui,
+        count: u32,
+        now_ms: i64,
+        live: bool,
+    ) -> (Option<u32>, bool) {
+        let (mut picked, mut noted) = (None, false);
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -237,15 +211,14 @@ impl History {
                 for (at, game) in all.iter().enumerate() {
                     let id = egui::Id::new(("history-strip", at));
                     motion::arrive(ui, id, motion::stagger(at, all.len()), |ui| {
-                        strip(ui, game, &mut self.open, now_ms);
+                        noted |= strip(ui, game, (&mut self.open, &mut self.notes), now_ms);
                     });
                 }
                 ui.add_space(space::XXL);
             });
-        picked
+        (picked, noted)
     }
 
-    /// A line on where things stand, when there is something to say.
     fn status(&self, count: u32, live: bool, now_ms: i64) -> Option<String> {
         match &self.past {
             Past::Idle if !live => Some("Waiting for the backend to connect.".to_owned()),
@@ -271,7 +244,6 @@ impl History {
     }
 }
 
-/// The row of counts to pick from. Returns the one clicked, if it changed.
 fn counts(ui: &mut Ui, count: u32) -> Option<u32> {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), space::ROW), Sense::hover());
@@ -320,8 +292,12 @@ fn counts(ui: &mut Ui, count: u32) -> Option<u32> {
     picked
 }
 
-/// One match's strip, and its scoreboard under it when it is open.
-fn strip(ui: &mut Ui, game: &Game, open: &mut HashSet<String>, now_ms: i64) {
+fn strip(
+    ui: &mut Ui,
+    game: &Game,
+    (open, notes): (&mut HashSet<String>, &mut Notes),
+    now_ms: i64,
+) -> bool {
     ui.add_space(space::MD);
     let (outer, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), STRIP), Sense::click());
@@ -346,17 +322,182 @@ fn strip(ui: &mut Ui, game: &Game, open: &mut HashSet<String>, now_ms: i64) {
             0,
             outcome(game),
         );
-        let limit = left(&painter, rect, game, now_ms);
+        let limit = left(&painter, rect, game, (now_ms, notes.has(id)));
         right(&painter, rect, game, (limit, is_open));
     }
-    if is_open {
-        scoreboard(ui, game);
+    if !is_open {
+        return false;
+    }
+    against(ui, game);
+    let done = note(ui, game, notes);
+    scoreboard(ui, game);
+    done
+}
+
+fn note(ui: &mut Ui, game: &Game, notes: &mut Notes) -> bool {
+    let Some(id) = game.match_id.as_deref() else {
+        return false;
+    };
+    let mut kept = notes.get(id);
+    let mut text = kept.text.clone();
+    ui.add_space(space::SM);
+    let width = 2.0f32.mul_add(-space::XL, ui.available_width());
+    let response = ui
+        .horizontal(|ui| {
+            ui.add_space(space::XL);
+            controls::field_named(
+                ui,
+                &mut text,
+                "A note on this game, like who you queued with or what went wrong",
+                width,
+                Some(egui::Id::new(("game-note", id))),
+            )
+        })
+        .inner;
+    if response.changed() {
+        kept.text = text;
+        kept.name = [game.map.as_deref(), game.mode.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
+        notes.set(id, kept);
+    }
+    response.lost_focus()
+}
+
+const AGAINST_WIDE: f32 = 104.0;
+
+fn against(ui: &mut Ui, game: &Game) {
+    let (Some(usual), Some(you)) = (
+        game.usual.as_ref(),
+        game.players.iter().find(|p| p.is_subject),
+    ) else {
+        return;
+    };
+    let (outer, _response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::hover());
+    let rect = outer.shrink2(vec2(space::XL, 0.0));
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let said = caps_text(
+        painter,
+        pos2(rect.left() + space::MD, rect.top() + 18.0),
+        Align2::LEFT_CENTER,
+        "Against Your Usual",
+        Face::Heavy.at(size::TITLE),
+        colour::TEXT_DIM,
+    );
+    let games = usual.games.unwrap_or_default();
+    let over = format!(
+        "Your {games} {} games before this one",
+        game.mode.as_deref().unwrap_or("earlier")
+    );
+    let sub = caps_text(
+        painter,
+        pos2(rect.left() + space::MD, rect.top() + 36.0),
+        Align2::LEFT_CENTER,
+        &over,
+        Face::Display.at(size::MICRO),
+        colour::TEXT_FAINT,
+    );
+    let mut x = rect.right() - space::LG;
+    let limit = said.right().max(sub.right()) + space::LG;
+    for (head, now, then, unit) in figures(you, usual).into_iter().rev() {
+        let (Some(now), Some(then)) = (now, then) else {
+            continue;
+        };
+        if x - AGAINST_WIDE < limit {
+            break;
+        }
+        compared(painter, (x, rect.top()), head, (now, then), unit);
+        x -= AGAINST_WIDE;
     }
 }
 
-/// The map and what kind of match it was, when and how long. Returns where
-/// the words end, which the right side must not cross.
-fn left(painter: &egui::Painter, rect: Rect, game: &Game, now_ms: i64) -> f32 {
+type Figure = (&'static str, Option<f64>, Option<f64>, Unit);
+
+fn figures(you: &Line, usual: &Usual) -> [Figure; 5] {
+    let whole = |n: Option<u32>| n.map(f64::from);
+    [
+        ("K/D", kd(you), usual.kd, Unit::Ratio),
+        ("ACS", whole(you.acs), usual.acs, Unit::Whole),
+        ("ADR", whole(you.adr), usual.adr, Unit::Whole),
+        ("HS%", whole(you.hs_pct), usual.hs_pct, Unit::Share),
+        ("KAST", whole(you.kast), usual.kast, Unit::Share),
+    ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    /// Two places, like a K/D of 1.32.
+    Ratio,
+    /// A whole number, like an ACS of 242.
+    Whole,
+    Share,
+}
+
+impl Unit {
+    fn write(self, n: f64) -> String {
+        match self {
+            Self::Ratio => format!("{n:.2}"),
+            Self::Whole => format!("{n:.0}"),
+            Self::Share => format!("{n:.0}%"),
+        }
+    }
+
+    const fn even(self) -> f64 {
+        match self {
+            Self::Ratio => 0.05,
+            Self::Whole | Self::Share => 2.0,
+        }
+    }
+}
+
+fn compared(
+    painter: &egui::Painter,
+    (x, top): (f32, f32),
+    head: &str,
+    (now, then): (f64, f64),
+    unit: Unit,
+) {
+    let gap = now - then;
+    let tint = if gap.abs() < unit.even() {
+        colour::TEXT_DIM
+    } else if gap > 0.0 {
+        colour::ALLY
+    } else {
+        colour::ENEMY
+    };
+    let sign = if gap < 0.0 { "-" } else { "+" };
+    let _head = caps_text(
+        painter,
+        pos2(x, top + 12.0),
+        Align2::RIGHT_CENTER,
+        head,
+        paint::label(),
+        colour::TEXT_FAINT,
+    );
+    let numbers = Face::Number.at(size::BODY + 1.0);
+    let moved = paint::numeral(
+        painter,
+        &format!("{sign}{}", unit.write(gap.abs())),
+        pos2(x, top + 32.0),
+        &numbers,
+        tint,
+    );
+    let _now = paint::numeral(
+        painter,
+        &unit.write(now),
+        pos2(moved.left() - space::SM, top + 32.0),
+        &numbers,
+        colour::TEXT_STRONG,
+    );
+}
+
+fn left(painter: &egui::Painter, rect: Rect, game: &Game, (now_ms, noted): (i64, bool)) -> f32 {
     let map = caps_text(
         painter,
         pos2(rect.left() + space::XL, rect.top() + 23.0),
@@ -372,6 +513,9 @@ fn left(painter: &egui::Painter, rect: Rect, game: &Game, now_ms: i64) -> f32 {
     if let Some(ms) = game.length_ms.filter(|ms| *ms > 0) {
         about.push(format!("{} min", (ms as f64 / 60_000.0).round()));
     }
+    if noted {
+        about.push("Noted".to_owned());
+    }
     let meta = caps_text(
         painter,
         pos2(rect.left() + space::XL + 1.0, rect.top() + 44.0),
@@ -383,19 +527,11 @@ fn left(painter: &egui::Painter, rect: Rect, game: &Game, now_ms: i64) -> f32 {
     map.right().max(meta.right())
 }
 
-/// How wide each of the strip's right-hand columns is, right to left: your
-/// RR, your ACS, your K/D/A, your agent and the score. Fixed, so each sits at
-/// the same place in every match whatever its figures are.
 const RR_WIDE: f32 = 52.0;
-/// See [`RR_WIDE`].
 const ACS_WIDE: f32 = 52.0;
-/// See [`RR_WIDE`].
 const KDA_WIDE: f32 = 108.0;
-/// See [`RR_WIDE`].
 const SCORE_WIDE: f32 = 88.0;
 
-/// The score, your agent, your line and your RR, each in its own fixed
-/// column from the strip's end, and left out when it would reach `limit`.
 fn right(painter: &egui::Painter, rect: Rect, game: &Game, (limit, is_open): (f32, bool)) {
     let end = rect.right() - space::LG;
     chevron(
@@ -450,7 +586,6 @@ fn right(painter: &egui::Painter, rect: Rect, game: &Game, (limit, is_open): (f3
     }
 }
 
-/// A big figure over its small label, right against `x`.
 fn figure(
     painter: &egui::Painter,
     (x, rect): (f32, Rect),
@@ -475,9 +610,6 @@ fn figure(
     );
 }
 
-/// Your rounds in the result's colour, theirs dim beside them, right
-/// against `x`, and the result on a chip in that colour centred under both,
-/// when the mode has a score.
 fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
     let Some([ours, theirs]) = game.score else {
         return;
@@ -521,7 +653,6 @@ fn score(painter: &egui::Painter, (x, rect): (f32, Rect), game: &Game) {
     );
 }
 
-/// A small arrow that points down under an open strip and right otherwise.
 pub(crate) fn chevron(painter: &egui::Painter, c: Pos2, open: bool, tint: Color32) {
     let stroke = Stroke::new(1.4, tint);
     let points = if open {
@@ -540,8 +671,6 @@ pub(crate) fn chevron(painter: &egui::Painter, c: Pos2, open: bool, tint: Color3
     painter.add(egui::Shape::line(points, stroke));
 }
 
-/// The match's scoreboard: your side then theirs, or everybody at once in a
-/// mode with no sides.
 fn scoreboard(ui: &mut Ui, game: &Game) {
     let width = 2.0f32.mul_add(-space::XL, ui.available_width());
     let columns = fitting(width);
@@ -573,7 +702,6 @@ fn scoreboard(ui: &mut Ui, game: &Game) {
     }
 }
 
-/// As many columns as leave a name its room, from the left.
 fn fitting(width: f32) -> &'static [Column] {
     let mut keep = COLUMNS.len();
     while keep > 0
@@ -584,7 +712,6 @@ fn fitting(width: f32) -> &'static [Column] {
     COLUMNS.get(..keep).unwrap_or(&[])
 }
 
-/// One side's heading with the column names, then a line for each player.
 fn block(
     ui: &mut Ui,
     (title, tint, side): (&str, Color32, Side),
@@ -628,7 +755,6 @@ fn block(
     ui.add_space(space::MD);
 }
 
-/// One player's line: their agent, their name, and a figure per column.
 fn line(ui: &mut Ui, player: &Line, side: Side, columns: &[Column], stripe: bool) {
     let (outer, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
@@ -652,8 +778,6 @@ fn line(ui: &mut Ui, player: &Line, side: Side, columns: &[Column], stripe: bool
     let numbers = Face::Number.at(size::BODY + 1.0);
     for column in columns.iter().rev() {
         let text = (column.cell)(player).unwrap_or_else(|| "-".to_owned());
-        // Coloured by how good it is, in the side's colour, so the stand-out
-        // figures on each team show without reading every number.
         let tint = match (column.good)(player) {
             Some(good) => paint::heat(side, good),
             None if player.is_subject => colour::TEXT_STRONG,
@@ -704,8 +828,6 @@ fn name(painter: &egui::Painter, face: &Player, (left, right): (f32, f32), middl
     }
 }
 
-/// A board player carrying just the name and agent, so the board's own crop
-/// and name code can draw a scoreboard line.
 fn stand_in(line: &Line) -> Player {
     Player {
         name: line.name.clone(),
@@ -714,7 +836,6 @@ fn stand_in(line: &Line) -> Player {
     }
 }
 
-/// Kills over deaths, or the kills when they never died.
 fn kd(line: &Line) -> Option<f64> {
     let kills = f64::from(line.kills?);
     Some(
@@ -724,7 +845,6 @@ fn kd(line: &Line) -> Option<f64> {
     )
 }
 
-/// Kills, deaths and assists the way the game's own scoreboard puts them.
 fn kda(line: &Line) -> String {
     let each = |n: Option<u32>| n.map_or_else(|| "-".to_owned(), |n| n.to_string());
     format!(
@@ -735,8 +855,6 @@ fn kda(line: &Line) -> String {
     )
 }
 
-/// The result's colour: your green for a win, red for a loss, and dim for a
-/// draw or a mode without one.
 fn outcome(game: &Game) -> Color32 {
     match game.result.as_deref() {
         Some("Victory") => colour::ALLY,
@@ -754,7 +872,6 @@ pub(crate) fn kept_ago(now_ms: i64, at: Option<f64>) -> String {
     )
 }
 
-/// How long ago a match started, the way a person would say it.
 fn ago(now_ms: i64, then_ms: i64) -> String {
     let minutes = (now_ms - then_ms).max(0) as f64 / 60_000.0;
     let hours = minutes / 60.0;
@@ -784,9 +901,15 @@ fn ago(now_ms: i64, then_ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{History, Past};
+    use super::{History, Past, Unit};
 
-    /// A refresh that fails keeps the games that were on screen, and says so.
+    #[test]
+    fn figures_are_written_by_kind() {
+        assert_eq!(Unit::Ratio.write(1.234), "1.23");
+        assert_eq!(Unit::Whole.write(241.6), "242");
+        assert_eq!(Unit::Share.write(21.4), "21%");
+    }
+
     #[test]
     fn a_failed_refresh_keeps_the_games_from_before() {
         let mut history = History::showing(serde_json::json!({ "games": [] }));

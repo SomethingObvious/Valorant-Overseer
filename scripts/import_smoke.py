@@ -4,25 +4,23 @@
 import importlib
 import sys
 
-REQUIRED = [
-    "requests",
-    "dotenv",
-    "urllib3",
-    "websockets",
-    "websockets.sync.client",
-]
+NEEDED = ("requests", "urllib3", "websockets", "websockets.sync.client")
 
-failed = []
-for mod in REQUIRED:
-    try:
-        importlib.import_module(mod)
-    except Exception as e:
-        failed.append(f"{mod}: {type(e).__name__}: {e}")
 
-if failed:
-    print("IMPORT SMOKE FAILED:", file=sys.stderr)
-    for line in failed:
-        print("  " + line, file=sys.stderr)
-    sys.exit(1)
+def main() -> int:
+    """Import each package and return 1 when any of them fails."""
+    broken = []
+    for name in NEEDED:
+        try:
+            importlib.import_module(name)
+        except Exception as e:
+            broken.append(f"{name}: {type(e).__name__}: {e}")
+    if broken:
+        print("These packages won't import:", *broken, sep="\n  ", file=sys.stderr)
+        return 1
+    print(f"all {len(NEEDED)} packages the backend needs import")
+    return 0
 
-print(f"import smoke ok ({len(REQUIRED)} modules)")
+
+if __name__ == "__main__":
+    sys.exit(main())

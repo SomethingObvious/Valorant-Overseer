@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Your last few matches with their scoreboards, for the History screen.
-
-A finished match never changes, so its scoreboard is kept on disk after the
-first fetch and asking again costs one history call.
-"""
+"""Your last few matches with their scoreboards, for the History screen."""
 
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ import requests
 from agents import resolve_agent
 from common.check import check, present
 from common.jsonstore import data_path, read_json, write_atomic
-from live_match import _fallback_name, _is_throttled, _mode_label
+from live_match import _fallback_name, _is_throttled, _mode_label, played
 from rounds import round_stats, rounds_played
 from vconstants import map_name_from_path
 
@@ -32,14 +28,11 @@ MOST = 40
 # Riot's match history answers twenty at a time.
 _PAGE = 20
 _DIR = Path(data_path("games"))
-# Match ids are UUIDs, and nothing else may become a file name.
 _ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-# Three at a time, so a first look at forty games doesn't trip the rate limit.
 _POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="past-games")
 
 
 def _match_ids(auth: Any, puuid: str, count: int) -> tuple[list[str], bool]:
-    """Return the newest `count` match ids, and whether Riot cut the list short."""
     ids: list[str] = []
     for start in range(0, count, _PAGE):
         end = min(count, start + _PAGE)
@@ -51,8 +44,6 @@ def _match_ids(auth: Any, puuid: str, count: int) -> tuple[list[str], bool]:
         if _is_throttled(page):
             return ids, True
         entries = page.get("History") if isinstance(page, dict) else None
-        # An error or an empty body is not an empty history, and read as one
-        # it would be kept over the games that were there.
         if not isinstance(entries, list):
             msg = f"Riot's match history didn't come back: {str(page)[:200]}"
             raise TypeError(msg)
@@ -124,13 +115,69 @@ def view(board: dict[str, Any], puuid: str, deltas: dict[str, int]) -> dict[str,
     teams = board.get("teams") or []
     ours = next((t for t in teams if t["id"] == mine), None)
     theirs = next((t for t in teams if t["id"] != mine), None)
-    # A deathmatch has a side per player, so it has no score to read.
     if len(teams) == 2 and ours and theirs:
         game["score"] = [ours["roundsWon"], theirs["roundsWon"]]
         game["result"] = "Victory" if ours["won"] else "Defeat" if theirs["won"] else "Draw"
     game["yourTeam"] = mine
     game["rrDelta"] = deltas.get(board["matchId"])
     return game
+
+
+_USUAL = 20
+_USUAL_LEAST = 3
+_USUAL_READ = 150
+
+
+def usual(game: dict[str, Any], boards: list[dict[str, Any]], puuid: str) -> dict[str, Any] | None:
+    """Return your averages over the 20 games of `game`'s mode before it, or None under 3."""
+
+    def started(board: dict[str, Any]) -> float:
+        at = board.get("startedAt")
+        return at if isinstance(at, (int, float)) and not isinstance(at, bool) else 0
+
+    began = started(game)
+    earlier = sorted(
+        (b for b in boards if b.get("mode") == game.get("mode") and 0 < started(b) < began),
+        key=started,
+        reverse=True,
+    )
+    lines = [
+        p
+        for b in earlier
+        if isinstance(players := b.get("players"), list)
+        for p in players
+        if isinstance(p, dict) and p.get("puuid") == puuid
+    ][:_USUAL]
+    if len(lines) < _USUAL_LEAST:
+        return None
+
+    def numbers(key: str) -> list[float]:
+        return [
+            n
+            for line in lines
+            if isinstance(n := line.get(key), (int, float)) and not isinstance(n, bool)
+        ]
+
+    def mean(key: str) -> float | None:
+        had = numbers(key)
+        return round(sum(had) / len(had), 1) if had else None
+
+    kills = sum(numbers("kills"))
+    deaths = sum(numbers("deaths"))
+    return {
+        "games": len(lines),
+        "kd": round(kills / max(deaths, 1), 2),
+        **{key: mean(key) for key in ("acs", "adr", "hsPct", "kast")},
+    }
+
+
+def _newest(count: int) -> list[dict[str, Any]]:
+    files = sorted(_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return [
+        b
+        for f in files[:count]
+        if isinstance(b := read_json(str(f), None), dict) and b.get("players") and b.get("matchId")
+    ]
 
 
 def keep(auth: Any, match_id: str) -> None:
@@ -140,22 +187,23 @@ def keep(auth: Any, match_id: str) -> None:
 
 
 def _safely(auth: Any, match_id: str) -> dict[str, Any] | None:
-    """Return `_board`, or None when the request failed, so one lost game isn't all of them."""
     try:
         return _board(auth, match_id)
     except requests.RequestException as e:
         LOG.warning("match %s didn't load: %r", match_id, e)
         return None
+    except Exception:
+        LOG.exception("match %s couldn't be read", match_id)
+        return None
 
 
 def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
-    """Return a match's scoreboard from disk, or from Riot the first time."""
     path = _DIR / f"{match_id}.json"
     kept = read_json(str(path), None)
     if isinstance(kept, dict) and kept.get("players"):
         _date(path, kept)
         return kept
-    md = auth.pd_get(f"/match-details/v1/matches/{match_id}", retries=2, urgent=True)
+    md = played(auth, match_id, retries=2)
     if _is_throttled(md) or not isinstance(md, dict):
         return None
     board = scoreboard(md)
@@ -167,12 +215,6 @@ def _board(auth: Any, match_id: str) -> dict[str, Any] | None:
 
 
 def _date(path: Path, board: dict[str, Any]) -> None:
-    """Date a saved game's file by when the game began.
-
-    `saved` reads the newest files first. One look at History fetches the
-    newest game first, so dated by the fetch the oldest games had the newest
-    files, and the newest games could be the ones left out.
-    """
     try:
         began = float(board.get("startedAt") or 0) / 1000
         if began > 0:
@@ -193,8 +235,9 @@ def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
         LOG.warning("rr refresh for the history screen failed: %r", e)
     deltas = history.deltas(puuid)
     games = [view(b, puuid, deltas) for b in boards if b]
-    # Everybody in them counts as met, even in games played while
-    # Overseer was closed.
+    kept = _newest(_USUAL_READ)
+    for game in games:
+        game["usual"] = usual(game, kept, puuid)
     try:
         encounter_log.record_games(puuid, games)
     except Exception as e:
@@ -206,20 +249,9 @@ def recent(auth: Any, puuid: str, count: int) -> dict[str, Any]:
 
 
 def saved(puuid: str | None, count: int) -> dict[str, Any] | None:
-    """Your newest `count` games from the disk cache, for when Riot can't be asked.
-
-    With no account signed in, the player in the most saved games is you.
-    `savedAt` is when the newest of them ended. None with nothing saved.
-    """
+    """Your newest `count` games from the disk cache, for when Riot can't be asked."""
     count = max(1, min(MOST, count))
-    files = sorted(_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    # Saved as they were first looked at, so the newest files hold the newest
-    # games, with room for some looked at out of order.
-    boards = [
-        b
-        for f in files[: count * 3]
-        if isinstance(b := read_json(str(f), None), dict) and b.get("players") and b.get("matchId")
-    ]
+    boards = _newest(max(count * 3, _USUAL_READ))
     if not puuid:
         seen: dict[str, int] = {}
         for board in boards:
@@ -234,11 +266,10 @@ def saved(puuid: str | None, count: int) -> dict[str, Any] | None:
     deltas = history.deltas(puuid)
     newest = mine[0]
     ended = ((newest.get("startedAt") or 0) + (newest.get("lengthMs") or 0)) / 1000
-    return {
-        "games": [view(b, puuid, deltas) for b in mine],
-        "asked": count,
-        "savedAt": ended or None,
-    }
+    games = [view(b, puuid, deltas) for b in mine]
+    for game in games:
+        game["usual"] = usual(game, boards, puuid)
+    return {"games": games, "asked": count, "savedAt": ended or None}
 
 
 def _self_check() -> None:
@@ -276,18 +307,13 @@ def _self_check() -> None:
             * 2,
         }
 
-    # The scoreboard reads per round, so the ACS is over the two rounds played
-    # and the headshot rate is one in four.
     board = present(scoreboard(md("00000000-0000-0000-0000-000000000001", blue_won=True)))
     me = next(p for p in board["players"] if p["puuid"] == "me")
     check((me["name"], me["acs"], me["hsPct"], me["adr"]) == ("Me#1", 400, 25, 150), me)
 
-    # The score and result read from your side, and the RR joins by match.
     seen = view(board, "them", {"00000000-0000-0000-0000-000000000001": -15})
     check((seen["score"], seen["result"], seen["rrDelta"]) == ([1, 2], "Defeat", -15), seen)
 
-    # Three ids, one not a UUID. One match is throttled, so the answer is
-    # partial, and a second look fetches only that one again.
     ids = [f"00000000-0000-0000-0000-00000000000{n}" for n in (1, 2)] + ["../../evil"]
     calls: list[str] = []
 
@@ -315,12 +341,9 @@ def _self_check() -> None:
         details = [c for c in calls if c.startswith("/match-details")]
         check(details == [f"/match-details/v1/matches/{ids[1]}"], details)
         check(again["games"][0]["result"] == "Defeat")
-        # The file is dated by its game, whenever it was fetched.
         dated = (Path(tmp) / f"{ids[0]}.json").stat().st_mtime
         check(dated == 1_700_000_001, dated)
 
-    # Offline, the saved games come back newest first, yours only, and with
-    # nobody signed in the player in most of them is taken to be you.
     with (
         tempfile.TemporaryDirectory() as tmp,
         mock.patch.object(history, "deltas", return_value={}),
@@ -346,6 +369,23 @@ def _self_check() -> None:
         check(mine is not None and mine["savedAt"] == 6.0, mine)
         check(saved(None, 5) == mine, "the player in most games is you")
         check(saved("someone else", 5) is None, "not another account's")
+
+    def past(at: int, mode: str, kills: int, acs: int) -> dict[str, Any]:
+        line = {"puuid": "me", "kills": kills, "deaths": 10, "acs": acs, "adr": None}
+        return {"matchId": str(at), "startedAt": at, "mode": mode, "players": [line]}
+
+    games = [past(n, "Competitive", 10 + n, 200 + 10 * n) for n in range(1, 6)]
+    games.append(past(3, "Swiftplay", 40, 900))
+    against = present(usual(games[3], games, "me"))
+    check((against["games"], against["kd"], against["acs"]) == (3, 1.2, 220.0), against)
+    check(against["adr"] is None, "a figure nobody has is left out")
+    check(usual(games[2], games, "me") is None, "two games aren't an average")
+    broken: list[dict[str, Any]] = [
+        {"startedAt": "yesterday", "mode": "Competitive", "players": [{"puuid": "me"}]},
+        {"startedAt": 2, "mode": "Competitive", "players": None},
+        {"startedAt": 2, "mode": "Competitive", "players": ["me", 7]},
+    ]
+    check(usual(games[3], games + broken, "me") == against, "broken saved games are passed over")
     print("past_games self-check OK (scoreboard, your side, disk cache, throttling, saved)")
 
 

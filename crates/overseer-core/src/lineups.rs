@@ -170,8 +170,6 @@ pub struct Drawing {
     pub width: f32,
 }
 
-// By hand rather than derived, because a saved shape with no opacity is a
-// solid one, not an invisible one.
 impl Default for Drawing {
     fn default() -> Self {
         Self {
@@ -202,8 +200,6 @@ pub struct Tools {
 mod tests {
     use super::{Atlas, Lineup};
 
-    /// What the backend sends reads whole, and a lineup goes back in the
-    /// shape the backend reads.
     #[test]
     fn an_atlas_reads_and_a_lineup_goes_back() {
         let atlas: Atlas = serde_json::from_str(

@@ -1,6 +1,3 @@
-//! The panel beside the map: the lineups on it and the one picked, and
-//! the frame the lineup form and the drawing tools sit in.
-
 use egui::{Align2, Color32, Panel, Rect, ScrollArea, Sense, Ui, pos2, vec2};
 use overseer_core::{Atlas, Lineup};
 use overseer_ui::{Face, caps_text, colour, motion, size, space};
@@ -10,17 +7,12 @@ use super::{
 };
 use crate::controls::{self, Tone};
 
-/// How tall a lineup's line in the list is.
 const ROW: f32 = 46.0;
 
-/// The room a pinned clip leaves under it for the lineup's pictures and words.
 const BELOW: f32 = 96.0;
 
-/// How tall the panel has to be to hold a clip still: the heading, the
-/// buttons and the dropdown over the shortest clip, with BELOW under it.
 const PINNED_FROM: f32 = 500.0;
 
-/// Draws the panel for whatever it is doing, and says what it asked for.
 pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Request> {
     let mut asked = None;
     if matches!(view.mode, Mode::Edit(_)) {
@@ -40,8 +32,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
                 asked = form::footer(ui, view);
             });
     }
-    // A clip that plays holds the panel still, with only what is under it
-    // scrolling. A window too short for that scrolls the whole panel instead.
     let pinned = matches!(view.mode, Mode::Browse)
         && clip_shown(atlas, view)
         && ui.available_height() >= PINNED_FROM;
@@ -50,8 +40,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
             .inner_margin(egui::Margin::symmetric(16, 16))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
-                // Comes in again for each map and each thing the panel
-                // does, rather than swapping in place.
                 let doing = match view.mode {
                     Mode::Browse => "browse",
                     Mode::Edit(_) => "edit",
@@ -79,7 +67,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> Option<Reques
     asked
 }
 
-/// A heading in the heavy italic and a line under it.
 pub(super) fn title(ui: &mut Ui, text: &str, under: &str) {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
@@ -104,7 +91,6 @@ pub(super) fn title(ui: &mut Ui, text: &str, under: &str) {
     );
 }
 
-/// A sentence wrapped to the panel.
 pub(super) fn words(ui: &mut Ui, text: &str, tint: Color32) {
     let galley = ui.painter().layout(
         text.to_owned(),
@@ -116,8 +102,6 @@ pub(super) fn words(ui: &mut Ui, text: &str, tint: Color32) {
     ui.painter().galley(rect.min, galley, tint);
 }
 
-/// A status line in `tint`, the full width of the panel with a little room
-/// above and below.
 pub(super) fn notice(ui: &mut Ui, text: &str, tint: Color32) {
     let galley = ui.painter().layout(
         text.to_owned(),
@@ -132,7 +116,6 @@ pub(super) fn notice(ui: &mut Ui, text: &str, tint: Color32) {
     ui.painter().galley(rect.min + vec2(0.0, 2.0), galley, tint);
 }
 
-/// What the last request came to.
 fn said(ui: &mut Ui, view: &View) {
     let Some((text, failed)) = &view.said else {
         return;
@@ -141,14 +124,12 @@ fn said(ui: &mut Ui, view: &View) {
     notice(ui, text, if *failed { colour::BAD } else { colour::ALLY });
 }
 
-/// Whether the picked lineup has a cut clip, which plays in the panel.
 fn clip_shown(atlas: &Atlas, view: &View) -> bool {
     atlas.lineups.iter().any(|l| {
         l.id.is_some() && l.id == view.selected && l.clip.as_ref().is_some_and(|c| c.file.is_some())
     })
 }
 
-/// The lineups on the map, a filter by agent, and the one picked.
 fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<Request> {
     let map = view.map.clone().unwrap_or_default();
     let here: Vec<&Lineup> = atlas.lineups.iter().filter(|l| l.map == map).collect();
@@ -158,7 +139,6 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
         n => format!("{n} lineups"),
     };
     title(ui, &map, &count);
-    // One row of three, the width split evenly.
     let shared = ui
         .horizontal(|ui| {
             let gap = ui.spacing().item_spacing.x;
@@ -171,8 +151,6 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
             exports(ui, view, wide)
         })
         .inner;
-    // Add Lineup or Draw just left Browse, and the sandbox shows no lineups,
-    // so the pick check below would drop the pick for good.
     if !matches!(view.mode, Mode::Browse) {
         return shared;
     }
@@ -188,8 +166,6 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
         }
         return shared;
     }
-    // Nothing picked lights every lineup on the map. One the filter has
-    // hidden isn't picked any more.
     let shown = view.shown(atlas);
     if !shown
         .iter()
@@ -218,8 +194,6 @@ fn browse(ui: &mut Ui, atlas: &Atlas, view: &mut View, pinned: bool) -> Option<R
     .or(shared)
 }
 
-/// Draw, as a menu: drawing kept on the map, or the sandbox, which keeps
-/// nothing and hides the lineups.
 fn draw_menu(ui: &mut Ui, atlas: &Atlas, view: &mut View, wide: f32) {
     let button = controls::button_wide(ui, "Draw", (Tone::Plain, true), wide);
     let _menu = egui::Popup::menu(&button)
@@ -241,8 +215,6 @@ fn draw_menu(ui: &mut Ui, atlas: &Atlas, view: &mut View, wide: f32) {
         });
 }
 
-/// Saving the map as a picture or copying it to paste into a chat, and
-/// sharing the map's lineups as a code.
 fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
     let busy = view.export.is_some();
     let mut asked = None;
@@ -268,7 +240,6 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
                 ui.close();
             }
             if controls::menu_row(ui, "Paste a Code", false, 150.0).clicked() {
-                // The clipboard's text comes back as a paste a frame later.
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                 view.pasting = Some(ui.ctx().cumulative_pass_nr());
@@ -278,7 +249,6 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
             if let Some(folder) = view.saved_to.as_ref()
                 && controls::menu_row(ui, "Open Folder", false, 150.0).clicked()
             {
-                // Explorer opens the folder by itself, and nothing waits on it.
                 drop(overseer_native::launch(
                     std::process::Command::new("explorer").arg(folder),
                 ));
@@ -288,8 +258,6 @@ fn exports(ui: &mut Ui, view: &mut View, wide: f32) -> Option<Request> {
     asked
 }
 
-/// A box that narrows the list to lineups with those words, and a chip that
-/// goes round the orders, on one quiet line under the heading.
 fn ordering(ui: &mut Ui, view: &mut View) {
     ui.horizontal(|ui| {
         let label = view.order.label();
@@ -301,15 +269,8 @@ fn ordering(ui: &mut Ui, view: &mut View) {
     });
 }
 
-/// Every lineup on the map as a row, under the agent chips, the filter and
-/// the order. The list has the panel until one is picked, then a share of
-/// it, so the picked one's details fit under it. Clicking the picked row
-/// again lights every lineup on the map.
 fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &mut View) {
     ui.add_space(space::SM);
-    // A picked lineup with a clip hands the list's height to the clip: the
-    // list shrinks to a dropdown that still switches between them, without
-    // the chips and the filter, which only narrow a list.
     if clip_shown(atlas, view) {
         chooser(ui, &view.shown(atlas), view);
         return;
@@ -344,9 +305,6 @@ fn picker(ui: &mut Ui, atlas: &Atlas, (here, hint): (&[&Lineup], &str), view: &m
         });
 }
 
-/// The lineups as a dropdown, shown in place of the list so a picked clip gets
-/// the panel's height. The picked one shows in the box, choosing another
-/// switches to it, and Show All Lineups puts the list back.
 fn chooser(ui: &mut Ui, list: &[&Lineup], view: &mut View) {
     controls::heading(ui, "Lineup");
     let wide = ui.available_width();
@@ -366,8 +324,6 @@ fn chooser(ui: &mut Ui, list: &[&Lineup], view: &mut View) {
                 view.confirm = None;
                 ui.close();
             }
-            // A long list of lineups scrolls inside the menu rather than off
-            // the window.
             ScrollArea::vertical()
                 .max_height(ui.ctx().content_rect().height() * 0.5)
                 .show(ui, |ui| {
@@ -383,7 +339,6 @@ fn chooser(ui: &mut Ui, list: &[&Lineup], view: &mut View) {
         });
 }
 
-/// A chip per agent with lineups here, when there is more than one.
 fn filter(ui: &mut Ui, here: &[&Lineup], view: &mut View) {
     let mut agents: Vec<&str> = here.iter().map(|l| l.agent.as_str()).collect();
     agents.sort_unstable();
@@ -407,7 +362,6 @@ fn filter(ui: &mut Ui, here: &[&Lineup], view: &mut View) {
     });
 }
 
-/// One lineup in the list: the agent, the title, and what it is for.
 fn row(
     ui: &mut Ui,
     atlas: &Atlas,
@@ -490,8 +444,6 @@ fn make_room(ui: &Ui, lineup: &Lineup, view: &mut View, clip: f32) {
     view.widen = (more > 1.0).then_some(more);
 }
 
-/// What a lineup is for, in a line: the ability and its key, the side and
-/// the site.
 pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
     let mut parts = Vec::new();
     if let Some(name) = lineup.ability.as_deref() {
@@ -509,8 +461,6 @@ pub(super) fn about(atlas: &Atlas, lineup: &Lineup) -> String {
     parts.join("  \u{b7}  ")
 }
 
-/// Delete, which asks Click Again to Delete for a few seconds after the
-/// first press. Says whether the second press came.
 fn delete(ui: &mut Ui, view: &mut View, busy: bool) -> bool {
     let now = ui.input(|i| i.time);
     let armed = view.confirm.is_some_and(|at| now - at < super::ARMED);
@@ -528,8 +478,6 @@ fn delete(ui: &mut Ui, view: &mut View, busy: bool) -> bool {
     armed
 }
 
-/// The picked lineup: what can be done with it, then its clip, its pictures
-/// and its words, in that order, so the clip is always on screen whole.
 fn details(
     ui: &mut Ui,
     lineup: &Lineup,
@@ -573,14 +521,8 @@ fn details(
         .is_some_and(|id| view.cutting.contains(id));
     let coming = (cutting || queued) && !deleting;
     let runs = clip.and_then(length).unwrap_or(form::LONGEST);
-    // Not before the clip's shape is known, or a wide one never widens
-    // the panel.
     let mut shape = (!coming).then_some(0.0);
     if let Some(file) = file {
-        // Pinned, the panel doesn't scroll, so the clip is held to what it
-        // leaves with BELOW to spare for the pictures and words under it.
-        // With nothing under it, the clip size has nothing to make room for,
-        // so the clip takes the panel down to the notice line.
         let said = |text: &Option<String>| text.as_deref().is_some_and(|t| !t.trim().is_empty());
         let under = !lineup.images.is_empty() || said(&lineup.notes) || said(&lineup.description);
         let tall = ui.ctx().content_rect().height();
@@ -625,9 +567,6 @@ fn details(
     asked
 }
 
-/// What goes under the picked lineup's clip: its pictures, its words, and
-/// why there is no clip when there isn't one. `quiet` is a clip neither
-/// playing nor on its way.
 fn under_clip(
     ui: &mut Ui,
     lineup: &Lineup,
@@ -655,7 +594,6 @@ fn under_clip(
             format!("The clip couldn't be cut. {why} Edit the lineup and save it to try again.");
         notice(ui, &said, colour::WARN);
     } else if quiet {
-        // A pasted lineup whose clip was never cut still has its link.
         let hint = if clip.is_some_and(|c| c.source.is_some()) {
             "The clip isn't cut yet. Edit the lineup and save it to cut it."
         } else {
@@ -665,9 +603,6 @@ fn under_clip(
     }
 }
 
-/// What the picked lineup says when it was saved before a game update
-/// changed its map, and Confirm, to say it still lands. True when that was
-/// pressed.
 fn still_lands(ui: &mut Ui, lineup: &Lineup, busy: bool) -> bool {
     let said = format!(
         "Saved before {} changed in a game update. Check it still lands where it should, then confirm it.",
@@ -679,17 +614,12 @@ fn still_lands(ui: &mut Ui, lineup: &Lineup, busy: bool) -> bool {
     confirmed
 }
 
-/// Where a clip still being cut goes, for a lineup picked straight after
-/// it was saved: black like the player, with a spinner and a line saying
-/// it's on its way.
 fn on_its_way(ui: &mut Ui) {
     let width = ui.available_width();
     let (rect, _response) =
         ui.allocate_exact_size(vec2(width, (width * 9.0 / 16.0).min(220.0)), Sense::hover());
     ui.painter().rect_filled(rect, 0, Color32::BLACK);
     let spinner = Rect::from_center_size(rect.center() - vec2(0.0, 14.0), vec2(28.0, 28.0));
-    // A still ring in the efficient tier, where a spinner would be the one
-    // thing on screen that moves.
     if motion::is_still(ui.ctx()) {
         ui.painter()
             .circle_stroke(spinner.center(), 10.0, (2.0, colour::TEXT_DIM));

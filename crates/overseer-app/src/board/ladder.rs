@@ -11,17 +11,13 @@ use overseer_ui::{Face, art, caps_at, caps_text, colour, hex, rank, shape, size,
 use super::Side;
 use super::paint;
 
-/// How tall the ladder is: a heading, a row of faces, the strip, and a row
-/// of faces back.
 const HEIGHT: f32 = 108.0;
 
 /// The highest tier Riot has. Radiant is one tier, not the first of three.
 const TOP: u32 = 27;
 
-/// The side of a face on the ladder.
 const FACE: f32 = 22.0;
 
-/// Half the width of the notch under a face, and how far it points.
 const NOTCH: f32 = 3.0;
 
 /// Where one account sits, in tiers times a hundred.
@@ -36,21 +32,12 @@ fn rung(player: &Player) -> Option<f32> {
     Some((tier as f32).mul_add(100.0, rr))
 }
 
-/// The tiers the strip runs over: out to whole ranks, and never past
-/// Radiant. A strip that started or stopped mid-rank would have a band too
-/// narrow to carry its name.
 fn span(lowest: u32, highest: u32) -> (u32, u32) {
     let first = lowest.div_euclid(3) * 3;
     let last = (highest.div_euclid(3) * 3 + 2).min(TOP);
     (first, last.max(first))
 }
 
-/// Spreads marks along an axis so none overlap, without leaving it.
-///
-/// A pass forward pushes each mark clear of the one before, then a pass
-/// back from the far end pulls in any pushed off it. Order is kept, so a
-/// mark never jumps past its neighbour. When there is not room for them all,
-/// they are spaced evenly from the near end.
 fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> {
     let mut at: Vec<f32> = wanted.iter().map(|w| w.min(high).max(low)).collect();
     for i in 1..at.len() {
@@ -70,8 +57,6 @@ fn spread(wanted: &[f32], gap: f32, low: f32, high: f32) -> Vec<f32> {
     at
 }
 
-/// The ladder, if at least two accounts in the lobby have a rank to put on
-/// it.
 pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, &str); 2]) {
     let placed: Vec<(&Player, f32)> = board
         .players
@@ -133,16 +118,10 @@ pub(crate) fn draw(ui: &mut Ui, board: &Board, teams: &[(Side, &str); 2]) {
     }
 }
 
-/// How near two faces' centres may come: closer than a face, so a crowd
-/// overlaps like a hand of cards rather than walking off its point.
 const OVERLAP: f32 = FACE * 0.78;
 
-/// How far a face in a crowd turns, the other way from its neighbour, so
-/// the overlap reads as one card on another.
 const TURN: f32 = 0.06;
 
-/// One side's faces along the strip, spread so none hides another, each on
-/// a straight stem down to the point it is really about.
 fn marks(
     painter: &egui::Painter,
     mut mine: Vec<(&Player, f32)>,
@@ -150,8 +129,6 @@ fn marks(
     strip: Rect,
     side: Side,
 ) {
-    // Enemies above in red and allies below in green, the board's own two
-    // colours, so a face says its side before it says who it is.
     let above = side == Side::Enemy;
     let team = if above { colour::ENEMY } else { colour::ALLY };
     mine.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -165,7 +142,6 @@ fn marks(
     };
     let toward: f32 = if above { 1.0 } else { -1.0 };
     let edge = if above { strip.top() } else { strip.bottom() };
-    // You last, so you lie on top of whoever you share a spot with.
     let mut order: Vec<usize> = (0..mine.len()).collect();
     order.sort_by_key(|i| mine.get(*i).is_some_and(|(p, _)| p.is_self));
     for i in order {
@@ -175,7 +151,6 @@ fn marks(
         let true_x = x_of(*rung).clamp(strip.left(), strip.right());
         let near = |other: Option<&f32>| other.is_some_and(|o| (o - x).abs() < FACE + 2.0);
         let crowded = near(i.checked_sub(1).and_then(|j| xs.get(j))) || near(xs.get(i + 1));
-        // A stand-in is cut from a card that does not turn, so it stays level.
         let turns = crowded && !player.is_self && player.agent.is_some();
         let turn = match (turns, i % 2 == 0) {
             (false, _) => 0.0,
@@ -188,14 +163,9 @@ fn marks(
             (team, team.gamma_multiply(0.55))
         };
         face(painter, player, pos2(x, y), turn, frame);
-        // Past the frame, which is wider round your own face.
         let rim = if player.is_self { 4.0 } else { 1.5 };
         let base = toward.mul_add(half + rim, y);
         let tip = toward.mul_add(NOTCH, base);
-        // The notch slides along the face to sit over the point, so the stem
-        // drops straight to it, but only along the part of the face no
-        // neighbour lies over, or the stem would seem to end on them. It
-        // leans when a crowd pushes a face further than that.
         let (mut lo, mut hi) = (x - half, x + half);
         if !player.is_self
             && let Some((next, &at)) = mine.get(i + 1).zip(xs.get(i + 1))
@@ -222,15 +192,10 @@ fn marks(
     }
 }
 
-/// How far from its centre a face hides what lies under it: its frame and
-/// the rim of background round that.
 fn cover(player: &Player) -> f32 {
     FACE / 2.0 + if player.is_self { 4.0 } else { 2.5 }
 }
 
-/// One account's square portrait, turned by `turn` and framed in `frame`,
-/// or in cream if it is you. A rim of the background round it keeps a face
-/// laid over another apart from it.
 fn face(painter: &egui::Painter, player: &Player, centre: egui::Pos2, turn: f32, frame: Color32) {
     let rect = Rect::from_center_size(centre, vec2(FACE, FACE));
     let corners = |grow: f32| -> Vec<egui::Pos2> {
@@ -294,8 +259,6 @@ fn face(painter: &egui::Painter, player: &Player, centre: egui::Pos2, turn: f32,
     }
 }
 
-/// Somebody with no agent yet: a square from the middle of their card, and
-/// the same blacked-out figure their row has.
 fn stand_in(painter: &egui::Painter, player: &Player, rect: Rect) {
     let ctx = painter.ctx();
     if let Some(card) = paint::banner(ctx, player) {
@@ -321,9 +284,6 @@ fn ink_on(fill: Color32) -> Color32 {
     }
 }
 
-/// The strip: a plate per rank on the board's lean, brightening from its
-/// first tier to its last so where someone sits inside a rank shows too,
-/// and the rank named on it wherever it is wide enough.
 fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32) {
     let run = strip.height() * paint::LEAN;
     let left_of = |tier: u32| ((tier - first) as f32).mul_add(step, strip.left());
@@ -332,7 +292,6 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
         let from = (group * 3).max(first);
         let to = (group * 3 + 2).min(last);
         let left = left_of(from);
-        // A clear break between ranks, so the three tiers of one read as one.
         let right = left_of(to + 1) - 4.0;
         let tint = rank(Some(from));
         let low = shape::blend(tint, colour::BG, 0.42);
@@ -352,8 +311,6 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
         let name = overseer_ui::rank_group(from);
         let width = overseer_ui::caps_width(painter, name, font.clone());
         let fits = width + space::XL + run <= right - left;
-        // The tiers as upright gaps on whole points, which stay crisp where a
-        // hairline on the lean would stairstep, and none under the name.
         let clear = if fits {
             left + run + space::SM + width + space::SM
         } else {
@@ -370,8 +327,6 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
             }
         }
         if fits {
-            // On the darkest end, so cream unless the rank's colour is light
-            // enough to stay light there.
             caps_at(
                 painter,
                 pos2(left + run + space::SM, strip.center().y - 1.0),
@@ -384,8 +339,6 @@ fn bands(painter: &egui::Painter, first: u32, last: u32, strip: Rect, step: f32)
     }
 }
 
-/// The note at the ladder's top right: how many of the other side rank
-/// above you, and how many have no rank to show.
 fn standing(board: &Board, placed: &[(&Player, f32)]) -> String {
     let unranked = board.players.len().saturating_sub(placed.len());
     let tail = if unranked == 0 {
@@ -412,15 +365,11 @@ fn standing(board: &Board, placed: &[(&Player, f32)]) -> String {
 mod tests {
     use super::spread;
 
-    /// Marks never overlap, never leave the axis, and keep their order.
     #[test]
     fn marks_spread_without_leaving_the_strip() {
-        // Three accounts on the same point at the top of the strip.
         let at = spread(&[500.0, 500.0, 500.0], 24.0, 0.0, 500.0);
         assert_eq!(at, [452.0, 476.0, 500.0]);
-        // Already apart: left alone.
         assert_eq!(spread(&[10.0, 100.0], 24.0, 0.0, 500.0), [10.0, 100.0]);
-        // No room at all: spaced from the near end.
         let crowded = spread(&[5.0; 5], 24.0, 0.0, 50.0);
         for pair in crowded.windows(2) {
             if let [a, b] = pair {

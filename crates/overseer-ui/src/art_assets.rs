@@ -8,7 +8,6 @@
 //! Keyed by the name the backend sends, lowercased with everything that is not
 //! a letter or a digit removed, so `KAY/O` and `kayo` are the same agent.
 
-/// Every playable agent's square portrait, for the panel and the ladder.
 pub(crate) const PORTRAITS: [(&str, &[u8]); 30] = [
     ("astra", include_bytes!("../assets/agents/astra.png")),
     ("breach", include_bytes!("../assets/agents/breach.png")),
@@ -45,7 +44,6 @@ pub(crate) const PORTRAITS: [(&str, &[u8]); 30] = [
     ("yoru", include_bytes!("../assets/agents/yoru.png")),
 ];
 
-/// Every agent's killfeed crop: the wide, tight cut the broadcast rows use.
 pub(crate) const KILLFEED: [(&str, &[u8]); 30] = [
     ("astra", include_bytes!("../assets/killfeed/astra.png")),
     ("breach", include_bytes!("../assets/killfeed/breach.png")),

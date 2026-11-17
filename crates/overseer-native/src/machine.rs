@@ -91,7 +91,6 @@ pub fn any_gpu() -> bool {
     !gpus().is_empty()
 }
 
-/// The dedicated memory of each adapter that isn't drawn in software.
 fn gpus() -> Vec<usize> {
     let software = u32::try_from(DXGI_ADAPTER_FLAG_SOFTWARE.0).unwrap_or_default();
     // SAFETY: documented DXGI calls, each adapter's description read into a
@@ -110,9 +109,6 @@ fn gpus() -> Vec<usize> {
 }
 
 /// Drops this process to the backend's priority, below normal.
-///
-/// For a window drawn in software, which keeps the processor busy, so the
-/// backend it started below normal still gets a turn.
 pub fn step_back() {
     // SAFETY: the pseudo handle for this process, which needs no closing.
     let _set = unsafe { SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS) };
@@ -140,9 +136,6 @@ pub fn one_core() {
 }
 
 /// Starts a program with every core and normal priority.
-///
-/// It would otherwise inherit the one core and the low priority of a window
-/// drawn in software, and so would whatever it starts in turn, like a browser.
 ///
 /// # Errors
 ///

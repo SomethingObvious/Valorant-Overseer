@@ -1,27 +1,16 @@
-//! The card a tag opens into when the pointer rests on it: what sort of tag
-//! it is, the word, what it means, and the numbers it came from, with a bar
-//! when those numbers are a share of something.
-
 use egui::{Color32, Ui, pos2, vec2};
 use overseer_ui::{Face, caps_text, colour, size, space};
 
 use super::paint;
 
-/// Everything one card says.
 pub(crate) struct Card<'a> {
-    /// What sort of tag it is: weapon, economy, duels, and so on.
     pub(crate) kind: &'a str,
-    /// The tag itself.
     pub(crate) word: &'a str,
-    /// What the word means, for somebody meeting it for the first time.
     pub(crate) means: &'a str,
-    /// What it was read from, with its numbers.
     pub(crate) evidence: &'a str,
-    /// The colour down its edge.
     pub(crate) accent: Color32,
 }
 
-/// The card for a tag the backend worked out, in the colour of whose it is.
 pub(crate) fn auto(ui: &mut Ui, tag: &overseer_core::AutoTag, accent: Color32) {
     show(
         ui,
@@ -55,8 +44,6 @@ pub(crate) fn under(
         .show(ctx, |ui| egui::Frame::popup(ui.style()).show(ui, add));
 }
 
-/// How long a card stays up once the pointer is off what opened it, so
-/// crossing the gap between two reads does not drop it for a frame.
 const LINGER: f64 = 0.12;
 
 /// Which of a group's spots has its card up: the one the pointer is `on`,
@@ -78,7 +65,6 @@ pub(crate) fn lingering(ctx: &egui::Context, group: egui::Id, on: Option<usize>)
     Some(spot)
 }
 
-/// A sentence under `rect`, the way [`under`] opens a card.
 pub(crate) fn say_under(ctx: &egui::Context, id: egui::Id, rect: egui::Rect, said: &str) {
     under(ctx, id, rect, |ui| {
         ui.set_max_width(2.0f32.mul_add(space::LG, WIDE));
@@ -90,8 +76,6 @@ pub(crate) fn say_under(ctx: &egui::Context, id: egui::Id, rect: egui::Rect, sai
     });
 }
 
-/// Marks something that opens a card under the pointer, with a line under
-/// `rect` and the help pointer, so it reads as something to rest on.
 pub(crate) fn mark_hovered(ctx: &egui::Context, layer: egui::LayerId, rect: egui::Rect) {
     ctx.layer_painter(layer).hline(
         rect.x_range(),
@@ -101,10 +85,8 @@ pub(crate) fn mark_hovered(ctx: &egui::Context, layer: egui::LayerId, rect: egui
     ctx.set_cursor_icon(egui::CursorIcon::Help);
 }
 
-/// How wide a card's words run before they wrap.
 const WIDE: f32 = 250.0;
 
-/// One full-width line of the card, `tall` points high.
 fn row(ui: &mut Ui, tall: f32) -> egui::Rect {
     let (rect, _response) = ui.allocate_exact_size(
         vec2(2.0f32.mul_add(space::LG, WIDE), tall),
@@ -113,7 +95,6 @@ fn row(ui: &mut Ui, tall: f32) -> egui::Rect {
     rect
 }
 
-/// Draws a card into a tooltip's ui.
 pub(crate) fn show(ui: &mut Ui, card: &Card<'_>) {
     ui.set_width(2.0f32.mul_add(space::LG, WIDE));
     let top = ui.cursor().top();
@@ -149,9 +130,6 @@ pub(crate) fn show(ui: &mut Ui, card: &Card<'_>) {
         evidence(ui, card);
     }
     ui.add_space(space::MD);
-    // The first frame only measures the card, out of sight, before it is
-    // moved to fit the screen, and an edge drawn then would flash where
-    // the card never shows.
     if ui.is_sizing_pass() {
         return;
     }
@@ -175,8 +153,6 @@ pub(crate) fn show(ui: &mut Ui, card: &Card<'_>) {
         .rect_filled(edge, 0, card.accent);
 }
 
-/// Under a rule, what the tag was read from, its numbers in the accent,
-/// and a bar when they are a share of something.
 fn evidence(ui: &mut Ui, card: &Card<'_>) {
     ui.add_space(space::SM);
     let rect = row(ui, 9.0);
@@ -210,8 +186,6 @@ fn evidence(ui: &mut Ui, card: &Card<'_>) {
     }
 }
 
-/// A wrapped paragraph, its numbers set brighter when `numbers` says in
-/// what, the way a flag's reasons are.
 fn paragraph(
     ui: &mut Ui,
     text: &str,
@@ -254,8 +228,6 @@ fn share(text: &str) -> Option<f32> {
 mod tests {
     use super::share;
 
-    /// The bar is drawn from the first "part of whole" in the evidence,
-    /// and from nothing that only looks like one.
     #[test]
     fn a_share_is_read_from_its_words() {
         assert_eq!(

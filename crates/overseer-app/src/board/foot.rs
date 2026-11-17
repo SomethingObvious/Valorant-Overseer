@@ -1,15 +1,9 @@
-//! Under the roster: anything the backend has to say, and how the session
-//! is going. It follows the last row instead of being pinned to the bottom,
-//! so a tall window has no empty band between the two.
-
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 use overseer_core::{Board, Session};
 use overseer_ui::{Face, caps_text, colour, space};
 
 use super::paint;
 
-/// Anything the backend needs to say about the board itself, in the shared
-/// band.
 pub(crate) fn notice(ui: &mut Ui, board: &Board) {
     let Some(notice) = board.notice.as_ref() else {
         return;
@@ -22,8 +16,6 @@ pub(crate) fn notice(ui: &mut Ui, board: &Board) {
         Some("warn" | "warning") => colour::WARN,
         _ => colour::INFO,
     };
-    // The action is an id like `open_game` for a front end to act on, and the
-    // message already says it in words.
     overseer_ui::say(ui, 0.0, tint, message);
 }
 
@@ -91,7 +83,6 @@ pub(crate) fn session(ui: &mut Ui, board: &Board) {
     );
 }
 
-/// Green for a gain, red for a loss.
 const fn signed(rr: i64) -> egui::Color32 {
     match rr.signum() {
         1 => colour::GOOD,
@@ -100,8 +91,6 @@ const fn signed(rr: i64) -> egui::Color32 {
     }
 }
 
-/// Where the ladder really moved over the session, beside the match
-/// figures, which leave out a rank up's bonus and derank protection.
 fn actual(painter: &egui::Painter, x: f32, y: f32, moved: i64) -> Rect {
     let label = caps_text(
         painter,

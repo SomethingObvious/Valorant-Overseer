@@ -1,30 +1,18 @@
-//! Ordering the board. It never changes what the backend sent, only the
-//! order it is read in. Sorting stays inside each team, because the two sides
-//! are the first thing the eye goes to.
-
 use overseer_core::Player;
 
-/// Which way a sorted column runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
-    /// Smallest first.
     Up,
-    /// Largest first.
     Down,
 }
 
-/// How the board is ordered, if it has been touched at all.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Sort {
-    /// The column heading, or nothing for the order the backend sent.
     pub(crate) column: Option<String>,
-    /// Which way that column runs.
     pub(crate) direction: Option<Direction>,
 }
 
 impl Sort {
-    /// A click on a heading. The first sorts best first, the second
-    /// reverses, and the third goes back to the backend's order.
     pub(crate) fn clicked(&mut self, column: &str) {
         if self.column.as_deref() != Some(column) {
             self.column = Some(column.to_owned());
@@ -37,7 +25,6 @@ impl Sort {
         }
     }
 
-    /// The arrow to draw on a heading, if it is the sorted one.
     pub(crate) fn arrow(&self, column: &str) -> Option<Direction> {
         if self.column.as_deref() == Some(column) {
             self.direction
@@ -47,8 +34,6 @@ impl Sort {
     }
 }
 
-/// The value one player sorts on, for one column, or None when there is
-/// nothing to compare.
 fn key_of(column: &str, player: &Player) -> Option<f64> {
     match column {
         "rank" => player.rank_tier.map(f64::from),
@@ -77,7 +62,6 @@ fn wins(player: &Player) -> f64 {
     won as f64
 }
 
-/// Puts a team in order. Nothing sorted leaves the backend's order alone.
 pub(crate) fn apply(players: &mut [&Player], sort: &Sort) {
     let (Some(column), Some(direction)) = (sort.column.as_deref(), sort.direction) else {
         return;
@@ -85,8 +69,6 @@ pub(crate) fn apply(players: &mut [&Player], sort: &Sort) {
     players.sort_by(|a, b| order(key_of(column, a), key_of(column, b), direction));
 }
 
-/// Compares two keys. Missing sorts last whichever way the column runs,
-/// since a row with no data never answers "who is best".
 fn order(a: Option<f64>, b: Option<f64>, direction: Direction) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let natural = match (a, b) {
@@ -118,7 +100,6 @@ mod tests {
         }
     }
 
-    /// A player with no number sorts last whichever way the column runs.
     #[test]
     fn missing_values_sort_last_both_ways() {
         let alice = player("Alice#EU", Some(1.5), Some(40));

@@ -1,11 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Riot's art for an agent or a map newer than this build, from valorant-api.
-
-The window carries art for every agent and map there was when it was built.
-For one that came after, it asks for this, which fetches Riot's own pictures
-once into data/art, and the window cuts them down the way the carried ones
-were cut.
-"""
+"""Riot's art for an agent or a map newer than this build, from valorant-api."""
 
 from __future__ import annotations
 
@@ -32,7 +26,6 @@ def slug(name: object) -> str:
 
 
 def _keep(url: object, path: Path) -> bool:
-    """Save one picture from valorant-api's media host, unless it is here already."""
     if path.exists():
         return True
     address = urlparse(str(url or ""))
@@ -62,9 +55,9 @@ def fetch(kind: object, name: object) -> dict[str, Any]:
             if slug(plan.get("displayName")) == key:
                 return {"ok": _keep(plan.get("listViewIcon"), ART / "maps" / f"{key}.png")}
     elif kind == "weapon":
-        for gun in valapi.get("weapons") or []:
-            if slug(gun.get("displayName")) == key:
-                return {"ok": _keep(gun.get("displayIcon"), ART / "weapons" / f"{key}.png")}
+        for gun in valapi.weapons():
+            if slug(gun["name"]) == key:
+                return {"ok": _keep(gun["icon"], ART / "weapons" / f"{key}.png")}
     return {"ok": False}
 
 
@@ -98,11 +91,17 @@ def _self_check() -> None:
         mock.patch(f"{__name__}.ART", Path(tmp)),
         mock.patch(f"{__name__}.save_png", side_effect=fake_save),
         mock.patch.object(valapi, "get", side_effect=listed),
+        mock.patch.object(
+            valapi,
+            "weapons",
+            return_value=[{"name": "New Gun", "icon": f"https://{_MEDIA}/weapons/g.png"}],
+        ),
     ):
         check(fetch("agent", "newcomer") == {"ok": True})
         check(fetch("agent", "newcomer") == {"ok": True} and len(fetched) == 2, "fetched once")
         check(fetch("agent", "elsewhere") == {"ok": False}, "only valorant-api's media host")
         check(fetch("map", "Newmap") == {"ok": True})
+        check(fetch("weapon", "newgun") == {"ok": True})
         check(fetch("agent", "x" * 41) == {"ok": False})
         check(fetch("skin", "newcomer") == {"ok": False})
     print("art self-check OK (fetched once, one host, odd asks)")

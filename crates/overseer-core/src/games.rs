@@ -49,6 +49,28 @@ pub struct Game {
     pub your_team: Option<String>,
     /// Everybody, best combat score first.
     pub players: Vec<Line>,
+    /// What you usually do in this mode, to set your line against. Absent
+    /// with too few earlier games to say.
+    pub usual: Option<Usual>,
+}
+
+/// Your averages over the games of one mode that came before a match.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Usual {
+    /// How many games they are over.
+    #[serde(deserialize_with = "number::whole")]
+    pub games: Option<u32>,
+    /// Kills over deaths, across all of them.
+    pub kd: Option<f64>,
+    /// Average combat score.
+    pub acs: Option<f64>,
+    /// Average damage a round.
+    pub adr: Option<f64>,
+    /// Headshots as a share of hits, as a percentage.
+    pub hs_pct: Option<f64>,
+    /// Rounds with a kill, an assist, a survival or a trade, as a percentage.
+    pub kast: Option<f64>,
 }
 
 /// One player's line on a scoreboard.
@@ -93,15 +115,14 @@ pub struct Line {
 mod tests {
     use super::Recent;
 
-    /// What the backend sends, a draw's missing RR and a deathmatch's missing
-    /// score included, reads without losing a field.
     #[test]
     fn a_history_reads_as_sent() {
         let games: Recent = serde_json::from_str(
             r#"{"games":[
                 {"matchId":"m1","map":"Haven","mode":"Competitive","startedAt":1790000000000,
                  "lengthMs":2100000.0,"score":[13,9],"result":"Victory","rrDelta":20,
-                 "yourTeam":"Blue","players":[{"puuid":"me","name":"Me#1","team":"Blue",
+                 "yourTeam":"Blue","usual":{"games":20,"kd":1.1,"acs":210.5,"adr":null},
+                 "players":[{"puuid":"me","name":"Me#1","team":"Blue",
                  "agent":"Brimstone","kills":21,"deaths":15,"assists":15,"acs":242.4,
                  "adr":133,"hsPct":null,"kast":92,"firstBloods":3,"isSubject":true}]},
                 {"matchId":"m2","mode":"Deathmatch","players":[]}
@@ -117,6 +138,12 @@ mod tests {
         let me = first.players.first().unwrap();
         assert_eq!((me.kills, me.acs, me.hs_pct), (Some(21), Some(242), None));
         assert!(me.is_subject);
+        let usual = first.usual.as_ref().unwrap();
+        assert_eq!(
+            (usual.games, usual.acs, usual.adr),
+            (Some(20), Some(210.5), None)
+        );
         assert_eq!(games.games.get(1).unwrap().score, None);
+        assert!(games.games.get(1).unwrap().usual.is_none());
     }
 }

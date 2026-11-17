@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Whether an account looks like it is playing under its real rank.
-
-Every sign is weighed rather than counted, and the reasons go out with the
-flag, so the panel can say why.
-"""
+"""Whether an account looks like it is playing under its real rank."""
 
 from __future__ import annotations
 
@@ -31,8 +27,6 @@ _SMURF_WR_GAMES_STRONG = 20
 _SMURF_WR_LEVEL = 100
 _SMURF_HS = 35.0
 _SMURF_GAP_TIERS = 3
-# Ranks have come down since the early acts the peak can be from, so two
-# ranks under it is common and only a hint. Three is an argument.
 _SMURF_GAP = 6
 _SMURF_GAP_STRONG = 9
 _SMURF_FLAG_SCORE = 2
@@ -62,20 +56,12 @@ def smurf_signals(
     hs: float | None = None,
     peak_act: str | None = None,
 ) -> list[tuple[str, int, list[Evidence]]]:
-    """Every signal that fires, each with what it is worth and its evidence rows.
-
-    A low level is what makes an ordinary number suspicious, so most signals
-    only count under one. The strong versions count at any level, hidden
-    included, since an account two whole ranks under its peak is worth a look
-    however old it is.
-    """
+    """Every signal that fires, each with what it is worth and its evidence rows."""
     reasons: list[tuple[str, int, list[Evidence]]] = []
     lvl = level or 0
-    # Zero is a hidden level.
     fresh = lvl > 0
     peak = peak_tier or 0
     now = rank_tier or 0
-    # An unranked account has no rank to measure a gap from.
     gap = peak - now if now >= 3 else 0
     matches = kd_matches or 0
     peak_row = _row("Peak", rank_from_tier(peak)["name"], peak_act) if peak else None
@@ -88,9 +74,6 @@ def smurf_signals(
                 [_row("Level", str(lvl), f"under {_SMURF_LEVEL}"), peak_row],
             )
         )
-    # Playing well below their own peak. Skipped when the peak already spoke
-    # above, because two lines saying the same thing about the same account is
-    # not two pieces of evidence.
     elif gap >= _SMURF_GAP and peak_row:
         weight = 2 if gap >= _SMURF_GAP_STRONG else 1
         reasons.append(
@@ -108,14 +91,10 @@ def smurf_signals(
                 [peak_row, _row("Below Peak", str(gap), f"ranks at level {lvl}")],
             )
         )
-    # The K/D is the last few matches, not a career, and three good games is
-    # something anybody has, so under five matches it is not evidence at all.
-    # Five good games is a good week, so alone it takes a lopsided one.
     if kd is not None and kd >= _SMURF_KD and matches >= _SMURF_KD_MATCHES:
         low = fresh and lvl < _SMURF_KD_LEVEL
         said = f"K/D {kd} at level {lvl}" if low else f"K/D {kd} over {matches} games"
         rows = [_row("K/D", f"{kd}", f"over {matches} games")]
-        # Under the strong line the level is the whole reason, so it shows too.
         if low:
             rows.append(_row("Level", str(lvl), f"under {_SMURF_KD_LEVEL}"))
         if kd >= _SMURF_KD_STRONG:
@@ -130,7 +109,6 @@ def smurf_signals(
         elif fresh and lvl < _SMURF_WR_LEVEL:
             rows.append(_row("Level", str(lvl), f"under {_SMURF_WR_LEVEL}"))
             reasons.append((f"Won {win_rate}% of {games} games", 1, rows))
-    # Aim counts at any level, but only as a hint, off the K/D's own sample.
     if hs is not None and hs >= _SMURF_HS and matches >= _SMURF_KD_MATCHES:
         reasons.append(
             (
@@ -175,18 +153,11 @@ def compute_smurf(
     )
     if not signals:
         return False, []
-    # Two points is a flag: one strong signal, or two ordinary ones agreeing.
-    # One ordinary number on a fresh account is how a good week gets called a
-    # smurf, so it is not enough alone. The reasons come back either way, and
-    # one point still shows in the panel as worth a look, without the accusation.
     score = sum(weight for _, weight, _ in signals)
     return score >= _SMURF_FLAG_SCORE, [text for text, _, _ in signals]
 
 
 def _self_check() -> None:
-    # The flag. A hidden level only loses the signals that are "for that
-    # level". A fall of two whole ranks and a dominant act still count, and a
-    # K/D off three matches is not evidence.
     hidden, why = compute_smurf(
         level=0, peak_tier=26, rank_tier=12, kd=2.5, win_rate=90.0, games=50
     )
@@ -206,8 +177,6 @@ def _self_check() -> None:
             [],
         )
     )
-    # An old account three ranks under its peak is worth a look on that
-    # alone, two is a hint, and one is nothing. Unranked has no gap at all.
     fallen, why = compute_smurf(
         level=124, peak_tier=21, rank_tier=12, kd=None, win_rate=None, games=None
     )
@@ -224,12 +193,10 @@ def _self_check() -> None:
         compute_smurf(level=124, peak_tier=26, rank_tier=0, kd=None, win_rate=None, games=None)[1]
         == []
     )
-    # A dominant run flags at any level, and says how many games it was.
     dominant, why = compute_smurf(
         level=300, peak_tier=12, rank_tier=12, kd=2.4, win_rate=None, games=None, kd_matches=5
     )
     check(dominant and why == ["K/D 2.4 over 5 games"], why)
-    # A good week is not a smurf.
     check(
         compute_smurf(
             level=300, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
@@ -240,7 +207,6 @@ def _self_check() -> None:
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=3
     )
     check((hot, why) == (False, []), why)
-    # On a young account it is a hint: shown, not flagged.
     hot, why = compute_smurf(
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
     )
@@ -249,8 +215,6 @@ def _self_check() -> None:
         level=41, peak_tier=12, rank_tier=12, kd=1.4, win_rate=None, games=None, kd_matches=5
     )
     check((warm, why) == (False, []), why)
-    # Aim needs the same sample the K/D needs, and at any level it is a hint
-    # that takes something else to flag.
     check(
         compute_smurf(
             level=41, peak_tier=12, rank_tier=12, kd=None, win_rate=None, games=None, hs=40.0
@@ -268,12 +232,10 @@ def _self_check() -> None:
         hs=40.0,
     )
     check(not aim and why == ["40% headshots"], why)
-    # Sitting a little below their own peak counts on a low level account.
     gap, why = compute_smurf(
         level=41, peak_tier=17, rank_tier=12, kd=None, win_rate=None, games=None
     )
     check(not gap and why == ["5 ranks below peak"], why)
-    # A low level on a high peak is one signal and enough on its own.
     flagged, why = compute_smurf(
         level=41, peak_tier=24, rank_tier=12, kd=None, win_rate=None, games=None
     )
@@ -292,13 +254,10 @@ def _self_check() -> None:
         level=75, peak_tier=12, rank_tier=12, kd=None, win_rate=88.0, games=40
     )
     check(alone and why == ["Won 88.0% of 40 games"], why)
-    # A win rate off nine games is not a win rate.
     check(
         compute_smurf(level=75, peak_tier=12, rank_tier=12, kd=None, win_rate=80.0, games=9)[1]
         == []
     )
-    # The panel's rows: a young account's level and peak with the act it was
-    # reached in, then its aim, each label once.
     rows = smurf_evidence(
         level=28,
         peak_tier=24,
@@ -324,7 +283,6 @@ def _self_check() -> None:
         smurf_evidence(level=300, peak_tier=12, rank_tier=12, kd=None, win_rate=None, games=None)
         == []
     )
-    # A K/D under the strong line only counts for its level, so the level shows.
     rows = smurf_evidence(
         level=41, peak_tier=12, rank_tier=12, kd=1.9, win_rate=None, games=None, kd_matches=5
     )

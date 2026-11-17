@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""The backend: the bridge the window reads.
-
-It builds the board from the VALORANT client, or from the demo, and answers
-the screens' requests for history, careers, lineups and offline chat.
-"""
+"""The backend: the bridge the window reads."""
 
 from __future__ import annotations
 
@@ -11,18 +7,13 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
-try:
-    from dotenv import load_dotenv
+from common import load_env
 
-    load_dotenv()
-except Exception as e:
-    # run.py has already put both .env files into the environment this process
-    # inherits, so a bad file only matters when app.py is run by hand.
-    import overseerlog
-
-    overseerlog.get_logger("backend").warning(f"backend/.env not loaded: {e!r}")
+if __name__ == "__main__":
+    load_env(Path(__file__).parent / ".env")
 
 import contextlib
 
@@ -37,6 +28,7 @@ import newest
 import overseerlog
 import party_detector
 import past_games
+import presence
 import refresh
 import sample_match
 import session_tracker
@@ -67,27 +59,20 @@ def _live_enabled() -> bool:
 
 
 def _attach_encounters(board: dict[str, Any]) -> dict[str, Any]:
-    is_live = board.get("source") == "local"
-    self_team = board.get("selfTeam")
+    owner = board.get("selfPuuid") if board.get("source") == "local" else None
+    ours = board.get("selfTeam")
     for p in board.get("players") or []:
         if not isinstance(p, dict):
             continue
-        enc = (
-            encounter_log.encounter_for(board.get("selfPuuid"), p.get("puuid")) if is_live else None
-        )
-        # record_board has already counted this lobby, and the row shows the
-        # times before it.
-        if enc:
-            if self_team is not None and p.get("team") == self_team:
-                enc["withCount"] = max(0, enc["withCount"] - 1)
-            else:
-                enc["againstCount"] = max(0, enc["againstCount"] - 1)
-        p["encounter"] = enc
+        met = encounter_log.encounter_for(owner, p.get("puuid")) if owner else None
+        if met:
+            side = "withCount" if ours is not None and p.get("team") == ours else "againstCount"
+            met[side] = max(0, met[side] - 1)
+        p["encounter"] = met
     return board
 
 
 def _attach_stacks(board: dict[str, Any]) -> dict[str, Any]:
-    """Mark the players who look like they queued together."""
     # Riot only reveals a party for accounts whose presence is visible, which
     # means friends and yourself. For everyone else this guess is the only
     # signal there is, so it carries the numbers it was drawn from and can be
@@ -102,20 +87,11 @@ def _attach_stacks(board: dict[str, Any]) -> dict[str, Any]:
 
 
 def _waiting_for(e: Exception) -> str | None:
-    """Return what a board with no one on it waits on, from why the client couldn't be read.
-
-    That is the Riot client, or VALORANT starting. None is a failure that
-    waiting won't fix.
-    """
     if not LocalAuth.available() or isinstance(e, (ClientNotReadyError, FileNotFoundError)):
-        # The next launch gets its own two minutes. Left running from a launch
-        # that was given up on, the wait was over before the game had started.
         _GAME_WAIT.clear()
         return "riot"
     if isinstance(e, GameNotStartedError):
         if not _game_running():
-            # A launch that was given up on leaves a log with no region in
-            # it. Nothing is starting, so the two minutes begin with the game.
             _GAME_WAIT.clear()
             return "game"
         now = time.time()
@@ -126,8 +102,15 @@ def _waiting_for(e: Exception) -> str | None:
     return None
 
 
+def _fault(e: BaseException) -> str:
+    at = e.__traceback__
+    while at is not None and at.tb_next is not None:
+        at = at.tb_next
+    where = f"{at.tb_frame.f_code.co_filename}:{at.tb_lineno}" if at is not None else ""
+    return f"{type(e).__name__} {where}"
+
+
 def _game_running() -> bool:
-    """Whether VALORANT itself is running, taken to be when the process list can't be read."""
     try:
         return _GAME_EXE in process_names()
     except Exception as e:
@@ -149,29 +132,23 @@ def _client_notice() -> dict[str, Any]:
     }
 
 
-_LAST_GOOD: dict[str, Any] = {"board": None, "at": 0.0, "notReady": False}
+_LAST_GOOD: dict[str, Any] = {"board": None, "at": 0.0, "notReady": False, "failing": ""}
 # When the client was first found up with VALORANT's region still unknown.
 _GAME_WAIT: dict[str, float] = {}
 _GAME_PATIENCE = 120.0
 _GAME_EXE = "valorant-win64-shipping.exe"
 _HOLD_SECS = 12
-# How long between live boards once a match is on. The round plays out in the
-# game, not here, so a board a tick slower costs nothing and spares the local
-# API. _watch_state still wakes the loop the moment the match ends.
-_INGAME_POLL = env_number("WS_STATE_POLL_INGAME", 15.0, low=0.5)
+_INGAME_POLL = env_number("WS_STATE_POLL_INGAME", 15.0, low=0.5, high=60.0)
 
 _BUILD_LOCK = threading.Lock()
 _BUILD_FRESH = 3.5
 
 
-# Your own row from the last board that had it, and when, kept on disk so the
-# window can still show your stats with no client to read them from.
 _YOU = data_path("you.json")
 _YOU_KEPT: dict[str, Any] = {}
 
 
 def _keep_you(board: dict[str, Any]) -> None:
-    """Keep your own row off a good board, writing it only when it changed."""
     me = next(
         (
             p
@@ -183,7 +160,7 @@ def _keep_you(board: dict[str, Any]) -> None:
     if me is None or me == _YOU_KEPT.get("player"):
         return
     _YOU_KEPT.update(player=me, at=time.time())
-    write_atomic(_YOU, dict(_YOU_KEPT), prefix=".you-")
+    write_atomic(_YOU, dict(_YOU_KEPT), prefix=".you-", durable=False)
 
 
 def saved_you() -> dict[str, Any] | None:
@@ -196,7 +173,6 @@ def saved_you() -> dict[str, Any] | None:
 
 
 def _in_match() -> bool:
-    """Whether the last good board had you in a match."""
     return (_LAST_GOOD["board"] or {}).get("state") == "INGAME"
 
 
@@ -210,18 +186,13 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
     notice = None
     if _live_enabled():
         with _BUILD_LOCK:
-            # A board asked for early has something new in it, so the last one
-            # won't do however fresh it is.
             stale = refresh.take_stale()
-            if _LAST_GOOD["board"] and not stale and time.time() - _LAST_GOOD["at"] < _BUILD_FRESH:
+            age = time.time() - _LAST_GOOD["at"]
+            if _LAST_GOOD["board"] and not stale and 0 <= age < _BUILD_FRESH:
                 return _LAST_GOOD["board"]
             try:
                 lm = live_match.LiveMatch(LocalAuth())
                 built = lm.build_scoreboard()
-                # The lobby's board is cached for twenty seconds and the same
-                # players come back every tick. Everything below writes into
-                # them, and tagging drops the habits it reads, so they get
-                # their own copies or the next tick's tags have nothing to read.
                 board = {
                     **built,
                     "players": [
@@ -251,11 +222,10 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                     _keep_you(board)
                 except (OSError, TypeError, ValueError):
                     LOG.exception("keeping your own row failed")
-                # On every board, so an empty one between matches still offers
-                # your last stats, and they are never older than what is kept.
                 board["you"] = saved_you()
                 _LAST_GOOD["board"], _LAST_GOOD["at"] = board, time.time()
                 _LAST_GOOD["notReady"] = False
+                _LAST_GOOD["failing"] = ""
                 _GAME_WAIT.clear()
             except Exception as e:
                 waiting = _waiting_for(e)
@@ -263,7 +233,11 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                     if not _LAST_GOOD["notReady"]:
                         LOG.info("live scoreboard: %s, waiting for %s", e, waiting)
                         _LAST_GOOD["notReady"] = True
-                else:
+                elif _LAST_GOOD["failing"] != _fault(e):
+                    # Once for each fault. A board is built every few seconds,
+                    # and one that fails all evening the same way would fill
+                    # every log file with the one trace.
+                    _LAST_GOOD["failing"] = _fault(e)
                     LOG.exception("live scoreboard failed")
 
                 # Once a match is on, keep its board through a dropped or slow
@@ -271,16 +245,12 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
                 # round only ends in the game, so bad Wi-Fi is no reason to
                 # clear the board you are reading. The client closing is: then
                 # the lockfile is gone and the usual hold runs out.
-                fresh = time.time() - _LAST_GOOD["at"] < _HOLD_SECS
+                fresh = 0 <= time.time() - _LAST_GOOD["at"] < _HOLD_SECS
                 if _LAST_GOOD["board"] and fresh:
                     return _LAST_GOOD["board"]
                 if _LAST_GOOD["board"] and _in_match() and LocalAuth.available():
-                    # Past the usual hold, the window says it isn't live.
-                    # Nothing is being read, so there is no reading to count down.
                     return {**_LAST_GOOD["board"], "heldSince": _LAST_GOOD["at"], "reading": None}
                 notice = _client_notice()
-                # Under the default auto as much as local, so the window can
-                # say what it waits on.
                 if client.source_pref != "demo":
                     return {
                         "state": "OFFLINE",
@@ -300,8 +270,6 @@ def build_live(seed: int = 7, want_state: str | None = None) -> dict[str, Any]:
         notice = _client_notice()
 
     if client.source_pref == "demo":
-        # DEMO_STATE picks the lobby or agent select, for looking at the rows
-        # nobody has picked an agent for yet.
         state = (want_state or os.getenv("DEMO_STATE") or "").lower()
         if state == "menus":
             board = sample_match.generate_lobby(seed)
@@ -343,15 +311,11 @@ def _current_puuid() -> str | None:
         auth = LocalAuth()
         auth.headers()
     except (ClientNotReadyError, FileNotFoundError):
-        # The game is closed or still signing in, which is normal.
         return None
     except Exception as e:
-        # LocalAuth can fail any number of ways while the client starts or
-        # after a patch. A request without an account still gets an answer.
-        LOG.warning("could not read the signed-in account: %r", e)
+        LOG.warning("the signed-in account couldn't be read: %r", e)
         return None
-    else:
-        return auth.puuid
+    return auth.puuid
 
 
 def _board_player(puuid: str) -> dict[str, Any]:
@@ -366,15 +330,8 @@ def _board_player(puuid: str) -> dict[str, Any]:
 
 
 def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Answer the Lineups screen's requests.
-
-    A lineup that can't be saved or played answers with why, in words for
-    the player.
-    """
     try:
         if req_type == "lineups":
-            # The blacked-out figure is cut from the agent played most, which the
-            # board only knows in a lobby, so History's record answers otherwise.
             return {**lineups.overview(), "main": history.main_agent()}
         if req_type == "lineup_save":
             return lineups.save(
@@ -401,15 +358,14 @@ def _lineup_request(req_type: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _offline_set(*, on: bool) -> dict[str, Any]:
-    """Hide you in chat, or show you again.
-
-    Hiding needs the Riot client started through the chat proxy, so the first
-    time that restarts it. After that it is a switch.
-    """
     import offline_launch
 
     state = offline_launch.status()
     if on and not state.get("running"):
+        last = (_LAST_GOOD["board"] or {}).get("state")
+        if last in ("PREGAME", "INGAME") and LocalAuth.available():
+            msg = "Finish this match first. Turning it on restarts the Riot Client and VALORANT."
+            return {**state, "ok": False, "message": msg}
         result = offline_launch.launch("offline")
     else:
         result = offline_launch.set_enabled(enabled=on)
@@ -444,8 +400,6 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                 data = sample_match.career(puuid, now.get("rankTier"), now.get("rr"))
             out = dict(data)
             out["weapons"] = _board_player(puuid).get("weapons") or []
-            # Your own career reads who you play with from every lobby on
-            # record. Its last eight matches would miss most of a stack.
             owner = _current_puuid()
             if owner and puuid == owner:
                 mates = encounter_log.teammates(owner)
@@ -498,6 +452,10 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
                 return {"error": "games_read needs a count."}
             return {"ok": True}
 
+        if req_type == "discord":
+            presence.set_on(on=bool(params.get("on")))
+            return {"ok": True}
+
         if req_type == "offline":
             import offline_launch
 
@@ -516,11 +474,8 @@ def handle_data_request(req_type: str, params: dict[str, Any] | None) -> dict[st
             return {}
 
         if req_type == "newest":
-            # Demo mode never reaches out, so a demo can't say anything about
-            # the real releases either.
             return {"newest": None if client.source_pref == "demo" else newest.newest()}
     except Exception as e:
-        # One bad request answers with an error and leaves the bridge serving.
         LOG.exception("request %r failed with params %r", req_type, params)
         return {
             "error": f"The {req_type} request failed ({e}). The trace is in .overseer/backend.log."
@@ -535,6 +490,9 @@ def _start_ws_bridge() -> int:
 
     def ws_state_provider() -> dict[str, Any]:
         board = dict(build_live())
+        # Every board, the empty one after VALORANT closes included, so the
+        # status clears with the game. A demo lobby is nobody's match.
+        presence.observe(board if client.source_pref != "demo" else {})
         board["agents"] = AGENTS
         return board
 
@@ -554,17 +512,10 @@ def _start_ws_bridge() -> int:
 
 
 def _watch_state() -> None:
-    """Wake the board loop the moment VALORANT changes state.
-
-    That is the menus, agent select or a match, noticed within two seconds
-    rather than at the loop's next tick. Your own presence comes from the
-    client on this PC, so asking sends nothing out.
-    """
     lm = None
     last = None
     failing = None
     while True:
-        # Every two seconds, since each ask returns every friend's presence.
         time.sleep(2.0)
         if not _live_enabled():
             continue
@@ -580,9 +531,6 @@ def _watch_state() -> None:
             time.sleep(4.0)
             continue
         failing = None
-        # After a dropped connection there is no last read, so the board on
-        # screen stands in. A match that ended while it was down then clears
-        # straight away, not at the slower in-match pace.
         seen = last if last is not None else (_LAST_GOOD["board"] or {}).get("state")
         if seen is not None and state != seen:
             refresh.soon()
@@ -590,12 +538,6 @@ def _watch_state() -> None:
 
 
 def _warm_lineups() -> None:
-    """Fetch what the Lineups screen draws from while nobody waits on it.
-
-    The maps and agents come from valorant-api and the minimaps and icons go
-    onto disk, so the first time the screen asks, the answer comes from memory
-    instead of the network. An agent newer than this build is learned here too.
-    """
     try:
         lineups.prune_cache()
         lineups.overview()
@@ -612,7 +554,7 @@ def _write_bridge_file(ws_port: int, token: str) -> None:
         {
             "wsPort": ws_port,
             "token": token,
-            "protocol": ws_server.PROTOCOL_VERSION,
+            "protocol": ws_server.SPEAKS,
             "pid": os.getpid(),
             # The launcher matches on this, not the pid. The venv's python.exe
             # re-execs, so the process the launcher started is not the one
@@ -621,8 +563,6 @@ def _write_bridge_file(ws_port: int, token: str) -> None:
         },
         prefix=".bridge-",
     ):
-        # Raised, so the launcher says so instead of the window waiting on a
-        # file that never comes.
         msg = "bridge.json write failed, so the window cannot find the bridge"
         raise OSError(msg)
 
@@ -631,9 +571,6 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     from types import SimpleNamespace
     from unittest import mock
 
-    # The bridge's request router is the whole data surface, so this checks
-    # that its demo answers stay well formed with no port, game or network.
-    # Demo is forced so backend\.env cannot change the answer.
     client.source_pref = "demo"
 
     check(handle_data_request("nope", None) == {"error": "The backend has no 'nope' request."})
@@ -653,8 +590,6 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     check(_refused == {"error": "A lineup needs a title and an agent."}, _refused)
     check(len(_games) == 7 and _games[0]["score"] and _games[0]["rrDelta"], _games[0])
 
-    # A cached board comes back as the same objects every tick, and tagging it
-    # must not use up the habits its tags are read from.
     _cached = {
         "state": "MENUS",
         "players": [
@@ -680,7 +615,6 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
             check("op" in _read, (_tick, _read))
             check("you" in _built, "a live board carries your kept row")
 
-    # A board with no one on it says what it waits on, so the window can too.
     with mock.patch.object(LocalAuth, "available", return_value=False):
         check(_waiting_for(ValueError()) == "riot")
     # VALORANT that never names its region stops being one that is starting.
@@ -692,17 +626,14 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     ):
         check(_waiting_for(GameNotStartedError()) == "game")
         check(_waiting_for(GameNotStartedError()) is None)
-    # With the game closed there is nothing to run out of patience with.
     with (
         mock.patch.object(LocalAuth, "available", return_value=True),
         mock.patch(f"{__name__}._game_running", return_value=False),
     ):
         check(_waiting_for(GameNotStartedError()) == "game" and not _GAME_WAIT, _GAME_WAIT)
     _GAME_WAIT["since"] = 0.0
-    # The client closing ends that wait, so the next launch starts a new one.
     with mock.patch.object(LocalAuth, "available", return_value=False):
         check(_waiting_for(GameNotStartedError()) == "riot" and not _GAME_WAIT, _GAME_WAIT)
-    # Under the default auto, an empty board still says what it waits on.
     _auth = mock.MagicMock()
     _auth.available.return_value = True
     with (
@@ -715,14 +646,21 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     check(_waited["state"] == "OFFLINE" and _waited["waiting"] == "game", _waited)
     _GAME_WAIT.clear()
 
-    # The loop waits longer between boards only while a match is on.
     _LAST_GOOD["board"] = {"state": "MENUS"}
     check(board_pace(4.0) == 4.0)
     _LAST_GOOD["board"] = {"state": "INGAME"}
     check(board_pace(4.0) == _INGAME_POLL)
+    with (
+        mock.patch("offline_launch.status", return_value={"running": False}),
+        mock.patch("offline_launch.launch", return_value={"ok": True}) as _launched,
+        mock.patch.object(LocalAuth, "available", return_value=True) as _up,
+    ):
+        _refused = _offline_set(on=True)
+        check(_refused["ok"] is False and "Finish this match" in _refused["message"], _refused)
+        # A match the client crashed out of is over, and nothing is left to close.
+        _up.return_value = False
+        check(_offline_set(on=True)["ok"] is True and _launched.call_count == 1)
 
-    # A match on screen holds through a dropped connection while the client is
-    # up, long past the usual hold, and lets go only once it is gone.
     _LAST_GOOD["board"], _LAST_GOOD["at"] = {"state": "INGAME", "players": []}, 0.0
     with (
         mock.patch(f"{__name__}._live_enabled", return_value=True),
@@ -736,12 +674,18 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
             check(_held["state"] == "INGAME", "a match holds through a drop")
             check(_held.get("heldSince") == 0.0, "and says it is held")
         _LAST_GOOD["board"] = {"state": "INGAME", "players": []}
-        with mock.patch.object(LocalAuth, "available", return_value=False):
-            check(build_live()["state"] == "OFFLINE", "a closed client lets the match go")
+        with (
+            mock.patch.object(LocalAuth, "available", return_value=False),
+            mock.patch.object(LOG, "exception") as _traced,
+        ):
+            _LAST_GOOD["failing"] = ""
+            with mock.patch(f"{__name__}._waiting_for", return_value=None):
+                _states = [build_live()["state"] for _ in range(3)]
+            check(_states == ["OFFLINE"] * 3, "a closed client lets the match go")
+            check(_traced.call_count == 1, _traced.call_count)
     _LAST_GOOD["board"] = None
+    _LAST_GOOD["failing"] = ""
 
-    # Your own row is kept off a good board, and read back from disk with no
-    # client, which is what the window shows as your last stats.
     import tempfile
     from pathlib import Path
 

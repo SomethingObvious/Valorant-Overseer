@@ -1,21 +1,13 @@
-//! What the wizard works out before it touches anything, kept apart from the
-//! window so all of it can be tested without one.
-
 use std::path::Path;
 
-/// One thing the wizard checked about this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Finding {
-    /// What was looked at.
     pub(crate) what: String,
-    /// What was found.
     pub(crate) detail: String,
-    /// Whether it stops the install.
     pub(crate) blocking: bool,
 }
 
 impl Finding {
-    /// Something that is fine.
     fn ok(what: &str, detail: impl Into<String>) -> Self {
         Self {
             what: what.to_owned(),
@@ -24,7 +16,6 @@ impl Finding {
         }
     }
 
-    /// Something that stops the install, said with what to do about it.
     fn stop(what: &str, detail: impl Into<String>) -> Self {
         Self {
             what: what.to_owned(),
@@ -34,26 +25,18 @@ impl Finding {
     }
 }
 
-/// Everything the wizard found, in the order it is worth reading.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Survey {
-    /// The findings themselves.
     pub(crate) findings: Vec<Finding>,
-    /// The region an install already here was set to, as its place in
-    /// [`REGIONS`]. An update keeps it.
     pub(crate) region: Option<usize>,
 }
 
 impl Survey {
-    /// Whether anything found stops the install.
     pub(crate) fn blocked(&self) -> bool {
         self.findings.iter().any(|f| f.blocking)
     }
 }
 
-/// Looks at the machine without changing anything, since nobody has agreed to
-/// anything yet. A setup that `carried` the app brings its own installer, and
-/// its folder may not exist until the install makes it.
 pub(crate) fn survey(root: &Path, carried: bool) -> Survey {
     let mut findings = Vec::new();
 
@@ -89,8 +72,6 @@ pub(crate) fn survey(root: &Path, carried: bool) -> Survey {
 
     let nearest = root.ancestors().find(|dir| dir.is_dir()).unwrap_or(root);
     findings.push(match writable(nearest) {
-        // A release's files are stripped of comments, so unpacking one over a
-        // checkout would overwrite the source and any work not yet committed.
         Ok(()) if carried && root.join(".git").exists() => Finding::stop(
             "This folder",
             "It's a copy of the source, and this setup would overwrite it. Set OVERSEER_ROOT to install somewhere else.",
@@ -116,8 +97,6 @@ pub(crate) fn survey(root: &Path, carried: bool) -> Survey {
 
     if let Some(version) = installed(root, "version") {
         let ours = env!("CARGO_PKG_VERSION");
-        // Unpacked over a newer install, an old setup quietly puts the old
-        // version back. A repair unpacks nothing, so it can't.
         findings.push(if carried && newer(&version, ours) {
             Finding::stop(
                 "Already installed",
@@ -136,16 +115,12 @@ pub(crate) fn survey(root: &Path, carried: bool) -> Survey {
     Survey { findings, region }
 }
 
-/// How many write probes this process has made, to name each one apart.
 static PROBES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// Whether a directory can be written to, said the way a person would.
 fn writable(root: &Path) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("{} is not a folder", root.display()));
     }
-    // Named for this probe alone. Two surveys of one folder at once (the tests
-    // do this) would otherwise trip over each other's half-deleted file.
     let probe = root.join(format!(
         ".overseer-write-test-{}-{}",
         std::process::id(),
@@ -176,7 +151,6 @@ fn cant_write(e: &std::io::Error) -> String {
     format!("{said}. ({e})")
 }
 
-/// One field of the marker an install leaves, like its version or region.
 fn installed(root: &Path, field: &str) -> Option<String> {
     let raw = std::fs::read_to_string(root.join(".overseer").join("installed.json")).ok()?;
     // One field out of a file the installer owns, so a string search does,
@@ -209,7 +183,6 @@ fn newer(a: &str, b: &str) -> bool {
     matches!((parts(a), parts(b)), (Some(a), Some(b)) if a > b)
 }
 
-/// The regions the backend knows, and what they are called.
 pub(crate) const REGIONS: [(&str, &str); 6] = [
     ("na", "North America"),
     ("eu", "Europe"),
@@ -219,7 +192,6 @@ pub(crate) const REGIONS: [(&str, &str); 6] = [
     ("br", "Brazil"),
 ];
 
-/// The arguments the installer is given for a region.
 pub(crate) fn install_args(script: &Path, region: &str) -> Vec<String> {
     vec![
         "-NoProfile".to_owned(),
@@ -238,8 +210,6 @@ mod tests {
 
     use super::{installed, newer, survey};
 
-    /// A folder that is not an install must say so rather than offering to
-    /// install into it.
     #[test]
     fn a_folder_that_is_not_an_install_is_blocked() {
         let found = survey(Path::new("Z:/nowhere-at-all"), false);
@@ -252,8 +222,6 @@ mod tests {
         );
     }
 
-    /// This repository is an install as well, and a release unpacked over it
-    /// would replace the source with stripped copies.
     #[test]
     fn a_carried_app_never_unpacks_over_a_checkout() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -269,8 +237,6 @@ mod tests {
         assert!(!newer("2.4.0-rc.1", "2.3.0"));
     }
 
-    /// The marker is read with a string search, so these are the cases a
-    /// search could get wrong.
     #[test]
     fn a_version_is_read_out_of_a_marker() {
         let dir = std::env::temp_dir().join("overseer-setup-test");
@@ -296,8 +262,6 @@ mod tests {
         std::fs::write(&file, "not json at all").unwrap();
         assert_eq!(installed(&dir, "version"), None);
 
-        // An update keeps the region set before, and one it doesn't know
-        // is asked for again.
         std::fs::write(&file, r#"{"version": "2.1.0", "region": "eu"}"#).unwrap();
         assert_eq!(survey(&dir, false).region, Some(1));
         std::fs::write(&file, r#"{"version": "2.1.0", "region": "moon"}"#).unwrap();

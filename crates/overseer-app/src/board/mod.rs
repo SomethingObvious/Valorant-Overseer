@@ -1,7 +1,3 @@
-//! The board, drawn as a broadcast graphic. The window, the overlay and the
-//! snapshot tests all draw it through [`draw`] from one [`Scene`], so a
-//! snapshot shows the same board the window does.
-
 mod card;
 mod foot;
 pub(crate) mod grid;
@@ -32,91 +28,61 @@ pub(crate) use card::STRIP_MIDDLE;
 /// egui's spacing under every widget: `item_spacing.y` in the style.
 const ITEM: f32 = space::SM;
 
-/// Under this content width the board draws its narrow rows.
 const NARROW: f32 = 640.0;
 
 /// How long the red slab takes to wipe off the enemy block when a lobby
 /// lands.
 const STINGER: f32 = 1.95;
 
-/// How long the numerals take to count up, and how long after the lobby
-/// lands they start.
 const COUNT: f32 = 0.40;
 
-/// See [`COUNT`].
 const COUNT_DELAY: f32 = 0.10;
 
 /// Whose side a block of rows is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Side {
-    /// The other team, or everybody else in a deathmatch.
     Enemy,
-    /// Yours.
     Ally,
 }
 
-/// Where the board is being drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Place {
-    /// The window: both teams, the heads, the ladder and the session.
     Window,
-    /// Over the game: the enemy only, smaller, nothing to click.
     Overlay,
 }
 
-/// Everything a board needs to be drawn, and nothing it could change.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Scene<'a> {
-    /// What the bridge last sent.
     pub(crate) board: &'a Board,
-    /// How the rows are ordered.
     pub(crate) sort: &'a Sort,
-    /// Who is chosen, by account id.
     pub(crate) selected: Option<&'a str>,
-    /// What has been written about whom.
     pub(crate) notes: &'a Notes,
-    /// Which columns are switched off.
     pub(crate) hidden: &'a [String],
     /// Whether the enemy block comes first.
     pub(crate) enemies_first: bool,
-    /// Where it is being drawn.
     pub(crate) place: Place,
-    /// The efficient tier: nothing moves and nothing blurs.
     pub(crate) still: bool,
-    /// How long ago this lobby landed, in seconds.
     pub(crate) since: f32,
+    /// Whether the window has lost the backend, so nothing on it is live.
+    pub(crate) lost: bool,
 }
 
-/// What the pointer did to the board this frame, and how tall it came out.
 #[derive(Debug, Default)]
 pub(crate) struct Touched {
-    /// How tall the board drew.
     pub(crate) drew: f32,
-    /// The account whose row was clicked.
     pub(crate) clicked: Option<String>,
-    /// The account whose row the pointer is over.
     pub(crate) hovered: Option<String>,
-    /// The column head that was clicked.
     pub(crate) heading: Option<&'static str>,
-    /// The side whose worth-a-look chip was clicked.
     pub(crate) worth: Option<String>,
-    /// What a button under the waiting plate asked for.
     pub(crate) waiting: Option<Asked>,
 }
 
-/// What a button under the waiting plate asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Asked {
-    /// Show My Last Stats.
     LastStats,
-    /// Reconnect Now.
     Reconnect,
 }
 
-/// The two sides, in reading order, as `(side, team id)`.
-///
-/// Enemies come first by default, unlike the game's own scoreboard, because
-/// the other five are why the app is open.
 pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, &str); 2] {
     let ours = board.self_team.as_deref().unwrap_or("Blue");
     let theirs = if free_for_all(board) {
@@ -133,7 +99,6 @@ pub(crate) fn teams(board: &Board, enemies_first: bool) -> [(Side, &str); 2] {
     }
 }
 
-/// The team id that means everybody but you, in a lobby with no sides.
 pub(crate) const EVERYONE: &str = "*";
 
 /// Whether this lobby has more than two teams. That means a deathmatch,
@@ -148,7 +113,6 @@ fn free_for_all(board: &Board) -> bool {
     seen.len() > 2
 }
 
-/// Whether a player belongs under a team id, [`EVERYONE`] included.
 pub(crate) fn on(player: &overseer_core::Player, team: &str) -> bool {
     if team == EVERYONE {
         !player.is_self
@@ -157,9 +121,6 @@ pub(crate) fn on(player: &overseer_core::Player, team: &str) -> bool {
     }
 }
 
-/// Whose side an account is on: yours if it shares your team, the
-/// enemy's otherwise, including when the backend has not said which team
-/// you are, because the other five are the ones worth being careful about.
 pub(crate) fn side_of(board: &Board, player: &overseer_core::Player) -> Side {
     let ours = board.self_team.as_deref();
     if ours.is_some() && player.team.as_deref() == ours {
@@ -169,9 +130,6 @@ pub(crate) fn side_of(board: &Board, player: &overseer_core::Player) -> Side {
     }
 }
 
-/// Who is on one side, in the order the board draws them: sorted by the
-/// clicked heading. The arrow keys walk this same list, so they always agree
-/// with the board.
 pub(crate) fn roster<'a>(
     board: &'a Board,
     team: &str,
@@ -183,7 +141,6 @@ pub(crate) fn roster<'a>(
     players
 }
 
-/// Every account on screen, top to bottom, by id.
 pub(crate) fn order(board: &Board, sort: &Sort, enemies_first: bool) -> Vec<String> {
     teams(board, enemies_first)
         .iter()
@@ -192,8 +149,6 @@ pub(crate) fn order(board: &Board, sort: &Sort, enemies_first: bool) -> Vec<Stri
         .collect()
 }
 
-/// The account a step up or down from `from`, stopping at either end, or
-/// the first one when nothing was chosen or the choice is not on screen.
 pub(crate) fn step(order: &[String], from: Option<&str>, down: bool) -> Option<String> {
     let at = from.and_then(|id| order.iter().position(|o| o == id));
     let next = match (at, down) {
@@ -204,7 +159,6 @@ pub(crate) fn step(order: &[String], from: Option<&str>, down: bool) -> Option<S
     order.get(next).cloned()
 }
 
-/// The next of `among` after `from`, wrapping round to the first.
 pub(crate) fn next_after(among: &[String], from: Option<&str>) -> Option<String> {
     let first = among.first()?;
     let at = from.and_then(|id| among.iter().position(|f| f == id));
@@ -214,15 +168,10 @@ pub(crate) fn next_after(among: &[String], from: Option<&str>) -> Option<String>
     )
 }
 
-/// Whether the board is still arriving, and so wants frames.
-///
-/// The count-up and the stinger are painted from how long ago the lobby
-/// landed, and nothing else asks for frames while they run.
 pub(crate) fn settling(since: f32, still: bool) -> bool {
     !still && since < (COUNT_DELAY + COUNT).max(STINGER) + 0.05
 }
 
-/// Exponential ease out: fast, then settling.
 fn expo(t: f32) -> f32 {
     if t >= 1.0 {
         1.0
@@ -231,7 +180,6 @@ fn expo(t: f32) -> f32 {
     }
 }
 
-/// Draws the board, and says what the pointer did to it.
 pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
     let mut touched = Touched::default();
     let order = teams(scene.board, scene.enemies_first);
@@ -241,9 +189,6 @@ pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
             let scrolled = ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    // Past the width every column fits in, more room is only
-                    // a longer way for the eye to travel from a name to its
-                    // K/D, so the board stops there and sits in the middle.
                     let room = ui.available_rect_before_wrap();
                     let spare = ((room.width() - full_width()) / 2.0).max(0.0);
                     let inside = Rect::from_min_max(
@@ -263,23 +208,14 @@ pub(crate) fn draw(ui: &mut Ui, scene: &Scene<'_>) -> Touched {
     touched
 }
 
-/// Everything inside the margins.
 fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2], touched: &mut Touched) {
     ui.add_space(space::LG);
-    // A window too small for the full row gets the smaller face, and a
-    // name column that gives up its last forty points before the numbers
-    // give up anything.
     let narrow = ui.available_width() < NARROW;
     let identity = identity(narrow);
-    // A column with nothing in it for anybody in the lobby is dropped for
-    // this lobby, which gives its room to one that has something to say.
-    // Only for a column whose emptiness cannot change mid-match: who you
-    // have met is read from history once, not filled in as the game goes.
     let mut hidden = scene.hidden.to_vec();
     if scene.board.players.iter().all(|p| p.met() == 0) {
         hidden.push("met".to_owned());
     }
-    // No map, as in the party lobby, and every row would say "-".
     if scene.board.map.is_none() {
         hidden.push("map".to_owned());
     }
@@ -316,13 +252,10 @@ fn content(ui: &mut Ui, scene: &Scene<'_>, order: &[(Side, &str); 2], touched: &
     foot::session(ui, scene.board);
 }
 
-/// How wide the board has to be to show every column at full size, its
-/// gutters included. The window gives anything past this to the panel.
 pub(crate) fn full_width() -> f32 {
     2.0f32.mul_add(GUTTER, identity(false) + grid::full())
 }
 
-/// How wide the face and the name are, before the first column.
 fn identity(narrow: bool) -> f32 {
     if narrow {
         SMALL.crop() + space::LG + 116.0
@@ -331,7 +264,6 @@ fn identity(narrow: bool) -> f32 {
     }
 }
 
-/// One side's rows, with the stinger over the enemy's while a lobby lands.
 fn block(
     ui: &mut Ui,
     scene: &Scene<'_>,
@@ -383,8 +315,6 @@ fn block(
         }
     }
     if side == Side::Enemy && !scene.still && scene.since < STINGER {
-        // The stinger: the plate's red wipes off the rows left to right,
-        // leading with the slant, once per lobby.
         let area = Rect::from_min_max(
             pos2(ui.min_rect().left(), top),
             pos2(ui.max_rect().right(), ui.cursor().top()),

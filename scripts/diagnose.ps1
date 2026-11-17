@@ -3,235 +3,217 @@
     [string]$BundlePath = ""
 )
 
-# What install and start would check, printed for a support request. -Bundle
-# also zips the report and the recent logs, redacted, onto the desktop.
 . (Join-Path $PSScriptRoot "common.ps1")
 
-$report = New-Object System.Collections.Generic.List[string]
-function DiagLine([string]$line) { $report.Add($line); Write-Host "  $line" }
-function RSection([string]$t) { $report.Add(""); $report.Add("== $t =="); Write-Host ""; Write-Host "==> $t" -ForegroundColor Cyan }
+$Logs = @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")
+$script:Report = New-Object System.Collections.Generic.List[string]
+$script:Blocked = $false
 
-$exitCode = 0
-function Bad([string]$line) { $script:exitCode = 1; DiagLine "[X] $line" }
-function Good([string]$line) { DiagLine "[OK] $line" }
+function Say([string]$Text) { $script:Report.Add($Text); Write-Host "  $Text" }
+function Pass([string]$Text) { Say "[OK] $Text" }
+function Flag([string]$Text) { $script:Blocked = $true; Say "[X] $Text" }
+function Heading([string]$Title) {
+    $script:Report.Add("")
+    $script:Report.Add("== $Title ==")
+    Write-Host ""
+    Write-Host "==> $Title" -ForegroundColor Cyan
+}
+
+function Read-Json([string]$Path) { return Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json }
+
+function Find-ProcessById([object]$Id) {
+    if (-not "$Id") { return $null }
+    return Get-CimInstance Win32_Process -Filter "ProcessId=$Id" -ErrorAction SilentlyContinue
+}
+
+function Get-PortOwner([int]$Port) {
+    $listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $listener) { return "free" }
+    $owner = $listener.OwningProcess
+    # The base interpreter holds the port, so it may be the venv's python.exe
+    # above it that names this install.
+    if (Test-ProcessUnder $owner $Root) { return "ours (Valorant Overseer, PID $owner)" }
+    $process = Find-ProcessById $owner
+    if (-not $process) { return "unknown process (PID $owner)" }
+    return "foreign: $(Split-Path -Leaf "$($process.ExecutablePath)") (PID $owner)"
+}
 
 Write-Host ""
 Write-Host "  OVERSEER DIAGNOSTICS" -ForegroundColor Red
 
-RSection "App"
-DiagLine "version: $(Get-LocalVersion)"
+Heading "App"
+$version = Get-AppVersion
+Say "version: $version"
 try {
-    $mf = Get-RuntimeManifest
-    DiagLine "channel: $($mf.app.channel), supported runtime: CPython $($mf.python.version) $($mf.python.arch), protocol: $($mf.protocol.version)"
-    if ($mf.app.version -ne (Get-LocalVersion)) { Bad "runtime.json says $($mf.app.version) but VERSION says $(Get-LocalVersion)" }
+    $mf = Read-Manifest
+    Say "channel: $($mf.channel), supported runtime: CPython $($mf.python.version) x64, protocol: $($mf.speaks)"
+    if ($mf.version -ne $version) { Flag "runtime.json says $($mf.version) but VERSION says $version" }
 }
-catch { Bad "runtime.json: $($_.Exception.Message)" }
-$relMf = Join-Path $Root "release-manifest.json"
-if (Test-Path $relMf) {
-    try { DiagLine "release commit: $((Get-Content $relMf -Raw | ConvertFrom-Json).commit)" } catch { }
+catch { Flag "runtime.json: $($_.Exception.Message)" }
+$releaseFile = Join-Path $Root "release-manifest.json"
+if (-not (Test-Path $releaseFile)) { Say "release commit: none (a source tree, or a release older than the manifest)" }
+else {
+    try { Say "release commit: $((Read-Json $releaseFile).commit)" } catch { }
 }
-else { DiagLine "release commit: none (a source tree, or a release older than the manifest)" }
 
-RSection "Windows"
+Heading "Windows"
 $os = [Environment]::OSVersion.Version
-DiagLine "windows: $($os.Major).$($os.Minor) build $($os.Build), 64-bit OS: $([Environment]::Is64BitOperatingSystem)"
+Say "windows: $($os.Major).$($os.Minor) build $($os.Build), 64-bit OS: $([Environment]::Is64BitOperatingSystem)"
+# A 32-bit PowerShell sees x86 here, and the real answer is in ARCHITEW6432.
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
-if ($arch -eq "AMD64") { Good "architecture: x64" } else { Bad "architecture: $arch (only x64 is supported)" }
-DiagLine "windows powershell: $($PSVersionTable.PSVersion)"
-$pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
-if ($pwsh) {
-    try { DiagLine "powershell 7: $((& pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null))" } catch { DiagLine "powershell 7: present" }
+if ($arch -eq "AMD64") { Pass "architecture: x64" } else { Flag "architecture: $arch (only x64 is supported)" }
+Say "windows powershell: $($PSVersionTable.PSVersion)"
+if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { Say "powershell 7: not installed, and not needed" }
+else {
+    $seven = "present"
+    try { $seven = & pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null } catch { }
+    Say "powershell 7: $seven"
 }
-else { DiagLine "powershell 7: not installed, and not needed" }
 
-RSection "Install Path"
-$special = @()
-if ($Root -match '\s') { $special += "spaces" }
-if ($Root -match "['&()%!]") { $special += "special characters" }
-if ($Root -match '[^\x00-\x7F]') { $special += "non-ASCII" }
-if ($Root.Length -gt 180) { $special += "very long path ($($Root.Length) chars)" }
-$cat = "normal"
-if ($Root -match 'OneDrive') { $cat = "OneDrive-synced" }
-elseif ($Root -match '\\Downloads\\') { $cat = "Downloads" }
-elseif ($Root -match '\.zip[\\/]|\\Temp1_') { $cat = "INSIDE A ZIP (must extract first)" }
-DiagLine "path category: $cat$(if ($special) { ' (' + ($special -join ', ') + ')' })"
-if ($cat -like "INSIDE*") { Bad "running from inside a ZIP" }
-try {
-    $t = Join-Path $Root (".vs-diag-" + [Guid]::NewGuid().ToString("N"))
-    [System.IO.File]::WriteAllText($t, "x"); Remove-Item $t -Force
-    Good "install folder writable"
+Heading "Install Path"
+$odd = @(([ordered]@{
+            "spaces"                                 = $Root -match '\s'
+            "special characters"                     = $Root -match "['&()%!]"
+            "non-ASCII"                              = $Root -match '[^\x00-\x7F]'
+            "very long path ($($Root.Length) chars)" = $Root.Length -gt 180
+        }).GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { $_.Key })
+$kind = switch -Regex ($Root) {
+    'OneDrive' { "OneDrive-synced"; break }
+    '\\Downloads\\' { "Downloads"; break }
+    '\.zip[\\/]|\\Temp1_' { "INSIDE A ZIP (must extract first)"; break }
+    default { "normal" }
 }
-catch { Bad "install folder isn't writable" }
+$why = ""
+if ($odd.Count -gt 0) { $why = " ($($odd -join ', '))" }
+Say "path category: $kind$why"
+if ($kind -like "INSIDE*") { Flag "running from inside a ZIP" }
+if (Test-Writable $Root) { Pass "install folder writable" } else { Flag "install folder isn't writable" }
+if (Test-Writable $env:TEMP) { Pass "TEMP writable" } else { Flag "TEMP isn't writable" }
 try {
-    $t = Join-Path $env:TEMP (".vs-diag-" + [Guid]::NewGuid().ToString("N"))
-    [System.IO.File]::WriteAllText($t, "x"); Remove-Item $t -Force
-    Good "TEMP writable"
-}
-catch { Bad "TEMP isn't writable" }
-try {
-    $drive = (Get-Item $Root).PSDrive
-    DiagLine ("free disk space: {0:N1} GB" -f ($drive.Free / 1GB))
-    if ($drive.Free -lt 2GB) { Bad "less than 2 GB free" }
+    $free = (Get-Item $Root).PSDrive.Free
+    Say ("free disk space: {0:N1} GB" -f ($free / 1GB))
+    if ($free -lt 2GB) { Flag "less than 2 GB free" }
 }
 catch { }
 
-RSection "Python"
+Heading "Python"
 try {
-    $py = Find-ExactPython
-    if ($py) {
-        $id = Get-PythonIdentity $py.Exe $py.Args
-        Good "supported python found: $($id.executable) ($($id.version) $($id.machine) $($id.bits)-bit)"
-    }
+    $py = Find-Python
+    if (-not $py) { Flag "no CPython $((Read-Manifest).python.version) x64 found on this PC (install.bat installs it)" }
     else {
-        Bad "no CPython $((Get-RuntimeManifest).python.version) x64 found on this PC (install.bat installs it)"
+        $info = Get-PythonInfo $py.Exe $py.Args
+        Pass "supported python found: $($info.exe) ($($info.version) $($info.machine) $($info.bits)-bit)"
     }
 }
-catch { Bad "python discovery failed: $($_.Exception.Message)" }
-
-if (Test-Path $VenvPy) {
-    $venv = Test-Venv
-    if ($venv.Ok) { Good ".venv healthy (python, pip $(Get-VenvPipVersion), packages, imports)" }
-    else { foreach ($r in $venv.Reasons) { Bad ".venv: $r" } }
-}
+catch { Flag "python discovery failed: $($_.Exception.Message)" }
+if (-not (Test-Path $VenvPy)) { Flag ".venv is missing. Run install.bat." }
 else {
-    Bad ".venv is missing. Run install.bat."
+    $faults = @(Get-VenvFaults)
+    if ($faults.Count -eq 0) { Pass ".venv healthy (python, pip $(Get-PipVersion), packages, imports)" }
+    $faults | ForEach-Object { Flag ".venv: $_" }
 }
+$fault = Get-MarkerFault
+if ($fault) { Flag "install markers: $fault" } else { Pass "install markers valid (format $MarkerFormat)" }
 
-$markers = Test-Markers
-if ($markers.Ok) { Good "install markers valid (schema $MarkerSchemaVersion)" }
-else { Bad "install markers: $($markers.Reason)" }
-
-RSection "Ports"
-function Get-PortOwner([int]$port) {
-    $conns = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
-    foreach ($c in $conns) {
-        $portPid = $c.OwningProcess
-        try {
-            # The listener is the base interpreter, so it may be the venv's
-            # python.exe above it that names this install.
-            if (Test-ProcessUnder $portPid $Root) { return "ours (Valorant Overseer, PID $portPid)" }
-            $exe = (Get-CimInstance Win32_Process -Filter "ProcessId=$portPid" -ErrorAction Stop).ExecutablePath
-            return "foreign: $(Split-Path -Leaf ($exe + '')) (PID $portPid)"
-        }
-        catch { return "unknown process (PID $portPid)" }
-    }
-    return "free"
-}
+Heading "Ports"
 $wsPort = 7878
 if (Test-Path $EnvFile) {
-    $wp = Get-Content $EnvFile -Encoding UTF8 | Select-String '^\s*WS_PORT\s*=\s*(\d+)'
-    if ($wp) { $wsPort = [int]$wp.Matches[0].Groups[1].Value }
+    $set = Select-String -Path $EnvFile -Pattern '^\s*WS_PORT\s*=\s*(\d+)' -Encoding UTF8 | Select-Object -First 1
+    if ($set) { $wsPort = [int]$set.Matches[0].Groups[1].Value }
 }
-$runtimeState = Join-Path $OverseerDir "runtime-state.json"
-if (Test-Path $runtimeState) {
-    try {
-        $rs = Get-Content $runtimeState -Raw -Encoding UTF8 | ConvertFrom-Json
-        $rp = Get-CimInstance Win32_Process -Filter "ProcessId=$($rs.pid)" -ErrorAction Stop
-        $identity = (($rp.ExecutablePath + " " + $rp.CommandLine) + "").ToLowerInvariant()
-        $rootLower = $Root.ToLowerInvariant()
-
-        if ($identity -eq $rootLower -or $identity.Contains($rootLower + '\')) {
-            $wsPort = [int]$rs.wsPort
-            DiagLine "the running launcher picked websocket port $wsPort"
-        }
-        else {
-            DiagLine "runtime-state.json is stale (PID now belongs to another program)"
-        }
+$stateFile = Join-Path $OverseerDir "runtime-state.json"
+if (Test-Path $stateFile) {
+    $state = $null
+    try { $state = Read-Json $stateFile } catch { }
+    $launcher = Find-ProcessById $state.pid
+    $here = $Root.ToLowerInvariant() + '\'
+    if (-not $launcher) { Say "runtime-state.json is stale (launcher is not running)" }
+    elseif ("$($launcher.ExecutablePath) $($launcher.CommandLine)".ToLowerInvariant().Contains($here)) {
+        $wsPort = [int]$state.wsPort
+        Say "the running launcher picked websocket port $wsPort"
     }
-    catch { DiagLine "runtime-state.json is stale (launcher is not running)" }
+    else { Say "runtime-state.json is stale (PID now belongs to another program)" }
 }
-DiagLine "websocket port $wsPort`: $(Get-PortOwner $wsPort)"
+Say "websocket port $wsPort`: $(Get-PortOwner $wsPort)"
 
-RSection "Running App"
+Heading "Running App"
+$bridge = $null
 $bridgeFile = Join-Path $OverseerDir "bridge.json"
-$bridgeReported = $false
 if (Test-Path $bridgeFile) {
-    try {
-        $b = Get-Content $bridgeFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        $null = Get-CimInstance Win32_Process -Filter "ProcessId=$($b.pid)" -ErrorAction Stop
-        if ((Get-PortOwner ([int]$b.wsPort)) -like "ours*") {
-            Good "backend bridge healthy (protocol $($b.protocol), ws $($b.wsPort), PID $($b.pid))"
-        }
-        else {
-            Bad "bridge.json names port $($b.wsPort), but no Valorant Overseer process is listening there"
-        }
-        $bridgeReported = $true
-    }
-    catch { }
+    try { $bridge = Read-Json $bridgeFile } catch { }
 }
-if (-not $bridgeReported) { DiagLine "backend: not running (start it with start.bat)" }
+if (-not ($bridge -and (Find-ProcessById $bridge.pid))) { Say "backend: not running (start it with start.bat)" }
+elseif ((Get-PortOwner ([int]$bridge.wsPort)) -like "ours*") {
+    Pass "backend bridge healthy (protocol $($bridge.protocol), ws $($bridge.wsPort), PID $($bridge.pid))"
+}
+else { Flag "bridge.json names port $($bridge.wsPort), but no Valorant Overseer process is listening there" }
 
-RSection "Riot"
+Heading "Riot"
 $lockfile = Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Config\lockfile"
-if (Test-Path $lockfile) {
-    try {
-        # The Riot Client keeps it open for writing, and ReadAllText only
-        # shares with other readers, so it fails whenever the client is up.
-        $fs = New-Object System.IO.FileStream($lockfile, [System.IO.FileMode]::Open,
-            [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        try { $null = (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
-        Good "Riot lockfile present and readable (Riot Client is running)"
-    }
-    catch {
-        Bad "VG-RIOT-001 Riot lockfile exists but can't be read. Restart the Riot Client."
-    }
+if (-not (Test-Path $lockfile)) {
+    Say "Riot lockfile: not found, so the Riot Client isn't running. Live data needs the game open."
 }
 else {
-    DiagLine "Riot lockfile: not found, so the Riot Client isn't running. Live data needs the game open."
+    try {
+        # The Riot Client holds it open for writing, and ReadAllText only shares
+        # with other readers, so that fails whenever the client is up.
+        $stream = [System.IO.File]::Open($lockfile, "Open", "Read", "ReadWrite")
+        try { $null = (New-Object System.IO.StreamReader($stream)).ReadToEnd() } finally { $stream.Dispose() }
+        Pass "Riot lockfile present and readable (Riot Client is running)"
+    }
+    catch { Flag "VG-RIOT-001 Riot lockfile exists but can't be read. Restart the Riot Client." }
 }
 
-RSection "Recent Errors (Redacted)"
-$any = $false
-$logs = @("launcher", "install", "update", "backend", "backend-console", "websocket", "crash")
-foreach ($log in $logs) {
-    $f = Join-Path $OverseerDir "$log.log"
-    if (-not (Test-Path $f)) { continue }
-    $errs = Get-Content $f -Encoding UTF8 -ErrorAction SilentlyContinue |
-        Where-Object { $_ -match '\bERROR\b|\bVG-[A-Z]+-\d+\b|Traceback' } |
-        Select-Object -Last 5
-    foreach ($e in $errs) { $any = $true; DiagLine "[$log] $(Protect-OverseerText $e)" }
-}
-if (-not $any) { DiagLine "none found" }
+Heading "Recent Errors (Redacted)"
+$recent = @(foreach ($log in $Logs) {
+        $file = Join-Path $OverseerDir "$log.log"
+        if (-not (Test-Path $file)) { continue }
+        Get-Content $file -Encoding UTF8 -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match '\bERROR\b|\bVG-[A-Z]+-\d+\b|Traceback' } |
+            Select-Object -Last 5 |
+            ForEach-Object { "[$log] $(Protect-OverseerText $_)" }
+    })
+if ($recent.Count -eq 0) { Say "none found" }
+$recent | ForEach-Object { Say $_ }
 
 if ($Bundle) {
-    RSection "Support Bundle"
+    Heading "Support Bundle"
     $dest = $BundlePath
     if (-not $dest) {
-        $dest = Join-Path ([Environment]::GetFolderPath("Desktop")) `
-        ("overseer-support-" + [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss") + ".zip")
+        $stamp = [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss")
+        $dest = Join-Path ([Environment]::GetFolderPath("Desktop")) "overseer-support-$stamp.zip"
     }
     $work = Join-Path $env:TEMP ("vs-bundle-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $work | Out-Null
     try {
-        Write-FileNoBom (Join-Path $work "diagnose-report.txt") (($report | ForEach-Object { Protect-OverseerText $_ }) -join "`r`n")
-        foreach ($rel in @("VERSION", "runtime.json", "release-manifest.json")) {
-            $p = Join-Path $Root $rel
-            if (Test-Path $p) { Copy-Item $p (Join-Path $work (Split-Path -Leaf $rel)) }
+        $clean = $script:Report | ForEach-Object { Protect-OverseerText $_ }
+        Write-Text (Join-Path $work "diagnose-report.txt") ($clean -join "`r`n")
+        foreach ($name in "VERSION", "runtime.json", "release-manifest.json") {
+            $path = Join-Path $Root $name
+            if (Test-Path $path) { Copy-Item $path (Join-Path $work $name) }
         }
-        foreach ($name in @("installed.json", "deps.json")) {
-            $p = Join-Path $OverseerDir $name
-            if (Test-Path $p) {
-                Write-FileNoBom (Join-Path $work $name) (Protect-OverseerText (Get-Content $p -Raw -Encoding UTF8))
+        foreach ($name in "installed.json", "deps.json") {
+            $path = Join-Path $OverseerDir $name
+            if (Test-Path $path) {
+                Write-Text (Join-Path $work $name) (Protect-OverseerText (Get-Content $path -Raw -Encoding UTF8))
             }
         }
-        foreach ($log in $logs) {
-            $f = Join-Path $OverseerDir "$log.log"
-            if (Test-Path $f) {
-                $lines = Get-Content $f -Encoding UTF8 | Select-Object -Last 400 | ForEach-Object { Protect-OverseerText $_ }
-                Write-FileNoBom (Join-Path $work "$log.log") ($lines -join "`r`n")
-            }
+        foreach ($log in $Logs) {
+            $path = Join-Path $OverseerDir "$log.log"
+            if (-not (Test-Path $path)) { continue }
+            $tail = Get-Content $path -Encoding UTF8 | Select-Object -Last 400 | ForEach-Object { Protect-OverseerText $_ }
+            Write-Text (Join-Path $work "$log.log") ($tail -join "`r`n")
         }
         if (Test-Path $dest) { Remove-Item -Force $dest }
         Compress-Archive -Path (Join-Path $work "*") -DestinationPath $dest
-        Good "support bundle written: $dest"
+        Pass "support bundle written: $dest"
     }
-    finally {
-        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-    }
+    finally { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
 }
 
 Write-Host ""
-if ($exitCode -eq 0) { Ok "Diagnostics finished. Nothing is blocking the app." }
-else { Warn "Diagnostics finished. Fix the [X] items above. install.bat repairs most of them." }
-exit $exitCode
+if ($script:Blocked) { Warn "Diagnostics finished. Fix the [X] items above. install.bat repairs most of them." }
+else { Ok "Diagnostics finished. Nothing is blocking the app." }
+exit [int]$script:Blocked

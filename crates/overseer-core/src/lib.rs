@@ -10,10 +10,10 @@ pub mod profile;
 
 pub use board::{
     AutoTag, Board, BriefLine, Encounter, Evidence, LockProgress, MapWinRate, Party, Player,
-    Reading, Saved, Score, Tendencies, TendenciesBuy, TendenciesFinding, TendenciesGun, Session, SessionPoint, Skin,
-    StackGuess, Streak, TeamStats, TopAgent, WeaponSkin,
+    Reading, Saved, Score, Session, SessionPoint, Skin, StackGuess, Streak, TeamStats, Tendencies,
+    TendencyBuy, TendencyFinding, TendencyGun, TopAgent, WeaponSkin,
 };
 pub use bridge::{Bridge, Event, Status};
-pub use games::{Game, Line, Recent};
+pub use games::{Game, Line, Recent, Usual};
 pub use lineups::{Ability, Atlas, Clip, Drawing, Kit, Lineup, Plan, Tools};
 pub use profile::{CareerMatch, CoPlayer, Profile};

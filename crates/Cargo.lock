@@ -909,7 +909,6 @@ name = "eframe"
 version = "0.36.2"
 dependencies = [
  "ahash",
- "bytemuck",
  "document-features",
  "egui",
  "egui-wgpu",
@@ -919,23 +918,15 @@ dependencies = [
  "glutin",
  "glutin-winit",
  "image",
- "js-sys",
  "log",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
  "parking_lot",
- "percent-encoding",
  "pollster",
  "profiling",
  "raw-window-handle",
  "ron",
  "serde",
  "static_assertions",
- "wasm-bindgen",
- "web-sys",
  "web-time",
- "wgpu",
  "windows-sys 0.61.2",
  "winit",
 ]
@@ -2491,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-app"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2507,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-core"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2516,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-native"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "windows",
  "windows-core",
@@ -2524,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-setup"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2534,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "overseer-ui"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "egui",
  "image",

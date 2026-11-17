@@ -12,10 +12,8 @@ use crate::board::{self, Asked};
 use crate::controls::{self, Tone};
 use overseer_ui::{self, Face, caps_text, colour, motion, size, space};
 
-/// The steps to a board, in order.
 const STEPS: [&str; 4] = ["Overseer", "Riot Client", "VALORANT", "Match"];
 
-/// How often the step being waited on is redrawn as it moves, in seconds.
 const TICK: f64 = 1.0 / 30.0;
 
 /// How long the step being waited on moves for, in seconds. Each frame
@@ -23,17 +21,12 @@ const TICK: f64 = 1.0 / 30.0;
 /// there all day beside another game.
 const LIVELY: f64 = 10.0;
 
-/// How long the screen can be away, in seconds, before the wait counts as
-/// a new one when it comes back. A look at Lineups or the settings carries
-/// on, where a match in between starts over.
 const AWAY: f64 = 300.0;
 
 /// How long the light takes to run along the line into the step being
 /// waited on, and its pip to pulse once, in seconds.
 const BEAT: f64 = 1.2;
 
-/// What to say, which step is being waited on, and whether it failed
-/// rather than being slow.
 struct Stage<'a> {
     title: &'a str,
     detail: &'a str,
@@ -41,8 +34,6 @@ struct Stage<'a> {
     failed: bool,
 }
 
-/// Where things have got, from the bridge's status and what the empty board
-/// says it waits on.
 fn stage<'a>(
     status: &'a Status,
     board: &'a Board,
@@ -57,7 +48,6 @@ fn stage<'a>(
             0,
             false,
         ),
-        // What went wrong exactly is on the connection light's hover.
         (None, Status::Lost(_), _) => (
             "Not Connected",
             "Overseer lost its connection and keeps trying by itself. Reconnect Now tries again straight away.",
@@ -103,11 +93,6 @@ fn stage<'a>(
     }
 }
 
-/// What to say while there is no board, on a plate with the steps along
-/// its foot and how long this one has taken. Under it, Reconnect Now while
-/// the connection is down or stopped, and Show My Last Stats with your stats
-/// kept from an earlier board. Says which was pressed. `stopped` is None
-/// where nothing can be pressed, like the overlay.
 pub(super) fn empty(
     ui: &mut Ui,
     (status, board): (&Status, &Board),
@@ -124,7 +109,6 @@ pub(super) fn empty(
         offers.push((Asked::LastStats, "Show My Last Stats"));
     }
     let room = ui.available_rect_before_wrap();
-    // Painted, so a screen reader gets the same words from a node of their own.
     let said = ui.interact(room, ui.id().with("waiting-said"), Sense::hover());
     said.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -144,8 +128,6 @@ pub(super) fn empty(
     }
     let painter = ui.painter().clone();
     let width = 440.0_f32.min(space::XXL.mul_add(-2.0, rect.width()));
-    // Laid out first, because the plate is as tall as its sentence, and the
-    // longest sentence is whatever the bridge last refused to do.
     let mut job = egui::text::LayoutJob::simple(
         stage.detail.to_owned(),
         Face::Body.at(size::BODY),
@@ -202,8 +184,6 @@ pub(super) fn empty(
     offer(ui, plate.center().x, plate.bottom() + space::LG, &offers)
 }
 
-/// The buttons under the plate, side by side and centred on `x` with their
-/// top at `top`. Says which was pressed.
 fn offer(ui: &mut Ui, x: f32, top: f32, offers: &[(Asked, &str)]) -> Option<Asked> {
     let wide: f32 = 200.0;
     let count = offers.len() as f32;
@@ -224,11 +204,6 @@ fn offer(ui: &mut Ui, x: f32, top: f32, offers: &[(Asked, &str)]) -> Option<Aske
     asked
 }
 
-/// How long the screen has been saying `title`, in seconds. It starts
-/// again when the title changes, and when the screen comes back after
-/// [`AWAY`] seconds of drawing something else, so a wait doesn't go on from
-/// the last time the same words showed, hours ago. Coming back sooner
-/// carries on, without the step moving again.
 fn since(ui: &Ui, title: &str) -> f64 {
     let now = ui.input(|i| i.time);
     let pass = ui.ctx().cumulative_pass_nr();
@@ -245,8 +220,6 @@ fn since(ui: &Ui, title: &str) -> f64 {
     })
 }
 
-/// How long something has been going on, to the minute when the window is
-/// still, so it only needs drawing once a minute.
 pub(super) fn since_text(since: f64, still: bool) -> String {
     let seconds = since.max(0.0) as u64;
     match (still, seconds) {
@@ -256,7 +229,6 @@ pub(super) fn since_text(since: f64, still: bool) -> String {
     }
 }
 
-/// How often [`since_text`] changes, in seconds.
 pub(super) fn tick(since: f64, still: bool) -> f64 {
     if still || since >= 600.0 { 60.0 } else { 1.0 }
 }
@@ -271,7 +243,6 @@ pub(super) fn clock(seconds: u64) -> String {
     }
 }
 
-/// Your row as the backend last kept it on disk, or None before it kept one.
 pub(crate) fn kept(root: &Path) -> Option<Saved> {
     let file = root.join("backend").join("data").join("you.json");
     let raw = std::fs::read_to_string(file).ok()?;
@@ -280,8 +251,6 @@ pub(crate) fn kept(root: &Path) -> Option<Saved> {
         .filter(|you| you.player.puuid.is_some())
 }
 
-/// A board of just your kept row, drawn as your side of a lobby. Its party
-/// was the lobby it came from, which is long gone, so that is left off.
 pub(crate) fn kept_board(you: &Saved) -> Board {
     let mut player = you.player.clone();
     (player.party, player.stack_guess, player.encounter) = (None, None, None);
@@ -294,9 +263,6 @@ pub(crate) fn kept_board(you: &Saved) -> Board {
     }
 }
 
-/// The words on the plate: the headline, the sentence already laid out to
-/// decide how tall the plate had to be, and how long it has been waiting at
-/// the end of the line under them.
 fn words(
     painter: &egui::Painter,
     plate: Rect,
@@ -333,10 +299,6 @@ fn words(
     );
 }
 
-/// The steps across the foot of `plate`, lit up to `lit` as it eases
-/// towards `step`, the one being waited on. That one pulses with a light
-/// running along the line into it, `since` seconds into the wait, or is red
-/// when it `failed`.
 fn chain(
     painter: &egui::Painter,
     plate: Rect,
@@ -354,8 +316,6 @@ fn chain(
         let waited_on = at == step;
         if at > 0 {
             let (from, to) = (middle(at - 1) + 12.0, x - 12.0);
-            // Green once the step it leads to is done, so the line into the
-            // one being waited on stays grey under its moving light.
             painter.hline(
                 from..=to,
                 pips,
@@ -400,9 +360,7 @@ fn chain(
 enum Pip {
     /// Done this far, from 0 to 1.
     Done(f32),
-    /// Being waited on, this far through the beat when it moves.
     Waiting(Option<f32>),
-    /// Being waited on, and failed.
     Failed,
 }
 
@@ -440,11 +398,9 @@ fn pip(painter: &egui::Painter, centre: egui::Pos2, look: Pip) {
     painter.circle(centre, radius, fill, edge);
 }
 
-/// The same words with no furniture, for a window too short to hold any.
 fn plain(ui: &mut Ui, title: &str, detail: &str) {
     ui.add_space(space::XXL);
     let wide = ui.available_width();
-    // Centred and wrapped, as a reason can be longer than the window is wide.
     let mut job = egui::text::LayoutJob::simple(
         detail.to_owned(),
         Face::Body.at(size::BODY),
@@ -495,7 +451,6 @@ mod tests {
     fn your_kept_row_is_read_from_the_backends_folder() {
         let root = std::env::temp_dir().join(format!("overseer-kept-{}", std::process::id()));
         let data = root.join("backend").join("data");
-        // A run that failed half way leaves its folder for the next one.
         let _stale = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&data).expect("a temp folder");
         assert!(kept(&root).is_none(), "nothing kept yet");

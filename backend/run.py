@@ -1,9 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""The backend's launcher, which the window starts for itself.
-
-It checks the install, keeps one backend running at a time, and stops it when
-the window that started it closes.
-"""
+"""The backend's launcher, which the window starts for itself."""
 
 from __future__ import annotations
 
@@ -12,15 +8,20 @@ import contextlib
 import ctypes
 import faulthandler
 import hashlib
+import importlib.util
+import itertools
 import json
 import msvcrt
 import os
+import re
 import secrets
 import signal
 import socket
+import string
 import subprocess
 import sys
 import time
+from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,11 +29,15 @@ from typing import IO, NoReturn
 
 from common import env_number, load_env
 from common.check import check
-from common.system import NETSTAT, POWERSHELL, TASKKILL
+from common.system import NETSTAT, POWERSHELL, TASKKILL, image_of, parents
 
 BACKEND = Path(__file__).resolve().parent
 ROOT = BACKEND.parent
 OVERSEER_DIR = ROOT / ".overseer"
+_RUNTIME_STATE = OVERSEER_DIR / "runtime-state.json"
+_CONSOLE_LOG = OVERSEER_DIR / "backend-console.log"
+_INSIDE = (str(ROOT).rstrip("\\") + os.sep).lower()
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 try:
     import overseerlog
@@ -62,76 +67,40 @@ try:
     _k32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
     _k32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
     _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    _k32.OpenProcess.restype = wintypes.HANDLE
-    _k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    _k32.QueryFullProcessImageNameW.argtypes = (
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD),
-    )
 except _CTYPES_ERRORS as e:
     LOG.warning("could not set up kernel32: %r", e)
 
 
-def die(code: str, msg: str) -> NoReturn:
-    """Stop the launch with an error code, a dialog and the reason, and exit."""
-    LOG.error("%s %s", code, msg)
-    _fatal_dialog(f"{code}: {msg}")
-    sys.exit(1)
-
-
-def _fatal_dialog(message: str) -> None:
+def _tell(message: str) -> None:
     if "--prod" not in sys.argv:
         return
     try:
-        ctypes.windll.user32.MessageBoxW(
-            None,
-            f"{message}\n\nDetails: {OVERSEER_DIR / 'launcher.log'}",
-            "Valorant Overseer",
-            0x10,
-        )
+        ctypes.windll.user32.MessageBoxW(None, message, "Valorant Overseer", 0x10)
     except Exception as e:
-        # Broad because this runs on the way out of die(), and a failure here
-        # must not hide the error being reported.
-        LOG.warning("could not show the fatal dialog: %r", e)
+        LOG.warning("the dialog didn't show: %r", e)
+
+
+def die(code: str, msg: str) -> NoReturn:
+    """Log `msg` under `code`, show it, and end the launch."""
+    LOG.error("%s %s", code, msg)
+    _tell(f"{code}: {msg}\n\nDetails: {OVERSEER_DIR / 'launcher.log'}")
+    sys.exit(1)
 
 
 def resolve_python() -> str:
-    """Return the Python to run the backend with.
-
-    This install's own, or the one running this script when it has the backend's
-    packages, or else stop with how to fix it.
-    """
-    py = ROOT / ".venv" / "Scripts" / "python.exe"
-    if py.exists():
-        return str(py)
-    if (
-        subprocess.run(
-            [sys.executable, "-c", "import websockets"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode
-        == 0
-    ):
+    """Return the Python to run the backend with."""
+    own = ROOT / ".venv" / "Scripts" / "python.exe"
+    if own.exists():
+        return str(own)
+    if importlib.util.find_spec("websockets") is not None:
         return sys.executable
-    die(
-        "VG-PY-001",
-        "There is no Python environment in .venv. Run install.bat to set one up.",
-    )
+    die("VG-PY-001", "There is no Python environment in .venv. Run install.bat to set one up.")
 
 
-# The fingerprint of the last runtime that passed validate_runtime.
 _RUNTIME_OK = OVERSEER_DIR / "runtime-ok"
 
 
 def _runtime_stamp(py: str) -> str:
-    """Return a fingerprint of the packages installed for `py` and the pins they answer to.
-
-    Every installed version has a dist-info folder named after it, so any
-    install, upgrade or removal changes this. Empty when it can't be told.
-    """
     site = Path(py).parent.parent / "Lib" / "site-packages"
     try:
         names = sorted(n.name for n in site.iterdir() if n.name.endswith(".dist-info"))
@@ -151,11 +120,7 @@ def forget_runtime() -> None:
 
 
 def validate_runtime(py: str) -> None:
-    """Check the runtime's packages match the pins before anything starts.
-
-    Each check starts Python again, which is most of a second on a slow PC, so
-    a runtime that passed and hasn't changed since isn't checked again.
-    """
+    """Check the runtime's packages match the pins before anything starts."""
     stamp = _runtime_stamp(py)
     try:
         if stamp and _RUNTIME_OK.read_text(encoding="utf-8") == stamp:
@@ -170,42 +135,47 @@ def validate_runtime(py: str) -> None:
             _RUNTIME_OK.write_text(stamp, encoding="utf-8")
 
 
+_CHECK_WAIT = 120
+
+
 def _check_runtime(py: str) -> None:
-    exact = ROOT / "scripts" / "verify_installed.py"
-    requirements = BACKEND / "requirements.txt"
-    if exact.exists() and requirements.exists():
-        r = subprocess.run(
-            [py, str(exact), "--requirements", str(requirements)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if r.returncode != 0:
-            LOG.error(
-                "VG-DEPS-001 exact dependency check failed:\n%s", (r.stderr or r.stdout).strip()
+    pins = BACKEND / "requirements.txt"
+    repair = "Run install.bat to repair them. Your settings and data are kept."
+    checks: tuple[tuple[Path, list[str], str], ...] = (
+        (
+            ROOT / "scripts" / "verify_installed.py",
+            ["--requirements", str(pins)],
+            "The installed packages don't match this release.",
+        ),
+        (
+            ROOT / "scripts" / "import_smoke.py",
+            [],
+            "Some installed packages are broken or missing.",
+        ),
+    )
+    for script, args, fault in checks:
+        if not script.exists() or (args and not pins.exists()):
+            continue
+        try:
+            ran = subprocess.run(
+                [py, str(script), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_CHECK_WAIT,
             )
-            die(
-                "VG-DEPS-001",
-                "The installed packages don't match this release. "
-                "Run install.bat to repair them. Your settings and data are kept.",
-            )
-    smoke = ROOT / "scripts" / "import_smoke.py"
-    if not smoke.exists():
-        return
-    r = subprocess.run([py, str(smoke)], capture_output=True, text=True, check=False)
-    if r.returncode != 0:
-        LOG.error("VG-DEPS-001 import smoke failed:\n%s", r.stderr.strip())
-        die(
-            "VG-DEPS-001",
-            "Some installed packages are broken or missing. "
-            "Run install.bat to repair them. Your settings and data are kept.",
-        )
+        except subprocess.TimeoutExpired:
+            # An antivirus scan holding the imports is slow, not broken, and
+            # a check that never ends must not keep the app from starting.
+            LOG.warning("%s took over %ss, so it was skipped", script.name, _CHECK_WAIT)
+            continue
+        if ran.returncode != 0:
+            LOG.error("VG-DEPS-001 %s failed:\n%s", script.name, (ran.stderr or ran.stdout).strip())
+            die("VG-DEPS-001", f"{fault} {repair}")
 
 
 @dataclass
 class _State:
-    """The mutex that says this launch is the app, once it holds it."""
-
     instance_lock: int | None = None
 
 
@@ -213,88 +183,111 @@ _STATE = _State()
 
 
 def _path_fingerprint() -> str:
-    # Must match Get-PathFingerprint in scripts/common.ps1, which lowercases
-    # ASCII only, or the two sides name different mutexes.
-    base = str(ROOT).rstrip("\\")
-    lowered = "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in base)
-    return hashlib.sha256(lowered.encode("utf-8")).hexdigest()[:16].upper()
+    # Has to agree with Get-FolderId in scripts/common.ps1, which lowers
+    # ASCII letters alone, or the two sides name different mutexes.
+    folded = str(ROOT).rstrip("\\").translate(_ASCII_LOWER)
+    return hashlib.sha256(folded.encode("utf-8")).hexdigest()[:16].upper()
 
 
 def _mutex_name(purpose: str) -> str:
     return rf"Local\Overseer-{purpose}-{_path_fingerprint()}"
 
 
-def _my_process_tree() -> set[int]:
-    mine = {os.getpid()}
-    pid = os.getpid()
-    for _ in range(4):
-        ppid = _parent_pid(pid)
-        if not ppid:
-            break
-        mine.add(ppid)
-        pid = ppid
-    return mine
-
-
-def _kill_leftover_instances() -> bool:
-    mine = _my_process_tree()
-    pids = set()
+def _end(pid: int, *, force: bool = True) -> None:
     try:
-        state = json.loads((OVERSEER_DIR / "runtime-state.json").read_text(encoding="utf-8"))
-        pid = int(state.get("pid", 0))
-        if pid > 0 and pid not in mine and _is_ours(pid):
-            pids.add(pid)
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError, TypeError, AttributeError) as e:
-        LOG.warning("unreadable runtime-state.json: %r", e)
-    try:
-        env = os.environ.copy()
-        env["VS_MATCH"] = (str(BACKEND) + os.sep + "run.py").lower()
-        out = subprocess.run(
-            [
-                POWERSHELL,
-                "-NoProfile",
-                "-Command",
-                (
-                    "$m = $env:VS_MATCH; Get-CimInstance Win32_Process -Filter "
-                    "\"Name like 'py%'\" | Where-Object { $_.CommandLine -and "
-                    "$_.CommandLine.ToLower().Contains($m) } | "
-                    "ForEach-Object { $_.ProcessId }"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=env,
-            check=False,
-        ).stdout
-        for tok in out.split():
-            if tok.isdigit() and int(tok) not in mine:
-                pids.add(int(tok))
-    # text=True decodes with the console code page, and output it can't
-    # decode leaves stdout as None, which the parsing below trips on.
-    except (OSError, subprocess.SubprocessError, AttributeError, TypeError) as e:
-        LOG.warning("could not list leftover instances: %r", e)
-    if not pids:
-        return False
-    for pid in pids:
-        LOG.info("killing leftover instance pid=%s to take over", pid)
         subprocess.run(
-            [TASKKILL, "/PID", str(pid), "/T", "/F"],
+            [TASKKILL, "/PID", str(pid), "/T", *(["/F"] if force else [])],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=15,
         )
-    return True
+    except (OSError, subprocess.SubprocessError) as e:
+        LOG.warning("ending %s failed: %r", pid, e)
+
+
+def _parent_map() -> dict[int, int]:
+    try:
+        return parents()
+    except OSError as e:
+        LOG.warning("the process list failed: %r", e)
+        return {}
+
+
+def _mine(parent_of: dict[int, int]) -> set[int]:
+    mine: set[int] = set()
+    pid = os.getpid()
+    while pid and pid not in mine and len(mine) < 5:
+        mine.add(pid)
+        pid = parent_of.get(pid, 0)
+    return mine
+
+
+def _python_commands() -> dict[int, str]:
+    # A Toolhelp snapshot has no command lines, so this one question goes to WMI.
+    query = (
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+        "Get-CimInstance Win32_Process -Filter \"Name like 'py%'\" | "
+        "ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
+    )
+    try:
+        out = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-Command", query],
+            capture_output=True,
+            timeout=20,
+            check=False,
+        ).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as e:
+        LOG.warning("the running Pythons weren't listed: %r", e)
+        return {}
+    commands = {}
+    for line in out.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if pid.isdigit():
+            commands[int(pid)] = command.lower()
+    return commands
+
+
+def _ours(pid: int, parent_of: dict[int, int], commands: dict[int, str]) -> bool:
+    # Two above, as the venv's python.exe starts the real interpreter, which
+    # runs from wherever Python is installed.
+    for _ in range(3):
+        if not pid:
+            return False
+        if _INSIDE in f"{image_of(pid)} {commands.get(pid, '')}".lower():
+            return True
+        pid = parent_of.get(pid, 0)
+    return False
+
+
+def _recorded_pid() -> int:
+    try:
+        state = json.loads(_RUNTIME_STATE.read_text(encoding="utf-8"))
+        return max(int(state.get("pid", 0)), 0)
+    except FileNotFoundError:
+        return 0
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        LOG.warning("runtime-state.json couldn't be read: %r", e)
+        return 0
+
+
+def _kill_leftover_instances() -> bool:
+    parent_of = _parent_map()
+    commands = _python_commands()
+    script = str(BACKEND / "run.py").lower()
+    leftover = {pid for pid, command in commands.items() if script in command}
+    recorded = _recorded_pid()
+    if recorded and _ours(recorded, parent_of, commands):
+        leftover.add(recorded)
+    leftover -= _mine(parent_of)
+    for pid in leftover:
+        LOG.info("ending pid %s, a launch left over from before", pid)
+        _end(pid)
+    return bool(leftover)
 
 
 def acquire_instance_lock() -> bool:
-    """Take the mutex that makes this launch the app.
-
-    A launch left over from before is stopped first. False when another launch
-    still holds it, or the mutex couldn't be made.
-    """
+    """Take the mutex that makes this launch the app."""
     kernel = ctypes.windll.kernel32
     try:
         handle = kernel.CreateMutexW(None, 0, _mutex_name("App"))
@@ -329,184 +322,71 @@ def release_instance_lock() -> None:
 
 def write_runtime_state(ws_port: int) -> None:
     """Write this launch's pid and port, for maintenance to find the app by."""
+    state = {"pid": os.getpid(), "wsPort": int(ws_port), "startedAt": int(time.time())}
+    fresh = _RUNTIME_STATE.with_suffix(".tmp")
     try:
         OVERSEER_DIR.mkdir(exist_ok=True)
-        path = OVERSEER_DIR / "runtime-state.json"
-        temp = path.with_suffix(".tmp")
-        temp.write_text(
-            json.dumps(
-                {
-                    "pid": os.getpid(),
-                    "wsPort": int(ws_port),
-                    "startedAt": int(time.time()),
-                }
-            ),
-            encoding="utf-8",
-        )
-        temp.replace(path)
+        fresh.write_text(json.dumps(state), encoding="utf-8")
+        fresh.replace(_RUNTIME_STATE)
     except OSError:
-        LOG.warning("couldn't write runtime-state.json (non-fatal)", exc_info=True)
+        LOG.warning(
+            "runtime-state.json wasn't written, which only maintenance misses", exc_info=True
+        )
 
 
 def clear_runtime_state() -> None:
     """Delete this launch's runtime state, once it stops."""
     with contextlib.suppress(OSError):
-        (OVERSEER_DIR / "runtime-state.json").unlink(missing_ok=True)
-
-
-def _pid_exe(pid: int) -> str:
-    try:
-        k32 = ctypes.windll.kernel32
-        h = k32.OpenProcess(0x1000, 0, pid)
-        if not h:
-            return ""
-        try:
-            buf = ctypes.create_unicode_buffer(1024)
-            size = ctypes.c_ulong(1024)
-            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
-                return buf.value
-            return ""
-        finally:
-            k32.CloseHandle(h)
-    except _CTYPES_ERRORS as e:
-        LOG.warning("could not read the image name of pid %s: %r", pid, e)
-        return ""
-
-
-def _parent_pid(pid: int) -> int:
-    try:
-        lines = subprocess.run(
-            [
-                POWERSHELL,
-                "-NoProfile",
-                "-Command",
-                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        ).stdout.splitlines()
-        ppid = lines[0].strip() if lines else ""
-        return int(ppid) if ppid.isdigit() else 0
-    # text=True decodes with the console code page, and output it can't
-    # decode leaves stdout as None, which the parsing below trips on.
-    except (OSError, subprocess.SubprocessError, AttributeError, TypeError) as e:
-        LOG.warning("could not look up pid %s: %r", pid, e)
-        return 0
-
-
-def _is_ours(pid: int) -> bool:
-    prefix = (str(ROOT).rstrip("\\") + os.sep).lower()
-    env = os.environ.copy()
-    env["VS_PREFIX"] = prefix
-    ps = (
-        f"$cur = {pid}; foreach ($hop in 1..3) {{ "
-        '$p = Get-CimInstance Win32_Process -Filter "ProcessId=$cur"; '
-        "if (-not $p) { break }; "
-        '$hay = ("$($p.ExecutablePath) $($p.CommandLine)").ToLower(); '
-        "if ($hay.Contains($env:VS_PREFIX)) { 'VS_OURS'; break }; "
-        "if (-not $p.ParentProcessId) { break }; "
-        "$cur = $p.ParentProcessId }"
-    )
-    try:
-        out = subprocess.run(
-            [POWERSHELL, "-NoProfile", "-Command", ps],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=env,
-            check=False,
-        ).stdout
-    # text=True decodes with the console code page, and output it can't
-    # decode leaves stdout as None, which the parsing below trips on.
-    except (OSError, subprocess.SubprocessError, AttributeError, TypeError) as e:
-        LOG.warning("could not tell whether pid %s is ours: %r", pid, e)
-        return False
-    else:
-        return "VS_OURS" in out
+        _RUNTIME_STATE.unlink(missing_ok=True)
 
 
 def _port_free(port: int) -> bool:
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-            s.bind(("127.0.0.1", int(port)))
+        probe = socket.create_server(("127.0.0.1", port))
     except OSError:
         return False
-    else:
-        return True
+    probe.close()
+    return True
 
 
-def _port_pids(port: int) -> set[int]:
-    out = ""
-    for proto in ("TCP", "TCPv6"):
-        try:
-            out += subprocess.run(
-                [NETSTAT, "-ano", "-p", proto],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            ).stdout
-        # text=True decodes with the console code page, and output it can't
-        # decode leaves stdout as None, which the parsing below trips on.
-        except (OSError, subprocess.SubprocessError, AttributeError, TypeError) as e:
-            LOG.warning("netstat -p %s failed: %r", proto, e)
-    me = os.getpid()
-    pids = set()
-    for line in out.splitlines():
-        parts = line.split()
-        if (
-            len(parts) >= 5
-            and parts[1].endswith(f":{port}")
-            and parts[2] in ("0.0.0.0:0", "[::]:0")
-        ):
-            try:
-                pid = int(parts[4])
-            except ValueError:
-                continue
-            if pid not in (0, 4, me):
-                pids.add(pid)
-    return pids
+def _port_holders(port: int) -> set[int]:
+    try:
+        out = subprocess.run(
+            [NETSTAT, "-ano"], capture_output=True, timeout=15, check=False
+        ).stdout.decode("ascii", "replace")
+    except (OSError, subprocess.SubprocessError) as e:
+        LOG.warning("netstat failed: %r", e)
+        return set()
+    # Picked out by the empty far end, as Windows translates the word LISTENING.
+    listening = re.compile(
+        rf"^\s*TCP\s+\S+:{port}\s+(?:0\.0\.0\.0|\[::\]):0\s+\S+\s+(\d+)\s*$", re.MULTILINE
+    )
+    return {int(pid) for pid in listening.findall(out)} - {0, 4, os.getpid()}
 
 
 def _kill_our_stale(port: int) -> bool:
-    killed = False
-    root = str(ROOT).lower()
-    prefix = root.rstrip("\\") + os.sep
-    for pid in _port_pids(port):
-        exe = _pid_exe(pid).lower()
-        if exe == root or exe.startswith(prefix) or _is_ours(pid):
-            LOG.info("closing our stale instance pid=%s on port %s", pid, port)
-            subprocess.run(
-                [TASKKILL, "/PID", str(pid), "/T"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-            killed = True
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline and not _port_free(port):
-                time.sleep(0.15)
-            if not _port_free(port):
-                LOG.warning("stale pid %s ignored graceful shutdown; forcing it", pid)
-                subprocess.run(
-                    [TASKKILL, "/PID", str(pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-    return killed
+    holders = _port_holders(port)
+    if not holders:
+        return False
+    parent_of, commands = _parent_map(), _python_commands()
+    ended = False
+    for pid in holders:
+        if not _ours(pid, parent_of, commands):
+            continue
+        LOG.info("asking pid %s, a backend of ours left on port %s, to close", pid, port)
+        _end(pid, force=False)
+        ended = True
+        until = time.monotonic() + 3
+        while not _port_free(port) and time.monotonic() < until:
+            time.sleep(0.15)
+        if not _port_free(port):
+            LOG.warning("pid %s didn't close when asked, so it is forced", pid)
+            _end(pid)
+    return ended
 
 
 def choose_port(preferred: str | int, label: str) -> int:
-    """Return a free port for `label`, `preferred` when it can be had.
-
-    A stale backend of ours holding it is stopped first. Otherwise one of the
-    twenty above it, with a warning naming what holds it, or stop when every one
-    is taken.
-    """
+    """Return a free port for `label`, `preferred` when it can be had."""
     preferred = int(preferred)
     if _port_free(preferred):
         return preferred
@@ -515,10 +395,7 @@ def choose_port(preferred: str | int, label: str) -> int:
             if _port_free(preferred):
                 return preferred
             time.sleep(0.25)
-    holder = ""
-    for pid in _port_pids(preferred):
-        holder = _pid_exe(pid) or f"PID {pid}"
-        break
+    holder = next((image_of(pid) or f"PID {pid}" for pid in _port_holders(preferred)), "")
     for alt in range(preferred + 1, preferred + 21):
         if _port_free(alt):
             LOG.warning(
@@ -550,38 +427,33 @@ def wait_bridge(launch_id: str, timeout: float) -> bool:
             if int(data.get("wsPort", 0)) > 0 and data.get("launchId") == launch_id:
                 return True
         except (OSError, ValueError, TypeError, AttributeError):
-            # Missing, or not this launch's yet. Keep polling.
             pass
         time.sleep(0.6)
     LOG.warning("the backend didn't write %s within %ss", bridge, int(timeout))
     return False
 
 
-def _rotate(path: Path, max_bytes: int = 2 * 1024 * 1024, backups: int = 5) -> None:
+def _rotate(path: Path, keep: int = 5, over: int = 2 * 1024 * 1024) -> None:
+    names = [path, *(path.with_name(f"{path.name}.{n}") for n in range(1, keep + 1))]
     try:
-        if path.exists() and path.stat().st_size > max_bytes:
-            for i in range(backups - 1, 0, -1):
-                src = path.with_suffix(path.suffix + f".{i}")
-                if src.exists():
-                    src.replace(path.with_suffix(path.suffix + f".{i + 1}"))
-            path.replace(path.with_suffix(path.suffix + ".1"))
+        if path.stat().st_size <= over:
+            return
+        for newer, older in reversed(list(itertools.pairwise(names))):
+            if newer.exists():
+                newer.replace(older)
     except OSError:
         pass
 
 
 def backend_output(*, prod: bool) -> IO[str] | None:
-    """Open the backend's console log, rotated, for a launch with --prod.
-
-    Without --prod, or when it won't open, the backend prints here instead.
-    """
+    """Open the backend's console log, rotated, for a launch with --prod."""
     if not prod:
         return None
     try:
         OVERSEER_DIR.mkdir(exist_ok=True)
-        log = OVERSEER_DIR / "backend-console.log"
-        _rotate(log)
+        _rotate(_CONSOLE_LOG)
         # Line buffered, so the last lines before a crash make it to disk.
-        return log.open("a", encoding="utf-8", errors="replace", buffering=1)
+        return _CONSOLE_LOG.open("a", encoding="utf-8", errors="replace", buffering=1)
     except OSError:
         return None
 
@@ -589,10 +461,11 @@ def backend_output(*, prod: bool) -> IO[str] | None:
 def tail_backend_log(lines: int = 12) -> str:
     """Return the backend console log's last `lines` lines, for an error message."""
     try:
-        text = (OVERSEER_DIR / "backend-console.log").read_text(encoding="utf-8", errors="replace")
-        return "\n".join(text.splitlines()[-lines:])
+        with _CONSOLE_LOG.open(encoding="utf-8", errors="replace") as log:
+            last = deque(log, maxlen=lines)
     except OSError:
         return ""
+    return "".join(last).rstrip("\n")
 
 
 def stop(proc: subprocess.Popen[bytes]) -> None:
@@ -605,23 +478,13 @@ def stop(proc: subprocess.Popen[bytes]) -> None:
         proc.wait(timeout=2)
         return
     LOG.warning("pid %s ignored a graceful shutdown, so its process tree is forced", proc.pid)
-    subprocess.run(
-        [TASKKILL, "/PID", str(proc.pid), "/T", "/F"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    _end(proc.pid)
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=1.5)
 
 
 def first_to_end(*pids: int) -> int:
-    """Wait for any of `pids` to end and return which, by its place in the call.
-
-    One wait on all of them, rather than a look every half second, so a
-    launcher with nothing to do never wakes the CPU. A process that can't be
-    opened has ended already.
-    """
+    """Wait for any of `pids` to end and return which, by its place in the call."""
     synchronize, inherit, wait_all = 0x00100000, False, False
     handles = []
     try:
@@ -646,8 +509,6 @@ def wait_window(parent: int | None) -> None:
 
 
 def _write_to(log: IO[str]) -> None:
-    # Where a child given `log` as its output would write, down to the handles
-    # the programs it starts inherit.
     sys.stdout.flush()
     sys.stderr.flush()
     for std, fd in ((-11, 1), (-12, 2)):
@@ -662,11 +523,7 @@ def serves_here(py: str) -> bool:
 
 
 def serve_here(py: str, ws_port: int, launch_id: str, log: IO[str] | None) -> None:
-    """Start the backend in this process, or stop with why it didn't start.
-
-    A second interpreter for app.py costs 17 MB and a start of its own, for a
-    launcher that only sits and waits on it.
-    """
+    """Start the backend in this process, or stop with why it didn't start."""
     os.environ["WS_PORT"] = str(ws_port)
     os.environ["OVERSEER_LAUNCH_ID"] = launch_id
     os.chdir(BACKEND)
@@ -685,11 +542,7 @@ def serve_here(py: str, ws_port: int, launch_id: str, log: IO[str] | None) -> No
 
         app.start()
     except (Exception, SystemExit):
-        # Broad because anything app.py raises on the way up is a backend that
-        # didn't start, and it has to say so rather than leave the window waiting.
         LOG.exception("VG-BACKEND-001 backend did not start")
-        # A quarantined or broken package is the usual cause, and that has its
-        # own error with a way to repair it.
         _check_runtime(py)
         die("VG-BACKEND-001", "The backend didn't start.")
     if stamp is not None:
@@ -710,7 +563,6 @@ def main() -> None:
     load_env(ROOT / ".env", BACKEND / ".env")
     parent = parent_pid()
     if not acquire_instance_lock():
-        # Another backend is serving already, and the window will find it.
         LOG.info("a backend is already being served, so this launch leaves it")
         return
     py = resolve_python()
@@ -729,7 +581,6 @@ def main() -> None:
         )
         env = os.environ.copy()
         env["WS_PORT"] = str(ws_port)
-        # Stamped into bridge.json so this launch can recognise its own.
         launch_id = secrets.token_hex(8)
         env["OVERSEER_LAUNCH_ID"] = launch_id
         LOG.info("starting stack: ws=%s", ws_port)
@@ -740,7 +591,6 @@ def main() -> None:
             wait_window(parent)
             LOG.info("the window that started this backend has closed, so it is shutting down")
             return
-        # Its own process group, so stop() can send it CTRL_BREAK alone.
         proc = subprocess.Popen(
             [py, "app.py"],
             cwd=str(BACKEND),
@@ -776,43 +626,28 @@ def main() -> None:
         release_instance_lock()
         clear_runtime_state()
         if served:
-            # The backend's pools and clip downloads would hold up the exit,
-            # and nothing they are doing matters once the window is gone.
             os._exit(0)
 
 
 def _report_crash() -> None:
     import traceback
 
-    tb = traceback.format_exc()
-    print(tb, file=sys.stderr)
-    log = OVERSEER_DIR / "crash.log"
+    trace = traceback.format_exc()
+    print(trace, file=sys.stderr)
+    crash = OVERSEER_DIR / "crash.log"
     try:
-        log.parent.mkdir(exist_ok=True)
-        _rotate(log)
-        with log.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n--- {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} ---\n{tb}")
+        OVERSEER_DIR.mkdir(exist_ok=True)
+        _rotate(crash)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with crash.open("a", encoding="utf-8") as log:
+            log.write(f"\n--- {stamp} ---\n{trace}")
     except OSError as e:
-        LOG.warning("could not write %s: %r", log, e)
-    if "--prod" in sys.argv:
-        try:
-            last = tb.strip().splitlines()[-1]
-            ctypes.windll.user32.MessageBoxW(
-                None,
-                f"Valorant Overseer stopped with an error.\n\n{last}\n\n"
-                f"Details were saved to:\n{log}",
-                "Valorant Overseer",
-                0x10,
-            )
-        except Exception as e:
-            # The crash is already on stderr and in crash.log. Nothing here
-            # may raise over it.
-            LOG.warning("could not show the crash dialog: %r", e)
+        LOG.warning("%s wasn't written: %r", crash, e)
+    last = trace.strip().rpartition("\n")[2]
+    _tell(f"Valorant Overseer stopped with an error.\n\n{last}\n\nDetails were saved to:\n{crash}")
 
 
 if __name__ == "__main__" and "--self-check" in sys.argv:
-    # The launcher decides whether anything runs at all, so its wait for the
-    # bridge is checked against fixtures and against a real backend.
     import tempfile
 
     _real_dir = OVERSEER_DIR
@@ -823,15 +658,12 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
     with tempfile.TemporaryDirectory() as _tmp:
         OVERSEER_DIR = Path(_tmp)
 
-        # A file left by the previous launch must not count as this one.
         _bridge(wsPort=7878, pid=4242, launchId="an-older-launch")
         check(not wait_bridge("mine", 1.2), "a stale bridge was accepted")
 
-        # A bridge with no port is not a bridge.
         _bridge(wsPort=0, pid=999, launchId="mine")
         check(not wait_bridge("mine", 1.2), "a portless bridge was accepted")
 
-        # A runtime is checked again once any package in it changes.
         _site = Path(_tmp) / "venv" / "Lib" / "site-packages"
         _site.mkdir(parents=True)
         _py = str(Path(_tmp) / "venv" / "Scripts" / "python.exe")
@@ -844,8 +676,6 @@ if __name__ == "__main__" and "--self-check" in sys.argv:
 
     OVERSEER_DIR = _real_dir
 
-    # Only a real python, actually spawned, re-execs into a second process,
-    # which is what breaks matching on pid. No fixture can stand in for it.
     _kept = None
     _bridge_path = OVERSEER_DIR / "bridge.json"
     if _bridge_path.exists():

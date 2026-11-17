@@ -35,7 +35,6 @@ const NAMES: [(&str, &str); 15] = [
     ("AVeryLongNameIndeed#0000", "Demonwon#1337"),
     ("DriftFrag#RR", "Zekkerz#zkn"),
     ("SageDiff#EUW", "Sacymono#2403"),
-    // Your own row in the history's match, so it is you there too.
     ("SaltiSmySugar#OBAMA", YOU),
     ("Xan#NA1", "ChronoKale#kale"),
     ("SumsItUp#777", "f0rsook#1231"),
@@ -44,10 +43,8 @@ const NAMES: [(&str, &str); 15] = [
     ("Wanderlust#EUW", "Derkovic#003"),
 ];
 
-/// Who the board's picture has selected, by the name the site shows.
 const SELECTED: &str = "Vexlyn#4AM";
 
-/// You, by the name the site shows.
 const YOU: &str = "Tenzei#0505";
 
 /// Swaps every Riot ID in `text` for its site name.
@@ -57,23 +54,16 @@ fn renamed(text: &str) -> String {
         .fold(text.to_owned(), |text, (from, to)| text.replace(from, to))
 }
 
-/// One row's numbers as a ranked lobby has them.
 struct Line {
     /// Their Riot ID.
     name: &'static str,
-    /// Their rank and its tier.
     rank: (&'static str, u32),
-    /// The best rank they have reached, its tier, and the act it was in.
     peak: (&'static str, u32, &'static str),
     rr: i64,
     kd: f64,
-    /// Headshot share, in percent.
     hs: f64,
-    /// Act win rate and the ranked games behind it.
     won: (f64, u32),
     level: u32,
-    /// The results the K/D was read from, newest first, which is what the
-    /// games column counts.
     form: &'static str,
 }
 
@@ -223,7 +213,6 @@ const LOBBY: [(&str, Line); 10] = [
     ),
 ];
 
-/// A tag with the sentence the backend would have read it from.
 fn tag(tag: &str, why: &str, kind: &str) -> overseer_core::AutoTag {
     overseer_core::AutoTag {
         tag: Some(tag.to_owned()),
@@ -233,7 +222,6 @@ fn tag(tag: &str, why: &str, kind: &str) -> overseer_core::AutoTag {
     }
 }
 
-/// Puts one row's numbers from [`LOBBY`] on a player, with the run they are on.
 fn set(p: &mut Player, line: &Line) {
     p.name = Some(line.name.to_owned());
     p.rank = Some(line.rank.0.to_owned());
@@ -259,8 +247,6 @@ fn set(p: &mut Player, line: &Line) {
     p.smurf_evidence.clear();
 }
 
-/// The two flagged accounts' reasons, worked out from their numbers the way
-/// the backend's own rules do, and the rest of what the panel shows of them.
 fn flag(p: &mut Player) {
     match p.name.as_deref() {
         Some("Riftborn#0210") => {
@@ -342,12 +328,12 @@ fn vexlyn(p: &mut Player) {
         tag(
             "aggressive",
             "Takes fights sooner than 89% of peers",
-            "Tendencies",
+            "Tendency",
         ),
         tag(
             "first bloods",
             "Opens with a kill more than 93% of peers",
-            "Tendencies",
+            "Tendency",
         ),
         tag("hot", "Won their last 4", "Form"),
     ];
@@ -355,7 +341,6 @@ fn vexlyn(p: &mut Player) {
     p.brief = all_figures();
 }
 
-/// The lines under All Figures, worded the way the backend words them.
 fn all_figures() -> Vec<overseer_core::BriefLine> {
     [
         (
@@ -422,11 +407,9 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
     .collect()
 }
 
-/// The selected enemy's Tendencies section, worded the way the backend words it:
-/// an aggressive Operator player who takes the first fight.
 fn tendencies() -> overseer_core::Tendencies {
     let finding = |headline: &str, evidence: &str, suggest: &str, pct: f32, ends: (&str, &str)| {
-        overseer_core::TendenciesFinding {
+        overseer_core::TendencyFinding {
             headline: Some(headline.to_owned()),
             evidence: Some(evidence.to_owned()),
             suggest: Some(suggest.to_owned()),
@@ -434,7 +417,7 @@ fn tendencies() -> overseer_core::Tendencies {
             left: Some(ends.0.to_owned()),
             right: Some(ends.1.to_owned()),
             share: Some(crate::panel::ordinal(pct)),
-            ..overseer_core::TendenciesFinding::default()
+            ..overseer_core::TendencyFinding::default()
         }
     };
     overseer_core::Tendencies {
@@ -462,28 +445,26 @@ fn tendencies() -> overseer_core::Tendencies {
                 ("close", "long range"),
             ),
         ],
-        buy: Some(overseer_core::TendenciesBuy {
+        buy: Some(overseer_core::TendencyBuy {
             label: Some("Pistol · 36 past rounds".to_owned()),
             armor: Some("Light armor 25/36".to_owned()),
             items: vec![
-                overseer_core::TendenciesGun {
+                overseer_core::TendencyGun {
                     name: Some("Ghost".to_owned()),
                     value: Some("22/36".to_owned()),
                 },
-                overseer_core::TendenciesGun {
+                overseer_core::TendencyGun {
                     name: Some("Classic".to_owned()),
                     value: Some("14/36".to_owned()),
                 },
             ],
-            ..overseer_core::TendenciesBuy::default()
+            ..overseer_core::TendencyBuy::default()
         }),
         footer: Some("Last 18 ranked games · 15 on Clove".to_owned()),
         ..overseer_core::Tendencies::default()
     }
 }
 
-/// The site's lobby: the snapshot board's shapes with the numbers a real
-/// Platinum match has, and nobody hidden.
 fn lobby() -> Board {
     let mut board = sample();
     for p in &mut board.players {
@@ -501,7 +482,6 @@ fn lobby() -> Board {
                 p.agent_color = Some("#3D2C44".to_owned());
             }
             YOU => {
-                // The session's last game, a win.
                 p.rr_earned = Some(19);
             }
             "Boastful#yuh" => {
@@ -540,7 +520,6 @@ fn lobby() -> Board {
                 });
         }
     }
-    // The backend's own order: your side first, then by rank, then level.
     let ours = board.self_team.clone();
     board.players.sort_by_key(|p| {
         (
@@ -576,7 +555,6 @@ const ECONOMY: [(&str, &str, &str); 7] = [
     ("Sacymono#2403", "saves", "6 of 7"),
 ];
 
-/// What one picture is of.
 enum Shot {
     Window(Box<Scene>),
     History(Box<History>),
@@ -585,7 +563,6 @@ enum Shot {
     Lineups(Box<(Lineups, Bridge)>),
 }
 
-/// Agent select, where only your own team is known.
 fn agent_select() -> Board {
     let mut board = lobby();
     board.players.retain(|p| p.team == board.self_team);
@@ -598,7 +575,6 @@ fn agent_select() -> Board {
     }
 }
 
-/// Every picture, by name and size in points.
 fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     let board = || {
         Shot::Window(Box::new(
@@ -609,7 +585,6 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     };
     vec![
         ("board", vec2(1600.0, 980.0), board()),
-        // The same board, tall enough for the whole of Vexlyn's panel.
         ("panel", vec2(1600.0, 1000.0), board()),
         (
             "pregame",
@@ -637,7 +612,6 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     ]
 }
 
-/// Draws one picture.
 fn paint(ui: &mut Ui, shot: &mut Shot) {
     match shot {
         Shot::Window(scene) => draw(ui, scene),
@@ -669,7 +643,6 @@ fn paint(ui: &mut Ui, shot: &mut Shot) {
         }
         Shot::Lineups(screen) => {
             let (lineups, bridge) = &mut **screen;
-            // The app's default, attackers at the bottom.
             show_lineups(ui, lineups, bridge, MapTurn::Attack);
         }
         Shot::Overlay(board) => {
@@ -682,8 +655,6 @@ fn paint(ui: &mut Ui, shot: &mut Shot) {
     }
 }
 
-/// The map and agent in the file at `path`, with six Brimstone incendiaries
-/// on Haven's three sites, two a site, thrown from the attackers' side.
 fn haven(path: &str) -> serde_json::Value {
     let mut atlas: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(&std::fs::read_to_string(path).expect("the atlas file reads"))

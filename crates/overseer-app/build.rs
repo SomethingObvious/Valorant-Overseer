@@ -48,8 +48,6 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// An `.ico` as resources: each picture copied as is, and a group whose
-/// entries point at them by id instead of by file offset.
 fn resources(ico: &[u8]) -> Option<Vec<u8>> {
     let count = u16_at(ico, 4)?;
     let mut res = EMPTY.to_vec();
@@ -70,7 +68,6 @@ fn resources(ico: &[u8]) -> Option<Vec<u8>> {
     Some(res)
 }
 
-/// A `VS_VERSIONINFO` naming the program, laid out the way `rc` writes one.
 fn version_info(name: &str, version: &str) -> Vec<u8> {
     let mut parts = version
         .split('.')

@@ -32,75 +32,45 @@ pub(crate) use player::{Prefs, SIZES, SPEEDS, speed_name};
 pub(crate) use shapes::COLOURS;
 pub(crate) use sketch::swatch;
 
-/// How wide the panel down the right is.
 const SIDE: f32 = 380.0;
-/// The most of the window the panel may take, dragged or widened for a
-/// clip or picture wider than it is tall.
 const SIDE_SHARE: f32 = 0.6;
-/// Below this wide, the panel gives the map half the window, since its own
-/// least and default widths would leave the map too small to use.
 const NARROW: f32 = 760.0;
-/// How often the list is asked for again while lineups' clips are cut, in
-/// seconds.
 const POLL: f64 = 2.0;
-/// How long that goes on at most, in seconds: the backend's ten minutes for
-/// a download and five for the cut.
 const POLL_FOR: f64 = 900.0;
-/// The most text Paste Code sends, far more than any code holds.
 const PASTE_MOST: usize = 512 * 1024;
 
-/// Everything the screen draws from, or where the request for it has got to.
 #[derive(Debug, Default)]
 enum Load {
-    /// Nothing asked yet.
     #[default]
     Idle,
-    /// Asked, with the last answer kept on screen until the new one lands.
     Asking {
-        /// The bridge's id for the question.
         id: u64,
-        /// What was showing when it was asked.
         kept: Option<Box<Atlas>>,
     },
-    /// The answer.
     Have(Box<Atlas>),
-    /// Why there is nothing, in words for a player.
     Refused(String),
 }
 
-/// A request the screen sent that changes something, waiting on its answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Job {
-    /// Saving the lineup being written, clip and all.
     Save,
-    /// Throwing a lineup away.
     Delete,
-    /// Keeping a map's shapes.
     Drawing,
-    /// Making a code of lineups to paste in a chat.
     Share,
-    /// Saving the lineups in a pasted code.
     Import,
-    /// Marking a lineup as checked since its map changed.
     Confirm,
 }
 
-/// What order the lineups are listed in, after what they share.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Order {
-    /// A, then B, then C, then any without a site.
     #[default]
     Site,
-    /// By name.
     Name,
-    /// By who throws it.
     Agent,
-    /// Attacking, then defending.
     Side,
 }
 
 impl Order {
-    /// What the sort chip says.
     const fn label(self) -> &'static str {
         match self {
             Self::Site => "By Site",
@@ -110,7 +80,6 @@ impl Order {
         }
     }
 
-    /// The one after it, as the chip goes round them.
     const fn next(self) -> Self {
         match self {
             Self::Site => Self::Name,
@@ -120,9 +89,7 @@ impl Order {
         }
     }
 
-    /// How two lineups compare in this order, leaving a tie for the name.
     fn compare(self, a: &Lineup, b: &Lineup) -> std::cmp::Ordering {
-        // Something set comes before nothing set.
         let key = |v: Option<&String>| (v.is_none(), v.cloned().unwrap_or_default());
         match self {
             Self::Site => key(a.site.as_ref()).cmp(&key(b.site.as_ref())),
@@ -133,8 +100,6 @@ impl Order {
     }
 }
 
-/// Whether `lineup` has every word of `wanted` somewhere: its name, agent,
-/// ability, site, notes or description.
 fn matches(lineup: &Lineup, wanted: &str) -> bool {
     let all = [
         Some(&lineup.title),
@@ -154,108 +119,60 @@ fn matches(lineup: &Lineup, wanted: &str) -> bool {
         .all(|word| all.contains(&word.to_lowercase()))
 }
 
-/// What the side panel is doing.
 #[derive(Debug, Default)]
 enum Mode {
-    /// Reading the lineups on a map.
     #[default]
     Browse,
-    /// Writing one.
     Edit(Box<Draft>),
-    /// Drawing shapes on the map.
     Draw(Box<Sketch>),
 }
 
-/// What the next click on the map sets while a lineup is being written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Place {
-    /// Where to stand.
     Stand,
-    /// Where it lands.
     Land,
-    /// Another place a smoke put down from afar lands. A click adds one, or
-    /// takes off the one it is on.
     More,
-    /// One of the lineup's own points, held by a drag.
     Point(usize),
 }
 
-/// A lineup being written, with its clip's fields as they were typed.
 #[derive(Debug, Clone)]
 struct Draft {
-    /// Everything but the clip and the notes.
     lineup: Lineup,
-    /// What the next click on the map sets.
     placing: Place,
-    /// The pin following the pointer while a drag on the map goes on.
     grab: Option<Place>,
-    /// Where you stand, while the drag is a new throw from there rather than
-    /// an old pin being moved.
     thrown_from: Option<[f32; 2]>,
-    /// A link, or the path of a video on this PC.
     source: String,
     /// Where the clip starts, as typed, like 1:10.
     from: String,
-    /// Where it ends.
     to: String,
-    /// Its volume as a percentage of the source's.
     volume: f32,
-    /// How to throw it.
     notes: String,
-    /// Everything else about it, as long as it needs.
     description: String,
-    /// What the agent search has in it.
     find: String,
-    /// What the ability search has in it, for any agent.
     find_ability: String,
-    /// Whether every agent's face is open to pick from.
     choosing: bool,
-    /// Whether the clip's fields are open.
     clip_open: bool,
-    /// Whether the notes box is open.
     notes_open: bool,
-    /// How long the clip's source runs, for the trim bar.
     measure: Measure,
-    /// The clip as it was last cut, its file and how long it runs, shown
-    /// until Load Video gets its source to trim it again.
     cut: Option<(String, f64)>,
-    /// The clip as it was opened. Saving leaves one that was cut as it is
-    /// rather than cutting it again, and takes one with its source cleared
-    /// off.
     opened: serde_json::Value,
-    /// When Cancel was first pressed on a draft with something in it, for
-    /// the few seconds a second press throws it away.
     discard: Option<f64>,
 }
 
-/// What is known about how long a clip's source runs.
 #[derive(Debug, Clone, Default)]
 struct Measure {
-    /// Its length in seconds, once the backend has said.
     length: Option<f64>,
-    /// The source that was asked about, so a new one is asked about again.
     of: String,
-    /// Whether the backend is still finding out.
     asking: bool,
-    /// Why it couldn't, when it couldn't.
     failed: Option<String>,
-    /// Set by Load Video, so a link is only fetched once somebody asks.
     wanted: bool,
-    /// The span the trim bar showed when a handle was taken, kept until
-    /// it is let go.
     held: Option<(f64, f64)>,
-    /// Where the handle being dragged was last, for the exact frame there
-    /// once it is let go.
     last: Option<f64>,
-    /// A file on this PC the window can play it from, once there is one.
     file: Option<String>,
-    /// Whether the backend is still getting that file, which for a link
-    /// is a download.
     fetching: bool,
 }
 
 impl Draft {
-    /// A fresh lineup on `map`, for `agent` when one is picked already.
     fn new(map: &str, agent: Option<&str>) -> Self {
         Self {
             lineup: Lineup {
@@ -285,7 +202,6 @@ impl Draft {
         }
     }
 
-    /// Whether there's anything in it that Cancel would throw away.
     fn started(&self) -> bool {
         self.lineup.id.is_some()
             || self.lineup.stand.is_some()
@@ -300,7 +216,6 @@ impl Draft {
             .any(|t| !t.trim().is_empty())
     }
 
-    /// A saved lineup, opened to change it.
     fn of(lineup: &Lineup) -> Self {
         let clip = lineup.clip.clone().unwrap_or_default();
         let cut = clip
@@ -331,8 +246,6 @@ impl Draft {
             choosing: false,
             clip_open: lineup.clip.is_some(),
             notes_open: lineup.notes.is_some(),
-            // Nothing is fetched until Load Video, which for a link is a
-            // download, and the cut clip plays meanwhile.
             measure: Measure::default(),
             cut,
             opened: serde_json::Value::Null,
@@ -342,8 +255,6 @@ impl Draft {
         draft
     }
 
-    /// The lineup as the backend saves it, named for its ability and site
-    /// when nobody gave it a name.
     fn sent(&self) -> Lineup {
         let notes = self.notes.trim();
         let description = self.description.trim();
@@ -360,7 +271,6 @@ impl Draft {
         }
     }
 
-    /// The name it gets when it isn't given one, like A Site Incendiary.
     fn named(&self) -> String {
         let what = if self.lineup.agent == SPIKE {
             "Spike Plant".to_owned()
@@ -376,8 +286,6 @@ impl Draft {
         }
     }
 
-    /// What still stops it being saved, in words, or nothing once it can be.
-    /// The Spike is only where it's planted.
     fn missing(&self) -> Option<&'static str> {
         if self.lineup.agent == SPIKE {
             return self
@@ -398,11 +306,6 @@ impl Draft {
         }
     }
 
-    /// The clip as the backend cuts it. Nothing when no source is given or
-    /// the clip is the one it was opened with and was cut, which the backend
-    /// then keeps as it is. An empty source when the one it was opened with
-    /// was taken off, which deletes it. One pasted and never cut goes as it
-    /// is, to be cut.
     fn clip(&self) -> serde_json::Value {
         if self.source.trim().is_empty() {
             return if self.opened.is_object() {
@@ -424,8 +327,6 @@ impl Draft {
         }
     }
 
-    /// Whether the clip still comes from the source it was opened with, so
-    /// the clip cut from that is the one to show.
     fn same_source(&self) -> bool {
         self.opened
             .get("source")
@@ -434,61 +335,35 @@ impl Draft {
     }
 }
 
-/// How many seconds the first press of Delete, Clear All or Cancel waits for
-/// the second.
 pub(crate) const ARMED: f64 = 5.0;
 
-/// How many changes back Draw's Undo goes.
 const UNDO_STEPS: usize = 100;
 
-/// Shapes being drawn on a map, and what the next drag draws.
 #[derive(Debug, Clone)]
 struct Sketch {
-    /// Every shape on the map, the newest last.
     shapes: Vec<Drawing>,
-    /// Which of [`shapes::KINDS`] the next drag draws.
     kind: usize,
-    /// Which of [`COLOURS`] it is in.
     colour: usize,
-    /// How wide a cone opens, in degrees.
     spread: f32,
     /// How solid the next shape is, from 0.1 to 1.
     opacity: f32,
-    /// How thick the next brush stroke is, in widths of the minimap.
     width: f32,
-    /// The points of the brush stroke being drawn, on the minimap.
     stroke: Vec<[f32; 2]>,
-    /// The shape drawn or moved last, which the colour and the opacity
-    /// change too.
     picked: Option<usize>,
-    /// Where the drag drawing a shape started, on the minimap.
     dragging: Option<[f32; 2]>,
-    /// The words the next label says.
     words: String,
-    /// The shape being dragged by its dot: which one, where the drag
-    /// started, and the shape as it was then.
     moving: Option<(usize, [f32; 2], Drawing)>,
-    /// The picked shape being resized by a grip: which shape, which grip,
-    /// and the shape as it was when the drag started.
     resizing: Option<(usize, usize, Drawing)>,
-    /// When Clear All was first pressed, for the few seconds a second press
-    /// clears the map.
     confirm: Option<f64>,
-    /// The shapes as they were before each change, the latest last, for Undo.
     history: Vec<Vec<Drawing>>,
     /// The shapes as of the last change that finished, which the next one
     /// is measured against.
     settled: Vec<Drawing>,
-    /// Whether this is the sandbox: a blank map with the lineups hidden,
-    /// where nothing drawn is kept.
     scratch: bool,
-    /// The agent, or the Spike, the next click puts down, in place of a
-    /// shape. Only the sandbox has these.
     stamp: Option<String>,
 }
 
 impl Sketch {
-    /// The shape the next drag draws, from `start` to `end`.
     fn drawing(&self, start: [f32; 2], end: [f32; 2]) -> Drawing {
         Drawing {
             kind: self.tool().to_owned(),
@@ -516,7 +391,6 @@ impl Sketch {
         }
     }
 
-    /// The kind the next drag or click draws, as kept.
     fn tool(&self) -> &'static str {
         if self.stamp.is_some() {
             return "stamp";
@@ -526,19 +400,14 @@ impl Sketch {
             .map_or("brush", |(kind, _)| kind)
     }
 
-    /// Whether the next click places a label rather than a drag drawing a
-    /// shape.
     fn lettering(&self) -> bool {
         self.tool() == "text"
     }
 
-    /// Whether the next click puts down an agent or the Spike.
     const fn stamping(&self) -> bool {
         self.stamp.is_some()
     }
 
-    /// Picks the shape at `index`, so the panel shows its colour, its
-    /// opacity and a label's words, and changing them changes it.
     fn pick(&mut self, index: usize) {
         self.picked = Some(index);
         let Some(shape) = self.shapes.get(index) else {
@@ -560,183 +429,103 @@ impl Sketch {
     }
 }
 
-/// Something the side panel asked the backend to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Request {
-    /// Save the lineup being written.
     Save,
-    /// Throw away the selected lineup.
     Delete,
-    /// Find out how long the clip's source runs.
     Measure,
-    /// Get a file of the clip's source the window can play.
     Watch,
-    /// Copy a code for the selected lineup.
     Share,
-    /// Copy a code for every lineup on the map.
     ShareMap,
-    /// Bring in the lineups in the code that was pasted.
     Paste,
-    /// Mark the selected lineup as checked since its map changed.
     Confirm,
 }
 
-/// Where an exported map goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Export {
-    /// A PNG in `lineups\exports`.
     Save,
-    /// The clipboard, for pasting straight into a chat.
     Copy,
 }
 
-/// The screen's state apart from the data: which map, whose lineups, and
-/// what the side panel is doing.
 #[derive(Debug, Default)]
 struct View {
-    /// The map on screen.
     map: Option<String>,
-    /// Only this agent's lineups, when set.
     agent: Option<String>,
-    /// Words a lineup has to have somewhere, to be listed.
     looking_for: String,
-    /// What order the list is in.
     order: Order,
-    /// The lineup picked, by id.
     selected: Option<String>,
-    /// Lineups whose clips the backend is cutting in the background,
-    /// by id. The list is asked for again every [`POLL`] seconds until
-    /// they are cut, for [`POLL_FOR`] at most.
     cutting: Vec<String>,
     /// When the list started being asked for again for them, and when it
     /// last was, on egui's clock.
     polled: Option<(f64, f64)>,
-    /// How much wider the panel's contents want to be for a clip or picture
-    /// wider than it is tall, done before the panel is drawn next.
     widen: Option<f32>,
-    /// The lineup the panel last widened for, so it widens once a pick and
-    /// a panel dragged narrower after stays that way.
     widened: Option<String>,
-    /// What the side panel is doing.
     mode: Mode,
-    /// A request in flight, and what it was.
     pending: Option<(u64, Job)>,
-    /// The lineup being saved, kept while the backend cuts its clip so a
-    /// save that fails can open it again as it was.
     saving: Option<Box<Draft>>,
-    /// A lineup whose save failed while the screen was on to something
-    /// else, opened again once it's back on the list.
     failed: Option<Box<Draft>>,
-    /// A lineup saved while the list was being asked for again, to add to
-    /// that list, since the backend may have read it before the save landed.
     late: Option<Lineup>,
-    /// How long a clip runs, asked for apart from `pending` so Save doesn't
-    /// wait on it.
     measuring: Option<u64>,
-    /// A file of the clip's source to play, asked for apart in the same way.
     watching: Option<u64>,
-    /// The video in the panel, while one is shown.
     player: Option<player::Player>,
-    /// How a clip plays when it first shows, from the settings.
     prefs: Prefs,
-    /// The pictures showing big, and which of them is on screen.
     viewing: Option<(Vec<String>, usize)>,
-    /// Which way up the maps are drawn, from the settings.
     turn_to: MapTurn,
-    /// Whether every lineup's name shows, from the settings.
     names_by_default: bool,
-    /// The colour areas are drawn in, from the settings, or by side.
     area: Option<Color32>,
-    /// Show Names or Hide Names pressed since Lineups opened, which wins over
-    /// the setting until it closes.
     names: Option<bool>,
     /// Quarter turns clockwise asked for with Turn since Lineups opened, on
     /// top of the way the settings turn each map.
     turned: u8,
-    /// What the last request came to, and whether it failed.
     said: Option<(String, bool)>,
-    /// When Delete was first pressed, for the few seconds a second press
-    /// deletes the lineup.
     confirm: Option<f64>,
-    /// The agent a new lineup starts with, from the settings.
     default_agent: String,
-    /// An agent Make Default was pressed on, for the settings to keep.
     new_default: Option<String>,
-    /// The agent you play most, whose outline the blacked-out figure is.
     main: Option<String>,
-    /// Shapes changed and not yet sent to be kept, by map, so a change on a
-    /// second map doesn't take the place of the first.
     unsaved: std::collections::BTreeMap<String, Vec<Drawing>>,
-    /// The shapes on their way to be kept, put back with the unsent ones if
-    /// they don't get there.
     drawing_out: Option<(String, Vec<Drawing>)>,
-    /// An export asked for and not yet done.
     export: Option<Export>,
-    /// Where the map was on screen when the window was asked for a picture.
     shot: Option<Rect>,
-    /// The folder the last picture was saved in.
     saved_to: Option<PathBuf>,
-    /// The pass Paste Code asked for the clipboard on, until its text
-    /// arrives.
     pasting: Option<u64>,
-    /// The clipboard's text once it arrives, for the backend to read.
     pasted: Option<String>,
-    /// A code to put on the clipboard.
     copy: Option<String>,
-    /// Whether this PC counts as slow, from the settings.
     slow: bool,
-    /// What the settings say about lineups from before their map changed.
     redraws: RedrawSettings,
-    /// A map redraw Got It was pressed on, for the settings to keep.
     redraw_seen: Option<String>,
-    /// Loop pressed on a clip's bar, to this, for the settings to keep.
     new_looping: Option<bool>,
 }
 
-/// How the settings say the maps are drawn.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Look<'a> {
-    /// Which way up.
     pub(crate) turn: MapTurn,
-    /// Whether every lineup's name shows when Lineups opens.
     pub(crate) names: bool,
-    /// The colour of an ability's area, or by side when there is none.
     pub(crate) area: Option<&'a str>,
-    /// The agent a new lineup starts with.
     pub(crate) agent: &'a str,
     /// Whether this PC counts as slow, which cuts clips at 720p.
     pub(crate) slow: bool,
-    /// What is said about lineups from before their map changed.
     pub(crate) redraws: &'a RedrawSettings,
 }
 
-/// The Lineups screen.
 #[derive(Debug, Default)]
 pub(crate) struct Lineups {
-    /// Everything the screen draws from.
     load: Load,
-    /// Which map, whose lineups, and what the side panel is doing.
     view: View,
 }
 
 impl Lineups {
-    /// The agent Make Default was last pressed on, once, for the settings.
     pub(crate) const fn new_default(&mut self) -> Option<String> {
         self.view.new_default.take()
     }
 
-    /// Loop as it was last pressed on a clip's bar, once, for the settings.
     pub(crate) const fn new_looping(&mut self) -> Option<bool> {
         self.view.new_looping.take()
     }
 
-    /// The map redraw Got It was last pressed on, once, for the settings.
     pub(crate) const fn redraw_seen(&mut self) -> Option<String> {
         self.view.redraw_seen.take()
     }
 
-    /// Asks for everything the screen draws from, on the current match's map
-    /// when there is one and nothing is being written.
     pub(crate) fn open(
         &mut self,
         bridge: &Bridge,
@@ -744,8 +533,6 @@ impl Lineups {
         map: Option<&str>,
         main: Option<&str>,
     ) {
-        // Only a board that knows replaces it. Out of a lobby the lineups'
-        // own answer says, from your recorded matches.
         if let Some(main) = main {
             self.view.main = Some(main.to_owned());
         }
@@ -757,13 +544,9 @@ impl Lineups {
         if !live || matches!(self.load, Load::Asking { .. }) {
             return;
         }
-        // Asked on every open, which is cheap after the first: the minimaps
-        // are on disk and a lineup is a small file.
         self.ask(bridge);
     }
 
-    /// Asks for everything the screen draws from, keeping what is showing on
-    /// screen until the answer lands.
     fn ask(&mut self, bridge: &Bridge) {
         let kept = match std::mem::take(&mut self.load) {
             Load::Have(atlas) => Some(atlas),
@@ -774,8 +557,6 @@ impl Lineups {
         self.load = Load::Asking { id, kept };
     }
 
-    /// Moves to `map`, the one being played, while lineups are only being
-    /// read and the map is one there are lineups for.
     pub(crate) fn follow(&mut self, map: &str) {
         let known = match &self.load {
             Load::Have(atlas)
@@ -791,7 +572,6 @@ impl Lineups {
         }
     }
 
-    /// What the settings say about the screen, kept for this frame.
     fn take_look(&mut self, prefs: Prefs, look: Look<'_>) {
         (self.view.prefs, self.view.turn_to) = (prefs, look.turn);
         self.view.names_by_default = look.names;
@@ -803,13 +583,10 @@ impl Lineups {
         }
     }
 
-    /// The next lineup down the map, as the Down arrow goes, for the footer's
-    /// hint.
     pub(crate) fn step_down(&mut self) {
         self.step(plan::Way::Down);
     }
 
-    /// Picks the lineup an arrow goes to, while browsing.
     fn step(&mut self, way: plan::Way) {
         if let Load::Have(atlas)
         | Load::Asking {
@@ -854,7 +631,6 @@ impl Lineups {
         self.view.viewing.is_some() || self.view.player.as_ref().is_some_and(player::Player::big)
     }
 
-    /// Whether the answer with this id is one this screen is waiting on.
     pub(crate) fn waiting_on(&self, id: u64) -> bool {
         matches!(self.load, Load::Asking { id: waiting, .. } if waiting == id)
             || self.view.pending.is_some_and(|(waiting, _)| waiting == id)
@@ -862,7 +638,6 @@ impl Lineups {
             || self.view.watching == Some(id)
     }
 
-    /// Takes an answer this screen was waiting on.
     pub(crate) fn answered(&mut self, id: u64, result: Result<serde_json::Value, String>) {
         if let Load::Asking { id: waiting, .. } = self.load
             && waiting == id
@@ -872,7 +647,6 @@ impl Lineups {
                     "The lineups came back in a shape this version can't read. Updating Overseer usually fixes this.".to_owned()
                 })
             });
-            // A refresh that fails keeps what was on screen, and says so.
             if let (Err(why), Load::Asking { kept: Some(_), .. }) = (&read, &self.load) {
                 self.view.said = Some((format!("Couldn't refresh the lineups. {why}"), true));
                 if let Load::Asking {
@@ -924,7 +698,6 @@ impl Lineups {
         }
     }
 
-    /// The lineup being written, for a test.
     #[cfg(test)]
     pub(crate) fn placed(&self) -> Option<&Lineup> {
         match &self.view.mode {
@@ -933,7 +706,6 @@ impl Lineups {
         }
     }
 
-    /// The clip's From and To as written, for a test.
     #[cfg(test)]
     pub(crate) fn trimmed(&self) -> Option<(&str, &str)> {
         match &self.view.mode {
@@ -942,7 +714,6 @@ impl Lineups {
         }
     }
 
-    /// The shapes being drawn, for a test.
     #[cfg(test)]
     pub(crate) fn sketched(&self) -> Option<&[Drawing]> {
         match &self.view.mode {
@@ -951,17 +722,11 @@ impl Lineups {
         }
     }
 
-    /// How many maps have drawings waiting to be kept, for a test.
     #[cfg(test)]
     pub(crate) fn unsaved_maps(&self) -> usize {
         self.view.unsaved.len()
     }
 
-    /// A screen already holding `atlas` on its first map, for the snapshots:
-    /// `browse` with `picked` selected, `write` a new lineup, `any` the same
-    /// for any agent, `add` one with nothing placed, `draw`, `erase`, `text`
-    /// with a label picked, or `sandbox` with Viper out and two things put
-    /// down.
     #[cfg(test)]
     pub(crate) fn showing(atlas: serde_json::Value, picked: Option<&str>, mode: &str) -> Self {
         let atlas: Atlas = serde_json::from_value(atlas).unwrap_or_default();
@@ -1041,8 +806,6 @@ impl Lineups {
         }
     }
 
-    /// Adds pictures dropped onto the window, or chosen in the Open dialog,
-    /// to the lineup being written, up to the most one can carry.
     fn dropped(&mut self, ui: &Ui) {
         let Mode::Edit(draft) = &mut self.view.mode else {
             return;
@@ -1065,8 +828,6 @@ impl Lineups {
         }
     }
 
-    /// Stops the video, since the screen is going away, and lets the setting
-    /// decide the names again next time.
     pub(crate) fn leave(&mut self) {
         self.view.player = None;
         // Ends the video process, which gives back what Windows' media
@@ -1085,7 +846,6 @@ impl Lineups {
         }
         let lost = self.view.measuring.take().is_some() | self.view.watching.take().is_some();
         if lost && let Mode::Edit(draft) = &mut self.view.mode {
-            // Asked again once the backend is back.
             draft.measure = Measure::default();
         }
         if self.view.pending.take().is_some() {
@@ -1098,12 +858,9 @@ impl Lineups {
                 true,
             ));
         }
-        // Asked straight away rather than when the screen opens, so it opens
-        // on its maps, and one opened before the backend was there gets them.
         self.ask(bridge);
     }
 
-    /// Puts a finished request's answer on screen.
     fn done(&mut self, job: Job, value: &serde_json::Value) {
         let view = &mut self.view;
         let added: Vec<Lineup> = value
@@ -1115,8 +872,6 @@ impl Lineups {
             .then(|| Lineup::deserialize(value).ok())
             .flatten();
         let later = view.wait_for(added.iter().chain(&saved));
-        // What it says goes up whatever the list is doing, or a save that
-        // lands while the screen is away leaves "Saving" up for good.
         match job {
             Job::Save => {
                 let title = saved.as_ref().map_or("the lineup", |l| l.title.as_str());
@@ -1140,8 +895,6 @@ impl Lineups {
                 } else if let Some(map) = text("map")
                     && matches!(view.mode, Mode::Browse)
                 {
-                    // Only while reading, or a sketch or a lineup being
-                    // written would end up on the other map.
                     view.map = Some(map.to_owned());
                     view.selected = None;
                 }
@@ -1182,8 +935,6 @@ impl Lineups {
         }
     }
 
-    /// Draws the screen, sends whatever it asked for, and saves or copies
-    /// the map once the window's picture of itself arrives.
     pub(crate) fn show(
         &mut self,
         ui: &mut Ui,
@@ -1198,7 +949,6 @@ impl Lineups {
                 pictures::viewer(ui.ctx(), shown, *at).map(|next| (shown.clone(), next));
         }
         self.dropped(ui);
-        // The keys are the text's while a box is being typed in.
         if ui.memory(|m| m.focused().is_none()) {
             if ui.input(|i| i.key_pressed(egui::Key::T)) {
                 self.view.names = Some(!self.view.naming());
@@ -1239,13 +989,10 @@ impl Lineups {
                 ui.multiply_opacity(opacity);
                 retry = plan::show(ui, atlas, &mut self.view);
             });
-        // Loop pressed on the bar holds for every clip after, too.
         if let Some(on) = self.view.player.as_mut().and_then(|p| p.looped.take()) {
             self.view.prefs.looping = on;
             self.view.new_looping = Some(on);
         }
-        // A video nothing drew this frame belongs to a form or a lineup
-        // that has gone, and dropping it stops its sound.
         let pass = ui.ctx().cumulative_pass_nr();
         if self
             .view
@@ -1277,8 +1024,6 @@ impl Lineups {
         }
     }
 
-    /// Puts a code that came back on the clipboard, and sends the
-    /// clipboard's text to be read once Paste Code has it.
     fn paste(&mut self, ui: &Ui, bridge: &Bridge, live: bool) {
         if let Some(code) = self.view.copy.take() {
             ui.ctx().copy_text(code);
@@ -1304,7 +1049,6 @@ impl Lineups {
             self.view.pasted = Some(text);
             self.send(bridge, live, Request::Paste);
         } else if ui.ctx().cumulative_pass_nr() > asked_on + 3 {
-            // An empty clipboard, or a picture on it, sends no paste at all.
             self.view.pasting = None;
             self.view.said = Some((
                 "There's no text on the clipboard. Copy a lineup code first.".to_owned(),
@@ -1315,8 +1059,6 @@ impl Lineups {
         }
     }
 
-    /// Asks for the list again every [`POLL`] seconds while pasted lineups'
-    /// clips are being cut, so each shows once it's ready.
     fn poll(&mut self, ui: &Ui, bridge: &Bridge, live: bool) {
         if self.view.cutting.is_empty() || !live {
             return;
@@ -1336,7 +1078,6 @@ impl Lineups {
             .request_repaint_after(std::time::Duration::from_secs_f64(POLL));
     }
 
-    /// Sends a map's changed shapes to be kept, once nothing else is waiting.
     fn keep_shapes(&mut self, bridge: &Bridge, live: bool) {
         if !live || self.view.pending.is_some() {
             return;
@@ -1351,7 +1092,6 @@ impl Lineups {
         }
     }
 
-    /// Sends what the side panel asked for, one request at a time.
     fn send(&mut self, bridge: &Bridge, live: bool, request: Request) {
         let view = &mut self.view;
         if !live {
@@ -1422,8 +1162,6 @@ impl Lineups {
         view.pending = Some((bridge.ask(name, params), job));
         view.said = (job == Job::Import).then(|| ("Bringing in the lineups.".to_owned(), false));
         view.confirm = None;
-        // Back to the list straight away rather than sitting in the editor
-        // while the clip is cut, which can take a while.
         if job == Job::Save
             && let Mode::Edit(draft) = std::mem::take(&mut view.mode)
         {
@@ -1434,14 +1172,10 @@ impl Lineups {
 }
 
 impl View {
-    /// Whether `lineup` is marked as saved before its map changed.
     fn marked(&self, atlas: &Atlas, lineup: &Lineup) -> bool {
         self.redraws.mark_redrawn && from_before(atlas, lineup)
     }
 
-    /// Waits on those of `lineups` whose clips the backend cuts after it
-    /// answers, asking for the list again until they're cut, and says
-    /// whether there were any.
     fn wait_for<'a>(&mut self, lineups: impl Iterator<Item = &'a Lineup>) -> bool {
         let before = self.cutting.len();
         self.cutting.extend(
@@ -1456,14 +1190,10 @@ impl View {
         more
     }
 
-    /// Whether every lineup's name shows on the map.
     fn naming(&self) -> bool {
         self.names.unwrap_or(self.names_by_default)
     }
 
-    /// The panel down the right, wider or narrower by dragging its edge,
-    /// since the form reads better with room and the map with less. A clip
-    /// or picture wider than it is tall widens it, once a pick.
     fn side_panel(&mut self, ui: &Ui) -> Panel {
         let room = ui.available_width();
         let (least, default, most) = if room < NARROW {
@@ -1485,21 +1215,16 @@ impl View {
         if wanted <= now + 1.0 {
             return side;
         }
-        // With no width kept, the panel takes its default.
         ui.ctx().data_mut(|d| d.remove::<egui::PanelState>(id));
         side.default_size(wanted)
     }
 
-    /// Puts shapes that didn't get kept back with the unsent ones, unless
-    /// that map has changed again since.
     fn unsent(&mut self, drawing: Option<(String, Vec<Drawing>)>) {
         if let Some((map, shapes)) = drawing {
             self.unsaved.entry(map).or_insert(shapes);
         }
     }
 
-    /// Opens the editor again on a lineup whose save didn't go through, or
-    /// once the screen is back on the list if it's on to something else.
     fn reopen(&mut self, saving: Option<Box<Draft>>) {
         if let Some(draft) = saving {
             if matches!(self.mode, Mode::Browse) {
@@ -1510,8 +1235,6 @@ impl View {
         }
     }
 
-    /// Opens a lineup whose save failed while the screen was busy, once it
-    /// is back on the list.
     fn reopen_failed(&mut self) {
         if matches!(self.mode, Mode::Browse)
             && let Some(draft) = self.failed.take()
@@ -1520,8 +1243,6 @@ impl View {
         }
     }
 
-    /// Takes how long the clip's source runs, if it is still the source
-    /// being written.
     fn measured(&mut self, result: Result<serde_json::Value, String>) {
         let Mode::Edit(draft) = &mut self.mode else {
             return;
@@ -1541,8 +1262,6 @@ impl View {
         }
     }
 
-    /// Takes the file to play the clip's source from, if it is still the
-    /// source being written.
     fn watched(&mut self, result: Result<serde_json::Value, String>) {
         let Mode::Edit(draft) = &mut self.mode else {
             return;
@@ -1562,9 +1281,6 @@ impl View {
         }
     }
 
-    /// Keeps the map on screen if it is still one of the maps, and otherwise
-    /// opens the first. Takes the agent you play most from `atlas` when no
-    /// board has said.
     fn settle(&mut self, atlas: &Atlas) {
         let known = self
             .map
@@ -1576,8 +1292,6 @@ impl View {
         if self.main.is_none() {
             self.main.clone_from(&atlas.main);
         }
-        // Lineups whose clips are cut now, couldn't be, or that are gone,
-        // are waited on no longer.
         self.cutting.retain(|id| {
             atlas
                 .lineups
@@ -1589,8 +1303,6 @@ impl View {
         }
     }
 
-    /// A new lineup on the map on screen, for the agent the list is cut to or
-    /// else the default one. The map and the panel both start one here.
     fn draft(&self) -> Draft {
         Draft::new(
             self.map.as_deref().unwrap_or_default(),
@@ -1598,7 +1310,6 @@ impl View {
         )
     }
 
-    /// Starts drawing on the map on screen, with its shapes as they are.
     fn sketch(&self, atlas: &Atlas) -> Sketch {
         let shapes = self.shapes(atlas).to_vec();
         Sketch {
@@ -1622,7 +1333,6 @@ impl View {
         }
     }
 
-    /// A blank sketch for the sandbox, which nothing is kept from.
     fn sandbox(&self, atlas: &Atlas) -> Sketch {
         Sketch {
             shapes: Vec::new(),
@@ -1632,8 +1342,6 @@ impl View {
         }
     }
 
-    /// The shapes on the map on screen: the ones being drawn, or else any
-    /// changed and on their way to be kept, or else the kept ones.
     fn shapes<'a>(&'a self, atlas: &'a Atlas) -> &'a [Drawing] {
         let map = self.map.as_deref().unwrap_or_default();
         if let Mode::Draw(sketch) = &self.mode {
@@ -1650,7 +1358,6 @@ impl View {
         atlas.drawings.get(map).map_or(&[], Vec::as_slice)
     }
 
-    /// The lineups on the map on screen, for the agent picked if there is one.
     fn shown<'a>(&self, atlas: &'a Atlas) -> Vec<&'a Lineup> {
         if matches!(&self.mode, Mode::Draw(sketch) if sketch.scratch) {
             return Vec::new();
@@ -1666,8 +1373,6 @@ impl View {
         shown
     }
 
-    /// Cuts the map out of the window's picture of itself, then saves it
-    /// as a PNG or copies it.
     fn exported(&mut self, ctx: &egui::Context, image: &egui::ColorImage, root: &Path) {
         let (Some(export), Some(rect)) = (self.export.take(), self.shot.take()) else {
             return;
@@ -1707,11 +1412,6 @@ impl View {
     }
 }
 
-/// An agent's face in `rect`, or for [`ANY`] a blacked-out figure with a
-/// question mark, the way agent select shows somebody who hasn't picked.
-/// The figure is cut from `main`, the agent you play most, when known, and
-/// only its outline is used: the tint is pure black, so none of the picture
-/// shows through.
 fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option<&str>) {
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     if agent == SPIKE {
@@ -1747,8 +1447,6 @@ fn face(painter: &egui::Painter, rect: Rect, agent: &str, lit: f32, main: Option
     }
 }
 
-/// The Spike's icon `half` either way of `at`, in `ink`, with the middle of
-/// its core on `at` rather than the middle of the picture.
 fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, ink: Color32) {
     if let Some(icon) = art::spike(painter.ctx()) {
         let [x, y] = art::SPIKE_CORE;
@@ -1762,8 +1460,6 @@ fn spike(painter: &egui::Painter, at: egui::Pos2, half: f32, ink: Color32) {
     }
 }
 
-/// An ability by name, from the agent's own kit first and then anyone's,
-/// since a lineup for any agent can be for any ability in the game.
 fn ability<'a>(atlas: &'a Atlas, agent: &str, name: &str) -> Option<(&'a Kit, &'a Ability)> {
     let owns = |kit: &'a Kit| {
         kit.abilities
@@ -1779,7 +1475,6 @@ fn ability<'a>(atlas: &'a Atlas, agent: &str, name: &str) -> Option<(&'a Kit, &'
         .or_else(|| atlas.agents.iter().find_map(owns))
 }
 
-/// What to say before there is anything to draw.
 fn waiting(ui: &mut Ui, load: &Load, live: bool) {
     ui.add_space(overseer_ui::space::LG);
     view::title(
@@ -1839,8 +1534,6 @@ fn seconds(text: &str) -> Option<f64> {
     Some(total)
 }
 
-/// Whether `lineup` was saved before a game update changed its map, so it
-/// may not land where it did.
 fn from_before(atlas: &Atlas, lineup: &Lineup) -> bool {
     let changed = atlas
         .maps
@@ -1850,19 +1543,15 @@ fn from_before(atlas: &Atlas, lineup: &Lineup) -> bool {
     changed.is_some_and(|at| lineup.saved.is_some_and(|saved| saved < at))
 }
 
-/// Puts `lineup` in `lineups`, in place of the one with its id.
 fn replace(lineups: &mut Vec<Lineup>, lineup: Lineup) {
     lineups.retain(|l| l.id != lineup.id);
     lineups.push(lineup);
 }
 
-/// Whether the backend is still to cut `clip`: it has no file, and no
-/// reason it couldn't be cut.
 const fn uncut(clip: &Clip) -> bool {
     clip.file.is_none() && clip.failed.is_none()
 }
 
-/// How long a clip runs, for the panel.
 fn length(clip: &Clip) -> Option<f64> {
     Some(clip.to? - clip.from?).filter(|s| *s > 0.0)
 }
@@ -1872,8 +1561,6 @@ mod tests {
     use super::{Draft, Lineups, Load, Mode, View, seconds};
     use overseer_core::{Clip, Lineup};
 
-    /// Every way a time is typed reads as seconds, and anything else as
-    /// nothing, the same as the backend reads them.
     #[test]
     fn a_typed_time_reads_as_seconds() {
         for (typed, read) in [
@@ -1893,11 +1580,6 @@ mod tests {
         }
     }
 
-    /// A saved lineup opens with its clip's fields filled in as typed and
-    /// its cut clip to show, fetching nothing, and goes back without the
-    /// notes box's blank lines. An untouched clip goes back as nothing,
-    /// which the backend keeps without cutting it again, a changed one goes
-    /// back whole, and one taken off goes back with no source.
     #[test]
     fn a_saved_lineup_round_trips_through_the_editor() {
         let saved = Lineup {
@@ -1934,7 +1616,6 @@ mod tests {
         draft.source.clear();
         assert_eq!(draft.clip(), serde_json::json!({ "source": "" }));
         assert!(Draft::new("Ascent", None).clip().is_null());
-        // One pasted and never cut is sent as it is, to be cut.
         let uncut = Lineup {
             clip: saved.clip.clone().map(|c| Clip { file: None, ..c }),
             ..saved
@@ -1942,9 +1623,6 @@ mod tests {
         assert!(!Draft::of(&uncut).clip().is_null());
     }
 
-    /// A saved picture is the map's square cut out of the window's picture,
-    /// written as a PNG named for the map, and the next one doesn't write
-    /// over it.
     #[test]
     fn a_saved_picture_is_the_map_alone() {
         let root = std::env::temp_dir().join("overseer-export-test");
@@ -1968,7 +1646,6 @@ mod tests {
                 .join(format!("ascent-{n}.png"));
             let bytes = std::fs::read(&path).unwrap();
             assert!(bytes.starts_with(b"\x89PNG"), "{}", path.display());
-            // The header's width and height, each four bytes, big-endian.
             let size = bytes.get(16..24).unwrap();
             assert_eq!(size, [0, 0, 0, 80, 0, 0, 0, 80]);
             assert!(view.export.is_none() && !view.said.unwrap().1);
@@ -1976,8 +1653,6 @@ mod tests {
         drop(std::fs::remove_dir_all(&root));
     }
 
-    /// A save's answer replaces the lineup it was and leaves the list as it
-    /// was, and a failed one says why and brings the editor back.
     #[test]
     fn a_save_lands_in_the_list_or_says_why_not() {
         let mut screen = Lineups {
@@ -1990,7 +1665,6 @@ mod tests {
         assert!(matches!(screen.view.mode, Mode::Edit(_)));
         assert!(screen.view.said.as_ref().unwrap().1);
 
-        // Pressing Save closes the editor and keeps the lineup aside.
         if let Mode::Edit(draft) = std::mem::take(&mut screen.view.mode) {
             screen.view.saving = Some(draft);
         }
@@ -2006,8 +1680,6 @@ mod tests {
         assert_eq!(screen.view.selected, None, "the list, with nothing picked");
         assert!(matches!(screen.view.mode, Mode::Browse));
 
-        // A save that fails after the screen went back to the list opens
-        // the lineup again as it was.
         screen.view.mode = Mode::Browse;
         screen.view.saving = Some(Box::new(Draft::new("Ascent", Some("Viper"))));
         screen.view.pending = Some((9, super::Job::Save));
@@ -2015,7 +1687,6 @@ mod tests {
         assert!(matches!(screen.view.mode, Mode::Edit(_)));
     }
 
-    /// A refresh that fails keeps the lineups that were on screen.
     #[test]
     fn a_failed_refresh_keeps_the_lineups_on_screen() {
         let mut screen = Lineups {
@@ -2035,15 +1706,11 @@ mod tests {
             "it didn't say so"
         );
 
-        // With nothing to keep, the screen says why there is nothing.
         screen.load = Load::Asking { id: 31, kept: None };
         screen.answered(31, Err("The backend went away.".to_owned()));
         assert!(matches!(screen.load, Load::Refused(_)));
     }
 
-    /// A save that lands while the list is being asked for again still says
-    /// it saved, and the lineup is in the list that comes back, even when
-    /// the backend read that list before the save landed.
     #[test]
     fn a_save_that_lands_while_the_list_reloads_still_shows() {
         let mut screen = Lineups {

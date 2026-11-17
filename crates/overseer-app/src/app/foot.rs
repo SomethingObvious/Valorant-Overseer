@@ -1,5 +1,3 @@
-//! The status line and hints along the bottom of the window.
-
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 
 use crate::board::GUTTER;
@@ -31,8 +29,6 @@ impl Overseer {
         let armed = self
             .quieting
             .is_some_and(|at| now - at < crate::lineups::ARMED);
-        // Said here as well as in Settings, since without the key the overlay
-        // can't be brought up in game at all.
         let clash = matches!(self.hotkey, Some(Err(_))).then_some((
             "Overlay Key Unavailable",
             Hint::OverlayKey,
@@ -98,14 +94,9 @@ impl Overseer {
         right - space::SM
     }
 
-    /// The footer's right half: what was just copied, and what the window
-    /// is spending. Returns where the hints have to stop.
     fn status(&self, ui: &Ui, painter: &egui::Painter, rect: Rect, right: f32) -> f32 {
-        // Drawn before the hints, which stop where this starts, so a narrow
-        // window drops hints instead of printing them over this.
         let bad = self.unreadable.0;
         let mut right = right;
-        // The tier only when it is efficient, the one state worth telling.
         let tier = (self.quality() == Quality::Efficient).then_some("Efficient");
         let now = ui.input(|i| i.time);
         let copied = panel::copied(ui.ctx()).map(|name| format!("Copied {name}"));
@@ -145,9 +136,6 @@ impl Overseer {
         right
     }
 
-    /// The keys the footer offers. The ones that act on players only show
-    /// on the board with somebody on it, and Help is always there, since it
-    /// lists the rest.
     fn hints(&self) -> impl Iterator<Item = (&'static str, &'static str, Hint)> + use<'_> {
         [
             ("?", "Help", Hint::Help),
@@ -167,9 +155,6 @@ impl Overseer {
         })
     }
 
-    /// The footer: the keys as keycaps, which are quicker to recognise than
-    /// prose, and what the window is spending. Each hint is also a button
-    /// for its key, and this says which was clicked.
     pub(super) fn footer(&self, ui: &mut Ui) -> Option<Hint> {
         let (rect, _response) =
             ui.allocate_exact_size(vec2(ui.available_width(), space::XXL), Sense::hover());

@@ -1,15 +1,7 @@
-//! Shapes drawn on the map to show a range or an area: rectangles, circles,
-//! ovals, cones and triangles, in a dozen colours, labels of a few words,
-//! boxes of text, brush strokes, and in the sandbox agents and the Spike.
-//! Each is the two points of the drag that drew it, on the minimap, so it
-//! scales with the map. A label or a stamp is the one point it starts at,
-//! and a stroke keeps every point it went through.
-
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 use overseer_core::Drawing;
 use overseer_ui::{Face, colour, typed_text};
 
-/// The shapes there are, as kept and as named, in the order the panel shows.
 pub(super) const KINDS: [(&str, &str); 9] = [
     ("brush", "Brush"),
     ("rect", "Rectangle"),
@@ -19,24 +11,19 @@ pub(super) const KINDS: [(&str, &str); 9] = [
     ("triangle", "Triangle"),
     ("text", "Text"),
     ("textbox", "Text Box"),
-    // Not a shape. It takes shapes off.
     ("erase", "Eraser"),
 ];
 
-/// The colours a shape can be, as kept, bright enough to read on the
-/// darkened minimap.
 pub(crate) const COLOURS: [&str; 12] = [
     "#FF4655", "#FF8A3D", "#FFC845", "#18E5A7", "#9ADEFF", "#5CE1E6", "#7AA2FF", "#C58BFF",
     "#F28DD5", "#FF8088", "#F2EFE8", "#8B929C",
 ];
 
-/// What each of [`COLOURS`] is called, for a screen reader.
 const NAMES: [&str; 12] = [
     "Red", "Orange", "Yellow", "Green", "Sky", "Cyan", "Blue", "Purple", "Pink", "Coral", "Cream",
     "Grey",
 ];
 
-/// The name of the colour `hex`, or the code itself for one not on the list.
 pub(super) fn colour_name(hex: &str) -> &str {
     COLOURS
         .iter()
@@ -45,12 +32,10 @@ pub(super) fn colour_name(hex: &str) -> &str {
         .unwrap_or(hex)
 }
 
-/// A kept colour as one to paint with.
 pub(super) fn ink(hex: &str) -> Color32 {
     overseer_ui::hex(Some(hex)).unwrap_or(colour::WARN)
 }
 
-/// How tall a label's letters are, in step with the map.
 fn letters(square: Square) -> f32 {
     (square.width() * 0.024).clamp(11.0, 24.0)
 }
@@ -71,7 +56,6 @@ fn plate(square: Square, start: Pos2, words: &str) -> Rect {
 /// in the minimap's own frame, so turning it never moves a lineup.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Square {
-    /// Where it is on screen.
     pub(super) rect: Rect,
     /// Quarter turns clockwise, 0 to 3.
     pub(super) turn: u8,
@@ -96,14 +80,11 @@ pub(super) const fn turned([x, y]: [f32; 2], turn: u8) -> [f32; 2] {
     }
 }
 
-/// Where a point on the minimap is on screen, turned with the map.
 pub(super) fn at(square: Square, spot: [f32; 2]) -> Pos2 {
     let [x, y] = turned(spot, square.turn);
     square.min + vec2(x, y) * square.width()
 }
 
-/// Draws one shape, faint inside and solid round its edge, both as solid as
-/// its opacity.
 pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) {
     let tint = ink(&drawing.colour).gamma_multiply(drawing.opacity.clamp(0.1, 1.0));
     let fill = tint.gamma_multiply(0.24);
@@ -173,8 +154,6 @@ pub(super) fn paint(painter: &egui::Painter, square: Square, drawing: &Drawing) 
     }
 }
 
-/// A box of text: dark behind, its colour round the edge, and its words cut
-/// off at the bottom.
 fn text_box(painter: &egui::Painter, square: Square, drawing: &Drawing, tint: Color32) {
     let (a, b) = (at(square, drawing.a), at(square, drawing.b));
     let bounds = Rect::from_two_pos(a, b);
@@ -187,16 +166,12 @@ fn text_box(painter: &egui::Painter, square: Square, drawing: &Drawing, tint: Co
         egui::StrokeKind::Inside,
     );
     let pad = letters(square) * 0.4;
-    // The colour is the box's edge, and the words are in the app's
-    // cream, which reads on any of them.
     let galley = painter.layout(
         drawing.text.clone(),
         Face::Body.at((letters(square) * 0.75).max(11.0)),
         colour::TEXT_STRONG,
         (bounds.width() - pad * 2.0).max(1.0),
     );
-    // Words past the bottom are cut off, and dragging a corner shows
-    // them again.
     painter.with_clip_rect(bounds.shrink(1.0)).galley(
         bounds.min + vec2(pad, pad),
         galley,
@@ -204,8 +179,6 @@ fn text_box(painter: &egui::Painter, square: Square, drawing: &Drawing, tint: Co
     );
 }
 
-/// A cone's outline: its tip, then an arc as far away as `end`, opening
-/// `spread` degrees either side of the line to it.
 fn cone(tip: Pos2, end: Pos2, spread: f32) -> Vec<Pos2> {
     let reach = tip.distance(end);
     let facing = (end - tip).angle();
@@ -219,8 +192,6 @@ fn cone(tip: Pos2, end: Pos2, spread: f32) -> Vec<Pos2> {
         .collect()
 }
 
-/// An even triangle round `centre` with one corner at `corner`, so the drag
-/// that draws it also turns it.
 fn triangle(centre: Pos2, corner: Pos2) -> [Pos2; 3] {
     let arm = corner - centre;
     let turn = |degrees: f32| {
@@ -234,7 +205,6 @@ fn triangle(centre: Pos2, corner: Pos2) -> [Pos2; 3] {
     [corner, turn(120.0), turn(240.0)]
 }
 
-/// Whether `spot` is on a shape, for the right click that removes it.
 pub(super) fn hit(square: Square, drawing: &Drawing, spot: Pos2) -> bool {
     let (a, b) = (at(square, drawing.a), at(square, drawing.b));
     match drawing.kind.as_str() {
@@ -279,13 +249,11 @@ pub(super) fn hit(square: Square, drawing: &Drawing, spot: Pos2) -> bool {
     }
 }
 
-/// Where an agent or the Spike put down at `at` sits, in step with the map.
 pub(super) fn stamp(square: Square, at: Pos2) -> Rect {
     let side = (square.width() * 0.05).clamp(20.0, 48.0);
     Rect::from_center_size(at, vec2(side, side))
 }
 
-/// How far `spot` is from the segment between `one` and `two`.
 fn near_segment(spot: Pos2, one: Pos2, two: Pos2) -> f32 {
     let along = two - one;
     let length = along.length_sq();
@@ -296,9 +264,6 @@ fn near_segment(spot: Pos2, one: Pos2, two: Pos2) -> f32 {
     spot.distance(one + along * share)
 }
 
-/// Where a shape's dot sits, the one that drags it: the middle of a
-/// rectangle or an oval, a text box's top left corner so it isn't on the
-/// words, and where the drag that drew anything else began.
 pub(super) fn handle(square: Square, drawing: &Drawing) -> Pos2 {
     let (a, b) = (at(square, drawing.a), at(square, drawing.b));
     match drawing.kind.as_str() {
@@ -308,11 +273,6 @@ pub(super) fn handle(square: Square, drawing: &Drawing) -> Pos2 {
     }
 }
 
-/// The grips that resize a shape, on the minimap: the four corners of a
-/// rectangle or an oval, and for a circle, a cone or a triangle the end the
-/// drag that drew it set, which gives its size and which way it faces. A
-/// label has none, since its letters go with the map, and a stroke is
-/// resized by its brush size instead.
 pub(super) fn grips(drawing: &Drawing) -> Vec<[f32; 2]> {
     let ([ax, ay], [bx, by]) = (drawing.a, drawing.b);
     match drawing.kind.as_str() {
@@ -322,8 +282,6 @@ pub(super) fn grips(drawing: &Drawing) -> Vec<[f32; 2]> {
     }
 }
 
-/// `drawing` with its grip `grip` dragged to `to`. A corner of a rectangle
-/// or an oval moves while the one across from it stays put.
 pub(super) fn resized(drawing: &Drawing, grip: usize, to: [f32; 2]) -> Drawing {
     let corners = grips(drawing);
     match drawing.kind.as_str() {
@@ -339,8 +297,6 @@ pub(super) fn resized(drawing: &Drawing, grip: usize, to: [f32; 2]) -> Drawing {
     }
 }
 
-/// `drawing` moved by `by` on the minimap, held so no part of it leaves the
-/// map rather than squashing against the edge.
 pub(super) fn moved(drawing: &Drawing, by: [f32; 2]) -> Drawing {
     let every = || {
         [drawing.a, drawing.b]
@@ -363,8 +319,6 @@ pub(super) fn moved(drawing: &Drawing, by: [f32; 2]) -> Drawing {
     }
 }
 
-/// A point on the minimap from one on screen, turned back to the minimap's
-/// own frame.
 pub(super) fn spot(square: Square, at: Pos2) -> [f32; 2] {
     let shown = [
         ((at.x - square.left()) / square.width()).clamp(0.0, 1.0),
@@ -373,7 +327,6 @@ pub(super) fn spot(square: Square, at: Pos2) -> [f32; 2] {
     turned(shown, 4 - square.turn % 4)
 }
 
-/// Whether a drag went far enough to be a shape rather than a slip.
 pub(super) fn long_enough(square: Square, start: [f32; 2], end: [f32; 2]) -> bool {
     at(square, start).distance(at(square, end)) >= 6.0
 }
@@ -455,8 +408,6 @@ mod tests {
         }
     }
 
-    /// A point goes on screen and comes back where it was at every turn, so
-    /// turning the map never moves what is kept on it.
     #[test]
     fn a_turned_point_comes_back_where_it_was() {
         for turn in 0..4 {

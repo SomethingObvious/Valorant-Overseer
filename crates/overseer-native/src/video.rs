@@ -55,19 +55,13 @@ thread_local! {
 /// What the engine has said since the app last asked. Set on Media
 /// Foundation's own threads, read on the window's.
 struct Events {
-    /// It knows the video's size.
     loaded: AtomicBool,
-    /// It has a frame to show.
     ready: AtomicBool,
-    /// It played to the end.
     ended: AtomicBool,
-    /// It couldn't read or play the file.
     failed: AtomicBool,
-    /// Wakes the video process's loop, so it hears about each event.
     wake: Box<dyn Fn() + Send + Sync>,
 }
 
-/// The engine's events, passed on to [`Events`].
 #[implement(IMFMediaEngineNotify)]
 struct Notify(Arc<Events>);
 
@@ -91,24 +85,13 @@ impl IMFMediaEngineNotify_Impl for Notify_Impl {
     }
 }
 
-/// A clip playing in a child window of the app's, shown where [`Clip::place`]
-/// puts it. Dropping it stops the engine and removes the window.
 pub(crate) struct Clip {
-    /// The media engine, which decodes and presents into `child`.
     engine: IMFMediaEngine,
-    /// The child window the video is drawn in.
     child: HWND,
-    /// What the engine has said.
     events: Arc<Events>,
-    /// Where it was last put and the part of that which could be seen, or
-    /// nothing while hidden.
     placed: Option<(Area, Area)>,
-    /// The size the picture was last fitted to.
     fitted: Option<[i32; 2]>,
-    /// When the window was last shown after being hidden.
     shown_at: Option<Instant>,
-    /// Whether it is clipped to nothing, as it is for [`SETTLE`] after
-    /// it is shown.
     blank: bool,
 }
 
@@ -149,39 +132,32 @@ impl Clip {
             .map_err(|e| e.message())
     }
 
-    /// Plays on from where it is.
     pub(crate) fn play(&self) {
         // SAFETY: `engine` is a live engine this value owns, used on the
         // thread that made it.
         let _played = unsafe { self.engine.Play() };
     }
 
-    /// Stops where it is, keeping that frame on screen.
     pub(crate) fn pause(&self) {
         // SAFETY: as in `play`.
         let _paused = unsafe { self.engine.Pause() };
     }
 
-    /// Whether it is playing.
     pub(crate) fn playing(&self) -> bool {
         // SAFETY: as in `play`.
         unsafe { !self.engine.IsPaused().as_bool() && !self.engine.IsEnded().as_bool() }
     }
 
-    /// Where it has got to, in seconds.
     pub(crate) fn time(&self) -> f64 {
         // SAFETY: as in `play`.
         unsafe { self.engine.GetCurrentTime() }
     }
 
-    /// Goes to `at` seconds, playing on from there if it was playing.
     pub(crate) fn seek(&self, at: f64) {
         // SAFETY: as in `play`.
         let _sought = unsafe { self.engine.SetCurrentTime(at.max(0.0)) };
     }
 
-    /// Goes to `at` as [`Clip::seek`] does, unless the last seek is still
-    /// going, so following a dragged handle doesn't queue a seek a frame.
     pub(crate) fn scrub(&self, at: f64) {
         // SAFETY: as in `play`.
         unsafe {
@@ -191,7 +167,6 @@ impl Clip {
         }
     }
 
-    /// Plays `rate` times as fast as recorded, the sound kept at its pitch.
     pub(crate) fn set_rate(&self, rate: f64) {
         // SAFETY: as in `play`.
         unsafe {
@@ -210,7 +185,6 @@ impl Clip {
         }
     }
 
-    /// The video's width and height, once the engine has read them.
     pub(crate) fn size(&self) -> Option<[u32; 2]> {
         let (mut wide, mut tall) = (0, 0);
         // SAFETY: as in `play`, with both pointers to locals that outlive the call.
@@ -221,24 +195,15 @@ impl Clip {
         (read.is_ok() && wide > 0 && tall > 0).then_some([wide, tall])
     }
 
-    /// Whether it played to the end since this was last asked.
     pub(crate) fn take_ended(&self) -> bool {
         self.events.ended.swap(false, Ordering::Relaxed)
     }
 
-    /// Whether the engine couldn't read or play the file.
     pub(crate) fn failed(&self) -> bool {
         self.events.failed.load(Ordering::Relaxed)
     }
 
-    /// Puts the video at `shown`'s first box in the window's client area,
-    /// showing only the part of it inside the second, or hides it. Returns
-    /// whether to call again shortly, while a window just shown is still
-    /// clipped to nothing.
     pub(crate) fn place(&mut self, shown: Option<(Area, Area)>) -> bool {
-        // Shown straight away, the window is white until the engine has drawn
-        // into it at its new size. So it waits for the engine's first frame,
-        // then stays clipped to nothing for `SETTLE`.
         let shown = shown.filter(|_| self.events.ready.load(Ordering::Relaxed));
         let Some(([left, top, right, bottom], [l, t, r, b])) = shown else {
             if self.placed.take().is_some() {
@@ -260,8 +225,6 @@ impl Clip {
                     top,
                     right - left,
                     bottom - top,
-                    // No waiting on the app's window to repaint behind it, which is
-                    // another process, and no copying old pixels the engine redraws.
                     SWP_NOACTIVATE
                         | SWP_NOZORDER
                         | SWP_SHOWWINDOW
@@ -282,14 +245,10 @@ impl Clip {
         settling
     }
 
-    /// Whether the video can be seen: placed, and no longer clipped to
-    /// nothing while it settles.
     pub(crate) const fn on_screen(&self) -> bool {
         self.placed.is_some() && !self.blank
     }
 
-    /// Fits the picture to the window it is in, once the engine knows the
-    /// video's size and whenever the window's size has changed.
     fn fit(&mut self) {
         let Some(([left, top, right, bottom], _)) = self.placed else {
             return;
@@ -327,8 +286,6 @@ impl Drop for Clip {
     }
 }
 
-/// Makes the engine and the child window it draws in, for `file` inside
-/// `parent`, on a device of the low-power GPU.
 fn open_in(
     parent: HWND,
     file: &str,
@@ -366,7 +323,6 @@ fn open_in(
     }
 }
 
-/// The engine itself, drawing into `child`.
 fn engine_for(
     child: HWND,
     file: &str,
@@ -396,8 +352,6 @@ fn engine_for(
     }
 }
 
-/// The device the engine decodes on and the manager that hands it over, on
-/// the low-power GPU so decoding stays off the one games run on. Made once.
 fn shared_device() -> windows_core::Result<IMFDXGIDeviceManager> {
     if let Some(kept) = DEVICE.with_borrow(Clone::clone) {
         return Ok(kept);

@@ -1,41 +1,29 @@
-//! Whether a newer Overseer is out. At most once a day, while the backend
-//! is up, the window asks it which release is newest, and the footer says so
-//! when that is newer than this one. Nothing is downloaded: the footer opens
-//! the release's page, and setup does the rest.
-
 use overseer_core::Bridge;
 
 use crate::settings::UpdateSettings;
 
-/// How long an answer is good for, in seconds.
 const DAY: i64 = 24 * 60 * 60;
 
 /// This build's version, which a newer release is measured against.
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The newest release's page, whichever it is when opened.
 pub(crate) const LATEST: &str =
     "https://github.com/SomethingObvious/Valorant-Overseer/releases/latest";
 
-/// The question to the backend, while one is out.
 #[derive(Debug, Default)]
 pub(crate) struct Update {
     waiting: Option<u64>,
 }
 
 impl Update {
-    /// Whether `id` is this question.
     pub(crate) fn waiting_on(&self, id: u64) -> bool {
         self.waiting == Some(id)
     }
 
-    /// Forgets the question a dropped connection took with it.
     pub(crate) const fn reconnected(&mut self) {
         self.waiting = None;
     }
 
-    /// Asks which release is newest when the last answer is a day old,
-    /// unless looking is switched off.
     pub(crate) fn ask(&mut self, bridge: &Bridge, settings: &UpdateSettings, now: i64) {
         if due(settings, now) && self.waiting.is_none() {
             self.waiting = Some(bridge.ask("newest", serde_json::Value::Null));
@@ -64,7 +52,6 @@ impl Update {
     }
 }
 
-/// Whether it is time to ask again.
 fn due(settings: &UpdateSettings, now: i64) -> bool {
     settings.check_updates
         && settings
@@ -72,13 +59,11 @@ fn due(settings: &UpdateSettings, now: i64) -> bool {
             .is_none_or(|at| now - at >= DAY || at > now)
 }
 
-/// The newest release, when it is newer than `current` and looking is on.
 pub(crate) fn newer<'a>(settings: &'a UpdateSettings, current: &str) -> Option<&'a str> {
     let newest = settings.newest_release.as_deref()?;
     (settings.check_updates && parse(newest)? > parse(current)?).then_some(newest)
 }
 
-/// The page of release `version`, built from its numbers alone.
 pub(crate) fn page(version: &str) -> Option<String> {
     let (major, minor, patch) = parse(version)?;
     Some(format!(
@@ -86,7 +71,6 @@ pub(crate) fn page(version: &str) -> Option<String> {
     ))
 }
 
-/// A version as three numbers, or nothing when it is anything else.
 fn parse(version: &str) -> Option<(u32, u32, u32)> {
     let mut parts = version.split('.').map(|part| {
         (!part.is_empty() && part.len() <= 4 && part.bytes().all(|b| b.is_ascii_digit()))
@@ -110,8 +94,6 @@ pub(crate) fn now() -> i64 {
 mod tests {
     use super::{DAY, Update, UpdateSettings, due, newer, page};
 
-    /// A newer release is said, the same or an older one is not, and
-    /// nothing is said with looking switched off.
     #[test]
     fn only_a_newer_release_is_said() {
         let at = |newest: &str| UpdateSettings {

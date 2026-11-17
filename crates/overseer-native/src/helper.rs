@@ -25,35 +25,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::Area;
 use crate::video::Clip;
 
-/// How often a playing clip says where it has got to. The app works out the
-/// time in between from the speed.
 const REPORT: Duration = Duration::from_millis(100);
 
-/// How often the loop looks again while a clip plays or a window settles.
 const BUSY: u32 = 50;
 
-/// One clip and what the app last asked of it.
 struct Shown {
-    /// The clip itself.
     clip: Clip,
-    /// Where the app wants it, or nothing for hidden.
     wanted: Option<(Area, Area)>,
-    /// What has been said about it.
     told: Told,
-    /// When it last said where it had got to.
     reported: Option<Instant>,
-    /// Whether its window is still clipped to nothing after being shown.
     settling: bool,
 }
 
-/// What the app has been told about a clip.
 #[derive(Default)]
 struct Told {
-    /// Its size.
     size: bool,
-    /// Its failure.
     failure: bool,
-    /// Whether its window is on screen, as last said.
     on_screen: bool,
 }
 
@@ -129,9 +116,6 @@ pub fn serve(parent: isize) -> i32 {
     }
 }
 
-/// Does one line the app sent: `open`, `place`, `hide`, `close`, `play`,
-/// `pause`, `seek`, `scrub`, `rate` or `volume`, each with the clip's id and
-/// then what it needs, all split by tabs.
 fn obey(
     line: &str,
     clips: &mut HashMap<u32, Shown>,
@@ -179,9 +163,6 @@ fn obey(
         ("scrub", [at]) => clip.scrub(*at),
         ("rate", [rate]) => clip.set_rate(*rate),
         ("volume", [share]) => clip.set_volume(*share),
-        // Only kept here and put in place once every waiting line is read,
-        // since a drag sends one a frame and moving the window takes longer
-        // than that, so placing each would fall seconds behind.
         ("place", [l, t, r, b, sl, st, sr, sb]) => {
             let area = |v: [f64; 4]| v.map(|n| n as i32);
             shown.wanted = Some((area([*l, *t, *r, *b]), area([*sl, *st, *sr, *sb])));
@@ -197,10 +178,6 @@ fn obey(
     shown.reported = Some(Instant::now());
 }
 
-/// Says what is new about one clip: its size once it is known, its end, its
-/// failure, where a playing one has got to, and when its window comes up on
-/// screen or goes. Places its window again too, since it waits for the
-/// engine's first frame and then settles.
 fn report(id: u32, shown: &mut Shown, out: &mut impl Write) {
     if !shown.told.size
         && let Some([wide, tall]) = shown.clip.size()
@@ -227,7 +204,6 @@ fn report(id: u32, shown: &mut Shown, out: &mut impl Write) {
     }
 }
 
-/// Says where a clip is and whether it is playing.
 fn say_state(id: u32, clip: &Clip, out: &mut impl Write) {
     drop(writeln!(
         out,

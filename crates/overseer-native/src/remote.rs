@@ -18,58 +18,38 @@ use crate::Area;
 /// game gets the CPU before the video process does.
 const FLAGS: u32 = 0x0800_0000 | 0x0000_4000;
 
-/// The video process, while there is one.
 static PROCESS: Mutex<Option<Process>> = Mutex::new(None);
 
-/// The id the next clip gets.
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
-/// The video process, the line it reads its orders from, and the clips it
-/// plays.
 struct Process {
-    /// The process itself.
     child: Child,
     /// Sends it one order a line, through a thread of its own so a busy
     /// process never holds up the app's window.
     say: Sender<String>,
-    /// What it last said about each clip, by id.
     clips: Clips,
 }
 
-/// What the video process last said about each clip, by id.
 type Clips = Arc<Mutex<HashMap<u32, Arc<Slot>>>>;
 
-/// One clip as the app knows it.
 struct Slot {
-    /// What the video process last said about it.
     heard: Mutex<Heard>,
-    /// Asks the app's window for a frame.
     wake: Box<dyn Fn() + Send + Sync>,
-    /// Whether the video process says the video is up on screen.
     on_screen: AtomicBool,
 }
 
-/// What the video process last said about a clip.
 #[derive(Debug)]
 struct Heard {
-    /// Where it was, in seconds.
     time: f64,
-    /// When that was said, to count on from while it plays.
     since: Instant,
-    /// Whether it was playing.
     playing: bool,
-    /// How fast it plays.
     rate: f64,
-    /// Its width and height, once known.
     size: Option<[u32; 2]>,
-    /// It played to the end since the app last asked.
     ended: bool,
-    /// It couldn't be played, or the video process has gone.
     failed: bool,
 }
 
 impl Heard {
-    /// A clip nothing has been said about yet, paused at its start.
     fn new() -> Self {
         Self {
             time: 0.0,
@@ -82,7 +62,6 @@ impl Heard {
         }
     }
 
-    /// Where it is now, counted on from what was last said while it plays.
     fn now(&self) -> f64 {
         if self.playing {
             self.since
@@ -94,7 +73,6 @@ impl Heard {
         }
     }
 
-    /// Takes `time` as where it is from now on.
     fn at(&mut self, time: f64) {
         (self.time, self.since) = (time, Instant::now());
     }
@@ -108,17 +86,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// A clip played by Windows' media engine, in the video process, in a child
 /// of the app's window. Dropping it stops the clip and removes the window.
 pub struct Video {
-    /// Its id with the video process.
     id: u32,
-    /// What the video process last said about it.
     slot: Arc<Slot>,
-    /// Sends the video process its orders.
     say: Sender<String>,
-    /// Every clip's slot, to take this one's out on drop.
     clips: Clips,
-    /// Where it was last put, so an unchanged place isn't sent again.
     placed: Option<(Area, Area)>,
-    /// Whether it has been put anywhere yet, or hidden.
     told: bool,
 }
 
@@ -165,7 +137,6 @@ impl Video {
         Ok(video)
     }
 
-    /// Sends the video process `what` for this clip.
     fn order(&self, what: &str) {
         let (kind, rest) = what.split_once('\t').unwrap_or((what, ""));
         let line = if rest.is_empty() {
@@ -176,7 +147,6 @@ impl Video {
         drop(self.say.send(line));
     }
 
-    /// What the video process last said, to read or change.
     fn heard(&self) -> MutexGuard<'_, Heard> {
         lock(&self.slot.heard)
     }
@@ -289,8 +259,6 @@ impl Drop for Video {
     }
 }
 
-/// The video process for the window `parent`, started when it isn't
-/// running: what sends it orders, and its clips.
 fn running(parent: isize) -> Result<(Sender<String>, Clips), String> {
     let mut process = lock(&PROCESS);
     if process
@@ -349,8 +317,6 @@ fn start(parent: isize) -> Result<Process, String> {
     Ok(Process { child, say, clips })
 }
 
-/// Takes one line the video process said: a clip's `state`, `size`, `ended`,
-/// `failed` or `shown`, with its id and then what it says, split by tabs.
 fn hear(clips: &Clips, line: &str) {
     let mut parts = line.split('\t');
     let (Some(kind), Some(id)) = (
@@ -413,10 +379,6 @@ mod tests {
 
     use super::{Clips, Heard, Slot, hear, lock};
 
-    /// What the video process says lands on the clip it names, a playing
-    /// clip's time counts on from what was said, and only news about its
-    /// size, its end, its failure or it coming on screen asks the window for
-    /// a frame.
     #[test]
     fn what_the_video_process_says_is_kept() {
         let clips: Clips = Arc::default();

@@ -1,11 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Today's ranked session for the board's footer, and each match's result as it ends.
-
-A session is the run of competitive matches with no gap of two hours or more
-between them, read from Riot's own list of your ranked games. That list has
-the games played while Overseer was closed, and the ones whose details Riot
-was slow to post, which watching a match end can miss.
-"""
+"""Today's ranked session for the board's footer, and each match's result as it ends."""
 
 from __future__ import annotations
 
@@ -45,8 +39,6 @@ _STATE: dict[str, Any] = {
 }
 # Riot's competitive updates for each account, and when they were read.
 _UPDATES: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-# Where each account stood on the ladder and when it was read. A dodge costs
-# rating without a match to show for it, so only a fresh read catches it.
 _STANDING: dict[str, tuple[int, float]] = {}
 # Riot takes a moment to charge a dodge.
 _DODGE_WAIT = 20
@@ -55,8 +47,10 @@ _DODGE_WAIT = 20
 def _load() -> dict[str, list[dict[str, Any]]]:
     raw = read_json(_PATH, None)
     accounts = raw.get("accounts") if isinstance(raw, dict) else None
+    if not isinstance(accounts, dict):
+        return {}
     out: dict[str, list[dict[str, Any]]] = {}
-    for puuid, account in (accounts or {}).items():
+    for puuid, account in accounts.items():
         if not isinstance(account, dict):
             continue
         points = account.get("points")
@@ -76,12 +70,7 @@ def _save() -> None:
 def session(
     matches: list[dict[str, Any]], results: dict[str, Any], now: float
 ) -> list[dict[str, Any]]:
-    """Return the session's matches as points, oldest first.
-
-    `matches` are Riot's competitive updates. `results` are the results seen
-    when matches ended, by match id, since Riot's list has none and a draw
-    can move the rating either way.
-    """
+    """Return the session's matches as points, oldest first."""
     played = sorted(
         (
             m
@@ -121,7 +110,6 @@ def session(
 
 
 def _fetch(lm: Any, waits: tuple[float, ...] = (0,)) -> None:
-    """Read Riot's list of your ranked games, then where you stand now."""
     try:
         for wait in waits:
             time.sleep(wait)
@@ -138,7 +126,6 @@ def _fetch(lm: Any, waits: tuple[float, ...] = (0,)) -> None:
             matches = cu.get("Matches") if isinstance(cu, dict) else None
             if not isinstance(matches, list):
                 continue
-            # Read after the list, so it is never older than the last match.
             _read_standing(lm)
             with _LOCK:
                 _UPDATES[me] = (asked, [m for m in matches if isinstance(m, dict)])
@@ -147,39 +134,36 @@ def _fetch(lm: Any, waits: tuple[float, ...] = (0,)) -> None:
 
 
 def _refresh(lm: Any, waits: tuple[float, ...] = (0,), *, force: bool = False) -> None:
-    """Read Riot's list on its own thread, when it is due or `force` says so."""
     me = str(getattr(lm, "self_puuid", None) or "")
     if not me or (_STATE["fetching"] and not force):
         return
     with _LOCK:
         fetched = _UPDATES.get(me, (0.0, []))[0]
-    if not force and time.time() - fetched < _REFRESH:
+    if not force and 0 <= time.time() - fetched < _REFRESH:
         return
     _STATE["fetching"] = True
     threading.Thread(target=_fetch, args=(lm, waits), daemon=True, name="session").start()
 
 
 def _self_rr(lm: Any, match_id: str) -> dict[str, Any]:
+    path = f"/mmr/v1/players/{lm.self_puuid}/competitiveupdates?startIndex=0&endIndex=5"
     try:
-        cu = lm.auth.pd_get(
-            f"/mmr/v1/players/{lm.self_puuid}/competitiveupdates"
-            f"?startIndex=0&endIndex=5&queue=competitive"
-        )
-        for match in (cu or {}).get("Matches", []) or []:
-            if match.get("MatchID") == match_id:
-                return {
-                    "delta": match.get("RankedRatingEarned"),
-                    "actual": rr_moved(match),
-                    "tier": match.get("TierAfterUpdate"),
-                    "rr": match.get("RankedRatingAfterUpdate"),
-                }
+        updates = (lm.auth.pd_get(f"{path}&queue=competitive") or {}).get("Matches") or []
+        update = next((u for u in updates if u.get("MatchID") == match_id), None)
+        if update is None:
+            return {}
+        return {
+            "delta": update.get("RankedRatingEarned"),
+            "actual": rr_moved(update),
+            "tier": update.get("TierAfterUpdate"),
+            "rr": update.get("RankedRatingAfterUpdate"),
+        }
     except Exception as e:
         LOG.warning("rr lookup for match %s failed: %r", match_id, e)
-    return {}
+        return {}
 
 
 def _point(lm: Any, board: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the match a board was showing as one point, once it has ended."""
     match_id = board.get("matchId")
     if not match_id or match_id == "lobby":
         return None
@@ -240,7 +224,6 @@ def _record(lm: Any, board: dict[str, Any]) -> None:
 
 
 def _read_standing(lm: Any, wait: float = 0) -> None:
-    """Read where you stand on the ladder now, from your current act's rank."""
     time.sleep(wait)
     try:
         season = lm.season_id()
@@ -299,11 +282,7 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
 
 
 def actual(points: list[dict[str, Any]], standing: int | None = None) -> int | None:
-    """How far the session really moved the rating, or None for one too old to say.
-
-    It runs from where the first match started to where the rating stands
-    now, so a dodge between or after the matches counts too.
-    """
+    """How far the session really moved the rating, or None for one too old to say."""
     if not points:
         return None
     first, last = points[0], points[-1]
@@ -326,13 +305,10 @@ if __name__ == "__main__":
     played.append({"MatchID": "dodge", "MapID": "", "MatchStartTime": 7 * hour * 1000})
     now_ids = [p["matchId"] for p in session(played, {}, 8 * hour)]
     check(now_ids == ["m5", "m6", "m7"], now_ids)
-    # Two hours idle after a game's length, the session has ended.
     check(session(played, {}, 7 * hour + 2 * hour + _GAME) == [])
     check(session(played[::-1], {}, 8 * hour)[0]["matchId"] == "m5", "any order")
     seen = session(played, {"m7": "Draw"}, 8 * hour)
     check([p["result"] for p in seen] == ["Defeat", "Victory", "Draw"], seen)
-    # A rank up keeps the whole gain, derank protection keeps the rating
-    # where it was, and Immortal counts on without starting over.
     up = {"TierBeforeUpdate": 12, "RankedRatingBeforeUpdate": 90}
     check(rr_moved({**up, "TierAfterUpdate": 13, "RankedRatingAfterUpdate": 10}) == 20)
     held = {"TierBeforeUpdate": 13, "RankedRatingBeforeUpdate": 0}

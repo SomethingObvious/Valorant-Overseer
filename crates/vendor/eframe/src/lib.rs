@@ -169,29 +169,11 @@ pub use epi::*;
 pub(crate) mod stopwatch;
 
 // ----------------------------------------------------------------------------
-// When compiling for web
-
-#[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen;
-
-#[cfg(target_arch = "wasm32")]
-pub use web_sys;
-
-#[cfg(target_arch = "wasm32")]
-pub mod web;
-
-#[cfg(target_arch = "wasm32")]
-pub use web::{WebLogger, WebRunner};
-
-// ----------------------------------------------------------------------------
 // When compiling natively
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
 mod native;
-
-#[cfg(target_os = "macos")]
-pub use native::macos::WindowChromeMetrics;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]

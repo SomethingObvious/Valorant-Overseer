@@ -23,26 +23,17 @@ use overseer_ui as design;
 mod site;
 mod stress;
 
-/// One frame to render: a board, and who is selected.
 struct Scene {
     board: Board,
     selected: Option<&'static str>,
-    /// How the board is ordered, which puts the sort arrow in the picture.
     sort: Sort,
-    /// What has been written about the people on the board.
     notes: Notes,
-    /// The selected player's history.
     career: Career,
-    /// The settings, which say whether a newer release is out.
     settings: Settings,
-    /// False on the first frame, which draws nothing: `set_fonts` lands a
-    /// frame late, and text in a family that is not bound yet panics inside
-    /// epaint.
     ready: bool,
 }
 
 impl Scene {
-    /// The sample board, with somebody selected and nothing else set.
     fn of(selected: Option<&'static str>) -> Self {
         Self {
             board: sample(),
@@ -58,47 +49,37 @@ impl Scene {
         }
     }
 
-    /// As somebody sees it the first time, with the strip over the board.
     fn first(mut self) -> Self {
         self.settings.welcome = Welcome::Due;
         self
     }
 
-    /// No board at all, which is what the app opens on.
     fn empty() -> Self {
         Self::of(None).with(Board::default())
     }
 
-    /// Ordered by a heading somebody clicked.
     fn sorted(self, sort: Sort) -> Self {
         Self { sort, ..self }
     }
 
-    /// With something written about one of them.
     fn noted(self, notes: Notes) -> Self {
         Self { notes, ..self }
     }
 
-    /// On a board of its own.
     fn with(self, board: Board) -> Self {
         Self { board, ..self }
     }
 
-    /// With a newer release known to be out.
     fn updated(mut self, newest: &str) -> Self {
         self.settings.updates.newest_release = Some(newest.to_owned());
         self
     }
 
-    /// With the selected player's history in hand.
     fn lived(self, career: Career) -> Self {
         Self { career, ..self }
     }
 }
 
-/// A board with the shapes worth looking at in one frame: a flagged low level
-/// account, an unranked one, a name too long for its column, a player with
-/// nothing filled in at all, and us.
 pub(crate) fn sample() -> Board {
     let mut players = vec![smurf_ally(), smurf_enemy()];
     players.extend(plain());
@@ -137,7 +118,6 @@ pub(crate) fn sample() -> Board {
         team_stats: stats,
         session: Some(overseer_core::Session {
             net: Some(37),
-            // One of the losses landed on derank protection.
             actual: Some(53),
             points: ["W", "W", "L", "W", "L", "W"]
                 .iter()
@@ -152,8 +132,6 @@ pub(crate) fn sample() -> Board {
     }
 }
 
-/// Two more on our side, because column shedding and party brackets only show
-/// up in a full lobby of ten.
 fn more_allies() -> Vec<Player> {
     vec![
         Player {
@@ -193,7 +171,6 @@ fn more_allies() -> Vec<Player> {
     ]
 }
 
-/// The other side, including the duo the gutter has to bracket.
 fn more_enemies() -> Vec<Player> {
     vec![
         Player {
@@ -241,7 +218,6 @@ fn more_enemies() -> Vec<Player> {
             rank: Some("Gold 1".to_owned()),
             rank_tier: Some(12),
             rr: Some(64),
-            // Two games behind this K/D, so it is drawn as a thin sample.
             kd: Some(2.93),
             win_rate: Some(52.0),
             games: Some(102),
@@ -280,7 +256,6 @@ fn duo() -> overseer_core::Party {
     }
 }
 
-/// One line of a flag's evidence, as the backend sends it.
 fn evidence(label: &str, value: &str, note: &str) -> overseer_core::Evidence {
     overseer_core::Evidence {
         label: label.to_owned(),
@@ -289,13 +264,10 @@ fn evidence(label: &str, value: &str, note: &str) -> overseer_core::Evidence {
     }
 }
 
-/// A run of results, newest first, written the way a person would say it.
 fn form(results: &str) -> Vec<String> {
     results.chars().map(|c| c.to_string()).collect()
 }
 
-/// A low level account on your side with an Ascendant peak and the aim to
-/// match, which is the case the whole flag exists for.
 fn smurf_ally() -> Player {
     Player {
         puuid: Some("a".to_owned()),
@@ -375,7 +347,6 @@ fn smurf_ally() -> Player {
     }
 }
 
-/// The same story on the other side, in a party the app had to infer.
 fn smurf_enemy() -> Player {
     Player {
         puuid: Some("d".to_owned()),
@@ -455,8 +426,6 @@ fn smurf_enemy() -> Player {
     }
 }
 
-/// The rest of the lobby: us, an unranked account with a name too long for
-/// its column, and somebody the backend knows nothing about yet.
 fn plain() -> Vec<Player> {
     vec![
         Player {
@@ -514,7 +483,6 @@ fn plain() -> Vec<Player> {
     ]
 }
 
-/// Draws what the window draws, on a fixed board.
 fn draw(ui: &mut Ui, scene: &mut Scene) {
     view::snapshot(
         ui,
@@ -536,7 +504,6 @@ fn a_history() -> Career {
     career(A_HISTORY)
 }
 
-/// The history behind [`a_history`], in the backend's JSON.
 const A_HISTORY: &str = r#"{
         "source": "demo", "puuid": "b",
         "matches": [
@@ -581,7 +548,6 @@ const A_HISTORY: &str = r#"{
         "bonusRounds": 7
     }"#;
 
-/// A career parsed from the backend's JSON.
 fn career(raw: &str) -> Career {
     Career::Have {
         puuid: "b".to_owned(),
@@ -589,8 +555,6 @@ fn career(raw: &str) -> Career {
     }
 }
 
-/// A note about somebody on the sample board, so the panel's boxes and the
-/// mark on their row are both in a picture.
 fn remembered() -> Notes {
     let mut notes = Notes::default();
     notes.set(
@@ -604,7 +568,6 @@ fn remembered() -> Notes {
     notes
 }
 
-/// Your own row as the backend keeps it, from the sample board.
 fn kept() -> Saved {
     let player = sample()
         .players
@@ -617,11 +580,9 @@ fn kept() -> Saved {
     }
 }
 
-/// Every frame the snapshot test pins, by name and window size.
 fn scenes() -> Vec<(&'static str, egui::Vec2, Scene)> {
     vec![
         ("wide", vec2(1200.0, 480.0), Scene::of(Some("SilentEnt#GG"))),
-        // Sorted by K/D, best first, so the heading's arrow is in a picture.
         (
             "sorted",
             vec2(1200.0, 480.0),
@@ -630,34 +591,25 @@ fn scenes() -> Vec<(&'static str, egui::Vec2, Scene)> {
                 direction: Some(Direction::Down),
             }),
         ),
-        // A player you have written about: the mark on their row, and the
-        // boxes in the panel with something in them.
         (
             "noted",
             vec2(1200.0, 480.0),
             Scene::of(Some("Day#9932")).noted(remembered()),
         ),
         ("normal", vec2(860.0, 480.0), Scene::of(Some("Day#9932"))),
-        // The strip over the board until Got It is pressed.
         (
             "welcome",
             vec2(860.0, 480.0),
             Scene::of(Some("Day#9932")).first(),
         ),
         ("compact", vec2(460.0, 460.0), Scene::of(Some("Day#9932"))),
-        // A full history, for the charts no number alone can check.
         (
             "career",
             vec2(1200.0, 1240.0),
             Scene::of(Some("Day#9932")).lived(a_history()),
         ),
-        // The screen the app opens on, at the size it opens at: the state
-        // plate with the three steps on it.
         ("opening", vec2(860.0, 420.0), Scene::empty()),
-        // The same screen in a window too short for the plate, which shows
-        // its fallback.
         ("waiting", vec2(860.0, 240.0), Scene::empty()),
-        // With your stats kept from an earlier board, the plate offers them.
         (
             "waiting-kept",
             vec2(860.0, 420.0),
@@ -666,14 +618,11 @@ fn scenes() -> Vec<(&'static str, egui::Vec2, Scene)> {
                 ..Board::default()
             }),
         ),
-        // What Show My Last Stats shows: your row alone, as your side, with
-        // your card in the panel.
         (
             "last-stats",
             vec2(860.0, 480.0),
             Scene::of(Some("Day#9932")).with(app::snapshot_kept(&kept())),
         ),
-        // A newer release out, said at the footer's far right.
         (
             "update",
             vec2(860.0, 240.0),
@@ -722,8 +671,6 @@ fn every_layout_is_unchanged() {
     }
 }
 
-/// Runs `harness` until nothing asks for another frame, so a picture is not
-/// a fade caught halfway.
 fn settle<S>(harness: &mut Harness<'_, S>) {
     let mut frames = 0;
     while harness.ctx.has_requested_repaint() && frames < 120 {
@@ -732,7 +679,6 @@ fn settle<S>(harness: &mut Harness<'_, S>) {
     }
 }
 
-/// The PC the settings pictures describe.
 const fn machine() -> crate::machine::Machine {
     crate::machine::Machine {
         memory: Some(16 << 30),
@@ -741,8 +687,6 @@ const fn machine() -> crate::machine::Machine {
     }
 }
 
-/// Three past games for the History snapshot, the newest a win with its
-/// scoreboard open, then a loss, then a Swiftplay with no RR.
 fn past_games() -> serde_json::Value {
     let line = |name: &str, team: &str, agent: &str, k: u32, d: u32, a: u32, acs: u32| {
         serde_json::json!({
@@ -759,6 +703,7 @@ fn past_games() -> serde_json::Value {
                 "matchId": "m1", "map": "Haven", "mode": "Competitive",
                 "startedAt": NOW_MS - 3 * 3_600_000, "lengthMs": 2_280_000,
                 "score": [13, 11], "result": "Victory", "rrDelta": 27, "yourTeam": "Blue",
+                "usual": {"games": 20, "kd": 1.12, "acs": 214.6, "adr": 139.2, "hsPct": 23.1, "kast": 74.0},
                 "players": [
                     line("SaltiSmySugar#OBAMA", "Blue", "Brimstone", 21, 15, 15, 242),
                     line("NeonLock#VAL", "Red", "Clove", 24, 17, 6, 268),
@@ -788,20 +733,31 @@ fn past_games() -> serde_json::Value {
     })
 }
 
+fn noted_history() -> History {
+    let mut history = History::showing(past_games());
+    history.notes.set(
+        "m1",
+        Note {
+            text: "Duo with Xan, held B the whole second half".to_owned(),
+            ..Note::default()
+        },
+    );
+    history
+}
+
 /// The clock the History snapshot reads, so "3 hours ago" stays true.
 const NOW_MS: i64 = 1_790_000_000_000;
 
-/// The History screen's snapshot, from a harness of its own.
 fn history_shot() -> egui_kittest::SnapshotResults {
     let mut shot = Harness::builder()
         .with_size(vec2(1200.0, 780.0))
         .build_ui_state(
             |ui, state: &mut (bool, History)| {
                 if state.0 {
-                    let _picked = state.1.show(ui, 5, NOW_MS, true);
+                    let _shown = state.1.show(ui, 5, NOW_MS, true);
                 }
             },
-            (false, History::showing(past_games())),
+            (false, noted_history()),
         );
     design::install_fonts(&shot.ctx);
     shot.ctx.set_style_of(egui::Theme::Dark, design::style());
@@ -813,8 +769,6 @@ fn history_shot() -> egui_kittest::SnapshotResults {
     shot.take_snapshot_results()
 }
 
-/// [`an_atlas`] after a game update redrew Ascent, with two of its lineups
-/// saved before then.
 fn redrawn_atlas() -> serde_json::Value {
     let mut atlas = an_atlas();
     if let Some(ascent) = atlas.pointer_mut("/maps/0").and_then(|m| m.as_object_mut()) {
@@ -829,9 +783,6 @@ fn redrawn_atlas() -> serde_json::Value {
     atlas
 }
 
-/// Ascent with its real callout positions, an outlined A site, and three
-/// lineups, for the Lineups snapshots. The minimap is left out, since it is
-/// fetched onto this machine and a picture of it would differ elsewhere.
 fn an_atlas() -> serde_json::Value {
     let callouts = [
         ("A Site", 0.3501, 0.1425),
@@ -888,10 +839,7 @@ fn an_atlas() -> serde_json::Value {
     })
 }
 
-/// Draws the Lineups screen the way every picture of it is taken, with the
-/// maps turned `turn`.
 fn show_lineups(ui: &mut Ui, lineups: &mut Lineups, bridge: &Bridge, turn: MapTurn) {
-    // A clip stays still, so a snapshot doesn't start a video playing.
     let prefs = crate::lineups::Prefs {
         autoplay: false,
         ..crate::lineups::Prefs::default()
@@ -915,8 +863,6 @@ fn show_lineups(ui: &mut Ui, lineups: &mut Lineups, bridge: &Bridge, turn: MapTu
     );
 }
 
-/// `lineups` in a harness of its own at `size`, past the frame its fonts
-/// land on.
 fn lineups_harness(
     size: egui::Vec2,
     lineups: Lineups,
@@ -943,7 +889,6 @@ fn lineups_harness(
     shot
 }
 
-/// Every Lineups snapshot, each from a harness of its own.
 fn lineups_shot() -> egui_kittest::SnapshotResults {
     let mut results = egui_kittest::SnapshotResults::default();
     // The small ones are what Lineups gets in the smallest window, 520 by
@@ -975,7 +920,6 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
         );
         let mut shot = lineups_harness(size, screen, MapTurn::Drawn);
         if mode == "note" {
-            // Resting on the A Main pin, which has notes, past the tooltip's delay.
             shot.hover_at(egui::pos2(425.0, 220.0));
             for _ in 0..8 {
                 shot.step();
@@ -988,8 +932,6 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
     results
 }
 
-/// Presses at `from`, moves to `to` in a few steps and lets go there, the way
-/// a mouse does.
 fn drag(shot: &mut Harness<'_, (bool, Lineups, Bridge)>, from: egui::Pos2, to: egui::Pos2) {
     shot.hover_at(from);
     shot.run();
@@ -1003,8 +945,6 @@ fn drag(shot: &mut Harness<'_, (bool, Lineups, Bridge)>, from: egui::Pos2, to: e
     shot.run();
 }
 
-/// The Lineups screen in `mode`, laid out as its snapshots are, for real
-/// pointer events.
 fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {
     lineups_harness(
         vec2(1200.0, 820.0),
@@ -1039,15 +979,11 @@ fn a_drag_on_the_trim_bar_writes_the_time() {
     );
     assert!(to.contains('.'), "a drag lands on tenths, not {to}");
 
-    // Dragged past the bar's end, a handle stops there.
     let mut far = screen("write");
     drag(&mut far, egui::pos2(944.0, 544.0), egui::pos2(300.0, 544.0));
     assert_eq!(trimmed(&far), ("2:24".to_owned(), "2:38".to_owned()));
 }
 
-/// Real pointer events on the Lineups screen, laid out as its snapshots are.
-/// A drag across the map is a whole lineup, a drag from a shape's dot moves
-/// just that shape, and a drag anywhere else still draws a new one.
 #[test]
 fn a_drag_on_the_map_places_a_lineup_and_moves_a_shape() {
     let (from, to) = (egui::pos2(620.0, 300.0), egui::pos2(700.0, 450.0));
@@ -1076,7 +1012,6 @@ fn a_drag_on_the_map_places_a_lineup_and_moves_a_shape() {
 
     let mut draw = screen("draw");
     let before = draw.state().1.sketched().unwrap().to_vec();
-    // The blue rectangle's dot, where the draw snapshot shows it.
     drag(
         &mut draw,
         egui::pos2(543.5, 546.5),
@@ -1109,8 +1044,6 @@ fn a_drag_on_the_map_places_a_lineup_and_moves_a_shape() {
     );
 }
 
-/// In the sandbox a click puts the agent that's out on the map, and nothing
-/// drawn there is kept.
 #[test]
 fn the_sandbox_keeps_nothing() {
     let mut sandbox = screen("sandbox");
@@ -1136,8 +1069,6 @@ fn the_sandbox_keeps_nothing() {
     );
 }
 
-/// The eraser takes off the drawing a click lands on, and a sweep takes off
-/// what it crosses, and neither moves a lineup.
 #[test]
 fn the_eraser_takes_off_what_it_touches() {
     let mut erase = screen("erase");
@@ -1146,7 +1077,6 @@ fn the_eraser_takes_off_what_it_touches() {
         drawn.iter().map(|s| s.kind.clone()).collect()
     };
     let before = kinds(&erase);
-    // Inside the blue rectangle, a click.
     drag(
         &mut erase,
         egui::pos2(560.0, 560.0),
@@ -1155,7 +1085,6 @@ fn the_eraser_takes_off_what_it_touches() {
     let after_click = kinds(&erase);
     assert!(!after_click.contains(&"rect".to_owned()), "{after_click:?}");
     assert_eq!(after_click.len(), before.len() - 1);
-    // Across the orange stroke.
     drag(
         &mut erase,
         egui::pos2(160.0, 636.0),
@@ -1173,9 +1102,6 @@ fn the_eraser_takes_off_what_it_touches() {
     );
 }
 
-/// The Lineups screen on a real atlas, for looking at by hand: the backend's
-/// `lineups.overview()` saved as JSON at `LINEUPS_ATLAS`, drawn into
-/// `STRESS_OUT`. Ignored, since the minimaps are only on this machine.
 #[test]
 #[ignore = "needs LINEUPS_ATLAS and STRESS_OUT"]
 fn lineups_live() {
@@ -1205,8 +1131,6 @@ fn lineups_live() {
     }
 }
 
-/// The overlay as the game sees it: the sample lobby drawn the way
-/// `overlay::show` draws it, at the overlay's width and its tallest.
 fn overlay_shot() -> egui_kittest::SnapshotResults {
     let mut results = overlay_frame(
         Board {
@@ -1215,9 +1139,6 @@ fn overlay_shot() -> egui_kittest::SnapshotResults {
         },
         "overlay",
     );
-    // Agent select, where only your own team is known, and two of them
-    // haven't picked, so their mains stand in for the agent: one with a role
-    // two of them share and one without.
     let full = sample();
     let main = |agent: &str, games: u32, role: &str| overseer_core::TopAgent {
         agent: Some(agent.to_owned()),
@@ -1256,7 +1177,6 @@ fn overlay_shot() -> egui_kittest::SnapshotResults {
     results
 }
 
-/// The overlay over `board`, saved as the snapshot `name`.
 fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
     let mut shot = Harness::builder()
         .with_size(vec2(crate::overlay::WIDTH, crate::overlay::CEILING))
@@ -1283,7 +1203,6 @@ fn overlay_frame(board: Board, name: &str) -> egui_kittest::SnapshotResults {
     shot.take_snapshot_results()
 }
 
-/// The lobby on `board` as the overlay draws it.
 fn overlay_board(ui: &mut Ui, board: &Board) {
     let _drew = crate::board::draw(
         ui,
@@ -1297,11 +1216,11 @@ fn overlay_board(ui: &mut Ui, board: &Board) {
             place: crate::board::Place::Overlay,
             still: true,
             since: 10.0,
+            lost: false,
         },
     );
 }
 
-/// The overlay's greeting, saved as its own snapshot.
 fn greeting_frame() -> egui_kittest::SnapshotResults {
     let mut greeting = Harness::builder()
         // The harness's own panel keeps 8 points round the edge.
@@ -1327,7 +1246,6 @@ fn greeting_frame() -> egui_kittest::SnapshotResults {
     greeting.take_snapshot_results()
 }
 
-/// The help screen's snapshot, from a harness of its own.
 fn help_shot() -> egui_kittest::SnapshotResults {
     let mut shot = Harness::builder()
         .with_size(vec2(880.0, 1300.0))
@@ -1349,10 +1267,7 @@ fn help_shot() -> egui_kittest::SnapshotResults {
     shot.take_snapshot_results()
 }
 
-/// The settings screen's snapshot, from a harness of its own.
 fn settings_shot() -> egui_kittest::SnapshotResults {
-    // Same first frame rule as the board: fonts land on the frame after they
-    // are installed, so the first one draws nothing.
     let mut shot = Harness::builder()
         .with_size(vec2(880.0, 2700.0))
         .build_ui_state(
@@ -1362,8 +1277,6 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
                         ui,
                         &mut state.1,
                         (Quality::Rich, None, &machine()),
-                        // Both broken, so the longer notes and their
-                        // wrapping are in the picture.
                         (
                             view::Trouble {
                                 hotkey: Some("Access is denied."),
@@ -1390,13 +1303,9 @@ fn settings_shot() -> egui_kittest::SnapshotResults {
     shot.run();
     shot.run();
     shot.snapshot("settings");
-    // Two harnesses means two sets of results, and kittest checks that every
-    // set was looked at. The caller merges them into one report.
     shot.take_snapshot_results()
 }
 
-/// A screen reader hears each switch in Settings by name and whether it's
-/// on, Tab reaches them, and Space flips the one the keyboard is on.
 #[test]
 fn a_setting_is_named_and_works_from_the_keyboard() {
     use egui::accesskit::{Role, Toggled};
@@ -1449,8 +1358,6 @@ fn a_setting_is_named_and_works_from_the_keyboard() {
     );
 }
 
-/// A screen reader hears a player's row as who they are, on what, their
-/// rank and K/D, and whether they're worth a look.
 #[test]
 fn a_row_says_who_it_is() {
     use egui_kittest::kittest::Queryable as _;
@@ -1479,8 +1386,6 @@ fn a_row_says_who_it_is() {
     );
 }
 
-/// Resting on a tag in the overlay opens the card that says what it means,
-/// as it does on the board.
 #[test]
 fn a_tag_in_the_overlay_explains_itself() {
     let board = sample();

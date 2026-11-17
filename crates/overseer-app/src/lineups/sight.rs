@@ -13,45 +13,27 @@ use egui::{ColorImage, Pos2, Vec2, pos2, vec2};
 
 use super::shapes::{self, Square};
 
-/// The minimap's walls as straight lines, in its own pixels, with the corners
-/// they meet at and a grid of which lines pass through which part of it.
 #[derive(Debug, Default)]
 pub(super) struct Walls {
-    /// Each wall, end to end.
     lines: Vec<[Pos2; 2]>,
-    /// Every end of a line, once.
     corners: Vec<Pos2>,
-    /// The lines through each square of the grid, row by row.
     grid: Vec<Vec<usize>>,
-    /// How many squares the grid is across and down.
     cells: (i64, i64),
-    /// How big the minimap is, in pixels.
     size: [f32; 2],
-    /// Which pixels can't be seen through, row by row.
     blocked: Vec<bool>,
 }
 
-/// How many pixels a square of the grid is each way.
 const CELL: f32 = 16.0;
 /// How far a traced wall may stray from the pixels' own edge when it is
 /// straightened, in pixels.
 const STRAY: f32 = 0.4;
-/// How far either side of a corner the rays that pass it are aimed, in
-/// radians.
 const PAST: f32 = 1e-4;
 /// How close to a line's end still hits it, as a share of the line. Without
 /// it a ray aimed right at a corner where two lines meet can slip between them.
 const SNUG: f32 = 1e-5;
-/// How much of a clear patch's edge has to be drawn as a drop for it to
-/// count as void. Abyss's drops are half grey or more, and no patch on any
-/// other map is over a sixth.
 const VOID: f32 = 0.3;
-/// How far a turret dropped in a wall is moved to stand beside it, in
-/// pixels.
 const STEP_OUT: i64 = 16;
 
-/// The walls of `image`: where the pixels that can't be seen through meet
-/// the rest.
 pub(super) fn walls(image: &ColorImage) -> Walls {
     let [wide, tall] = image.size;
     let blocked = blocked(image);
@@ -95,9 +77,6 @@ pub(super) fn walls(image: &ColorImage) -> Walls {
     }
 }
 
-/// Which pixels of `image` can't be seen through, row by row: the clear
-/// ones off the floor, unless they are void, and the white edge of a wall
-/// that stands at the void.
 fn blocked(image: &ColorImage) -> Vec<bool> {
     let [wide, tall] = image.size;
     let clear: Vec<bool> = image.pixels.iter().map(|p| p.a() <= 128).collect();
@@ -118,15 +97,12 @@ fn blocked(image: &ColorImage) -> Vec<bool> {
             .get(i)
             .is_some_and(|p| p.a() > 128 && test(p.r(), p.g(), p.b()))
     };
-    // A drop's edge is a light grey, a little yellow under a spike site.
     let grey = |r: u8, g: u8, b: u8| {
         r.abs_diff(222) <= 18
             && r.abs_diff(g) < 6
             && (r.saturating_sub(16)..=r.saturating_add(5)).contains(&b)
     };
     let white = |r: u8, g: u8, b: u8| r.min(g).min(b) >= 250;
-    // Each clear patch, joined edge to edge, and how many of the floor
-    // pixels on its edge there are and how many are grey.
     let mut patch = vec![usize::MAX; clear.len()];
     let mut edges: Vec<(u32, u32)> = Vec::new();
     for start in 0..clear.len() {
@@ -201,11 +177,8 @@ fn trace(blocked: &[bool], [wide, tall]: [usize; 2]) -> Vec<Vec<Pos2>> {
                 solid(x + 1, y + 1),
                 solid(x, y + 1),
             ];
-            // In half pixels, so the ends of pieces meet exactly.
             let (top, right) = ((2 * x + 2, 2 * y + 1), (2 * x + 3, 2 * y + 2));
             let (bottom, left) = ((2 * x + 2, 2 * y + 3), (2 * x + 1, 2 * y + 2));
-            // Walls touching only at a corner are kept joined, so no ray
-            // slips between them.
             let found: &[[(i64, i64); 2]] = match corners {
                 [false, false, false, false] | [true, true, true, true] => &[],
                 [false, false, false, true] | [true, true, true, false] => &[[left, bottom]],
@@ -223,7 +196,6 @@ fn trace(blocked: &[bool], [wide, tall]: [usize; 2]) -> Vec<Vec<Pos2>> {
     join(&pieces)
 }
 
-/// `pieces` joined end to end into runs of points, in pixels.
 fn join(pieces: &[[(i64, i64); 2]]) -> Vec<Vec<Pos2>> {
     let mut ends: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
     for (index, piece) in pieces.iter().enumerate() {
@@ -254,8 +226,6 @@ fn join(pieces: &[[(i64, i64); 2]]) -> Vec<Vec<Pos2>> {
     runs
 }
 
-/// The ends met walking on from `at` through each unused piece in turn,
-/// marking them used.
 fn walk(
     pieces: &[[(i64, i64); 2]],
     ends: &HashMap<(i64, i64), Vec<usize>>,
@@ -280,9 +250,6 @@ fn walk(
     out
 }
 
-/// `run` with every point that strays less than `STRAY` from a straight line
-/// between its neighbours left out, so a wall is a few long lines rather than
-/// a staircase of short ones.
 fn straighten(run: &[Pos2]) -> Vec<Pos2> {
     let Some(&last) = run.last() else {
         return Vec::new();
@@ -324,7 +291,6 @@ fn straighten(run: &[Pos2]) -> Vec<Pos2> {
     out
 }
 
-/// How far `p` is from the line through `a` and `b`.
 fn off_line(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let along = b - a;
     if along.length() <= 0.0 {
@@ -334,12 +300,6 @@ fn off_line(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 impl Walls {
-    /// Where a turret put down at `at` and aimed at `aim` stands: the middle
-    /// of its pixel, or of the nearest one it can see from when `at` is in a
-    /// wall, since a wall a few pixels thick is easy to drop it on, and from
-    /// inside one it would see only a sliver along the inside of the wall.
-    /// The side of the wall it is aimed at comes first, so it looks out of
-    /// the wall and not back into it.
     fn standing(&self, at: Pos2, aim: Pos2) -> Pos2 {
         let [wide, tall] = self.size;
         let (x, y) = (at.x.floor() as i64, at.y.floor() as i64);
@@ -368,9 +328,6 @@ impl Walls {
         best.map_or(at, |(_, middle)| middle)
     }
 
-    /// What can be seen from `from` between the angles `low` and `high`, as
-    /// the points round its edge from `low` to `high`, in the minimap's
-    /// pixels. Nothing further than `far` is looked for.
     fn seen(&self, from: Pos2, (low, high): (f32, f32), far: f32) -> Vec<Pos2> {
         let wide = high - low;
         let mut turns = vec![low, high];
@@ -391,9 +348,6 @@ impl Walls {
             .collect()
     }
 
-    /// How far a ray from `from` along `way` goes before it meets a wall, up to
-    /// `far`. It walks the grid square by square and stops once a wall it has
-    /// met is nearer than the next square.
     fn cast(&self, from: Pos2, way: Vec2, far: f32) -> f32 {
         let mut best = far;
         let start = from + vec2(1.0, 1.0);
@@ -440,12 +394,10 @@ impl Walls {
     }
 }
 
-/// The cross product of `a` and `b`, how far `b` turns from `a`.
 fn cross(a: Vec2, b: Vec2) -> f32 {
     a.x.mul_add(b.y, -(a.y * b.x))
 }
 
-/// How far along a ray from `from` along `way` it meets `line`, if it does.
 fn hit(from: Pos2, way: Vec2, [a, b]: [Pos2; 2]) -> Option<f32> {
     let along = b - a;
     let across = cross(way, along);
@@ -458,8 +410,6 @@ fn hit(from: Pos2, way: Vec2, [a, b]: [Pos2; 2]) -> Option<f32> {
     (t >= 0.0 && (-SNUG..=1.0 + SNUG).contains(&s)).then_some(t)
 }
 
-/// Where a turret at `at` on `square`, aimed at `aim`, stands and what it
-/// sees in a cone `degrees` wide, as the points round its edge, on screen.
 pub(super) fn cone(
     walls: &Walls,
     square: Square,
@@ -550,9 +500,6 @@ mod tests {
         walls(&image)
     }
 
-    /// A clear patch edged in a drop's grey is void, seen across to whatever
-    /// is past it, a white wall standing at its edge still stops the view,
-    /// and a patch edged in white all round is a wall.
     #[test]
     fn the_void_is_seen_across_but_not_a_wall_beside_it() {
         let grey = egui::Color32::from_gray(225);
@@ -572,10 +519,6 @@ mod tests {
         assert!((solid - 9.5).abs() <= STRAY, "to the patch, {solid}");
     }
 
-    /// A turret dropped inside a wall four pixels thick stands on the floor
-    /// beside it and sees along it, where from inside it saw a sliver of the
-    /// wall's own inside, and on the side it is aimed at, even past the
-    /// wall's middle. One put down on the floor stands where it was put.
     #[test]
     fn a_turret_dropped_in_a_thin_wall_stands_beside_it() {
         let mut image = ColorImage::new([64, 64], vec![egui::Color32::from_gray(118); 64 * 64]);
@@ -589,8 +532,6 @@ mod tests {
         let walls = walls(&image);
         let up = pos2(31.2, 0.0);
         assert_eq!(walls.standing(pos2(10.2, 10.9), up), pos2(10.5, 10.5));
-        // Aimed along the wall, it stands beside it on the near side, a pixel
-        // on towards where it looks.
         let stands = walls.standing(pos2(31.2, 32.5), up);
         assert_eq!(stands, pos2(29.5, 31.5));
         let east = walls.standing(pos2(31.2, 32.5), pos2(60.0, 32.5));
@@ -607,8 +548,6 @@ mod tests {
         assert_eq!(rim.iter().find(in_wall), None);
     }
 
-    /// Turning the cone a little moves only its edges, and every point in
-    /// between stays exactly where it was.
     #[test]
     fn turning_moves_only_the_edges() {
         let walls = room();

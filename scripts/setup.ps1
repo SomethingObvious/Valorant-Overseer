@@ -1,5 +1,4 @@
 ﻿# One-time developer setup: hooks, merge policy, tools. Idempotent, safe to
-# re-run. Someone installing the app runs install.bat instead.
 
 $ErrorActionPreference = "Stop"
 
@@ -10,8 +9,6 @@ Step "Installing git hooks"
 Ok "git now runs the hooks in .githooks (pre-commit, commit-msg, pre-push)"
 
 Step "Setting the merge policy"
-# Rebase always, never merge. These are repo-local, so other checkouts on this
-# machine keep whatever they had.
 & git -C $Root config pull.rebase true
 & git -C $Root config rebase.autoStash true
 & git -C $Root config rebase.autosquash true
@@ -20,9 +17,6 @@ Step "Setting the merge policy"
 & git -C $Root config commit.cleanup strip
 Ok "Rebase, never merge, and fast-forward only."
 
-# user.name and user.email are left alone on purpose. A setup script that
-# quietly rewrites a contributor's identity is how commits end up authored by
-# the wrong person.
 $who = (& git -C $Root config --get user.name)
 if (-not $who) { Warn "git user.name isn't set. Set it before you commit." }
 

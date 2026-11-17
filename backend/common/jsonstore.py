@@ -15,8 +15,6 @@ _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def _warn(msg: str) -> None:
-    # Imported here because run.py imports this package for load_env and
-    # treats overseerlog as optional, so a missing logger skips the warning.
     try:
         import overseerlog
     except ImportError:
@@ -54,7 +52,6 @@ def read_json(path: str, default: Any) -> Any:
 
 
 def _set_aside(path: str, default: Any, e: Exception) -> Any:
-    """Move an unreadable store out of the way and return `default`."""
     kept = f"{path}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
     try:
         # rename rather than replace, because on Windows rename refuses to
@@ -67,21 +64,22 @@ def _set_aside(path: str, default: Any, e: Exception) -> Any:
     return default
 
 
-def write_atomic(path: str, data: Any, *, prefix: str) -> bool:
+def write_atomic(path: str, data: Any, *, prefix: str, durable: bool = True) -> bool:
     """Write `data` as JSON to `path` through a temp file, and return False if that fails."""
-    # The temp file sits in the same directory so the replace is a rename,
-    # which is what makes it atomic. Every caller is a best-effort save, so
-    # this reports failure instead of raising.
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(Path(path).parent), prefix=prefix, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
+                # NTFS keeps the rename through a power cut but not the data,
+                # so an unsynced file can come back empty.
+                if durable:
+                    fh.flush()
+                    os.fsync(fh.fileno())
             Path(tmp).replace(path)
             return True
         finally:
-            # Only still there if something above failed.
             if Path(tmp).exists():
                 with contextlib.suppress(OSError):
                     Path(tmp).unlink()

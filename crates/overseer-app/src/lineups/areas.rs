@@ -6,42 +6,19 @@
 use egui::{Color32, Pos2, Shape, Stroke, Vec2};
 use overseer_ui::colour;
 
-/// The ground an ability covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Reach {
-    /// A circle where it lands: its edge, and the inner circle where it does
-    /// full damage when there is one.
     Round(f32, Option<f32>),
-    /// A strip out from where it's thrown toward where it lands: how far out
-    /// it starts, how long it runs and how wide it is.
     Strip(f32, f32, f32),
-    /// A fan out from where it's thrown toward where it lands: how far it
-    /// reaches and how wide it opens, in degrees.
     Fan(f32, f32),
-    /// A strip from where it lands on in the way it was thrown: how long it
-    /// runs and how wide it is.
     Sweep(f32, f32),
-    /// A wall this long standing across the throw where it lands.
     Across(f32),
-    /// Four walls out from where it lands in an X across the throw, each
-    /// running until it meets a wall or reaches this far.
     Cross(f32),
-    /// A trip wire between its two ends, which can be this far apart.
     Wire(f32),
-    /// A wall from where it's cast to where it ends, bent through each of the
-    /// lineup's points in turn, and cut off at this long.
     Bent(f32),
-    /// A wall through both pins from one side of the map to the other.
     Divide,
-    /// Two lines out from where it's cast toward where it lands, this far
-    /// apart, each running this far behind and this far ahead or until it
-    /// meets a wall.
     Lanes(f32, f32, f32),
-    /// A cone this many degrees wide out from where it lands, pointing at
-    /// the lineup's point, as far as it can see before the walls.
     Aim(f32),
-    /// A circle this big where it lands and another where it bounces, which
-    /// is the lineup's point.
     Bounce(f32),
 }
 
@@ -119,9 +96,6 @@ const STRIP: &[(&str, f32, f32, f32)] = &[
     ("Toxic Screen", 0.0, 6000.0, 0.0),
 ];
 
-/// Abilities put down from afar rather than thrown: how many places one
-/// lineup can put them in all, and how far from where you stand they reach,
-/// with no limit for Astra's stars, which go anywhere on the map.
 const SPOTS: &[(&str, usize, Option<f32>)] = &[
     ("Sky Smoke", 3, Some(5500.0)),
     ("Dark Cover", 2, Some(8000.0)),
@@ -134,8 +108,6 @@ const SPOTS: &[(&str, usize, Option<f32>)] = &[
     ("Nova Pulse", 5, None),
 ];
 
-/// Whether two ability names are the same however they are spaced or
-/// capitalised, since the game's own list has a double space in Nebula's.
 fn same(a: &str, b: &str) -> bool {
     let words = |s: &str| {
         s.split_whitespace()
@@ -145,8 +117,6 @@ fn same(a: &str, b: &str) -> bool {
     words(a) == words(b)
 }
 
-/// How many places `ability` can be put down in one lineup, and how far
-/// from where you stand, for one put down from afar.
 pub(super) fn spots(ability: Option<&str>) -> Option<(usize, Option<f32>)> {
     let ability = ability?;
     SPOTS
@@ -155,7 +125,6 @@ pub(super) fn spots(ability: Option<&str>) -> Option<(usize, Option<f32>)> {
         .map(|&(_, most, range)| (most, range))
 }
 
-/// The ground `ability` covers, matched by name however it is spaced.
 pub(super) fn reach(ability: &str) -> Option<Reach> {
     let same = |name: &str| same(name, ability);
     if let Some(&(_, edge, inner)) = ROUND.iter().find(|r| same(r.0)) {
@@ -182,22 +151,12 @@ pub(super) fn reach(ability: &str) -> Option<Reach> {
     .map(|r| r.1)
 }
 
-/// The thinnest a strip or wall is drawn, in points, so a metre-wide wall
-/// still shows on a small map.
 const THINNEST: f32 = 3.0;
 
-/// How far the floor runs from a point along a way before it meets a wall,
-/// in points, when it does within the most given.
 pub(super) type Run<'a> = &'a dyn Fn(Pos2, Vec2, f32) -> Option<f32>;
 
-/// How far each way Cosmic Divide is drawn, in game units. It has no end, and
-/// this is past the edge of every map.
 const ENDLESS: f32 = 50_000.0;
 
-/// Draws `reach` for a lineup thrown from `stand` that comes down at `land`,
-/// with its own `points`, at `units` points to a game unit, finding walls
-/// with `run`. Anything that goes the way it was thrown needs both pins
-/// apart, and isn't drawn until it has them.
 pub(super) fn draw(
     painter: &egui::Painter,
     at: (Option<Pos2>, Pos2, &[Pos2]),
@@ -207,7 +166,6 @@ pub(super) fn draw(
     painter.extend(outline(at, reach, (ink, run)));
 }
 
-/// The shapes `draw` paints.
 fn outline(
     (stand, land, points): (Option<Pos2>, Pos2, &[Pos2]),
     (reach, units): (Reach, f32),
@@ -291,9 +249,6 @@ fn outline(
     }
 }
 
-/// The points along a wall from `from` through each of `bends` in turn to
-/// `to`, cut off `most` along it. It is a smooth curve that passes through
-/// every one of them, or a straight line with none.
 pub(super) fn bent(from: Pos2, bends: &[Pos2], to: Pos2, most: f32) -> Vec<Pos2> {
     wall(from, bends, to, most)
         .into_iter()
@@ -346,11 +301,8 @@ fn catmull_rom([p0, p1, p2, p3]: [Pos2; 4], t: f32) -> Pos2 {
         .to_pos2()
 }
 
-/// How many straight pieces each stretch of a bent wall is drawn in.
 const STEPS: u8 = 16;
 
-/// A circle `outer` round at `land`, with the inner circle of full damage
-/// when there is one.
 fn round(land: Pos2, (outer, inner): (f32, Option<f32>), ink: Color32) -> Vec<Shape> {
     let edge = Stroke::new(1.5, ink.gamma_multiply(0.7));
     let mut out = vec![
@@ -367,8 +319,6 @@ fn round(land: Pos2, (outer, inner): (f32, Option<f32>), ink: Color32) -> Vec<Sh
     out
 }
 
-/// Barrier Mesh's four walls out from `land` in an X across the way it was
-/// thrown, each stopping at a wall or at `most` points.
 fn cross(
     land: Pos2,
     ahead: Option<Vec2>,
@@ -390,8 +340,6 @@ fn cross(
         .collect()
 }
 
-/// Fast Lane's two lines from `from` toward `ahead`, `apart` points apart,
-/// each running `behind` back and `far` on, or until it meets a wall.
 fn lanes(
     (from, ahead): (Pos2, Vec2),
     (behind, far, apart): (f32, f32, f32),
@@ -409,10 +357,6 @@ fn lanes(
         .collect()
 }
 
-/// A trip wire through its ends `a` and `b`, run on out to the wall each
-/// side when the whole of it fits in `most` points and no wall stands between
-/// the ends. Otherwise it can't be put there, and the part between the ends
-/// is red and dashed.
 fn wire((a, b): (Pos2, Pos2), most: f32, run: Run<'_>, line: (Color32, Stroke)) -> Vec<Shape> {
     let (way, between) = ((b - a).normalized(), a.distance(b));
     let spare = most - between;
@@ -432,9 +376,6 @@ fn wire((a, b): (Pos2, Pos2), most: f32, run: Run<'_>, line: (Color32, Stroke)) 
 /// rays at its two edges, and what it sees inside stays the same.
 const RAYS: u16 = 360;
 
-/// What a turret at `from` facing `ahead` sees in a cone `degrees` wide:
-/// each ray runs until it meets a wall, or `far` points when none comes. It
-/// shoots at any range it can see, so there's no other limit.
 fn sight(
     (from, ahead): (Pos2, Vec2),
     (degrees, far): (f32, f32),
@@ -459,8 +400,6 @@ fn sight(
     view(from, ends, (fill, edge))
 }
 
-/// The shape a turret at `from` sees, round to the points `ends` in order,
-/// in `ink`.
 pub(super) fn seen(from: Pos2, ends: Vec<Pos2>, ink: Color32) -> Vec<Shape> {
     view(
         from,
@@ -472,10 +411,7 @@ pub(super) fn seen(from: Pos2, ends: Vec<Pos2>, ink: Color32) -> Vec<Shape> {
     )
 }
 
-/// [`seen`], in `fill` with its edge in `edge`.
 fn view(from: Pos2, ends: Vec<Pos2>, (fill, edge): (Color32, Stroke)) -> Vec<Shape> {
-    // One mesh with no softened edges, since softening each thin slice on
-    // its own leaves spikes where they meet. The rim line smooths the edge.
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(from, fill);
     for end in &ends {
@@ -489,8 +425,6 @@ fn view(from: Pos2, ends: Vec<Pos2>, (fill, edge): (Color32, Stroke)) -> Vec<Sha
     vec![Shape::mesh(mesh), Shape::closed_line(rim, edge)]
 }
 
-/// A cone out from `from` toward `ahead`, `far` points long and `degrees`
-/// wide.
 fn fan(
     from: Pos2,
     ahead: Vec2,
@@ -506,8 +440,6 @@ fn fan(
     Shape::convex_polygon(points, fill, edge)
 }
 
-/// A rectangle out from `origin` along `way`, from `near` to `far` points
-/// out and `wide` points across.
 fn band(
     origin: Pos2,
     way: Vec2,
@@ -524,7 +456,6 @@ mod tests {
     use super::*;
     use egui::pos2;
 
-    /// Sizes come back as the game has them, by name however it is spaced.
     #[test]
     fn every_kind_of_area_reads_from_its_name() {
         assert_eq!(reach("Incendiary"), Some(Reach::Round(450.0, None)));
@@ -548,7 +479,6 @@ mod tests {
         assert_eq!(reach("Updraft"), None);
     }
 
-    /// The corners of every polygon drawn.
     fn corners(shapes: &[Shape]) -> Vec<Pos2> {
         shapes
             .iter()
@@ -560,7 +490,6 @@ mod tests {
             .collect()
     }
 
-    /// Whether two lists of corners are the same, past float noise.
     fn same_corners(found: &[Pos2], wanted: &[[f32; 2]]) -> bool {
         found.len() == wanted.len()
             && found
@@ -569,7 +498,6 @@ mod tests {
                 .all(|(f, w)| (f.x - w[0]).abs() < 1e-3 && (f.y - w[1]).abs() < 1e-3)
     }
 
-    /// Open floor everywhere.
     fn open(_: Pos2, _: Vec2, _: f32) -> Option<f32> {
         None
     }
@@ -583,9 +511,6 @@ mod tests {
         Some((wall - from.y) / way.y).filter(|t| *t <= most)
     }
 
-    /// A strip runs out from where it's thrown, Armageddon on from where it
-    /// lands, and a wall stands across, each the size the game says, here at
-    /// a point to a metre.
     #[test]
     fn each_shape_points_the_way_it_is_thrown() {
         let at = (Some(pos2(0.0, 0.0)), pos2(100.0, 0.0));
@@ -648,7 +573,6 @@ mod tests {
             ),
             "{span:?}"
         );
-        // Nine metres of wire can't cross a ten metre corridor.
         let short = outline(
             (None, pos2(100.0, 0.0), &ends),
             (Reach::Wire(900.0), 0.01),
@@ -680,8 +604,6 @@ mod tests {
         );
     }
 
-    /// A wall goes through every bend in turn, and one longer than the game
-    /// allows stops at the most it can be.
     #[test]
     fn a_bent_wall_meets_its_bends_and_stops_at_its_length() {
         let (from, to) = (pos2(0.0, 0.0), pos2(30.0, 0.0));
@@ -718,9 +640,6 @@ mod tests {
         );
     }
 
-    /// Fast Lane's two lines stop where they meet a wall, Relay Bolt splashes
-    /// where it bounces and where it lands, and the turret's cone points at
-    /// its dot.
     #[test]
     fn lanes_stop_at_walls_and_a_bolt_splashes_twice() {
         let at = (
@@ -744,8 +663,6 @@ mod tests {
         let floor: (Color32, Run<'_>) = (Color32::WHITE, &open);
         let bolt = outline(at, (Reach::Bounce(500.0), 0.01), floor);
         assert_eq!(bolt.len(), 4);
-        // With no wall it sees to the end of the map and past, straight at
-        // its dot, and a wall stops each ray at it.
         let rim_of = |aim: Pos2, run: (Color32, Run<'_>)| match outline(
             (at.0, at.1, &[aim]),
             (Reach::Aim(100.0), 0.01),
@@ -762,7 +679,6 @@ mod tests {
                 .any(|p| (p.x - 10.0).abs() < 1e-3 && p.y >= 500.0 - 1e-2),
             "{rim:?}"
         );
-        // Turned a little, every ray inside the cone ends where it did.
         let walled: (Color32, Run<'_>) = (Color32::WHITE, &corridor);
         let (before, after) = (
             rim_of(pos2(10.0, 20.0), walled),

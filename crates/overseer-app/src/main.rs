@@ -42,7 +42,6 @@ use egui::ViewportBuilder;
 /// Wide enough for the board and the panel, and short enough for a 1080p
 /// screen with a task bar.
 const INITIAL_SIZE: [f32; 2] = [1280.0, 800.0];
-/// Below this the board cannot draw a row without wrapping it.
 const MINIMUM_SIZE: [f32; 2] = [520.0, 360.0];
 
 /// How many panics a session writes down. A frame that panics every time
@@ -79,8 +78,6 @@ fn keep_panics(root: &Path) {
 }
 
 fn main() -> eframe::Result {
-    // The video process, which plays lineup clips in the window named after
-    // the flag, and nothing else.
     let mut args = std::env::args().skip_while(|a| a != "--video").skip(1);
     if let Some(parent) = args.next().and_then(|p| p.parse::<isize>().ok()) {
         std::process::exit(overseer_native::serve(parent));
@@ -103,13 +100,11 @@ fn main() -> eframe::Result {
         .with_title("Valorant Overseer")
         .with_inner_size(INITIAL_SIZE)
         .with_min_inner_size(MINIMUM_SIZE)
-        // The masthead is the title bar, with its own buttons.
         .with_decorations(false)
         .with_app_id("valorant-overseer");
     if let Some(icon) = overseer_ui::art::logo_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
-    // Taken by whichever run gets as far as making the app.
     let listener = std::cell::Cell::new(listener);
     let made = std::cell::Cell::new(false);
     let run = |draw: probe::Draw| {
@@ -150,8 +145,6 @@ fn main() -> eframe::Result {
             }),
         )
     };
-    // Each way that fails before the app is made gives way to the next. One
-    // that fails after it ran has nothing to do with drawing.
     let mut ran = Ok(());
     for draw in probe::DRAWS {
         if draw == probe::Draw::Software {
@@ -173,20 +166,27 @@ pub(crate) const NO_WINDOW: u32 = 0x0800_0000;
 /// starts inherits it.
 pub(crate) const BELOW_NORMAL: u32 = 0x0000_4000;
 
-/// Starts the backend under `run.py`, or says why it can't. With no install
-/// to run, the window just waits for a backend.
-fn serve(root: &Path) -> Option<String> {
+pub(crate) fn serve(root: &Path) -> Option<String> {
     let python = root.join(".venv").join("Scripts").join("python.exe");
     let launcher = root.join("backend").join("run.py");
-    if !python.is_file() || !launcher.is_file() {
+    if !root.join(".overseer").is_dir() {
         return None;
+    }
+    if !launcher.is_file() {
+        return Some(format!(
+            "Its backend isn't in {}. Run the setup again to repair it. Your settings and lineups are kept.",
+            root.display()
+        ));
+    }
+    if !python.is_file() {
+        return Some(
+            "Its Python environment is missing, which happens when an install stops partway. Run install.bat in Overseer's folder to repair it. Your settings and lineups are kept."
+                .to_owned(),
+        );
     }
     if let Some(why) = broken(root) {
         return Some(why);
     }
-    // `--parent` ends the backend when this process ends. Everything it
-    // starts shares its hidden console, so nothing flashes on screen and it
-    // can still be stopped cleanly.
     let started = std::process::Command::new(python)
         .arg(launcher)
         .args(["--prod", "--parent"])
@@ -227,17 +227,13 @@ fn broken(root: &Path) -> Option<String> {
     })
 }
 
-/// The directory holding `.overseer`, which is the directory holding the app.
 fn install_root() -> PathBuf {
-    // Lets a checkout run while an installed copy is also on the machine.
     if let Some(from_env) = std::env::var_os("OVERSEER_ROOT") {
         return PathBuf::from(from_env);
     }
     std::env::current_exe()
         .ok()
         .and_then(|exe| {
-            // The exe sits in crates/target in a checkout and in the install
-            // directory once shipped, and walking up finds both.
             exe.ancestors()
                 .find(|dir| dir.join(".overseer").is_dir())
                 .map(PathBuf::from)

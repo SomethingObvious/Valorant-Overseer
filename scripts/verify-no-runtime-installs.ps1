@@ -1,37 +1,31 @@
 ﻿. (Join-Path $PSScriptRoot "common.ps1")
 
-# The startup path checks and launches and nothing else. This fails if run.py,
-# start.ps1 or start.bat contains anything that installs or builds.
-$bad = 0
+# The functions in common.ps1 that install something. A name here that
+# common.ps1 doesn't define fails, so a rename can't quietly drop one.
+$Installers = @("Initialize-Python", "Install-Python", "New-Venv", "Install-Packages",
+    "Install-Binaries", "New-DesktopShortcut", "Register-Uninstall")
 
-foreach ($rel in @("backend\run.py")) {
-    $c = Get-Content (Join-Path $Root $rel) -Raw -Encoding UTF8
-
-    foreach ($pat in @('"-m",\s*"pip"', "'-m',\s*'pip'",
-            '"-m",\s*"venv"', "'-m',\s*'venv'",
-            '"install"', "'install'", '"ci"', "'ci'",
-            '"build"', "'build'", 'ensurepip',
-            'os\.system\(', 'shell\s*=\s*True')) {
-        if ($c -match $pat) { Fail "$rel contains a runtime install action: $pat"; $bad = 1 }
-    }
+$Banned = @{
+    "backend\run.py"    = @('"-m",\s*"pip"', "'-m',\s*'pip'", '"-m",\s*"venv"', "'-m',\s*'venv'",
+        '"install"', "'install'", '"ci"', "'ci'", '"build"', "'build'", 'ensurepip',
+        'os\.system\(', 'shell\s*=\s*True')
+    "scripts\start.ps1" = @('pip install', '-m venv', 'npm\s+(install|ci)', 'run build') + $Installers
+    "start.bat"         = @('pip install', '-m venv', 'npm\s+(install|ci)', 'run build') + $Installers
 }
 
-# The functions in common.ps1 that install something, matched by name. A name
-# here that common.ps1 doesn't define fails, so a rename can't quietly take one
-# out of the check.
-$Installers = @("Initialize-ExactPython", "Install-ExactPython", "Repair-Venv", "Install-PyDeps",
-    "Install-Binaries", "New-DesktopShortcut", "Register-Uninstall")
+$faults = @()
 foreach ($name in $Installers) {
     if (-not (Get-Command $name -CommandType Function -ErrorAction SilentlyContinue)) {
-        Fail "common.ps1 has no function named $name. Update the list in this script."; $bad = 1
+        $faults += "common.ps1 has no function named $name. Update the list in this script."
     }
 }
-foreach ($rel in @("scripts\start.ps1", "start.bat")) {
-    $c = Get-Content (Join-Path $Root $rel) -Raw -Encoding UTF8
-    foreach ($pat in (@('pip install', '-m venv', 'npm\s+(install|ci)', 'run build') + $Installers)) {
-        if ($c -match $pat) { Fail "$rel contains a runtime install action: $pat"; $bad = 1 }
-    }
+foreach ($rel in $Banned.Keys) {
+    $text = Get-Content (Join-Path $Root $rel) -Raw -Encoding UTF8
+    $faults += @($Banned[$rel] | Where-Object { $text -match $_ } |
+            ForEach-Object { "$rel contains a runtime install action: $_" })
 }
 
-if ($bad -eq 0) { Ok "startup path is install-free (validation + launch only)." }
-exit $bad
+$faults | ForEach-Object { Fail $_ }
+if ($faults.Count -gt 0) { exit 1 }
+Ok "startup path is install-free (validation + launch only)."
+exit 0

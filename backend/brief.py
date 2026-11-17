@@ -1,24 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""The pregame brief: players in, lines out, each with the count behind it.
-
-Every line is something a player tends to do, read from their own recent
-matches, held against players of the same agent and rank band in the
-bundled sample (norms.json). It was collected through one account and is
-not a representative sample of the whole ranked population. A line keeps its
-conditioning in its name: "in the opening kill" is a share of rounds,
-"distance from teammates' centre at observed kills" is where they stood
-when someone died, never where they spent the round. A line is a finding,
-and the suggestion after it, for a teammate or an opponent, is a possibility
-the finding allows, not a second finding.
-
-The measurements reuse the existing recent-match downloads. No corpus is
-downloaded or built on the user's machine.
-
-Never shown: a win probability, an archetype label, a tendency from fewer
-than `min_read` matches, or a comparison with peers on a read that did
-not persist in the player's rank band. Such a read is a record, the
-figure with its count and nothing more.
-"""
+"""The brief on each player: players in, lines out, each with the count behind it."""
 
 from __future__ import annotations
 
@@ -26,6 +7,7 @@ import json
 import math
 from bisect import bisect_right
 from collections import Counter
+from functools import cache
 from itertools import pairwise
 from pathlib import Path
 from statistics import median
@@ -58,24 +40,12 @@ KIND_WORDS = {
     "full": "rounds with 3,900+ gear",
 }
 POSITIONAL = ("open_rate", "open_kill_rate", "open_death_rate", "forward", "separation")
-# Fewer rounds of a kind than this, and no buy line.
 MIN_BUY_ROUNDS = 4
-# Fewer rounds of this round's kind than this, and no "this round" line.
 MIN_NOW_ROUNDS = 6
-# The buy families tied to a kind of round, as against an equipment tier.
 ROUND_KINDS = ("pistol", "after_lost_pistol")
-# The round kind when the round is known and is neither: no family is this
-# round's, and the round-kind families yield.
 OTHER_ROUND = "other"
-# A read that persists only at twenty matches in the player's band needs
-# this many contributing matches before the brief compares them with peers.
 READY20_MATCHES = 15
-# The side a read without one in its name is about.
 SIDE_OF = {"plant_rate": "attack"}
-# What a flagged line allows, for a teammate and for an opponent, when the
-# read runs high (+) or low (-): a short preparation, never a claim about
-# what the player will do, and nothing at all where the measurement
-# supports no defensible action (time of death, distance from spawn).
 SUGGESTS = {
     ("open_all", 1): ("Stay close to trade.", "Set up a trade for the opening."),
     ("open_all", -1): ("Agree who takes first contact.", "Watch for another opener."),
@@ -119,12 +89,7 @@ def norms() -> dict[str, Any]:
 
 
 def band(tier: float | None) -> str | None:
-    """Return the rank band a tier falls in.
-
-    A median over an even number of matches can land between two tiers,
-    like 8.5 between Bronze 3 and Silver 1, and it rounds up to the band
-    the player was moving into.
-    """
+    """Return the rank band a tier falls in."""
     if tier is None or not tier > 0:
         return None
     whole = math.floor(tier + 0.5)
@@ -143,7 +108,6 @@ def _number(value: Any) -> float:
 
 
 def _xy(location: Any) -> tuple[float, float] | None:
-    """Return a finite position, or None for a snapshot without one."""
     if not isinstance(location, dict):
         return None
     x, y = _number(location.get("x")), _number(location.get("y"))
@@ -166,7 +130,6 @@ def _enemy(kill: dict[str, Any], teams: dict[str, str]) -> bool:
 
 
 def _listed(kill: dict[str, Any]) -> dict[str, tuple[float, float]]:
-    """Where Riot placed each living player at a kill, those with a usable position."""
     out: dict[str, tuple[float, float]] = {}
     for loc in kill.get("playerLocations") or []:
         if not isinstance(loc, dict):
@@ -188,11 +151,6 @@ def _distance(kill: dict[str, Any], killer: str) -> float | None:
 
 
 def _round_kills(rr: dict[str, Any]) -> list[tuple[float, dict[str, Any]]]:
-    """Every kill with a victim and its clock, in the order the norms were built with.
-
-    The clock is Riot's round time. A kill without one takes its game time
-    less the round's typical offset, and one without either goes last.
-    """
     raw = [
         kill
         for stats in rr.get("playerStats") or []
@@ -220,7 +178,6 @@ def _round_kills(rr: dict[str, Any]) -> list[tuple[float, dict[str, Any]]]:
 def _opening(
     rr: dict[str, Any], kills: list[tuple[float, dict[str, Any]]], teams: dict[str, str]
 ) -> dict[str, Any] | None:
-    """Pick the first enemy kill, or the first blood when the clocks cannot order them."""
     enemy = [(when, kill) for when, kill in kills if _enemy(kill, teams)]
     if not enemy:
         return None
@@ -231,14 +188,6 @@ def _opening(
 
 
 def _traded(kills: list[tuple[float, dict[str, Any]]], index: int, teams: dict[str, str]) -> bool:
-    """Whether this kill's killer died to the victim's team within the trade window.
-
-    The killer's next recorded death, by event order, settles it. It is a
-    trade when that death carries a round time inside the window and came
-    from the victim's team. Any other death of the killer, timed or not, ends
-    the search, since a killer who died and came back is on a new life.
-    Unrelated kills without a round time are skipped.
-    """
     kill = kills[index][1]
     killer, victim = str(kill.get("killer") or ""), str(kill["victim"])
     when = _number(kill.get("roundTime"))
@@ -267,9 +216,6 @@ class Places:
             for c in entry.get("callouts") or []
             if isinstance(c, dict) and (at := _xy(c.get("location"))) is not None
         ]
-        # The side's region holds more than its spawn, and on Fracture and
-        # Pearl another of its callouts comes first, so the spawn is asked
-        # for by name.
         self.spawn = {
             side: next((at for s, r, at in callouts if s == region and r == "Spawn"), None)
             or next((at for s, _, at in callouts if s == region), None)
@@ -302,12 +248,6 @@ def _shield(armor: str) -> str:
 
 
 def _option(weapon: str | None) -> str:
-    """Name the buy-menu option a recorded weapon is: a gun, other, none, or unknown.
-
-    None is a weapon id the catalogue could not name, which is not the same
-    as no weapon. It counts as unknown so a missing catalogue never reads
-    as a round with no gun.
-    """
     if weapon is None:
         return "unknown"
     if not weapon:
@@ -323,18 +263,7 @@ def match_reads(
     places: Places | None = None,
     map_name: Callable[[str], str | None] | None = None,
 ) -> dict[str, Any] | None:
-    """One player's reads from one match detail, as sums with their denominators.
-
-    None for a match that is not a full competitive game, or one they were
-    not in. The sums are counted the way the norms were. The per-round reads
-    like `open_all` only count rounds with their stats row, while `death_t`
-    and `kill_dist_mean` take every timed death and every gun kill with or
-    without one, and the positional figures are per side over every round
-    with a side.
-
-    `weapon_name`, `places` and `map_name` default to the valorant-api
-    lookups, and a check passes its own to run without the network.
-    """
+    """One player's reads from one match detail, as sums with their denominators."""
     info = md.get("matchInfo")
     if not isinstance(info, dict):
         return None
@@ -384,7 +313,6 @@ def match_reads(
         opening = _opening(rr, kills, teams)
         opened = bool(opening and puuid in (opening.get("killer"), opening.get("victim")))
 
-        # The positional figures, from every round with a side.
         if side:
             figs = pos[side]
             figs.setdefault("open_rate", []).append(float(opened))
@@ -421,7 +349,6 @@ def match_reads(
             if seps:
                 figs.setdefault("separation", []).append(sum(seps) / len(seps))
 
-        # Pace and range from every enemy kill they were part of.
         first: float | None = None
         for index, (_, kill) in enumerate(kills):
             if not _enemy(kill, teams):
@@ -442,12 +369,9 @@ def match_reads(
                     add("kill_dist_mean", dist, 1.0)
 
         if n in PISTOLS:
-            # The round's result is known with or without a stats row.
             lost_pistol = team != winner
             pistol_known = bool(winner)
         if stats is None:
-            # The norms' round table has no row for this round either, so
-            # the per-round reads have nothing to count here.
             continue
         rounds_seen += 1
         shots.extend(
@@ -481,8 +405,6 @@ def match_reads(
             if n - 1 in PISTOLS and lost_pistol:
                 kinds.append("after_lost_pistol")
                 if pistol_known and econ:
-                    # A force buy as rounds.py counts it, from a recorded
-                    # economy after a pistol with a known winner.
                     forced = math.isfinite(loadout) and loadout >= FORCE_VALUE
                     add("force_rate", float(forced), 1.0)
             spent = _number(econ.get("spent"))
@@ -511,7 +433,6 @@ def match_reads(
         "unresolved_weapons": unresolved,
         "sums": sums,
         "buys": buys,
-        # Rates average over rounds and distances take the median, as the norms do.
         "positional": {
             s: {k: (sum(v) / len(v) if k.endswith("_rate") else median(v)) for k, v in figs.items()}
             for s, figs in pos.items()
@@ -520,7 +441,6 @@ def match_reads(
 
 
 def _cell(table: dict[str, Any], agent: str | None, band_name: str | None) -> dict[str, Any]:
-    """Return the norm cell for an agent and band, or the band alone, or nothing."""
     if agent and f"{agent}|{band_name}" in table:
         return dict(table[f"{agent}|{band_name}"])
     if band_name and f"*|{band_name}" in table:
@@ -534,12 +454,6 @@ def _flag(z: float, matches: int) -> bool:
 
 
 def _ready(read: str, band_name: str | None, matches: int) -> bool:
-    """Whether a read persists in this band at the matches in hand.
-
-    A read that clears the bar at ten matches a half in the band is ready
-    from the first comparison. One that clears it only at twenty needs
-    READY20_MATCHES contributing matches first.
-    """
     if not band_name:
         return False
     n = norms()
@@ -556,16 +470,7 @@ def curve_for(read: str, band_name: str | None) -> dict[str, Any] | None:
 
 
 def percentile(z: float, read: str, band_name: str | None, matches: int) -> float:
-    """Place a player among peers, as the share of peers whose mean sits below their mean z.
-
-    Where the bundled histograms of players' ten-match means have a curve
-    for the read, it is the rank of z among its quantiles. Otherwise it is a
-    normal on the scale of peers' means. The per-match spread is wider than
-    the spread of players' means, and the read's persistence r in the band
-    is the player-level share of the variance, so a mean of `matches`
-    per-match z-scores has a standard deviation of about
-    sqrt(r + (1 - r) / matches).
-    """
+    """Place a player among peers, as the share of peers whose mean sits below their mean z."""
     found = curve_for(read, band_name)
     if found:
         q = [float(v) for v in found["quantiles"]]
@@ -581,12 +486,7 @@ def percentile(z: float, read: str, band_name: str | None, matches: int) -> floa
 
 
 def position(z: float, read: str, band_name: str | None, matches: int) -> float:
-    """Place a player's mean z on the curve's scale.
-
-    On a real curve that is z itself, clipped to the curve's range. On the
-    normal fallback it is standard deviations of peers' means from the
-    middle.
-    """
+    """Place a player's mean z on the curve's scale."""
     found = curve_for(read, band_name)
     if found:
         return min(max(z, float(found["lo"])), float(found["hi"]))
@@ -596,8 +496,8 @@ def position(z: float, read: str, band_name: str | None, matches: int) -> float:
     return z / math.sqrt(r + (1 - r) / max(1, matches))
 
 
+@cache
 def _shape(read: str, band_name: str | None) -> dict[str, Any]:
-    """Return the curve to draw: the real density and range, or nothing for the normal fallback."""
     found = curve_for(read, band_name)
     if not found:
         return {"curve": [], "lo": -2.6, "hi": 2.6}
@@ -605,7 +505,6 @@ def _shape(read: str, band_name: str | None) -> dict[str, Any]:
 
 
 def _blur(bins: list[float], width: float, points: int) -> list[float]:
-    """Spread each bin over a normal `width` bins wide, read at `points` even steps."""
     last = len(bins) - 1
     out = []
     for j in range(points):
@@ -622,12 +521,6 @@ def _one_hump(curve: list[float]) -> bool:
 
 
 def _smooth(density: list[float], points: int = 49) -> list[float]:
-    """Smooth a peer histogram into one hump.
-
-    The bundled histograms are 24 bins from a few thousand players, so their
-    wiggles are sampling noise, not a second kind of player. The blur widens
-    until the curve has a single peak.
-    """
     bins = [max(0.0, float(v)) for v in density]
     if len(bins) < 2 or max(bins) <= 0:
         return bins
@@ -641,19 +534,12 @@ def _smooth(density: list[float], points: int = 49) -> list[float]:
 
 
 def _key(read: str) -> str:
-    """Name the read's family for the wording tables, where every carry read is one family."""
     return "carry" if read.startswith("carry_") else read.split("|", maxsplit=1)[0]
 
 
 def _pair(
     r: dict[str, Any], read: str, weapons: dict[str, str]
 ) -> list[float] | tuple[float, float] | None:
-    """One match's numerator and denominator for a read.
-
-    The carry reads come from the weapons recorded per round over the
-    rounds played, as their bundled norms are weighted. The rest are the
-    sums match_reads() kept.
-    """
     if read.startswith("carry_"):
         name = weapons.get(read[len("carry_") :])
         rounds = int(r.get("rounds") or 0)
@@ -681,15 +567,7 @@ def lines_for(
     on_side: str | None = None,
     round_kind: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Every line the brief can say about one player from their matches, most telling first.
-
-    `reads` is match_reads() of each of their recent matches, newest first.
-    `on_side` is this player's side this round when the board knows it, and
-    `round_kind` the kind of round coming for them (pistol,
-    after_lost_pistol or None). Both only change which lines lead and which
-    buy family is marked as this round's. A read that did not persist in the
-    player's band is a record, the figure and its count with no comparison.
-    """
+    """Every line the brief can say about one player from their matches, most telling first."""
     reads = [r for r in reads if r]
     n = norms()
     min_read = int(n["min_read"])
@@ -717,10 +595,6 @@ def lines_for(
             }
         )
 
-    # Each read's z is taken against the norm for that match's agent and
-    # band and then averaged over matches, so a player who swaps agents
-    # meets each norm. The peers' figure is composed the same way, weighted
-    # by what each match contributed.
     weapons = {w.lower(): str(w) for w in n["weapons"]}
     for read, words in n["words"].items():
         if read in POSITIONAL or read.startswith("at_plant"):
@@ -741,13 +615,10 @@ def lines_for(
                 peer_num += stat[0] * pair[1]
                 peer_den += pair[1]
         if den <= 0 or (read.startswith("carry_") and num <= 0):
-            # A weapon they never carried is no line at all.
             continue
         value = num / den
         count = int(den)
         if len(zs) < min_read or not _ready(read, band_name, len(zs)):
-            # Too few matches met a norm, or the read did not persist in
-            # this band, so the figure is kept as a record with no comparison.
             line(
                 "record",
                 read,
@@ -780,9 +651,6 @@ def lines_for(
             text=_tendency_text(read, value, count, peer_num / peer_den, z=z, flag=flag),
         )
 
-    # Positional reads, pooled over maps in z-scores, nudged toward the
-    # lobby's map where the research found a map-specific part, only where
-    # the read persisted in this band.
     for side in SIDES:
         rows = [r for r in reads if r["positional"].get(side)]
         for fig in POSITIONAL:
@@ -832,8 +700,6 @@ def lines_for(
                 ),
             )
 
-    # Style: where they sit on the two axes the research found to replicate,
-    # pace and spacing, as a position with a count, never a label.
     for axis, loads in AXES.items():
         per: dict[str, list[float]] = {}
         for read, sign in loads.items():
@@ -851,8 +717,6 @@ def lines_for(
         pct = percentile(mean, key, band_name, len(scores))
         pos = position(mean, key, band_name, len(scores))
         if abs(mean) < STYLE_Z:
-            # Within the usual range there is no line of its own, though the
-            # tag still places them.
             line(
                 "style",
                 axis,
@@ -884,10 +748,6 @@ def lines_for(
             text=AXIS_WORDS[axis][way],
         )
 
-    # The buy families: what they held on each kind of round, as a
-    # distribution against peers composed from each contributing match's
-    # agent and band, and the one weapon and the one shield to expect, each
-    # the most common on its own.
     options = [*(w.lower() for w in n["weapons"]), "other", "none", "unknown"]
     shields = [f"shield_{s}" for s in n["shield_order"]]
     for kind in KINDS:
@@ -974,8 +834,6 @@ def lines_for(
             ),
         )
 
-    # Records: what they carried, who they play (every agent, so the scope
-    # can count this lobby's agent), who they queue with.
     unresolved = sum(int(r.get("unresolved_weapons") or 0) for r in reads)
     rounds_all = sum(r["rounds"] for r in reads)
     carried: Counter[str] = Counter()
@@ -1027,11 +885,6 @@ def lines_for(
     return _present(out, map_name, side=on_side, round_kind=round_kind)
 
 
-# The two axes of play the research found to replicate across halves of the
-# players: pace, early fights against late ones, and
-# spacing, apart from the team against with it. Each is the mean of the
-# per-match z of the reads that load on it, signed so that positive is early
-# and positive is apart.
 AXES = {
     "pace": {
         "open_all": 1.0,
@@ -1043,22 +896,13 @@ AXES = {
     },
     "spacing": {"separation|attack": 1.0, "separation|defense": 1.0},
 }
-# A position this far from the middle, in the norm's standard deviations, is
-# called early or late, apart or close. Nearer than that is no line, since
-# typical is not news.
 STYLE_Z = 0.5
 AXIS_WORDS = {
     "pace": {1: "Opening/pace score above peers", -1: "Opening/pace score below peers"},
     "spacing": {1: "Farther from team at kills", -1: "Closer to team at kills"},
 }
-# The axes the panel draws. Pace mixes frequency with timing, so it can't
-# promise "earlier", and the side-specific timing reads carry that instead.
 PANEL_AXES = ("spacing",)
 
-# A neutral label per read for the full list: the event in the words
-# players use, with no direction, since the list holds unflagged reads
-# too and a small lean must not read as "often plants". Direction belongs
-# to a line that earned the panel, in SHOWN.
 LABELS = {
     "open_all": "Opening kill/death involvement",
     "first_lethal_attack": "First kill/death on attack",
@@ -1103,10 +947,6 @@ _UNITS = {
 }
 
 
-# A behaviour line earns a place on the panel only when it cleared the bar on
-# a read that changes the next round's preparation, and an equipment line
-# only for a conspicuous choice against peers. The panel holds at most two
-# lines, one per theme, and never fills a slot for its own sake.
 PRIORITY = {
     "carry": 3,
     "open_all": 3,
@@ -1118,11 +958,9 @@ PRIORITY = {
     "forward": 2,
     "separation": 2,
     "plant_rate": 2,
-    # The force buy matters on the round it is about, and leads there.
     "force_rate": 1,
 }
 THEME = {
-    # A carried weapon and the equipment line for it are one fact.
     "carry": "equipment",
     "open_all": "opening",
     "first_lethal_attack": "opening",
@@ -1135,10 +973,6 @@ THEME = {
     "plant_rate": "spike",
     "force_rate": "buy",
 }
-# The words a shown line uses: the event in players' terms, with the
-# direction against peers, never a role ("entry", "lurker", "anchor") the
-# measurement does not establish. "First blood" is the opening enemy kill;
-# "opening kill/death" includes the victim.
 SHOWN = {
     ("open_all", 1): "In the opening kill/death more often",
     ("open_all", -1): "In the opening kill/death less often",
@@ -1180,20 +1014,13 @@ SPECIAL = {
 }
 PISTOL_GUNS = ("classic", "shorty", "frenzy", "ghost", "bandit", "sheriff")
 MAX_SHOWN = 2
-# A shown behaviour line needs the standing to hold in this share of the
-# contributing matches, and a shown carry read this many rounds carried.
 MAJORITY = 0.6
 CARRY_MIN_ROUNDS = 8
-# A buy family names its second gun when the first holds under this share
-# of the rounds, or the second comes within this much of it.
 SECOND_LEAD, SECOND_GAP = 0.6, 0.15
-# An equipment family needs this many rounds, over this many matches, with
-# this share of its weapons named, before any option in it can be shown.
 BUY_ROUNDS, BUY_MATCHES, BUY_KNOWN = 10, 5, 0.9
 
 
 def _read_side(read: str) -> str | None:
-    """Name the side a read is specific to, or None for one that spans both."""
     if "|" in read:
         return read.split("|")[1]
     if read in SIDE_OF:
@@ -1207,15 +1034,6 @@ def _read_side(read: str) -> str | None:
 def _behaviour_pick(
     row: dict[str, Any], side: str | None, round_kind: str | None
 ) -> tuple[float, str] | None:
-    """Score a behaviour line for the panel, or None when it has no place there.
-
-    A read about the other side of the round, when the side is known, is
-    hidden this half and kept in the history. The force buy leads on the
-    round after a lost pistol and is not shown on any other, and a weapon
-    habit is not shown on a pistol round. A carry read is shown only for a
-    weapon that changes how the next fight is taken (a sniper, a shotgun or
-    a machine gun), and only when they carry it more than peers.
-    """
     if not row.get("flag") or not row.get("persisted"):
         return None
     z = float(row["z"])
@@ -1226,20 +1044,16 @@ def _behaviour_pick(
     n = int(row["contributing"])
     same = int(row.get("positive") or 0) if z > 0 else n - int(row.get("positive") or 0)
     if same < MAJORITY * n:
-        # The pooled figure and the match-by-match standing must agree, since
-        # a habit holds in most of their matches and not in a few heavy ones.
         return None
     if key == "carry":
         family = SPECIAL.get(row["read"][len("carry_") :])
         rounds = float(row["value"]) * int(row["count"])
         if z <= 0 or family in (None, "SMG") or rounds < CARRY_MIN_ROUNDS:
-            # An SMG is the ordinary half buy.
             return None
     own = _read_side(row["read"])
     if side and own and own != side:
         return None
     if key == "carry" and round_kind == "pistol":
-        # The pistol history is what a pistol round is about.
         return None
     if priority < 2:
         return None
@@ -1250,16 +1064,8 @@ def _behaviour_pick(
 def _equipment_pick(
     row: dict[str, Any], round_kind: str | None
 ) -> tuple[float, dict[str, Any]] | None:
-    """Score an equipment line, returning the one option that earned it.
-
-    The family for the round coming is one step more pressing, and a
-    family tied to a round kind (pistol, after pistol loss) has no place
-    on a round of another kind.
-    """
     rounds = int(row["count"])
     if round_kind and row["read"] in ROUND_KINDS and row["read"] != round_kind:
-        # The pistol has passed, or the round after it, so that family's
-        # history is not this round's preparation.
         return None
     bonus = 1 if round_kind and row["read"] == round_kind else 0
     known = 1 - int(row.get("unknown_weapons") or 0) / max(1, rounds)
@@ -1271,8 +1077,6 @@ def _equipment_pick(
     for w in row["weapons"]:
         opt, share, peers, count = w["option"], float(w["share"]), w.get("peers"), int(w["count"])
         if peers is None or not _ready(f"{kind}_{opt}", band_name, matches):
-            # An option whose share did not persist in their band is a
-            # record of these rounds, not a habit to plan around.
             continue
         gap = (share - float(peers)) * 100
         family = SPECIAL.get(opt)
@@ -1297,7 +1101,6 @@ def _equipment_pick(
     for s in row["shields"]:
         share, peers, count = float(s["share"]), s.get("peers"), int(s["count"])
         if peers is None or kind == "low":
-            # No shields on a save round is the save, not a habit.
             continue
         if not _ready(f"{kind}_shield_{s['option']}", band_name, matches):
             continue
@@ -1323,11 +1126,6 @@ def _select(
     side: str | None = None,
     round_kind: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Mark the lines the panel shows, at most MAX_SHOWN, and give each its shown words.
-
-    The buy family for the round coming is marked `now`, whether or not it
-    earned a top slot, so the panel can say what they held on such rounds.
-    """
     picks: list[tuple[float, str, dict[str, Any]]] = []
     for row in rows:
         row["show"] = row["kind"] == "style" and bool(row.get("panel"))
@@ -1405,13 +1203,6 @@ def _present(
     side: str | None = None,
     round_kind: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Give every line a headline, its evidence in a few words, and a strength, then rank them.
-
-    The headline is what the window shows, with the evidence under it in
-    small print. The strength is the standing against peers, so the top of
-    the list is what matters most. Flagged lines come first, then the rest
-    by strength, then buys, then records.
-    """
     for row in rows:
         kind, read = row["kind"], row["read"]
         z = float(row.get("z") or 0.0)
@@ -1473,7 +1264,6 @@ def _present(
             row["headline"] = f"Queued with others: {together}/{row['count']} games"
             row["evidence"] = ""
         else:
-            # A read that did not persist in this band, kept as a figure.
             row["headline"] = _label(read)
             unit = _UNITS.get(read, "rounds")
             row["evidence"] = f"{_figure(read, float(row['value']))} · {row['count']} {unit}"
@@ -1498,7 +1288,6 @@ def _shield_word(option: str) -> str:
 
 
 def _weapon_word(option: str) -> str:
-    """Name a buy-menu option as players say it: OP for the Operator."""
     if option == "none":
         return "no gun recorded"
     if option == "other":
@@ -1509,7 +1298,6 @@ def _weapon_word(option: str) -> str:
 
 
 def _label(read: str) -> str:
-    """Name a read neutrally, with its side or weapon filled in."""
     key = _key(read)
     return LABELS.get(key, read).format(
         side=_read_side(read) or "", weapon=_weapon_word(read[len("carry_") :])
@@ -1517,7 +1305,6 @@ def _label(read: str) -> str:
 
 
 def _gun_summary(expect: dict[str, Any], rounds: int) -> str:
-    """Name the gun or guns to expect over the rounds, or the tie, or the unknown count."""
     if expect.get("weapon"):
         text = f"{_weapon_word(expect['weapon'])} {expect['weapon_count']}/{rounds}"
         if expect.get("second"):
@@ -1530,7 +1317,6 @@ def _gun_summary(expect: dict[str, Any], rounds: int) -> str:
 
 
 def _armor_summary(expect: dict[str, Any], rounds: int) -> str:
-    """Name the armor to expect over the rounds, or the tie."""
     if expect.get("shield_tied"):
         names = ", ".join("none" if a == "none" else a for a in expect["shield_tied"])
         return f"armor tie: {names} {expect['shield_count']}/{rounds} each"
@@ -1552,12 +1338,6 @@ def _buy_text(
     top_s: str,
     peers: dict[str, float],
 ) -> str:
-    """Write one line per kind of round: the guns and the armor with counts, then the spend.
-
-    Each is the most common on its own, not a loadout seen together. A tie
-    between guns names them all and expects none, and a family whose weapons
-    the catalogue could not name says so instead of naming one.
-    """
     gun = _gun_summary(expect, rounds)
     top_w = expect.get("weapon")
     if top_w and peers:
@@ -1587,13 +1367,6 @@ def _figure(read: str, value: float) -> str:
 def _tendency_text(
     read: str, value: float, count: int, peers: float | None, *, z: float, flag: bool
 ) -> str:
-    """One line: the label, the figure with its count, and the peers' figure.
-
-    The figure pools every round, while the standing that decides the flag
-    averages each match's z-score as the norms were scored, so the two can
-    disagree when a few heavy matches pull the pooled figure one way. The
-    list says which way the standing went only when it cleared the bar.
-    """
     unit = _UNITS.get(read, "rounds")
     text = f"{_label(read)}: {_figure(read, value)} · {count} {unit}"
     if peers is not None:
@@ -1603,8 +1376,6 @@ def _tendency_text(
     return text
 
 
-# The score seen at each round of a match, so the loser of a pistol round
-# is known when the next round's board arrives.
 _SCORES: dict[str, dict[int, tuple[int, int]]] = {}
 # The board numbers its rounds from 1.
 PISTOL_ROUNDS = (1, 13)
@@ -1634,7 +1405,6 @@ def round_context(board: dict[str, Any]) -> tuple[int | None, str | None]:
 
 
 def _results(seen: dict[int, tuple[int, int]], n: int, who: str) -> list[bool | None]:
-    """Return the team's result of each round of this half before round n, None where unseen."""
     idx = 0 if who == "ally" else 1
     start = PISTOL_ROUNDS[1] if n >= PISTOL_ROUNDS[1] else PISTOL_ROUNDS[0]
     out: list[bool | None] = []
@@ -1645,13 +1415,7 @@ def _results(seen: dict[int, tuple[int, int]], n: int, who: str) -> list[bool | 
 
 
 def round_ctx(seen: dict[int, tuple[int, int]], n: int, who: str) -> str | None:
-    """Name the round's economy context for a team.
-
-    The pistol, the second round after a won or lost pistol, or a later
-    round after a won round or after one, two, or three or more lost rounds
-    in a row, since the loss bonus grows with the streak. None when the
-    scores it needs were not seen.
-    """
+    """Name the round's economy context for a team."""
     if n in PISTOL_ROUNDS:
         return "pistol"
     results = _results(seen, n, who)
@@ -1671,16 +1435,7 @@ def round_ctx(seen: dict[int, tuple[int, int]], n: int, who: str) -> str | None:
 def forecast(
     rows: list[dict[str, Any]], ctx: str | None, band_name: str | None
 ) -> dict[str, Any] | None:
-    """Forecast the gun and armor for the round coming, from the context and their tiers.
-
-    The band's odds of each equipment tier in this context weigh the
-    player's own share of each gun within that tier, shrunk toward peers by
-    `forecast_prior` rounds. On the corpus the most likely gun was the one
-    recorded in 48 percent of rounds, and 59 percent when its odds reach a
-    half, against 45 for their usual gun. Knowing the tier would give 55, so
-    the rest is the Vandal-or-Phantom coin. Returns the guns and armor with
-    their odds, most likely first, or None without a context or enough rounds.
-    """
+    """Forecast the gun and armor for the round coming, from the context and their tiers."""
     n = norms()
     tiers = n.get("tiers") or {}
     if not ctx or ctx == "pistol":
@@ -1718,14 +1473,7 @@ def forecast(
 
 
 def attach(board: dict[str, Any]) -> dict[str, Any]:
-    """Compose every player's brief for this board, and drop the raw measurements.
-
-    The lines depend on the map, the user's team, each player's side and the
-    round coming, so they are rebuilt from the measurements on every board
-    and never carried from one lobby or round to the next. A player whose
-    measurements can't be composed gets no lines, logged, and the rest of
-    the board is unaffected.
-    """
+    """Compose every player's brief for this board, and drop the raw measurements."""
     map_name = str(board.get("map") or "")
     mine = str(board.get("selfTeam") or "")
     my_side = str(board.get("side") or "").lower() or None
@@ -1793,21 +1541,18 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
 
 
 def card_tags(card: dict[str, Any]) -> list[dict[str, str]]:
-    """Return a row tag for each strong read on a Tendencies card, once per word."""
+    """Return a row tag for each strong read in a Tendencies section, once per word."""
     out: list[dict[str, str]] = []
     for found in [card.get("tag"), *(card.get("habits") or [])]:
         word = str((found or {}).get("word") or "")
         if word and all(t["tag"] != word for t in out):
             evidence = str(found.get("evidence") or "") if found else ""
-            out.append({"tag": word, "why": evidence, "means": HABIT_TAG_MEANS, "kind": "Tendencies"})
+            out.append({"tag": word, "why": evidence, "means": HABIT_TAG_MEANS, "kind": "Tendency"})
     return out
 
 
-# The equipment tiers, in the order the bundled odds use.
 TIERS = ("low", "mid", "full")
-# Lost rounds in a row beyond this count the same, as the loss bonus does.
 STREAK_CAP = 3
-# Fewer rounds across the tiers than this, and no forecast.
 FORECAST_ROUNDS = 10
 # The round's context in words, for the forecast block.
 CTX_WORDS = {
@@ -1818,12 +1563,10 @@ CTX_WORDS = {
     "later|lost|2": "after two lost rounds",
     "later|lost|3": "after three or more lost rounds",
 }
-# A second gun or armor is named when its odds reach this.
 SECOND_ODDS = 0.15
 
 
 def _forecast_line(likely: dict[str, Any], puuid: str, matches: int, scope: str) -> dict[str, Any]:
-    """Write the forecast as a line of the history, with how it was made and how it does."""
     guns = ", ".join(f"{_weapon_word(g)} {p:.0%}" for g, p in likely["guns"][:3])
     armor = ", ".join(f"{_shield_word('shield_' + a)} {p:.0%}" for a, p in likely["armor"][:2])
     text = (
@@ -1848,7 +1591,6 @@ def _forecast_line(likely: dict[str, Any], puuid: str, matches: int, scope: str)
 
 
 def _forecast_block(likely: dict[str, Any]) -> dict[str, Any]:
-    """Lay out the forecast as the panel's block: label, guns with odds, armor with odds."""
     guns = likely["guns"]
     line = f"{_weapon_word(guns[0][0])} {guns[0][1]:.0%}"
     if len(guns) > 1 and guns[1][1] >= SECOND_ODDS:
@@ -1870,7 +1612,6 @@ MAX_GUN_ICONS = 3
 
 
 def _gun_items(pairs: list[tuple[str, Any]]) -> list[dict[str, str]]:
-    """Name each gun the way the art is filed, with its figure, for the icon row."""
     out = []
     for option, value in pairs:
         if option in ("none", "other", "unknown"):
@@ -1896,9 +1637,6 @@ HABIT_READS = (
 MAX_HABITS = 3
 
 
-# Each habit as a sentence with the player's percentile among peers:
-# "{p}" is the share of peers they sit beyond, "{side}" the read's side.
-# The first form is for a standing above the peers' mean, the second below.
 PCT_WORDS = {
     "open_all": (
         "In the opening fight more than {p} of peers",
@@ -1931,12 +1669,7 @@ PCT_WORDS = {
         "Dies first less than {p} of peers on {side}",
     ),
 }
-# The pace tag: beyond these shares of peers, the word applies.
 TAG_HI, TAG_LO = 0.75, 0.25
-# What a habit is called in plain words: above peers, below peers, and the
-# two milder forms. Beyond HABIT_STRONG of peers the plain label stands and
-# beyond HABIT_MILD the milder "tends to" form. Nearer than that the read is
-# no habit and gets no line.
 HABIT_WORDS = {
     "open_all": (
         "Takes the first fight",
@@ -1994,8 +1727,6 @@ HABIT_WORDS = {
     ),
 }
 HABIT_STRONG, HABIT_MILD = 0.75, 0.6
-# What the ends of each habit's curve mean: the left word for a low value
-# of the read, the right for a high one, so the mark reads at a glance.
 AXIS_ENDS = {
     "open_all": ("stays out", "takes fights"),
     "first_lethal_attack": ("early", "late"),
@@ -2008,8 +1739,6 @@ AXIS_ENDS = {
     "open_death_rate": ("fewer", "more first deaths"),
 }
 PACE_ENDS = ("passive", "aggressive")
-# The row's word for a strong habit, above peers and below. Each says what
-# they do, never a role the measurement doesn't establish.
 HABIT_TAGS = {
     "pace": ("aggressive", "passive"),
     "open_all": ("fights first", "waits"),
@@ -2022,11 +1751,10 @@ HABIT_TAGS = {
     "open_kill_rate": ("first bloods", "few first bloods"),
     "open_death_rate": ("dies first", "rarely dies first"),
 }
-HABIT_TAG_MEANS = "Tendencies puts them past three in four players on the same agent at the same rank."
+HABIT_TAG_MEANS = "Past three in four players on the same agent at the same rank."
 
 
 def _ordinal(share: float) -> str:
-    """Write a share of peers as the percentile it is: 85th, 91st, 2nd."""
     n = max(1, min(99, round(share * 100)))
     teens = range(10, 21)
     suffix = "th" if n % 100 in teens else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
@@ -2034,22 +1762,11 @@ def _ordinal(share: float) -> str:
 
 
 def _beyond(row: dict[str, Any]) -> float:
-    """Return the share of peers the player sits beyond, whichever way."""
     pct = float(row.get("pct") or 0.5)
     return pct if float(row.get("z") or 0.0) > 0 else 1 - pct
 
 
 def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str, Any]:
-    """Word one habit plainly, with where they sit among peers as the evidence.
-
-    "Plays apart from the team on defense", and under it "Further from
-    the team than 80% of peers on defense · 5/7 games": the percentile is
-    the share of same-agent, same-rank players their mean sits beyond.
-    Beyond three quarters the label stands, and beyond six tenths it is
-    "Tends to". A read that cleared the bar adds the count of their
-    matches on that side of peers and, on the player's current side and
-    never on the user's own card, what to do about it.
-    """
     read, key = row["read"], _key(row["read"])
     z = float(row.get("z") or 0.0)
     side = _read_side(read) or ""
@@ -2080,9 +1797,6 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         "suggest": suggest,
         "own": "",
         "peers": "",
-        # The one number the chart prints at the mark is the share of peers
-        # to its left, so a mark on the left is a low percentile whatever
-        # the read.
         "share": _ordinal(float(row.get("pct") or 0.5)),
         "pct": float(row.get("pct") or 0.5),
         "pos": float(row.get("pos") or 0.0),
@@ -2093,14 +1807,6 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
 
 
 def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Name the player's pace from the pace score's percentile: aggressive, passive, or between.
-
-    The pace score is the first axis the research found to replicate:
-    opening involvement, the time of the first kill or death by side,
-    the time of death. Beyond three quarters of peers it is aggressive and
-    below a quarter passive. In between the word is "even pace" and the
-    percentile still says where.
-    """
     pace = next((r for r in rows if r["kind"] == "style" and r["read"] == "pace"), None)
     if pace is None:
         return None
@@ -2134,12 +1840,6 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _habits(rows: list[dict[str, Any]], side: str | None, *, is_self: bool) -> list[dict[str, Any]]:
-    """Pick the habits a card always shows.
-
-    Flagged reads first, whichever side (a read about the other side keeps
-    its side in its words), this side first among them, then by distance
-    from peers.
-    """
     picks = []
     for row in rows:
         if row["kind"] not in ("tendency", "positional") or not row.get("persisted"):
@@ -2147,7 +1847,6 @@ def _habits(rows: list[dict[str, Any]], side: str | None, *, is_self: bool) -> l
         if _key(row["read"]) not in HABIT_READS:
             continue
         if _beyond(row) < HABIT_MILD and not row.get("flag"):
-            # Near the middle of their peers: not a habit, no line.
             continue
         own = _read_side(row["read"])
         other = bool(side and own and own != side)
@@ -2179,13 +1878,6 @@ ARMOR_WORD = {
 
 
 def _block(row: dict[str, Any], family: str) -> dict[str, Any]:
-    """Lay out one buy family as the panel's block: label, guns, armor.
-
-    The guns line names the leader over the rounds and a close second, or
-    every tied gun. A finding on this family (a gun or armor far from
-    peers) merges into its line with the rate and the peers' share, so the
-    block says it once.
-    """
     expect, rounds = row["expect"], int(row["count"])
     pick = row.get("pick") if row.get("show") else None
     if expect.get("tied"):
@@ -2240,17 +1932,7 @@ def tendencies(
     matches: int,
     likely: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compose the panel's Tendencies section from a player's lines.
-
-    Up to three habits come first, flagged reads and this side first. Then
-    at most one tactical callout (a weapon habit, a buy habit or an
-    equipment exception) and one buy block. The block is the family for the
-    round coming, else the forecast for this round from the score's
-    context, else the 3,900+ gear history on an ordinary round with no
-    finding. The footer gives the sample and how much of it was on this
-    lobby's agent. The user's own card carries no suggestion and collapses
-    on ordinary rounds.
-    """
+    """Compose the panel's Tendencies section from a player's lines."""
     min_read = int(norms()["min_read"])
     footer = f"Last {matches} ranked games"
     if agent and matches and agents_known:
@@ -2319,12 +2001,6 @@ def tendencies(
 
 
 def _fixture(rounds: list[dict[str, Any]], *, stats_for: dict[int, set[str]] | None = None) -> Any:
-    """Build a ten-player competitive detail for the self-check, Red p0..p4 against Blue p5..p9.
-
-    `stats_for` names the players with a stats row in each round, and by
-    default everyone has one. Each round's kills go on their killer's stats row, or
-    on any row when the killer has none.
-    """
     subjects = [f"p{i}" for i in range(10)]
     players = [
         {
@@ -2365,7 +2041,6 @@ def _fixture(rounds: list[dict[str, Any]], *, stats_for: dict[int, set[str]] | N
 
 
 def _self_check() -> None:
-    # Keep a release from accidentally bundling raw matches or a growing corpus.
     check(NORMS_PATH.stat().st_size <= 2 * 1024 * 1024, "peer baseline exceeds 2 MiB")
     n = norms()
     pending: list[Any] = [n]
@@ -2378,7 +2053,6 @@ def _self_check() -> None:
         elif isinstance(value, list):
             pending.extend(value)
     check(n["bands"][0][2] == "iron-bronze", n["bands"])
-    # A strong read is a row tag, once per word. A mild one and an even pace aren't.
     card = {
         "tag": {"word": "aggressive", "evidence": "More aggressive than 86% of peers"},
         "habits": [
@@ -2389,7 +2063,7 @@ def _self_check() -> None:
     }
     tagged = card_tags(card)
     check([t["tag"] for t in tagged] == ["aggressive", "long range"], tagged)
-    check(all(t["kind"] == "Tendencies" and t["why"] and t["means"] for t in tagged), tagged)
+    check(all(t["kind"] == "Tendency" and t["why"] and t["means"] for t in tagged), tagged)
     check(card_tags({"tag": None, "habits": []}) == [])
     check(band(13) == "silver-gold" and band(27) == "asc+" and band(None) is None, "band")
     check(band(8.5) == "silver-gold" and band(14.5) == "plat-dia", "band between tiers rounds up")
@@ -2422,8 +2096,6 @@ def _self_check() -> None:
     check([when for when, _ in kills] == [1000.0, 2000.0, 3000.0, math.inf], "recovered order")
     check(_traded(kills, 0, teams), "an unrelated recovered-clock kill does not end the search")
     check(not _traded(kills, 2, teams), "no trade after the last kill")
-    # The killer's own death, however recorded, is a boundary: a later-life
-    # death cannot be the trade.
     boundary = _round_kills(
         {
             "playerStats": [
@@ -2439,14 +2111,11 @@ def _self_check() -> None:
         }
     )
     check(not _traded(boundary, 0, teams), "an untimed death of the killer ends the search")
-    # With an enemy kill nobody can place, the first blood names the opening.
     check(_opening({}, kills, teams) is None, "no opening without a chronology")
     check(
         _opening({"firstBloodPlayer": "a"}, kills, teams) is kills[0][1], "opening by first blood"
     )
     check(_opening({}, kills[:3], teams) is kills[0][1], "opening by clock")
-    # A first kill with a game time but no round time keeps its place in the
-    # order and is the opening.
     rr = {
         "playerStats": [
             {
@@ -2545,18 +2214,15 @@ def _self_check() -> None:
         "pistol buy",
     )
     check(reads["unresolved_weapons"] == 0 and reads["carried"] == {"Ghost": 1}, "carried")
-    # A weapon id the catalogue cannot name is unknown, never no gun.
     md["roundResults"][0]["playerStats"][0]["economy"]["weapon"] = "gun-x"
     reads = read_fixture()
     check(
         reads["unresolved_weapons"] == 1 and reads["buys"]["pistol"].get("unknown") == 1, "unknown"
     )
     check("none" not in reads["buys"]["pistol"], "no false no-gun")
-    # A pistol round with no equipment value still belongs to the pistol family.
     md["roundResults"][0]["playerStats"][0]["economy"] = {"weapon": "gun-1"}
     reads = read_fixture()
     check(reads["buys"]["pistol"]["rounds"] == 1, "pistol without loadout value")
-    # A family whose weapons the catalogue cannot name expects no weapon.
     unknown_only = {k: {"rounds": 0.0, "spent": 0.0} for k in KINDS}
     unknown_only["pistol"] = {"rounds": 5.0, "spent": 0.0, "unknown": 5.0, "shield_none": 5.0}
     rows = [
@@ -2577,7 +2243,6 @@ def _self_check() -> None:
     reads = read_fixture()
     check(reads["buys"]["after_lost_pistol"]["rounds"] == 1, "lost pistol known without stats")
     check(reads["sums"]["force_rate"] == [1.0, 1.0], reads["sums"].get("force_rate"))
-    # A tie between guns names no gun.
     tie = {k: {"rounds": 0.0, "spent": 0.0} for k in KINDS}
     tie["pistol"] = {"rounds": 4.0, "spent": 0.0, "ghost": 2.0, "sheriff": 2.0, "shield_none": 4.0}
     tie_rows = [
@@ -2590,9 +2255,6 @@ def _self_check() -> None:
     check("gun tie: Ghost, Sheriff 10/20 each" in buy["text"], buy["text"])
     check("gun tie: Ghost, Sheriff 10/20 each" in buy["headline"], buy["headline"])
     check("Gun tie" in buy["evidence"], buy["evidence"])
-    # attach() composes only for players on the board, with at least
-    # min_read measurements behind every line, for this map and this side,
-    # and leaves nothing raw.
     rows = [
         {
             **reads,
@@ -2629,7 +2291,6 @@ def _self_check() -> None:
     check(
         all(abs(float(row["value"])) >= STYLE_Z or not row["words"] for row in styles), "no typical"
     )
-    # A weapon never carried is no line, and one carried is, named for the weapon.
     carries = [row for row in players["p0"]["brief"] if row["read"].startswith("carry_")]
     check([row["read"] for row in carries] == ["carry_ghost"], carries)
     check(carries[0]["headline"] == "Rounds with Ghost", carries[0]["headline"])
@@ -2646,8 +2307,6 @@ def _self_check() -> None:
         any(r.get("now") and r["read"] == "pistol" for r in round_one["players"][0]["brief"]),
         "pistol now",
     )
-    # On a round of another kind the pistol family is nobody's "now" and
-    # earns no slot. The scope rides on every line.
     round_five: dict[str, Any] = {
         **board,
         "matchId": "m1",
@@ -2723,8 +2382,6 @@ def _self_check() -> None:
     sc = round_five["players"][0]["tendencies"]
     check(sc["buy"] is None and sc["empty"] == "" and sc["main"] is None, sc)
     check(sc["habits"] and all(not h["suggest"] for h in sc["habits"]), "no coaching on own card")
-    # The round's context from the scores seen, or None where a score was
-    # missed.
     seen = {1: (0, 0), 2: (0, 1), 3: (0, 2), 4: (1, 2), 5: (1, 3)}
     check(round_ctx(seen, 1, "ally") == "pistol", "pistol ctx")
     check(round_ctx(seen, 2, "ally") == "second|lost", round_ctx(seen, 2, "ally"))

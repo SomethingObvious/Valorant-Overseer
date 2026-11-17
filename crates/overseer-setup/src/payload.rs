@@ -13,7 +13,6 @@ use std::process::Command;
 /// writes the same eight.
 const MAGIC: &[u8; 8] = b"OVSETUP1";
 
-/// The zip's length and the magic.
 const TAIL: u64 = 16;
 
 /// Windows' `CREATE_NO_WINDOW`.
@@ -36,8 +35,6 @@ pub(crate) fn shipped(tool: &str) -> PathBuf {
     )
 }
 
-/// Where the zip sits inside `exe`, as its offset and length, when it carries
-/// one.
 pub(crate) fn carried(exe: &Path) -> Option<(u64, u64)> {
     let mut file = File::open(exe).ok()?;
     let at = file.metadata().ok()?.len().checked_sub(TAIL)?;
@@ -52,9 +49,6 @@ pub(crate) fn carried(exe: &Path) -> Option<(u64, u64)> {
     Some((at.checked_sub(len)?, len))
 }
 
-/// Where a carried app goes: the same folder every time, so there is nothing
-/// to choose and a second run upgrades the first. `OVERSEER_ROOT` moves it,
-/// for a test.
 pub(crate) fn home() -> Option<PathBuf> {
     if let Some(from_env) = std::env::var_os("OVERSEER_ROOT") {
         return Some(PathBuf::from(from_env));
@@ -67,9 +61,6 @@ pub(crate) fn home() -> Option<PathBuf> {
     )
 }
 
-/// Unpacks the app carried in `exe` into `root`, over whatever an older
-/// version left there. Settings, notes and match data aren't in the zip, so
-/// they stay.
 pub(crate) fn unpack(exe: &Path, root: &Path) -> Result<(), String> {
     let (at, len) = carried(exe).ok_or("This setup doesn't have the app inside it.")?;
     if root.join(".git").exists() {
@@ -92,7 +83,6 @@ pub(crate) fn unpack(exe: &Path, root: &Path) -> Result<(), String> {
     done
 }
 
-/// Copies the carried zip out to a file of its own for tar to read.
 fn copy_out(exe: &Path, at: u64, len: u64, zip: &Path) -> Result<(), String> {
     let unreadable = |e: std::io::Error| format!("Couldn't read this setup: {e}");
     let mut file = File::open(exe).map_err(unreadable)?;
@@ -165,8 +155,6 @@ mod tests {
         }
     }
 
-    /// A stand-in setup: some bytes for the exe, a real zip made by tar, its
-    /// length and the magic.
     fn setup_with(dir: &Path, name: &str, text: &str) -> std::path::PathBuf {
         let src = dir.join("src");
         std::fs::create_dir_all(src.join("backend")).unwrap();
@@ -197,7 +185,6 @@ mod tests {
         let dir = std::env::temp_dir().join("overseer-setup-payload");
         drop(std::fs::remove_dir_all(&dir));
         let exe = setup_with(&dir, "run.py", "print('hi')\n");
-        // A user name in three scripts, which no one code page holds.
         let root = dir
             .join("\u{416}\u{4e2d}\u{d55c}")
             .join("Valorant Overseer");
@@ -230,8 +217,6 @@ mod tests {
         assert_eq!(source, "# the source\n");
     }
 
-    /// The plain setup in the install folder has nothing after it, and
-    /// neither does a file too short to hold the tail.
     #[test]
     fn a_plain_exe_carries_nothing() {
         let dir = std::env::temp_dir().join("overseer-setup-plain");

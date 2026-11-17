@@ -1,12 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Player card art, fetched once per card into a folder on this machine.
-
-The window draws a player's card behind their row until they pick an agent,
-the way the game's own scoreboard does. The window does not go online, so
-the backend fetches the card's banner and the board carries the local path
-once the file is there. A card that is still on its way is not on this board
-yet, and the next one a second later has it.
-"""
+"""Player card art, fetched once per card into a folder on this machine."""
 
 from __future__ import annotations
 
@@ -53,7 +46,6 @@ def _fetch(card: str, path: Path) -> None:
     url = f"https://media.valorant-api.com/playercards/{card}/wideart.png"
     try:
         save_png(url, path, timeout=10)
-    # RequestException is an OSError too, so it has to be caught first.
     except (requests.RequestException, ValueError):
         LOG.warning("could not fetch player card %s", card, exc_info=True)
     except OSError:
@@ -77,7 +69,6 @@ def attach(board: dict[str, Any]) -> dict[str, Any]:
 
 
 def _self_check() -> None:
-    # Nothing that is not a uuid reaches the file system.
     for bad in ("", None, "../../etc", "d93ad22d-4db7-b6bc-5e9c-e5959bb9dd7", "x" * 36):
         check(art(bad) is None, bad)
     with _LOCK:
@@ -85,7 +76,6 @@ def _self_check() -> None:
     board = {"players": [{"playerCard": "not a card"}, "not a player"]}
     check("cardArt" not in attach(board)["players"][0])
 
-    # A card that could not be saved is logged and asked for again.
     from unittest import mock
 
     card = "d93ad22d-4db7-b6bc-5e9c-e5959bb9dd7a"

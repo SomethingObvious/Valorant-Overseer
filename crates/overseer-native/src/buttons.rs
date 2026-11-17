@@ -47,7 +47,6 @@ pub struct Held {
 /// The thread reading the presses, which runs until the process ends.
 #[derive(Debug, Clone, Copy)]
 pub struct Buttons {
-    /// Where [`Buttons::mouse`] posts to.
     thread: u32,
 }
 
@@ -78,7 +77,6 @@ pub fn listen(sink: impl Fn(Press) + Send + 'static) -> Result<Buttons, String> 
     heard.recv().map_err(|why| why.to_string())?
 }
 
-/// The generic desktop page, and its mouse and keyboard.
 const DESKTOP: u16 = 0x01;
 const MOUSE: u16 = 0x02;
 const KEYBOARD: u16 = 0x06;
@@ -149,8 +147,6 @@ fn run(told: &SyncSender<Result<Buttons, String>>, sink: &impl Fn(Press)) {
     }
 }
 
-/// Sends `usage`'s presses to `window` whatever has the foreground, or stops
-/// them with `None`.
 fn register(usage: u16, window: Option<HWND>) -> Result<(), String> {
     let flags: RAWINPUTDEVICE_FLAGS = if window.is_some() {
         RIDEV_INPUTSINK
@@ -168,7 +164,6 @@ fn register(usage: u16, window: Option<HWND>) -> Result<(), String> {
     unsafe { RegisterRawInputDevices(&[device], size) }.map_err(|why| why.message())
 }
 
-/// The press behind a `WM_INPUT`.
 fn read(handle: HRAWINPUT) -> Option<RAWINPUT> {
     let mut raw = RAWINPUT::default();
     let mut size = u32::try_from(size_of::<RAWINPUT>()).ok()?;
@@ -187,12 +182,8 @@ fn read(handle: HRAWINPUT) -> Option<RAWINPUT> {
     (got != u32::MAX && got > 0).then_some(raw)
 }
 
-/// The mouse's button flags for each button going down, by its virtual-key
-/// code. Going up is the flag after it.
 const MOUSE_DOWN: [(u16, u16); 5] = [(1, 0x01), (2, 0x04), (4, 0x10), (5, 0x40), (6, 0x100)];
 
-/// What went down in `raw`, keeping `held` up to date so a key held down
-/// only counts once.
 fn pressed(raw: &RAWINPUT, held: &mut [bool; 256]) -> Vec<u16> {
     let mut down = Vec::new();
     let mut set = |key: u16, now: bool| {
@@ -225,7 +216,6 @@ fn pressed(raw: &RAWINPUT, held: &mut [bool; 256]) -> Vec<u16> {
     down
 }
 
-/// Whether this process has the foreground window.
 fn ours() -> bool {
     // SAFETY: documented calls with a local that outlives them.
     unsafe {

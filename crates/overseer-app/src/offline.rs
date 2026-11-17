@@ -13,40 +13,27 @@ pub(crate) const POLL: f64 = 3.0;
 pub(crate) struct State {
     /// Whether the Riot client was started through it.
     pub(crate) running: bool,
-    /// Whether it hides you.
     pub(crate) enabled: bool,
-    /// Whether the client's chat is going through it right now.
     pub(crate) connected: bool,
 }
 
-/// The switch's side of offline chat.
 #[derive(Debug, Default)]
 pub(crate) struct Offline {
-    /// The last answer, once there is one.
     pub(crate) state: Option<State>,
-    /// What the backend said about the last change, when it said anything.
     pub(crate) said: Option<String>,
-    /// The switch was pressed, to this, and nothing has been sent yet.
     pub(crate) wanted: Option<bool>,
-    /// A press on its way to the backend.
     sent: Option<bool>,
-    /// Agent select or a match is on, when a restart would cost the match.
     pub(crate) playing: bool,
-    /// When the switch that restarts the game was first pressed, for the
-    /// few seconds a second press restarts it.
     pub(crate) armed: Option<f64>,
-    /// The question out, and when the last one went.
     waiting: Option<u64>,
     asked_at: Option<f64>,
 }
 
 impl Offline {
-    /// Whether `id` is this screen's question.
     pub(crate) fn waiting_on(&self, id: u64) -> bool {
         self.waiting == Some(id)
     }
 
-    /// Takes the answer to a status question or a change.
     pub(crate) fn answered(&mut self, result: Result<serde_json::Value, String>) {
         self.waiting = None;
         self.sent = None;
@@ -63,11 +50,8 @@ impl Offline {
         }
     }
 
-    /// Forgets the question a dropped connection took with it.
     pub(crate) fn reconnected(&mut self) {
         self.waiting = None;
-        // The bridge drops what it couldn't send, so the switch goes back
-        // and says so rather than flipping later on its own.
         if self.sent.take().is_some() {
             self.said = Some(
                 "Overseer lost its connection before that went through, so nothing changed."

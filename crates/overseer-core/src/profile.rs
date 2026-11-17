@@ -164,8 +164,6 @@ impl Profile {
         } else {
             &self.rating
         };
-        // Unranked matches are dropped rather than plotted flat, because a line
-        // that does not move when nothing was at stake reads as a plateau.
         let mut run: Vec<&CareerMatch> = source.iter().filter(|m| m.is_ranked()).collect();
         run.reverse();
         run
@@ -176,7 +174,6 @@ impl Profile {
 mod tests {
     use super::Profile;
 
-    /// The shape the backend actually sends, read the way the panel reads it.
     #[test]
     fn a_career_arrives_whole() {
         let raw = r#"{
@@ -204,8 +201,6 @@ mod tests {
         assert_eq!(profile.top_guns.first().and_then(|g| g.share), Some(62));
         assert_eq!(profile.force_habit.pct, Some(63));
 
-        // Only the competitive match is on the rating chart, and the run
-        // reads oldest first whichever way the history arrived.
         let run = profile.rating_run();
         assert_eq!(run.len(), 1);
         assert_eq!(run.first().and_then(|m| m.rr_after), Some(72));

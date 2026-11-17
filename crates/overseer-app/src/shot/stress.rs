@@ -13,15 +13,12 @@ use crate::notes::Notes;
 use crate::sort::Sort;
 use overseer_ui as design;
 
-/// A frame of the window, or of the overlay.
 enum Shot {
     Window(Scene),
     Overlay(Board),
-    /// The window with the pointer resting at a point, for its tooltips.
     Hover(Scene, egui::Pos2),
 }
 
-/// A plain account at a tier, for a fixture to change what it cares about.
 fn player(id: &str, name: &str, team: &str, agent: &str, tier: u32) -> Player {
     Player {
         puuid: Some(id.to_owned()),
@@ -61,13 +58,11 @@ fn rank_name(tier: u32) -> Option<String> {
     ))
 }
 
-/// Fourteen agents, for the modes with more than ten players.
 const AGENTS: [&str; 14] = [
     "Jett", "Reyna", "Neon", "Raze", "Yoru", "Phoenix", "Iso", "Sova", "Omen", "Sage", "Fade",
     "Skye", "Viper", "Chamber",
 ];
 
-/// A board around these players, in a match, you on Blue.
 fn board(players: Vec<Player>) -> Board {
     Board {
         state: Some("INGAME".to_owned()),
@@ -118,7 +113,6 @@ fn names() -> Board {
     board(players)
 }
 
-/// Every number at the end of its range.
 fn extremes() -> Board {
     let mut radiant = player("x1", "Apex#TOP", "Red", "Jett", 27);
     radiant.rr = Some(1043);
@@ -180,7 +174,6 @@ fn extremes() -> Board {
     b
 }
 
-/// A full five on the other side, and two parties on yours.
 fn parties() -> Board {
     let party = |number: u32, size: u32| Party {
         number: Some(number),
@@ -213,7 +206,6 @@ fn parties() -> Board {
     board(players)
 }
 
-/// Everybody on the other side flagged, each for several reasons.
 fn flagged() -> Board {
     let mut players = Vec::new();
     for (i, agent) in ["Jett", "Reyna", "Neon", "Raze", "Yoru"].iter().enumerate() {
@@ -280,7 +272,6 @@ fn sparse() -> Board {
     }
 }
 
-/// A deathmatch: fourteen players, each their own team.
 fn deathmatch() -> Board {
     let players: Vec<Player> = AGENTS
         .iter()
@@ -307,8 +298,6 @@ fn deathmatch() -> Board {
     }
 }
 
-/// The usual match, still reading back: a third of the games in, and the
-/// rest about a minute and a half off.
 fn reading() -> Board {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -323,7 +312,6 @@ fn reading() -> Board {
     }
 }
 
-/// A mode with more than five a side: two teams of seven.
 fn crowd() -> Board {
     let players = AGENTS
         .iter()
@@ -372,8 +360,6 @@ fn strangers() -> (Board, Notes) {
     (board, notes)
 }
 
-/// One account with the longest of everything the panel prints: name, agent
-/// names, reasons, tags and a four figure win sample.
 fn wordy() -> Board {
     let mut b = sample();
     let mut long = player("w1", "WWWWWWWWWWWWWWWW#WWWWW", "Red", "Brimstone", 12);
@@ -419,7 +405,6 @@ fn wordy() -> Board {
     b
 }
 
-/// The scenes, each at the size it is worth seeing at.
 fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     let window = |board: Board, selected| Shot::Window(Scene::of(selected).with(board));
     let (odd, noted) = strangers();
@@ -495,7 +480,6 @@ fn shots() -> Vec<(&'static str, Vec2, Shot)> {
     .collect()
 }
 
-/// The longest of everything, at the panel's narrow, default and wide sizes.
 fn wordy_shots() -> Vec<(&'static str, Vec2, Shot)> {
     let wordy_scene = || Scene::of(Some("WWWWWWWWWWWWWWWW#WWWWW")).with(wordy());
     vec![
@@ -533,7 +517,6 @@ fn wordy_shots() -> Vec<(&'static str, Vec2, Shot)> {
     ]
 }
 
-/// The overlay's scenes, at its own width.
 fn overlays() -> Vec<(&'static str, Vec2, Shot)> {
     vec![
         ("crowd-overlay", vec2(660.0, 640.0), Shot::Overlay(crowd())),
@@ -600,6 +583,7 @@ fn every_stress_lobby_renders_to_the_folder() {
                                     place: crate::board::Place::Overlay,
                                     still: false,
                                     since: 10.0,
+                                    lost: false,
                                 },
                             );
                         });
@@ -629,7 +613,6 @@ fn every_stress_lobby_renders_to_the_folder() {
         *harness.state_mut() = Some(shot);
         harness.run();
         if let Some(at) = rest {
-            // Rest there long enough for a tooltip's delay to pass.
             harness.hover_at(at);
             for _frame in 0..40 {
                 harness.step();

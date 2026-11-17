@@ -1,10 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""What a match detail says about each player, round by round.
-
-The scoreboard figures Riot doesn't hand over (KAST, first bloods, trades,
-clutches, plants) and the habits the tags read, worked out from the kills and
-the economy of every round.
-"""
+"""What a match detail says about each player, round by round."""
 
 from __future__ import annotations
 
@@ -19,12 +14,7 @@ _TRADE_WINDOW_MS = 3000
 
 
 def rounds_played(md: dict[str, Any]) -> int:
-    """Return how many rounds a match ran to, at least one.
-
-    Counted from the rounds themselves. A surrender ends a match early and
-    credits the winners with the rounds they still needed, so the two scores
-    add up to more rounds than anybody played.
-    """
+    """Return how many rounds a match ran to, at least one."""
     teams = [t for t in md.get("teams") or [] if isinstance(t, dict)]
     won = sum(int(t.get("roundsWon") or 0) for t in teams)
     return len(md.get("roundResults") or []) or won or 1
@@ -35,7 +25,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
     # Rounds get abandoned, players disconnect, and Riot has shipped rounds with
     # no playerStats at all, so every field here is read defensively.
     out: dict[str, dict[str, Any]] = {}
-    # Which side each account played, for the clutch check below.
     teams: dict[str, str] = {}
     for player in md.get("players") or []:
         if isinstance(player, dict) and player.get("subject") and player.get("teamId"):
@@ -108,8 +97,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 if item:
                     entry["weapons"][item] = entry["weapons"].get(item, 0) + 1
 
-        # A plant that loses the round is a different thing from one that wins
-        # it, so plants and defuses each keep a second count of the ones that won.
         won_by = rr.get("winningTeam")
         planter = rr.get("bombPlanter")
         if planter:
@@ -122,13 +109,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
             if won_by and teams.get(defuser) == won_by:
                 slot(defuser)["defusesWon"] += 1
 
-        # A clutch is being the last one standing on your side with at least
-        # one opponent alive, and then winning the round. Rounds do not carry
-        # sides, so they come from the match roster, but only for people in
-        # this round's playerStats: the roster can list a coach, who never
-        # dies. A deathmatch has a side per player and would make everyone the
-        # last one standing, so it takes exactly two sides. With no winner
-        # nothing is recorded rather than a loss being invented.
         played = {str(ps.get("subject")) for ps in stats if ps.get("subject")}
         sides: dict[str, set[str]] = {}
         for puuid in played:
@@ -142,8 +122,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
                 victim = str(kill.get("victim") or "")
                 fell = teams.get(victim)
                 if fell:
-                    # `standing` holds only the sides that played this round,
-                    # so a victim from any other side is not in it.
                     standing.get(fell, set()).discard(victim)
                 for side_name, members in standing.items():
                     if len(members) != 1:
@@ -171,7 +149,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
             traded = False
             killer = killed_by.get(sub)
             if killer is not None:
-                # You were traded if whoever killed you died soon afterwards.
                 avenged = killed_at.get(killer)
                 if avenged is not None and 0 <= avenged - killed_at.get(sub, 0) <= _TRADE_WINDOW_MS:
                     traded = True
@@ -184,8 +161,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
         entry["kastPct"] = round(entry["kast"] / span * 100)
         # Riot's own econ rating is damage per 1000 credits spent.
         entry["econ"] = round(entry["damage"] / entry["spent"] * 1000) if entry["spent"] else None
-        # Only the count here. match_detail works out the headshot rate from
-        # the same three fields, so there is one answer.
         entry["shots"] = entry["headshots"] + entry["bodyshots"] + entry["legshots"]
         ranked_weapons = sorted(entry["weapons"].items(), key=lambda kv: (-kv[1], str(kv[0])))
         entry["weaponKills"] = [
@@ -203,9 +178,6 @@ def round_stats(md: dict[str, Any], rounds: int) -> dict[str, dict[str, Any]]:
 # that nobody has forced anything. They saved and bought a pistol.
 FORCE_VALUE = 2000
 
-# The pistol rounds and the round after each of them. Competitive plays twelve
-# a side, so the second half opens at index twelve. Overtime does its own thing
-# and is left out rather than guessed at.
 PISTOL_ROUNDS = (0, 12)
 
 
@@ -282,7 +254,6 @@ def buy_habits(md: dict[str, Any], puuid: str) -> dict[str, Any]:
         if not economy:
             continue
         if winner == side:
-            # A won pistol makes the next round the bonus round.
             won_pistols += 1
             name = valapi.weapon_name(str(economy.get("weapon") or "")) or ""
             if name:
@@ -388,8 +359,6 @@ def _self_check() -> None:
                 "bombDefuser": "D",
             },
         ],
-        # A and C hold one side, B and D the other. The rounds cannot say who
-        # clutched without this, because a round does not carry the sides.
         "players": [
             {"subject": "A", "teamId": "Blue"},
             {"subject": "C", "teamId": "Blue"},
@@ -405,8 +374,6 @@ def _self_check() -> None:
     check(stats["A"]["kastPct"] == 100, f"A should be traded in round 2: {stats['A']}")
     check(stats["A"]["econ"] == round(250 / 6800 * 1000), stats["A"])
 
-    # The habits the automatic tags read are the same counts, summed over
-    # matches, with the rounds each player was actually in.
     habits = habits_of([match], "A")
     check(habits["matches"] == 1 and habits["rounds"] == 2, habits)
     check(habits["firstBloods"] == 1 and habits["firstDeaths"] == 1, habits)
@@ -424,7 +391,6 @@ def _self_check() -> None:
     check(stats["D"]["clutches"] == 0, stats["D"])
     check(stats["D"]["clutchesLost"] == 2, stats["D"])
 
-    # The whole loadout, not just the favourite.
     check(stats["C"]["weaponKills"][0]["kills"] == 2, stats["C"])
 
     check(stats["B"]["kastPct"] == 50, f"B has no round-1 contribution: {stats['B']}")

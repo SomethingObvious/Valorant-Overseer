@@ -105,7 +105,7 @@ files = ["backend", "scripts"]
 cache_dir = ".overseer/cache/mypy"
 strict = true
 
-# Two relaxations, each with its reason.
+# Three relaxations, each with its reason.
 
 # Every one of the forty-five sites this fires on returns a value pulled
 # straight out of Riot's JSON or an untyped cache dict, which is Any by
@@ -113,7 +113,14 @@ strict = true
 # add a line of syntax to say it.
 warn_return_any = false
 
-# requests ships no types of its own and python-dotenv has none either. Their
-# stub packages would be a dependency installed only for this check.
+# requests ships no types of its own, and its stub package would be a
+# dependency installed only for this check.
 ignore_missing_imports = true
+
+# With no types for requests, a class built on one of its classes is built on
+# Any. A session takes its TLS settings from its adapter, and the adapter only
+# takes other ones by being subclassed, so this one module may.
+[[tool.mypy.overrides]]
+module = "riot_client"
+disallow_subclassing_any = false
 

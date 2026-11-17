@@ -3,28 +3,38 @@
 //! any connection with one.
 
 use std::io::ErrorKind;
-use std::net::TcpStream;
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tungstenite::{Message, WebSocket, client::IntoClientRequest, stream::MaybeTlsStream};
+use tungstenite::{Message, WebSocket, client::IntoClientRequest};
 
 use crate::board::Board;
 
-/// The protocol version this build speaks. The bridge rejects anything else.
-const PROTOCOL: u32 = 1;
+const SPEAKS: u32 = 2;
 
-/// How long to wait before a first reconnect, doubling to [`RETRY_CEILING`].
 const RETRY_BASE: Duration = Duration::from_millis(500);
-/// The longest gap between reconnect attempts.
 const RETRY_CEILING: Duration = Duration::from_secs(10);
 /// How long a read blocks, which is also the longest a question waits to go
 /// out, since the thread cannot write while it reads.
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
+/// How long the backend gets to take the socket, and then to say the token
+/// is good. A `bridge.json` left by the last run can name a port some other
+/// program has since taken, and one that never answers would otherwise hold
+/// this thread for good, with the new backend's file never read.
+const GREETING: Duration = Duration::from_secs(5);
+/// How long a live bridge may say nothing at all before it counts as gone.
+/// The backend pings every 30 seconds whether or not a board changed, so
+/// this is two missed pings and a slow one. A backend that froze with its
+/// socket open would otherwise leave the window showing it as connected.
+#[cfg(not(test))]
+const SILENCE: Duration = Duration::from_secs(75);
+#[cfg(test)]
+const SILENCE: Duration = Duration::from_secs(2);
 
 /// Where the connection has got to, in the words the header uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,18 +70,13 @@ pub enum Event {
     },
 }
 
-/// A question waiting to go out.
 #[derive(Debug)]
 struct Ask {
-    /// The id the answer will carry.
     id: u64,
-    /// Which request, in the backend's words: `profile`, `match`, `recap`.
     request: String,
-    /// Whatever that request needs.
     params: serde_json::Value,
 }
 
-/// What the backend writes once it is listening.
 #[derive(Debug, Deserialize)]
 struct Credentials {
     #[serde(rename = "wsPort")]
@@ -79,21 +84,15 @@ struct Credentials {
     token: String,
 }
 
-/// One frame from the bridge, every field optional for the reason in
-/// [`crate::board`].
 #[derive(Debug, Deserialize)]
 struct Envelope {
-    #[serde(rename = "type")]
     kind: Option<String>,
-    data: Option<serde_json::Value>,
-    message: Option<String>,
-    code: Option<String>,
-    /// Set on a `response`, matching the id the question went out with.
-    id: Option<u64>,
-    /// Set on a `response`: whether the backend managed it.
-    ok: Option<bool>,
-    /// Set on a `response` that did not.
-    error: Option<String>,
+    board: Option<serde_json::Value>,
+    why: Option<String>,
+    say: Option<String>,
+    n: Option<u64>,
+    answer: Option<serde_json::Value>,
+    failed: Option<String>,
 }
 
 /// A running connection. Dropping it asks the thread to stop.
@@ -105,9 +104,6 @@ pub struct Bridge {
     outbox: Sender<Ask>,
 }
 
-/// The next question's id. Shared by every bridge and never reused, so a
-/// late answer to a question abandoned, even on a bridge since replaced, is
-/// not taken for the current one.
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 impl Bridge {
@@ -126,8 +122,6 @@ impl Bridge {
             .name("overseer-bridge".to_owned())
             .spawn(move || run(&path, &events_tx, &stop_rx, &asks, &wake))
         {
-            // No wake needed, since this is before the first frame, and that
-            // frame drains the queue.
             drop(failed.send(Event::Stopped(format!("no bridge thread: {e}"))));
         }
         Self {
@@ -172,8 +166,6 @@ pub fn credentials_path(root: &Path) -> PathBuf {
     root.join(".overseer").join("bridge.json")
 }
 
-/// Reads the credentials, or says why not. A missing file just means the
-/// backend is not listening yet.
 fn read_credentials(path: &Path) -> Result<Credentials, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| match e.kind() {
         ErrorKind::NotFound => "waiting for the backend".to_owned(),
@@ -196,9 +188,6 @@ fn run<W: Fn()>(
     wake: &W,
 ) {
     let mut attempt: u32 = 0;
-    // The same failure again on every retry changes nothing on screen, so it
-    // only wakes the window the first time. A still window would otherwise
-    // draw a dozen frames a minute for a backend that isn't there.
     let mut failing: Option<String> = None;
     loop {
         if stop.try_recv().is_ok() {
@@ -258,19 +247,16 @@ fn run<W: Fn()>(
     }
 }
 
-/// How long to wait before attempt `n`, capped.
 fn backoff(n: u32) -> Duration {
     let shift = n.saturating_sub(1).min(5);
     let scaled = RETRY_BASE.saturating_mul(1_u32 << shift);
     scaled.min(RETRY_CEILING)
 }
 
-/// Waits out a backoff. True means a stop arrived first.
 fn wait(stop: &Receiver<()>, total: Duration) -> bool {
     matches!(stop.recv_timeout(total), Ok(()))
 }
 
-/// Queues an event and wakes the UI. False means the UI is gone.
 fn post<W: Fn()>(events: &Sender<Event>, wake: &W, event: Event) -> bool {
     if events.send(event).is_err() {
         return false;
@@ -279,33 +265,35 @@ fn post<W: Fn()>(events: &Sender<Event>, wake: &W, event: Event) -> bool {
     true
 }
 
-/// Opens the socket and authenticates. The error is what the header will show.
-fn connect(path: &Path) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, String> {
+fn connect(path: &Path) -> Result<WebSocket<TcpStream>, String> {
     let creds = read_credentials(path)?;
-    let url = format!("ws://127.0.0.1:{}", creds.ws_port);
-    let request = url
-        .as_str()
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, creds.ws_port));
+    let request = format!("ws://{address}")
         .into_client_request()
         .map_err(|e| format!("bad bridge address: {e}"))?;
+    let unanswered = |e: std::io::Error| format!("bridge not answering: {e}");
+    let stream = TcpStream::connect_timeout(&address, GREETING).map_err(unanswered)?;
+    stream.set_nodelay(true).map_err(unanswered)?;
+    stream
+        .set_read_timeout(Some(GREETING))
+        .map_err(unanswered)?;
     let (mut socket, _response) =
-        tungstenite::connect(request).map_err(|e| format!("bridge not answering: {e}"))?;
+        tungstenite::client(request, stream).map_err(|e| format!("bridge not answering: {e}"))?;
 
-    if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
-        // Without a read timeout the pump never sees a stop, and closing the
-        // window leaves the thread blocked until the backend next speaks.
-        stream
-            .set_read_timeout(Some(READ_TIMEOUT))
-            .map_err(|e| format!("cannot set a read timeout: {e}"))?;
-    }
+    // Without a read timeout the pump never sees a stop, and closing the
+    // window leaves the thread blocked until the backend next speaks.
+    socket
+        .get_ref()
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .map_err(|e| format!("cannot set a read timeout: {e}"))?;
 
-    let hello = serde_json::json!({ "type": "auth", "token": creds.token, "protocol": PROTOCOL });
+    let hello = serde_json::json!({ "kind": "hello", "key": creds.token, "speaks": SPEAKS });
     socket
         .send(Message::Text(hello.to_string().into()))
         .map_err(|e| format!("cannot greet the bridge: {e}"))?;
     Ok(socket)
 }
 
-/// Why the pump loop returned.
 enum Pumped {
     /// The UI asked to stop.
     Stopped,
@@ -315,24 +303,35 @@ enum Pumped {
     Dropped(String),
 }
 
-/// Reads frames until something ends the connection.
 fn pump<W: Fn()>(
-    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    socket: &mut WebSocket<TcpStream>,
     events: &Sender<Event>,
     stop: &Receiver<()>,
     asks: &Receiver<Ask>,
     wake: &W,
 ) -> Pumped {
     let mut live = false;
+    let greeted = Instant::now();
+    let mut heard = Instant::now();
     loop {
         if stop.try_recv().is_ok() {
             return Pumped::Stopped;
         }
+        if !live && greeted.elapsed() > GREETING {
+            return Pumped::Dropped("the backend didn't answer".to_owned());
+        }
+        if live && heard.elapsed() > SILENCE {
+            return Pumped::Dropped("the backend stopped answering".to_owned());
+        }
         if live && let Err(why) = send_asks(socket, asks) {
             return Pumped::Dropped(why);
         }
-        match socket.read() {
-            Ok(Message::Text(text)) => match handle(&text, socket) {
+        let read = socket.read();
+        if read.is_ok() {
+            heard = Instant::now();
+        }
+        match read {
+            Ok(Message::Text(text)) => match handle(&text) {
                 Handled::Nothing => {}
                 Handled::Event(event) => {
                     if matches!(event, Event::Status(Status::Live)) {
@@ -355,28 +354,19 @@ fn pump<W: Fn()>(
             // answers websocket pings by itself.
             Ok(_) => {}
             Err(tungstenite::Error::Io(e))
-                if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
-                // The read timeout, which is how the stop check above gets
-                // to run.
-            }
+                if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(e) => return Pumped::Dropped(format!("bridge read failed: {e}")),
         }
     }
 }
 
-/// Sends the questions queued since the last look. This runs between reads,
-/// since the socket has one owner, so a question waits up to [`READ_TIMEOUT`].
-fn send_asks(
-    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
-    asks: &Receiver<Ask>,
-) -> Result<(), String> {
+fn send_asks(socket: &mut WebSocket<TcpStream>, asks: &Receiver<Ask>) -> Result<(), String> {
     for ask in asks.try_iter() {
         let frame = serde_json::json!({
-            "type": "request",
-            "id": ask.id,
-            "request": ask.request,
-            "params": ask.params,
+            "kind": "ask",
+            "n": ask.id,
+            "what": ask.request,
+            "with": ask.params,
         });
         socket
             .send(Message::Text(frame.to_string().into()))
@@ -385,7 +375,6 @@ fn send_asks(
     Ok(())
 }
 
-/// What one frame meant.
 enum Handled {
     /// Nothing the UI needs to know.
     Nothing,
@@ -397,65 +386,44 @@ enum Handled {
     Broken(String),
 }
 
-/// A rejected token is usually the last run's, read before the new backend
-/// rewrote bridge.json, so reconnecting (which reads it again) fixes it. A
-/// protocol this build doesn't speak is final.
-fn auth_error(code: Option<String>, message: Option<String>) -> Handled {
-    match code.as_deref() {
-        Some("bad_token" | "timeout") => Handled::Broken("Reconnecting to the backend".to_owned()),
+fn refused(why: Option<String>, say: Option<String>) -> Handled {
+    match why.as_deref() {
+        Some("key" | "late") => Handled::Broken("Reconnecting to the backend".to_owned()),
         _ => Handled::Rejected(
-            message
-                .or(code)
-                .unwrap_or_else(|| "the bridge rejected this build".to_owned()),
+            say.or(why)
+                .unwrap_or_else(|| "the bridge turned this build away".to_owned()),
         ),
     }
 }
 
-/// Reads one frame, ignoring any it does not know, since that is a newer
-/// backend and not a fault.
-fn handle(text: &str, socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Handled {
+fn handle(text: &str) -> Handled {
     let Ok(envelope) = serde_json::from_str::<Envelope>(text) else {
         return Handled::Nothing;
     };
     match envelope.kind.as_deref() {
-        Some("auth_ok") => Handled::Event(Event::Status(Status::Live)),
-        Some("auth_error") => auth_error(envelope.code, envelope.message),
-        // An unreadable board is not worth a reconnect, since the next one is
-        // a second away. It is still reported, because a board dropped in
-        // silence looks exactly like no match in progress.
-        Some("state") => {
-            envelope.data.map_or(Handled::Nothing, |value| {
-                match serde_json::from_value::<Board>(value) {
-                    Ok(board) => Handled::Event(Event::Board(Box::new(board))),
-                    Err(e) => Handled::Event(Event::Unreadable(e.to_string())),
-                }
-            })
-        }
-        // The backend echoes the id it was sent, so an answer without one
-        // answers nobody.
-        Some("response") => envelope
-            .id
+        Some("welcome") => Handled::Event(Event::Status(Status::Live)),
+        Some("refused") => refused(envelope.why, envelope.say),
+        Some("board") => envelope.board.map_or(Handled::Nothing, |value| {
+            match serde_json::from_value::<Board>(value) {
+                Ok(board) => Handled::Event(Event::Board(Box::new(board))),
+                Err(e) => Handled::Event(Event::Unreadable(e.to_string())),
+            }
+        }),
+        Some("reply") => envelope
+            .n
             .map_or(Handled::Nothing, |id| Handled::Event(answer(id, envelope))),
-        Some("ping") => match socket.send(Message::Text(r#"{"type":"pong"}"#.into())) {
-            Ok(()) => Handled::Nothing,
-            Err(e) => Handled::Broken(format!("cannot answer a ping: {e}")),
-        },
         _ => Handled::Nothing,
     }
 }
 
-/// Turns a `response` into an answer, counting a payload with an `error` in it
-/// as a failure too.
 fn answer(id: u64, envelope: Envelope) -> Event {
-    if envelope.ok == Some(false) {
+    if let Some(why) = envelope.failed {
         return Event::Answer {
             id,
-            result: Err(envelope
-                .error
-                .unwrap_or_else(|| "the bridge would not say why".to_owned())),
+            result: Err(why),
         };
     }
-    let Some(data) = envelope.data else {
+    let Some(data) = envelope.answer else {
         return Event::Answer {
             id,
             result: Err("the bridge answered with nothing".to_owned()),
@@ -476,33 +444,32 @@ fn answer(id: u64, envelope: Envelope) -> Event {
 
 #[cfg(test)]
 mod tests {
-    use super::{Envelope, Event, Handled, answer, auth_error, read_credentials};
+    use super::{
+        Envelope, Event, GREETING, Handled, SILENCE, Status, answer, connect, read_credentials,
+        refused,
+    };
 
     #[test]
-    fn only_a_protocol_mismatch_stops_the_bridge() {
-        for code in ["bad_token", "timeout"] {
-            let handled = auth_error(Some(code.to_owned()), Some("Restart".to_owned()));
+    fn only_a_version_mismatch_stops_the_bridge() {
+        for why in ["key", "late"] {
+            let handled = refused(Some(why.to_owned()), Some("Restart".to_owned()));
             assert!(
                 matches!(handled, Handled::Broken(_)),
-                "{code} should reconnect"
+                "{why} should reconnect"
             );
         }
-        let handled = auth_error(
-            Some("incompatible_protocol".to_owned()),
-            Some("Update it".to_owned()),
-        );
-        assert!(matches!(handled, Handled::Rejected(why) if why == "Update it"));
-        assert!(matches!(auth_error(None, None), Handled::Rejected(_)));
+        let handled = refused(Some("speaks".to_owned()), Some("Run setup".to_owned()));
+        assert!(matches!(handled, Handled::Rejected(why) if why == "Run setup"));
+        assert!(matches!(refused(None, None), Handled::Rejected(_)));
     }
 
-    /// Both shapes of failure, and a success, read the way the panel needs.
     #[test]
     fn an_answer_carries_its_own_bad_news() {
         let envelope = |raw: &str| serde_json::from_str::<Envelope>(raw).unwrap();
 
         let Event::Answer { id, result } = answer(
             7,
-            envelope(r#"{"type":"response","id":7,"ok":true,"data":{"puuid":"x"}}"#),
+            envelope(r#"{"kind":"reply","n":7,"answer":{"puuid":"x"}}"#),
         ) else {
             panic!("not an answer");
         };
@@ -512,11 +479,9 @@ mod tests {
             Some("x")
         );
 
-        // The bridge refusing outright.
-        let Event::Answer { result, .. } = answer(
-            8,
-            envelope(r#"{"type":"response","id":8,"ok":false,"error":"boom"}"#),
-        ) else {
+        let Event::Answer { result, .. } =
+            answer(8, envelope(r#"{"kind":"reply","n":8,"failed":"boom"}"#))
+        else {
             panic!("not an answer");
         };
         assert_eq!(result.unwrap_err(), "boom");
@@ -525,18 +490,88 @@ mod tests {
         // and sign in" looks like on the wire.
         let Event::Answer { result, .. } = answer(
             9,
-            envelope(r#"{"type":"response","id":9,"ok":true,"data":{"error":"sign in"}}"#),
+            envelope(r#"{"kind":"reply","n":9,"answer":{"error":"sign in"}}"#),
         ) else {
             panic!("not an answer");
         };
         assert_eq!(result.unwrap_err(), "sign in");
 
-        let Event::Answer { result, .. } =
-            answer(10, envelope(r#"{"type":"response","id":10,"ok":true}"#))
+        let Event::Answer { result, .. } = answer(10, envelope(r#"{"kind":"reply","n":10}"#))
         else {
             panic!("not an answer");
         };
         assert!(result.is_err(), "an answer with no payload read as one");
+    }
+
+    /// A port that takes the socket and then says nothing is given up on, so
+    /// the thread goes back to read the file the new backend writes.
+    #[test]
+    fn a_port_that_never_answers_is_given_up_on() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = silent.local_addr().unwrap().port();
+        let dir = std::env::temp_dir().join("overseer-bridge-silent");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bridge.json");
+        std::fs::write(&path, format!(r#"{{"wsPort":{port},"token":"stale"}}"#)).unwrap();
+
+        let began = std::time::Instant::now();
+        let refused = connect(&path);
+        drop(std::fs::remove_dir_all(&dir));
+        assert!(refused.unwrap_err().starts_with("bridge not answering"));
+        assert!(
+            began.elapsed() < GREETING * 2,
+            "it waited {:?}",
+            began.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_bridge_that_goes_quiet_is_dropped() {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let root = std::env::temp_dir().join(format!("overseer-quiet-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".overseer")).unwrap();
+        std::fs::write(
+            root.join(".overseer").join("bridge.json"),
+            format!(r#"{{"wsPort":{port},"token":"t"}}"#),
+        )
+        .unwrap();
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let quiet = std::thread::spawn(move || {
+            let (stream, _) = server.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let _hello = socket.read().unwrap();
+            socket
+                .send(tungstenite::Message::Text(r#"{"kind":"welcome"}"#.into()))
+                .unwrap();
+            let _done = finished.recv_timeout(SILENCE * 3);
+        });
+
+        let (woke, wakes) = std::sync::mpsc::channel::<()>();
+        let bridge = super::Bridge::start(&root, move || {
+            let _sent = woke.send(());
+        });
+        let until = std::time::Instant::now() + SILENCE * 3;
+        let (mut live, mut why) = (false, None);
+        while why.is_none() {
+            let Some(left) = until.checked_duration_since(std::time::Instant::now()) else {
+                break;
+            };
+            let _woken = wakes.recv_timeout(left);
+            for event in bridge.drain() {
+                match event {
+                    Event::Status(Status::Live) => live = true,
+                    Event::Status(Status::Lost(lost)) if live => why = Some(lost),
+                    _ => {}
+                }
+            }
+        }
+        let _told = done.send(());
+        drop(bridge);
+        quiet.join().unwrap();
+        drop(std::fs::remove_dir_all(&root));
+        assert!(live, "it was welcomed");
+        assert_eq!(why.as_deref(), Some("the backend stopped answering"));
     }
 
     #[test]

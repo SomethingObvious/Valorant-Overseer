@@ -1,6 +1,3 @@
-//! Which GPU the window asks for, and a report of what it found, so the gate
-//! checks the claims in `crates/README.md` instead of trusting them.
-
 use std::path::Path;
 
 use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, wgpu};
@@ -10,7 +7,6 @@ use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, wgpu};
 /// window never holds more than a few hundred.
 const BINDINGS: u32 = 16_384;
 
-/// How the window draws, in the order they are tried until one opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Draw {
     /// DX12 on a real GPU. Asking for every backend starts the Vulkan and
@@ -25,7 +21,6 @@ pub(crate) enum Draw {
     Software,
 }
 
-/// Every way to draw, best first.
 pub(crate) const DRAWS: [Draw; 4] = [Draw::Dx12, Draw::Gpu, Draw::OpenGl, Draw::Software];
 
 /// The renderer configuration, asking for the integrated GPU. VALORANT wants
@@ -108,8 +103,6 @@ pub(crate) fn software(info: &wgpu::AdapterInfo) -> bool {
             .any(|name| info.name.contains(name))
 }
 
-/// One line describing the adapter the app ended up on, since that decides
-/// which quality tier it can hold.
 #[must_use]
 pub(crate) fn adapter_line(info: &wgpu::AdapterInfo) -> String {
     format!(
@@ -118,9 +111,6 @@ pub(crate) fn adapter_line(info: &wgpu::AdapterInfo) -> String {
     )
 }
 
-/// Prints where the window would find its backend, without opening a window,
-/// because the gate may have no desktop session to open one in. The adapter is
-/// only known once the app draws its first frame, so the app reports that.
 pub(crate) fn report(root: &Path) {
     let bridge = overseer_core::bridge::credentials_path(root);
     println!("root      {}", root.display());

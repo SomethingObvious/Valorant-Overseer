@@ -26,63 +26,42 @@ const LONGEST_SIDE: usize = 1920;
 /// The steps the frame size goes up in, so resizing the panel doesn't
 /// restart ffmpeg on every frame of the drag.
 const SIDE_STEP: f32 = 240.0;
-/// Frames a second of the video, whatever the speed.
 const FPS: f64 = 30.0;
-/// How many decoded frames wait for their turn. A few is enough to ride out
-/// a slow one, and more would only hold memory.
 const AHEAD: usize = 4;
-/// The sizes there are to pick from: how much of the window's height the
-/// video may take in the panel, by name. Full screen is for seeing it big.
 pub(crate) const SIZES: [(f32, &str); 4] = [
     (0.5, "Small"),
     (0.63, "Medium"),
     (0.8, "Large"),
     (0.95, "Largest"),
 ];
-/// The speeds there are to pick from.
 pub(crate) const SPEEDS: [f32; 7] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-/// How long, in seconds, a paused clip's controls stay after the pointer
-/// leaves.
 const LINGER: f64 = 2.0;
 
-/// How tall the bar over the bottom of the video is.
 const STRIP: f32 = 46.0;
 /// How often the timeline moves while Windows' engine plays, in seconds.
 /// Each move redraws the whole window, so it is a few times a second
 /// rather than every frame.
 const TICK: f64 = 0.25;
-/// How long a looping part holds its last frame before it starts over, so
-/// the end of the throw reads before the start of the next.
 const REST: f64 = 0.6;
-/// How big a scrub strip's frames are on their longest side. Small, since
-/// they only show while a handle is dragged, and many of them are kept.
 const STRIP_SIDE: usize = 360;
 /// The most frames one scrub strip keeps, about 50 MB at its size.
 const STRIP_MOST: f64 = 240.0;
-/// The least height the video keeps when little of the panel is left under
-/// it.
 const SHORTEST: f32 = 180.0;
 /// The room kept either side of a full screen video Windows' engine plays,
 /// for the X beside its top right corner.
 const CLOSE_ASIDE: f32 = 40.0;
-/// How far the arrow keys skip, in seconds.
 const SKIP: f64 = 5.0;
 
-/// A decoded frame: its width and height, and its pixels as RGB.
 type Frame = ([usize; 2], Vec<u8>);
 
-/// How a clip plays when it first shows, from the settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Prefs {
     /// How fast, 1 being as recorded.
     pub(crate) speed: f32,
     /// How loud, from 0 to 100.
     pub(crate) volume: f32,
-    /// Whether it starts playing on its own.
     pub(crate) autoplay: bool,
-    /// Whether it starts over when it ends.
     pub(crate) looping: bool,
-    /// How much of the window's height it may take in the panel.
     pub(crate) size: f32,
 }
 
@@ -98,7 +77,6 @@ impl Default for Prefs {
     }
 }
 
-/// What a speed is called on its button and in the settings.
 pub(crate) fn speed_name(speed: f32) -> String {
     if (speed - 1.0).abs() < f32::EPSILON {
         "Normal".to_owned()
@@ -107,15 +85,9 @@ pub(crate) fn speed_name(speed: f32) -> String {
     }
 }
 
-/// A video file, and whatever is decoding or playing it. Dropping it stops
-/// both programs.
 pub(crate) struct Player {
-    /// The file it plays.
     file: String,
-    /// Its width and height as its own header gives them, so its box has
-    /// its shape before anything has opened it.
     header: Option<[u32; 2]>,
-    /// The frame on screen.
     texture: Option<TextureHandle>,
     /// The ffmpeg decoding now, and the frames it has made.
     run: Option<Run>,
@@ -123,63 +95,35 @@ pub(crate) struct Player {
     /// first frame is waiting when the part ends, rather than the picture
     /// freezing while a new ffmpeg seeks back.
     ahead: Option<Run>,
-    /// When a looping part that has reached its end starts over, while it
-    /// holds its last frame.
     rest: Option<f64>,
     /// ffplay, while the sound plays.
     sound: Option<Child>,
-    /// A still asked for while another was still being made, made next.
     next_still: Option<f64>,
-    /// Where in the video the frame on screen is, in seconds.
     at: f64,
-    /// The part it plays, from and to.
     span: (f64, f64),
-    /// Where the part playing now ends.
     till: f64,
-    /// The clip's own volume as a percentage, which the listening level
-    /// scales.
     gain: f32,
     /// The loudest the volume bar goes: 100, or while a clip is being cut
     /// the 200 its volume slider goes to.
     top: f32,
-    /// The clip volume the bar last took its place from, while a clip is
-    /// being cut.
     followed: Option<f32>,
-    /// When to start the sound again at a level the volume slider moved it
-    /// to, once the slider has sat still for a moment.
     resound: Option<f64>,
-    /// How it plays: its speed, how loud (its `volume`), whether it
-    /// loops or starts on its own, and how much of the window it takes.
-    /// They start as the settings say and change as it is played.
     prefs: Prefs,
-    /// Whether the sound is off, leaving the level where it was.
     muted: bool,
     /// Whether it is showing full screen.
     big: bool,
-    /// How many pixels its frames have on their longest side, to fit where
-    /// it is drawn.
     side: usize,
-    /// The frame to show when it is first drawn, once it knows how big to
-    /// make it.
     first: Option<f64>,
-    /// While the timeline is held: whether it was playing when taken, and
-    /// the time under the pointer.
     scrub: Option<(bool, f64)>,
-    /// Small frames of the stretch being cut, decoded ahead.
     strip: Option<Strip>,
-    /// The pass it was last drawn in, so the screen can drop one nobody sees.
     pub(super) shown_in: u64,
     /// What plays it. While Windows' engine does, nothing above starts an
     /// ffmpeg.
     engine: Engine,
-    /// Loop pressed on the bar, to this, for the settings to keep.
     pub(super) looped: Option<bool>,
-    /// Where the engine's video goes this frame: the box, the part of the
-    /// screen that can be seen, and the layer it is drawn on.
     spot: Option<(Rect, Rect, egui::LayerId)>,
 }
 
-/// Which engine plays a clip.
 enum Engine {
     /// Windows' media engine, opened when the clip first shows.
     Wanted,
@@ -199,13 +143,9 @@ enum Engine {
 /// once. Each full size frame is its own ffmpeg seeking and decoding, which
 /// takes a fifth of a second or more.
 struct Strip {
-    /// Where the stretch starts and ends, in seconds.
     from: f64,
-    /// See `from`.
     to: f64,
-    /// Frames a second it keeps.
     fps: f64,
-    /// The frames so far, in order.
     frames: std::sync::Arc<std::sync::Mutex<Vec<Frame>>>,
     /// The ffmpeg making them, while it does.
     child: Option<Child>,
@@ -223,30 +163,22 @@ impl std::fmt::Debug for Player {
 
 /// One ffmpeg, and the frames its thread has read off it.
 struct Run {
-    /// The process.
     child: Child,
-    /// Its frames, in order.
     frames: Receiver<Frame>,
-    /// Where in the video its first frame is.
     from: f64,
     /// When the first frame went on screen, on egui's clock, while playing.
     /// A still has none.
     clock: Option<Clock>,
-    /// Frames taken off it so far.
     taken: u32,
 }
 
 /// The clock a playing run keeps time by.
 #[derive(Debug, Clone, Copy)]
 struct Clock {
-    /// When its first frame went on screen, once it has.
     started: Option<f64>,
-    /// How fast it plays.
     speed: f32,
 }
 
-/// The player in `slot` for `file`, made new with `prefs` and showing the
-/// frame at `at` when the slot is empty or holds another file's.
 pub(super) fn of<'slot>(
     slot: &'slot mut Option<Player>,
     file: &str,
@@ -264,7 +196,6 @@ pub(super) fn of<'slot>(
 }
 
 impl Player {
-    /// A player for `file`, showing nothing until it is asked for a frame.
     fn new(file: &str, prefs: Prefs) -> Self {
         Self {
             file: file.to_owned(),
@@ -343,16 +274,12 @@ impl Player {
         self.video().is_some_and(|video| !video.on_screen())
     }
 
-    /// Whether it is playing, counting one held while it can't be seen.
     fn playing(&self) -> bool {
         self.rest.is_some()
             || self.run.as_ref().is_some_and(|r| r.clock.is_some())
             || matches!(&self.engine, Engine::Native { video, held } if *held || video.playing())
     }
 
-    /// Decodes small frames of `from` to `to` ahead, unless the strip it
-    /// has covers them already. One that couldn't start is not tried again
-    /// for the same stretch.
     pub(super) fn prepare(&mut self, (from, to): (f64, f64)) {
         // Windows' engine seeks fast enough to need none.
         if to <= from
@@ -396,9 +323,6 @@ impl Player {
         });
     }
 
-    /// Shows the frame nearest `at` from the strip straight away, while a
-    /// handle or the timeline is dragged, or the exact one the slow way when
-    /// the strip hasn't got that far.
     pub(super) fn preview(&mut self, ctx: &egui::Context, at: f64) {
         if self.video().is_some() {
             if self.playing() {
@@ -426,13 +350,11 @@ impl Player {
             self.still(at);
             return;
         };
-        // A still on its way would land after this one and cover it.
         self.stop();
         self.at = at;
         self.put(ctx, image);
     }
 
-    /// Puts `image` on screen in place of the frame there.
     fn put(&mut self, ctx: &egui::Context, image: ColorImage) {
         match &mut self.texture {
             Some(texture) => texture.set(image, TextureOptions::LINEAR),
@@ -464,7 +386,6 @@ impl Player {
         self.big
     }
 
-    /// Where it has got to, while it plays.
     pub(super) fn playhead(&self) -> Option<f64> {
         self.playing().then_some(self.at)
     }
@@ -488,7 +409,6 @@ impl Player {
         self.start(at, None);
     }
 
-    /// Plays `from` to `to`.
     fn play(&mut self, from: f64, to: f64) {
         self.stop();
         self.till = to;
@@ -500,7 +420,6 @@ impl Player {
         } else {
             self.start(from, Some(to - from));
         }
-        // From `at`, which is where this part starts.
         self.sound();
     }
 
@@ -536,7 +455,6 @@ impl Player {
         }
     }
 
-    /// Goes to `at` within its part, playing on from there if it was playing.
     fn seek(&mut self, at: f64) {
         let (from, to) = self.span;
         let at = at.min(to).max(from);
@@ -547,7 +465,6 @@ impl Player {
         }
     }
 
-    /// Starts the sound from where the video is, in place of any playing.
     fn sound(&mut self) {
         if let Some(mut sound) = self.sound.take() {
             end(&mut sound);
@@ -567,7 +484,6 @@ impl Player {
         }
     }
 
-    /// Stops both programs, leaving the frame on screen.
     fn stop(&mut self) {
         for mut run in [self.run.take(), self.ahead.take()].into_iter().flatten() {
             end(&mut run.child);
@@ -611,8 +527,6 @@ impl Player {
         })
     }
 
-    /// Takes whatever frames are due and puts the newest on screen. A part
-    /// that played to its end starts over when it loops.
     fn advance(&mut self, ctx: &egui::Context) {
         if let Some(until) = self.rest {
             let now = ctx.input(|i| i.time);
@@ -637,8 +551,6 @@ impl Player {
         let mut newest = None;
         let mut ended = false;
         loop {
-            // Playing, a frame waits until its time. A still takes its one
-            // frame the moment it is there.
             if let Some(Clock {
                 started: Some(started),
                 speed,
@@ -680,8 +592,6 @@ impl Player {
             if let Some(next) = next {
                 self.start(next, None);
             } else if played && self.prefs.looping {
-                // The last frame stays up for a moment, with the next pass
-                // already waiting behind it.
                 self.ahead = ahead;
                 self.rest = Some(ctx.input(|i| i.time) + REST);
                 ctx.request_repaint_after(Duration::from_secs_f64(REST));
@@ -712,8 +622,6 @@ impl Player {
             video.seek(from);
             video.play();
         }
-        // A frame short of the end, so the engine never reaches the end of
-        // the file, where it can show black, and the last frame stays up.
         let past = self.till > from && video.playing() && video.time() >= self.till - 1.0 / FPS;
         let ended = video.take_ended();
         if ended || past {
@@ -724,15 +632,11 @@ impl Player {
                 return;
             }
             if ended {
-                // A file a little shorter than its part gets to the end
-                // first, so it goes back to the last frame.
                 video.seek((video.time() - 1.0 / FPS).max(from));
             }
         }
         self.at = video.time();
         if video.playing() {
-            // A few times a second, and right as the part ends so it
-            // stops there and not up to a tick later.
             let left = (self.till - self.at) / f64::from(self.prefs.speed);
             ctx.request_repaint_after(Duration::from_secs_f64(TICK.min(left).max(0.005)));
         }
@@ -743,7 +647,6 @@ impl Player {
         self.shape().unwrap_or(16.0 / 9.0)
     }
 
-    /// The video's width over its height, once a frame or its header says.
     pub(super) fn shape(&self) -> Option<f32> {
         let said = self.video().map_or_else(
             || self.texture.as_ref().map(TextureHandle::size),
@@ -782,11 +685,6 @@ impl Player {
         }
     }
 
-    /// Draws the video in its own shape, as wide as the panel unless that
-    /// would make it taller than its share of the window, with its bar
-    /// over the bottom of it. `span` is the part it plays and `gain` the
-    /// clip's own volume. Full screen, the panel keeps the frame and the
-    /// controls go to the big one.
     pub(super) fn show(&mut self, ui: &mut Ui, span: (f64, f64), gain: f32, room: f32) {
         (self.span, self.gain) = (span, gain);
         self.open_native(ui.ctx());
@@ -807,11 +705,6 @@ impl Player {
         self.keys(ui);
         let aspect = self.aspect();
         let wide = ui.available_width();
-        // Sized from its own shape and a share of the window, not from where
-        // it sits in a scroll, so it keeps its box as the panel scrolls
-        // instead of growing under the player and letting the black backing
-        // show through. `room` holds back height for whatever sits under it,
-        // like the trim bar.
         let cap = self
             .prefs
             .size
@@ -823,8 +716,6 @@ impl Player {
         if !self.big {
             self.fit(rect, ui.ctx().pixels_per_point());
         }
-        // After the size is known, so the first frames are made that size.
-        // Playing straight away needs no still to replace a moment later.
         let first = self.first.take();
         if std::mem::take(&mut self.prefs.autoplay) {
             self.toggle();
@@ -847,7 +738,6 @@ impl Player {
             let shown = spot
                 .filter(|_| !hidden)
                 .and_then(|(rect, seen, layer)| placed(ui.ctx(), rect, seen, layer));
-            // Out of sight it stops decoding, and plays on once it is back.
             if shown.is_none() && video.playing() {
                 video.pause();
                 *held = true;
@@ -890,8 +780,6 @@ impl Player {
         }
     }
 
-    /// The video big in the middle of the window over a dark backdrop, with
-    /// an X in its corner. The X, a click on the backdrop or Escape go back.
     fn fullscreen(&mut self, ctx: &egui::Context) {
         let aspect = self.aspect();
         let native = self.video().is_some();
@@ -961,14 +849,11 @@ impl Player {
         if video.clicked() {
             self.toggle();
         }
-        // Over an empty box they would be the only thing there.
         if fade > 0.0 && !self.coming() {
             self.controls(ui, rect, id, fade);
         }
     }
 
-    /// Whether a paused clip's controls are still within [`LINGER`] of the
-    /// pointer leaving or the clip being paused.
     fn lingers(&self, ctx: &egui::Context, id: Id, busy: bool) -> bool {
         let playing = self.playing();
         let now = ctx.input(|i| i.time);
@@ -1034,7 +919,6 @@ impl Player {
             self.toggle();
         }
 
-        // The rest from the right edge in.
         let mut x = strip.right() - 8.0;
         let spot = Rect::from_min_max(pos2(x - 28.0, y - 14.0), pos2(x, y + 14.0));
         let said = if self.big { "Smaller" } else { "Bigger" };
@@ -1072,8 +956,6 @@ impl Player {
         self.time(&painter, (strip.left() + 42.0, spot.left() - 8.0), y, fade);
     }
 
-    /// How far in it is and how long the part runs, between `room`'s two
-    /// ends when it fits there.
     fn time(&self, painter: &egui::Painter, room: (f32, f32), y: f32, fade: f32) {
         let at = self.scrub.map_or(self.at, |(_, t)| t);
         let (from, to) = self.span;
@@ -1093,9 +975,6 @@ impl Player {
         }
     }
 
-    /// The timeline across the part playing, with what has played filled
-    /// in. Pressing or dragging on it shows the frame under the pointer, and
-    /// letting go plays on from there if it was playing.
     fn timeline(&mut self, ui: &Ui, painter: &egui::Painter, rect: Rect, id: Id, fade: f32) {
         let (from, to) = self.span;
         let response = ui
@@ -1112,7 +991,6 @@ impl Player {
             self.scrub = Some((was, t));
             self.preview(ui.ctx(), t);
         } else if let Some((was, t)) = self.scrub.take() {
-            // The exact frame once let go, since the strip's are only near.
             if was {
                 self.play(t, to);
             } else {
@@ -1146,9 +1024,6 @@ impl Player {
         }
     }
 
-    /// How loud, as a bar filled to the level with a knob at its end.
-    /// Pressing or dragging along it sets the level, and the sound starts
-    /// again at it once let go.
     fn volume(&mut self, ui: &Ui, painter: &egui::Painter, rect: Rect, id: Id, fade: f32) {
         let response = ui
             .interact(rect, id.with("volume"), Sense::click_and_drag())
@@ -1194,9 +1069,6 @@ impl Player {
         );
     }
 
-    /// Loop on the bar, ending at `right`: lit when a clip plays again from
-    /// the start, dim when it stops on its last frame. Returns where the next
-    /// control has to end.
     fn loop_button(
         &mut self,
         ui: &Ui,
@@ -1233,8 +1105,6 @@ impl Player {
         spot.left() - 4.0
     }
 
-    /// The speed's name as a button whose right end is at `end`, opening the
-    /// speed menu. Returns where its left end is.
     fn speed_button(
         &mut self,
         ui: &Ui,
@@ -1268,9 +1138,6 @@ impl Player {
         spot.left()
     }
 
-    /// The menu of [`SPEEDS`] that `button` opens, above it so it stays on
-    /// the video: a dark card with a row for each speed and the one playing
-    /// marked in red. A new speed plays on from where it is at that speed.
     fn speed_menu(&mut self, button: &egui::Response, id: Id) {
         let mut picked = None;
         let card = egui::Frame::NONE
@@ -1389,16 +1256,12 @@ fn placed(
     Some((pixels(rect), pixels(seen)))
 }
 
-/// A click target in `rect` with a pointing hand over it, which a screen
-/// reader calls `label`.
 fn button(ui: &Ui, rect: Rect, id: Id, label: &str) -> egui::Response {
     let response = ui.interact(rect, id, Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// A dark wash up from the bottom of `rect`, so the controls read over any
-/// picture.
 fn shade(painter: &egui::Painter, rect: Rect, fade: f32) {
     let dark = Color32::from_black_alpha((200.0 * fade) as u8);
     let mut mesh = egui::Mesh::default();
@@ -1411,8 +1274,6 @@ fn shade(painter: &egui::Painter, rect: Rect, fade: f32) {
     painter.add(mesh);
 }
 
-/// A play mark: a dark disc with a cream triangle in it, brighter under the
-/// pointer.
 fn mark(painter: &egui::Painter, centre: egui::Pos2, hot: bool) {
     painter.circle_filled(
         centre,
@@ -1427,7 +1288,6 @@ fn mark(painter: &egui::Painter, centre: egui::Pos2, hot: bool) {
     triangle(painter, centre, 1.0, ink);
 }
 
-/// A play triangle around `centre`, `scale` times the size of the big one.
 fn triangle(painter: &egui::Painter, centre: egui::Pos2, scale: f32, ink: Color32) {
     painter.add(Shape::convex_polygon(
         vec![
@@ -1455,7 +1315,6 @@ fn corners(painter: &egui::Painter, rect: Rect, leave: bool, ink: Color32) {
     }
 }
 
-/// Loop's mark: most of a ring with an arrowhead where it ends.
 fn looping(painter: &egui::Painter, rect: Rect, ink: Color32) {
     let centre = rect.center();
     let radius = 7.0;
@@ -1498,7 +1357,6 @@ pub(super) fn cross(painter: &egui::Painter, rect: Rect, hot: bool) {
     painter.line_segment([c + vec2(-6.0, 6.0), c + vec2(6.0, -6.0)], stroke);
 }
 
-/// A speaker in `rect`, with sound waves or else a cross when it is silent.
 fn speaker_mark(painter: &egui::Painter, rect: Rect, silent: bool, ink: Color32) {
     let c = rect.center() + vec2(-4.0, 0.0);
     painter.add(Shape::convex_polygon(
@@ -1588,9 +1446,6 @@ fn decode(
         Some(length) => command.args(["-t", &format!("{length:.3}")]),
         None => command.args(["-frames:v", "1"]),
     };
-    // Frames are dropped to `fps` before they are resized, not after, and
-    // bilinear costs a third less than the default bicubic with no jagged
-    // edges, which the cheapest one left on a crosshair.
     let fit = format!(
         "fps={fps},scale='min({side},iw)':'min({side},ih)':\
          force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear"
@@ -1661,7 +1516,6 @@ fn header(out: &mut impl BufRead) -> Option<[usize; 2]> {
 /// Plays `file`'s sound from `from` for `length` seconds of the video at
 /// `volume` percent and `speed` times as fast, in an ffplay with no window.
 fn sound(file: &str, from: f64, length: f64, volume: f32, speed: f32) -> std::io::Result<Child> {
-    // atempo goes no slower than half speed, so a quarter takes two of them.
     let tempo = if speed < 0.5 {
         format!("atempo=0.5,atempo={:.3}", speed / 0.5)
     } else {
@@ -1684,7 +1538,6 @@ fn sound(file: &str, from: f64, length: f64, volume: f32, speed: f32) -> std::io
         .spawn()
 }
 
-/// Ends a program and waits for it to go, so nothing is left running.
 fn end(child: &mut Child) {
     drop(child.kill());
     drop(child.wait());
@@ -1735,8 +1588,6 @@ fn track_size(file: &mut (impl Read + Seek), mut at: u64, end: u64) -> Option<[u
 mod tests {
     use super::{Player, Prefs, header, of, placed};
 
-    /// A PPM header gives the frame's size and leaves the reader on its
-    /// first pixel, and anything else gives nothing.
     #[test]
     fn a_frame_header_gives_its_size() {
         let mut read = &b"P6\n360 640\n255\nRGB"[..];
@@ -1802,10 +1653,8 @@ mod tests {
             out
         };
         assert_eq!(frame(false), Some(([10, 20, 110, 220], [10, 20, 110, 100])));
-        // A menu is known from the frame it was drawn in.
         let _first = frame(true);
         assert_eq!(frame(true), None);
-        // And it goes from the next frame on.
         let _closed = frame(false);
         assert!(frame(false).is_some(), "back once the menu has gone");
         let away = egui::Rect::from_min_max(egui::pos2(0.0, 300.0), egui::pos2(500.0, 400.0));

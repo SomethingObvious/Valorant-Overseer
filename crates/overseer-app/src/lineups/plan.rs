@@ -1,11 +1,3 @@
-//! The map: its minimap with each site's plantable ground lit, the places the
-//! game names, the shapes drawn on it, and a pin for where each lineup is
-//! thrown from and where it lands. Browsing only looks: a click picks a
-//! lineup and resting on one shows its notes. Once Add a Lineup is pressed, a
-//! drag from where you stand to where it lands places both at once. While
-//! drawing, a drag draws a shape or moves one by its dot, and a click places
-//! a label. An export asks the window for a picture of it.
-
 use egui::{Align2, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
 use overseer_core::{Atlas, Lineup, Plan};
 use overseer_ui::{Face, art, caps_text, caps_width, colour, motion, size, space};
@@ -16,27 +8,15 @@ use super::{Mode, Place, SPIKE, View, ability, areas, face, sight, spike};
 use crate::controls;
 use crate::settings::MapTurn;
 
-/// Below this the minimap is too small for the callouts' names.
 const NAMED: f32 = 440.0;
-/// The most points the backend keeps in one stroke, `_MOST_POINTS` in lineups.py.
 const MOST_POINTS: usize = 4000;
-/// How near a click has to be to a pin to pick its lineup, in points.
 const REACH: f32 = 16.0;
-/// Half the side of the agent's square where a lineup is thrown from.
 const FACE: f32 = 13.0;
-/// The radius of the ring where it lands.
 const RING: f32 = 11.0;
-/// How near another lineup's landing spot one has to land to land on exactly
-/// that spot, in game units: a metre. A hand on a mouse misses by about that
-/// much, and two throws for different parts of a site are much further apart.
 const SAME_SPOT: f32 = 100.0;
-/// The radius of the dot a shape is dragged by.
 const DOT: f32 = 5.0;
-/// Half the side of a grip that resizes the picked shape.
 const GRIP: f32 = 4.0;
 
-/// Draws the map row and the map, and takes clicks and drags on the map.
-/// True when the plate asking for the minimap again was clicked.
 pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
     ui.add_space(space::LG);
     maps(ui, atlas, view);
@@ -55,7 +35,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
     if side < 120.0 {
         return false;
     }
-    // Each map comes in as it loads or is picked, a little below its place.
     let shown = motion::enter(ui.ctx(), egui::Id::new(("lineups-map", &plan.name)), 0.0);
     let square = Square {
         rect: Rect::from_min_size(
@@ -86,7 +65,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
             .clicked()
     };
     if view.export.is_some() {
-        // The picture is of the map alone, without the hint along its edge.
         if view.shot.is_none() {
             view.shot = Some(*square);
             ui.ctx()
@@ -107,8 +85,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
         {
             click(atlas, view, square, at);
         }
-        // Every lineup under the pointer, one under another, when several
-        // share a spot.
         let under_pointer = response
             .hover_pos()
             .map(|at| under(atlas, view, square, at));
@@ -121,9 +97,6 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
     retry
 }
 
-/// Over the map once a game update has redrawn it, when lineups were saved
-/// on the old one: which, and that they may not land where they did. Said
-/// once, until Got It.
 fn redrawn(ui: &mut Ui, atlas: &Atlas, view: &mut View, plan: &Plan) {
     let Some((key, said)) = redrawn_notice(atlas, view, plan) else {
         return;
@@ -159,10 +132,7 @@ fn redrawn(ui: &mut Ui, atlas: &Atlas, view: &mut View, plan: &Plan) {
     });
 }
 
-/// What [`redrawn`] says about `plan`, and the key that says it was seen, or
-/// nothing when it was never redrawn, has no lineup from before, or was seen.
 fn redrawn_notice(atlas: &Atlas, view: &View, plan: &Plan) -> Option<(String, String)> {
-    // The sandbox hides the lineups the notice is about.
     if matches!(&view.mode, Mode::Draw(sketch) if sketch.scratch) {
         return None;
     }
@@ -180,8 +150,6 @@ fn redrawn_notice(atlas: &Atlas, view: &View, plan: &Plan) -> Option<(String, St
     Some((key, redrawn_words(&plan.name, &old)?))
 }
 
-/// What [`redrawn`] says about `old`, the lineups saved before `map`
-/// changed, or nothing when there are none.
 fn redrawn_words(map: &str, old: &[&str]) -> Option<String> {
     let named = match old {
         [] => return None,
@@ -203,14 +171,10 @@ fn redrawn_words(map: &str, old: &[&str]) -> Option<String> {
     ))
 }
 
-/// A chip for every map. The map stays put while a lineup is being written
-/// or shapes drawn on it.
 fn maps(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     let (names, turn) = ("Names (T)", "Turn (R)");
     let tools = controls::chip_width(ui, names) + controls::chip_width(ui, turn) + space::SM;
     let room = space::XL.mul_add(-2.0, ui.available_width() - tools);
-    // Too narrow for both on one line, beside the panel in a small window,
-    // the maps get the whole width and the tools a line of their own.
     if room < TOOLS_BESIDE {
         let wide = ui.available_width();
         ui.allocate_ui(vec2(wide, 0.0), |ui| map_chips(ui, atlas, view));
@@ -230,10 +194,8 @@ fn maps(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     });
 }
 
-/// The least room the map chips need for the tools to sit on their line.
 const TOOLS_BESIDE: f32 = 160.0;
 
-/// A chip for every map, wrapped to the width they're given.
 fn map_chips(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     let browsing = matches!(view.mode, Mode::Browse);
     ui.horizontal_wrapped(|ui| {
@@ -250,8 +212,6 @@ fn map_chips(ui: &mut Ui, atlas: &Atlas, view: &mut View) {
     });
 }
 
-/// Every lineup's name on the map, lit while they show, and a quarter turn of
-/// the map, from the right. T and R do the same.
 fn map_tools(ui: &mut Ui, view: &mut View, (names, turn): (&str, &str)) {
     ui.add_space(space::XL);
     ui.spacing_mut().item_spacing = vec2(space::SM, space::SM);
@@ -264,9 +224,6 @@ fn map_tools(ui: &mut Ui, view: &mut View, (names, turn): (&str, &str)) {
     }
 }
 
-/// How many quarter turns put the side `turn_to` asks for at the bottom of
-/// `plan`, along the line from the other side's spawn to its own, since one
-/// side can start in the middle, like the defenders on Fracture.
 fn turn_for(plan: &Plan, turn_to: MapTurn) -> u8 {
     let (Some(attack), Some(defend)) = (plan.attack, plan.defend) else {
         return 0;
@@ -277,7 +234,6 @@ fn turn_for(plan: &Plan, turn_to: MapTurn) -> u8 {
         MapTurn::Drawn => return 0,
     };
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
-    // How far down the line points after each number of quarter turns.
     let down = [dy, dx, -dy, -dx];
     down.iter()
         .zip(0..4u8)
@@ -285,7 +241,6 @@ fn turn_for(plan: &Plan, turn_to: MapTurn) -> u8 {
         .map_or(0, |(_, turn)| turn)
 }
 
-/// Draws `texture` filling the map's square, turned with it.
 fn turned_image(painter: &egui::Painter, square: Square, texture: egui::TextureId, tint: Color32) {
     let mut mesh = egui::Mesh::with_texture(texture);
     for corner in [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]] {
@@ -301,8 +256,6 @@ fn turned_image(painter: &egui::Painter, square: Square, texture: egui::TextureI
     painter.add(mesh);
 }
 
-/// The minimap on black with its plantable ground lit. False when it isn't
-/// here yet, for the window to say so over everything else.
 fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) -> bool {
     painter.rect_filled(*square, 0, colour::VOID);
     match plan
@@ -311,11 +264,7 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) -> bool {
         .and_then(|path| art::file(painter.ctx(), path))
     {
         Some(texture) => {
-            // Dark enough that the names and pins read on its floors.
             turned_image(painter, square, texture.id(), Color32::from_gray(118));
-            // The game's minimap tints where the spike can be planted, the
-            // same olive on every map, so lighting that shows each plantable
-            // area exactly without anybody drawing it.
             if let Some(plantable) = plan
                 .minimap
                 .as_deref()
@@ -334,11 +283,7 @@ fn backdrop(painter: &egui::Painter, square: Square, plan: &Plan) -> bool {
     true
 }
 
-/// Says the map's minimap hasn't downloaded, in the middle of where it goes,
-/// on a plate that asks again when clicked.
 fn missing(painter: &egui::Painter, square: Square, name: &str) -> Rect {
-    // Over everything else, since the callouts and drawings go on the map
-    // either way, on a raised plate, since the map under it is black.
     let mut job = egui::text::LayoutJob::simple(
         format!("The {name} minimap hasn't downloaded. Click here to try again."),
         Face::Body.at(size::BODY),
@@ -365,13 +310,8 @@ fn missing(painter: &egui::Painter, square: Square, name: &str) -> Rect {
     plate
 }
 
-/// How near plantable ground the Spike has to be put to move onto it, in game
-/// units. Further off it stays where it is put.
 const STICKY: f32 = 200.0;
 
-/// `at`, on the minimap `image`, moved onto the nearest plantable pixel
-/// within `reach` map widths when it is just off the plantable ground, or
-/// left where it is.
 fn stick(image: &egui::ColorImage, at: [f32; 2], reach: f32) -> [f32; 2] {
     let [w, h] = image.size;
     let on = |x: i64, y: i64| {
@@ -402,20 +342,16 @@ fn stick(image: &egui::ColorImage, at: [f32; 2], reach: f32) -> [f32; 2] {
     })
 }
 
-/// Whether a minimap pixel is the olive the game tints plantable ground in.
 fn plantable(pixel: Color32) -> bool {
     let [r, g, b, a] = pixel.to_srgba_unmultiplied();
     a > 200 && r.abs_diff(g) < 6 && r > b.saturating_add(20)
 }
 
-/// The names the game gives places, and each site's letter in amber. Each
-/// name sits on a dark backing so it reads over a wall as well as a floor.
 fn callouts(painter: &egui::Painter, square: Square, plan: &Plan) {
     let font = Face::Display.at(size::MICRO);
     let count = plan.callouts.len();
     let spots = spots(painter, square, plan, &font);
     for (index, (callout, spot)) in plan.callouts.iter().zip(spots).enumerate() {
-        // The names follow the map in, one after another.
         let id = egui::Id::new(("callout", &plan.name, index));
         let shown = motion::enter(painter.ctx(), id, 0.15 + motion::stagger(index, count));
         let mut painter = painter.clone();
@@ -449,15 +385,11 @@ fn callouts(painter: &egui::Painter, square: Square, plan: &Plan) {
     }
 }
 
-/// How tall a callout's backing is, in points.
 const PLATE: f32 = 14.0;
-/// How many cells each side of the map is split into to find floor for the
-/// names on.
 const CELLS: u16 = 256;
 /// How far a name may move from Riot's spot to find floor, in cells, about
 /// a tenth of the map.
 const NEAR: i32 = 26;
-/// The space kept between a name and a wall or another name, in points.
 const GAP: f32 = 6.0;
 
 /// Where each callout goes on the map as it is turned, 0 to 1 each way.
@@ -516,18 +448,13 @@ fn spots(
     placed
 }
 
-/// A name to put on the map, in cells of the map as it is turned.
 struct Label {
     /// Riot's spot for it.
     at: [f32; 2],
-    /// Its backing with the gap round it.
     size: [f32; 2],
-    /// A site's letter, which goes down before the names.
     letter: bool,
 }
 
-/// The floor of the map on screen, worked out once for each map and turn
-/// once its minimap is on disk. All floor until then.
 fn floor_of(ctx: &egui::Context, square: Square, plan: &Plan) -> std::sync::Arc<Floor> {
     let id = egui::Id::new(("walled-floor", &plan.name, square.turn));
     if let Some(kept) = ctx.data(|store| store.get_temp::<std::sync::Arc<Floor>>(id)) {
@@ -559,11 +486,8 @@ fn walls_of(ctx: &egui::Context, plan: &Plan) -> Option<std::sync::Arc<sight::Wa
     Some(walls)
 }
 
-/// A box of cells, from its top left corner to just past its bottom right.
 type Cells = [i32; 4];
 
-/// Which cells of the map, as it is turned, are floor, kept as running
-/// totals so how much of any box is floor takes four lookups.
 struct Floor {
     sums: Vec<u32>,
 }
@@ -586,8 +510,6 @@ impl Floor {
             let [x, y] = shapes::turned(shown, 4 - turn % 4);
             let px = ((x * w as f32) as usize).min(w.saturating_sub(1));
             let py = ((y * h as f32) as usize).min(h.saturating_sub(1));
-            // The floor is mid grey, the sites yellow and the wall lines
-            // white, so only the lines are this bright in red and green.
             image
                 .pixels
                 .get(py * w + px)
@@ -619,7 +541,6 @@ impl Floor {
         Self { sums }
     }
 
-    /// The floor cells above and left of the corner `x`, `y`.
     fn upto(&self, x: i32, y: i32) -> u32 {
         let row = i32::from(CELLS) + 1;
         usize::try_from(y * row + x)
@@ -629,15 +550,10 @@ impl Floor {
             .unwrap_or(0)
     }
 
-    /// Whether the cell at `x`, `y` is wall, or off the map.
     fn wall(&self, x: i32, y: i32) -> bool {
         self.count([x, y, x + 1, y + 1]) == 0
     }
 
-    /// How many points the floor runs from `from` along `way` on `square`
-    /// before a wall, when one comes within `most`. A point on a wall's edge
-    /// starts from the floor beside it, up to three cells out, since a trip
-    /// or a mesh is put against a wall. One deeper in the wall is at it.
     fn run(&self, square: Square, (from, way): (Pos2, Vec2), most: f32) -> Option<f32> {
         let cell = square.width() / f32::from(CELLS);
         let wall = |t: f32| {
@@ -653,13 +569,11 @@ impl Floor {
             .find(|&t| wall(t))
     }
 
-    /// How many cells of a box are floor.
     fn count(&self, [x0, y0, x1, y1]: Cells) -> u32 {
         (self.upto(x1, y1) + self.upto(x0, y0))
             .saturating_sub(self.upto(x0, y1) + self.upto(x1, y0))
     }
 
-    /// Where each of `labels` is centred, in cells, letters first.
     fn place(&self, labels: &[Label]) -> Vec<[f32; 2]> {
         let mut near: Vec<(i32, i32)> = (-NEAR..=NEAR)
             .flat_map(|dy| (-NEAR..=NEAR).map(move |dx| (dx, dy)))
@@ -682,9 +596,6 @@ impl Floor {
         placed
     }
 
-    /// The box for `label` nearest its own spot, trying each of `near` in
-    /// turn, that is all floor and clear of `taken`, or else the clear one
-    /// with the most floor.
     fn best(&self, label: &Label, near: &[(i32, i32)], taken: &[Cells]) -> Option<Cells> {
         let edge = i32::from(CELLS);
         let (wide, tall) = (label.size[0].ceil() as i32, label.size[1].ceil() as i32);
@@ -713,8 +624,6 @@ impl Floor {
     }
 }
 
-/// What a click or a drag on the map does next, on a plate along its bottom
-/// edge, so the map says how to use it without anybody finding a button.
 fn prompt(painter: &egui::Painter, square: Square, view: &View) {
     let drawing;
     let words = match &view.mode {
@@ -749,8 +658,6 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
             &drawing
         }
     };
-    // Smaller on a small map, and left out when even that runs past its
-    // edges, as the panel beside it says the same.
     let Some((font, wide)) = [size::BODY + 2.0, size::LABEL]
         .into_iter()
         .map(|at| {
@@ -784,9 +691,6 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
     );
 }
 
-/// A drag draws a shape, shown as it goes, unless it starts on a shape's dot,
-/// which moves that shape instead. A right click takes off the newest shape
-/// under the pointer.
 fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, view: &mut View) {
     let map = view.map.clone().unwrap_or_default();
     let Mode::Draw(sketch) = &mut view.mode else {
@@ -808,7 +712,6 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
         && let Some(at) = response.interact_pointer_pos()
     {
         if grip_on(square, sketch, at).is_some() {
-            // A click on a grip is a resize that didn't move.
         } else if let Some(index) = dot_at(square, &sketch.shapes, at) {
             sketch.pick(index);
         } else if sketch.stamping() || (sketch.lettering() && !sketch.words.trim().is_empty()) {
@@ -832,8 +735,6 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     changed |= resize(sketch, square, now, response.drag_stopped());
     changed |= brush(painter, sketch, square, now, response.drag_stopped());
     if let (Some(start), Some(end)) = (sketch.dragging, now) {
-        // A stamp follows the pointer and goes down where it lets go, so a
-        // click that slips a little still puts one down.
         let from = if sketch.stamping() { end } else { start };
         shapes::paint(painter, square, &sketch.drawing(from, end));
         if response.drag_stopped() {
@@ -871,8 +772,6 @@ fn draw(ui: &Ui, painter: &egui::Painter, square: Square, response: &Response, v
     }
 }
 
-/// Takes off the newest drawing under a click, or under the pointer as it
-/// sweeps across the map, and leaves the lineups alone. True when one went.
 fn erase(sketch: &mut super::Sketch, square: Square, response: &Response) -> bool {
     let touched = (response.clicked() || response.dragged())
         .then(|| response.interact_pointer_pos())
@@ -892,13 +791,9 @@ fn erase(sketch: &mut super::Sketch, square: Square, response: &Response) -> boo
     true
 }
 
-/// Every shape's dot, the picked one lit in its own colour and with its
-/// grips, small cream squares at its corners or its far end.
 fn dots(painter: &egui::Painter, square: Square, sketch: &super::Sketch) {
     for (index, shape) in sketch.shapes.iter().enumerate() {
         let picked = sketch.picked == Some(index);
-        // A stamp is grabbed anywhere on it, so a dot would only hide the
-        // face. The picked one gets a cream edge instead.
         if shape.kind == "stamp" {
             if picked {
                 painter.rect_stroke(
@@ -934,8 +829,6 @@ fn dots(painter: &egui::Painter, square: Square, sketch: &super::Sketch) {
     }
 }
 
-/// Starts a drag at `origin`: on a grip of the picked shape it resizes it,
-/// on a dot it moves that shape, and anywhere else it draws a new one.
 fn take_hold(sketch: &mut super::Sketch, square: Square, origin: Pos2) {
     if let Some((index, grip)) = grip_on(square, sketch, origin) {
         sketch.resizing = sketch.shapes.get(index).map(|s| (index, grip, s.clone()));
@@ -955,7 +848,6 @@ fn take_hold(sketch: &mut super::Sketch, square: Square, origin: Pos2) {
     }
 }
 
-/// The newest shape whose dot is under `at`, or the newest stamp.
 fn dot_at(square: Square, shapes: &[overseer_core::Drawing], at: Pos2) -> Option<usize> {
     shapes.iter().rposition(|s| {
         if s.kind == "stamp" {
@@ -966,9 +858,6 @@ fn dot_at(square: Square, shapes: &[overseer_core::Drawing], at: Pos2) -> Option
     })
 }
 
-/// The picked shape and which of its grips is under `at`. Only the picked
-/// shape has grips, and they come before its dot and before drawing a new
-/// shape, since they sit on top.
 fn grip_on(square: Square, sketch: &super::Sketch, at: Pos2) -> Option<(usize, usize)> {
     let index = sketch.picked?;
     let shape = sketch.shapes.get(index)?;
@@ -978,8 +867,6 @@ fn grip_on(square: Square, sketch: &super::Sketch, at: Pos2) -> Option<(usize, u
         .map(|grip| (index, grip))
 }
 
-/// Follows the brush to `now`, drawing the stroke so far. True once it is
-/// let go with a stroke worth keeping.
 fn brush(
     painter: &egui::Painter,
     sketch: &mut super::Sketch,
@@ -990,10 +877,6 @@ fn brush(
     let Some(&last) = sketch.stroke.last() else {
         return false;
     };
-    // A point every couple of pixels is smooth enough, and keeps a long
-    // stroke to a few hundred points.
-    // The backend refuses a stroke over MOST_POINTS, and with it every later
-    // save of the map, so a longer one just stops growing.
     if let Some(to) = now
         && sketch.stroke.len() < MOST_POINTS
         && shapes::at(square, last).distance(shapes::at(square, to)) >= 2.0
@@ -1024,8 +907,6 @@ fn brush(
     true
 }
 
-/// Follows a grip being dragged to `now`. True once it is let go, when the
-/// new size wants keeping.
 fn resize(
     sketch: &mut super::Sketch,
     square: Square,
@@ -1036,8 +917,6 @@ fn resize(
         return false;
     };
     let bigger = shapes::resized(was, *grip, to);
-    // Too small to see or to take hold of again is a slip, so it keeps the
-    // size it had.
     if let Some(shape) = sketch.shapes.get_mut(*index)
         && shapes::long_enough(square, bigger.a, bigger.b)
     {
@@ -1049,8 +928,6 @@ fn resize(
     stopped
 }
 
-/// The pointer for what a press would take hold of: a shape being moved, a
-/// grip, or a dot. `hover` is where it is over the map, if it is.
 fn pointer(ui: &Ui, square: Square, sketch: &super::Sketch, hover: Option<Pos2>) {
     let gripped = sketch
         .resizing
@@ -1067,15 +944,11 @@ fn pointer(ui: &Ui, square: Square, sketch: &super::Sketch, hover: Option<Pos2>)
     }
 }
 
-/// The pointer over a grip: the diagonal arrows a corner drags along, or a
-/// move cross for the one grip of a circle, a cone or a triangle.
 fn grip_cursor(shape: Option<&overseer_core::Drawing>, grip: usize) -> egui::CursorIcon {
     let Some(shape) = shape.filter(|s| matches!(s.kind.as_str(), "rect" | "oval" | "textbox"))
     else {
         return egui::CursorIcon::Move;
     };
-    // The corners go round from the first point, and every other one leans
-    // the same way, which way depending on how the shape was drawn.
     let ([ax, ay], [bx, by]) = (shape.a, shape.b);
     let leans = (bx - ax) * (by - ay) >= 0.0;
     if grip.is_multiple_of(2) == leans {
@@ -1085,13 +958,10 @@ fn grip_cursor(shape: Option<&overseer_core::Drawing>, grip: usize) -> egui::Cur
     }
 }
 
-/// The colour of a lineup's side: the attackers' red or the defenders' blue.
 fn tint(side: Option<&str>) -> Color32 {
     crate::board::paint::side_tint(side, colour::TEXT_DIM)
 }
 
-/// Every lineup on the map, the picked one last so it is on top, and the one
-/// being written in cream.
 fn pins(
     painter: &egui::Painter,
     (square, room): (Square, Rect),
@@ -1113,8 +983,6 @@ fn pins(
     let dim = writing.is_some() || !picked.is_empty();
     let run = |from: Pos2, way: Vec2, most: f32| floor.run(square, (from, way), most);
     let walls = walls_of(painter.ctx(), plan);
-    // Areas stay on the map, since Cosmic Divide has no end and a big one
-    // like Haunt's would cover the panel beside it.
     let inside = painter.with_clip_rect(square.rect.intersect(painter.clip_rect()));
     let areas = |lineup: &Lineup, ink: Color32| {
         area(
@@ -1127,14 +995,7 @@ fn pins(
     };
     let dimmed = if dim { 0.45 } else { 0.9 };
     let faint = |lineup: &Lineup| tint(lineup.side.as_deref()).gamma_multiply(dimmed);
-    // In the colour the settings pick, or else the side's, dimmed the same
-    // as its pin.
     let shade = |l: &Lineup| view.area.unwrap_or_else(|| tint(l.side.as_deref()));
-    // From the bottom: the other lineups' areas, your drawings, then the
-    // picked or written lineup's area, so a faded area never covers a
-    // drawing and the one you're looking at is never under one. Every
-    // other lineup's line goes down before any ring or face, so no line
-    // crosses a pin.
     for lineup in &rest {
         areas(lineup, shade(lineup).gamma_multiply(dimmed));
     }
@@ -1153,13 +1014,8 @@ fn pins(
     for lineup in &rest {
         marks(painter, square, atlas, lineup, (faint(lineup), main));
     }
-    // Names keep off every face and ring, and may run off the map as
-    // far as the screen goes. The picked one's name goes first, so the rest
-    // move out of its way.
     let shown: Vec<&Lineup> = rest.iter().chain(&picked).copied().chain(writing).collect();
     let mut taken = covered(square, &shown);
-    // A painter of its own over the whole screen, as one made from the map's
-    // painter is only ever as big as the map.
     let painter = &egui::Painter::new(painter.ctx().clone(), painter.layer_id(), room);
     for lineup in &picked {
         pin(
@@ -1193,8 +1049,6 @@ fn pins(
     }
 }
 
-/// The mark on a lineup saved before its map changed: an amber dot with an
-/// exclamation mark, centred on `at`.
 pub(super) fn badge(painter: &egui::Painter, at: Pos2) {
     painter.circle_filled(at, 7.0, colour::WARN);
     painter.circle_stroke(at, 7.0, Stroke::new(1.5, colour::VOID));
@@ -1207,9 +1061,6 @@ pub(super) fn badge(painter: &egui::Painter, at: Pos2) {
     );
 }
 
-/// What only shows while a lineup is being written: how far a smoke put
-/// down from afar reaches from where you stand, a trip's two ends to drag,
-/// and the point a wall bends through.
 fn handles(painter: &egui::Painter, square: Square, lineup: &Lineup, scale: Option<f32>) {
     let units = scale.map(|s| s * square.width());
     let stand = lineup.stand.map(|p| shapes::at(square, p));
@@ -1249,9 +1100,6 @@ fn handles(painter: &egui::Painter, square: Square, lineup: &Lineup, scale: Opti
     }
 }
 
-/// The ground a lineup's ability covers, to the map's scale, with trips and
-/// walls stopping at the map's walls. It moves with the pins, since it is
-/// drawn from them.
 fn area(
     painter: &egui::Painter,
     square: Square,
@@ -1276,11 +1124,6 @@ fn area(
     // A turret's view is worked out on the traced walls once there are any.
     if let (Reach::Aim(degrees), Some(walls), Some(aim)) = (reach, walls, points.first()) {
         let at = shapes::at(square, land);
-        // Casting the rays walks the wall grid for every corner in view, and
-        // the answer only moves with the pins, the map or the walls, so it is
-        // kept between frames.
-        // One slot per lineup, so dragging its pins replaces the answer
-        // rather than piling up one for every frame of the drag.
         let bits = |v: f32| v.to_bits();
         let slot = egui::Id::new(("turret-sight", &lineup.id));
         let asked = egui::Id::new((
@@ -1303,8 +1146,6 @@ fn area(
         return;
     }
     let afar = areas::spots(lineup.ability.as_deref()).is_some();
-    // Put down from afar, each point is another place it lands. Otherwise
-    // they are the ability's own, a trip's ends or a wall's bend.
     let (lands, own): (Vec<Pos2>, &[Pos2]) = if afar {
         (
             std::iter::once(shapes::at(square, land))
@@ -1325,7 +1166,6 @@ fn area(
     }
 }
 
-/// The other places a lineup put down from afar lands, which are its points.
 fn more_lands(lineup: &Lineup) -> &[[f32; 2]] {
     if areas::spots(lineup.ability.as_deref()).is_some() {
         &lineup.points
@@ -1334,7 +1174,6 @@ fn more_lands(lineup: &Lineup) -> &[[f32; 2]] {
     }
 }
 
-/// A badge on each lineup saved before the game changed its map.
 fn badges<'a>(
     painter: &egui::Painter,
     square: Square,
@@ -1352,7 +1191,6 @@ fn badges<'a>(
     }
 }
 
-/// Where a lineup is thrown from and where it lands, joined by a dashed line.
 fn pin(
     painter: &egui::Painter,
     square: Square,
@@ -1364,7 +1202,6 @@ fn pin(
     marks(painter, square, atlas, lineup, (ink, main));
 }
 
-/// The dashed line from where a lineup is thrown to where it lands.
 fn throw(painter: &egui::Painter, square: Square, lineup: &Lineup, ink: Color32) {
     let stand = lineup.stand.map(|p| shapes::at(square, p));
     let land = lineup.land.map(|p| shapes::at(square, p));
@@ -1381,7 +1218,6 @@ fn throw(painter: &egui::Painter, square: Square, lineup: &Lineup, ink: Color32)
     }
 }
 
-/// A lineup's rings where it lands and its face where it's thrown from.
 fn marks(
     painter: &egui::Painter,
     square: Square,
@@ -1402,8 +1238,6 @@ fn marks(
     }
 }
 
-/// Where a lineup lands: a ring `radius` round, with the ability's icon in it
-/// when there is one.
 pub(super) fn land_mark(
     painter: &egui::Painter,
     at: Pos2,
@@ -1412,7 +1246,6 @@ pub(super) fn land_mark(
     lineup: &Lineup,
     ink: Color32,
 ) {
-    // The Spike has no ring, as its defuse range is barely wider than one.
     if lineup.agent == SPIKE {
         spike(painter, at, radius * 0.75, ink);
         return;
@@ -1436,8 +1269,6 @@ pub(super) fn land_mark(
     }
 }
 
-/// Where a lineup is thrown from: the agent's face in a square `half` either
-/// side of `at`.
 pub(super) fn stand_mark(
     painter: &egui::Painter,
     at: Pos2,
@@ -1457,7 +1288,6 @@ pub(super) fn stand_mark(
     painter.rect_stroke(square, 0, Stroke::new(1.5, ink), egui::StrokeKind::Inside);
 }
 
-/// A lineup's title above where it lands, kept clear of `taken`.
 fn label(
     painter: &egui::Painter,
     (square, room): (Square, Rect),
@@ -1478,8 +1308,6 @@ fn label(
         room,
     );
     taken.push(plate);
-    // Outlined and barred in its side's colour, so a lineup's name reads
-    // apart from the map's own place names on their plain dark plates.
     let side = tint(lineup.side.as_deref());
     painter.rect(
         plate,
@@ -1500,8 +1328,6 @@ fn label(
     );
 }
 
-/// What a name must keep off: every lineup's face where it is thrown from
-/// and its ring where it lands. The ground a molly covers is fine to sit on.
 fn covered(square: Square, lineups: &[&Lineup]) -> Vec<Rect> {
     let mut out = Vec::new();
     for lineup in lineups {
@@ -1522,18 +1348,10 @@ fn covered(square: Square, lineups: &[&Lineup]) -> Vec<Rect> {
     out
 }
 
-/// How wide the bar in its side's colour is down a lineup name's left edge.
 const BAR: f32 = 3.0;
 
-/// The space kept between two names on the map, in points.
 const APART: f32 = 4.0;
 
-/// `plate` kept inside `bounds`, the screen it is drawn on, and moved to the
-/// nearest place clear of everything in `taken` by `APART`: names placed
-/// before it, and the faces and rings it mustn't cover. That can be above,
-/// below or out to either side, whichever is nearest, so lineups on one spot
-/// stack their names. When nothing near is clear it takes the spot covering
-/// the least.
 fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
     let inside = |r: Rect| {
         let dx = (bounds.left() - r.left()).max(0.0) + (bounds.right() - r.right()).min(0.0);
@@ -1548,9 +1366,6 @@ fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
             .map(|i| i.area())
             .sum()
     };
-    // Rows of the name's height, and steps of a quarter of its width out to a
-    // width and a half either side, tried nearest first. Below costs a little
-    // more than above, so a stack still grows upwards.
     let (up, across) = (plate.height() + APART, (plate.width() + APART) / 4.0);
     let mut shifts: Vec<Vec2> = (-5_i8..=5)
         .flat_map(|row| {
@@ -1573,8 +1388,6 @@ fn clear_of(taken: &[Rect], plate: Rect, bounds: Rect) -> Rect {
     best.1
 }
 
-/// A drag on the map while a lineup is being written: from where you stand
-/// to where it lands, or one of its pins picked up and moved.
 fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Response) {
     if let Mode::Edit(draft) = &mut view.mode {
         let held = match draft.grab {
@@ -1583,7 +1396,6 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
         };
         let scale = scale_of(atlas, &draft.lineup.map);
         settle(&mut draft.lineup, scale, held);
-        // The Spike is only where it's planted, so a click always plants it.
         if draft.lineup.agent == SPIKE {
             draft.lineup.stand = None;
             draft.lineup.ability = None;
@@ -1601,7 +1413,6 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
                 draft.lineup.land = Some(stick(&image, land, STICKY * scale));
             }
         }
-        // Another ability can't put down more, so a click places it again.
         if draft.placing == Place::More && areas::spots(draft.lineup.ability.as_deref()).is_none() {
             draft.placing = Place::Land;
         }
@@ -1620,9 +1431,6 @@ fn drag(ui: &Ui, atlas: &Atlas, view: &mut View, square: Square, response: &Resp
     }
 }
 
-/// Starts a drag at `origin` on the lineup being written. On one of its pins
-/// it picks that pin up. Anywhere else it throws from there, with where it
-/// lands following the pointer. Browsing, a drag does nothing.
 fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
     let Mode::Edit(draft) = &mut view.mode else {
         return;
@@ -1659,9 +1467,6 @@ fn grab(atlas: &Atlas, view: &mut View, square: Square, origin: Pos2) {
     });
 }
 
-/// Moves the pin being held to `now`, and lets go of it once the drag is
-/// `done`. Where it lands dropped back on where you stand is taken back, as
-/// that was a press held still rather than a throw.
 fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool) {
     let Mode::Edit(draft) = &mut view.mode else {
         return;
@@ -1698,9 +1503,6 @@ fn follow(atlas: &Atlas, view: &mut View, square: Square, now: Pos2, done: bool)
     }
 }
 
-/// A click at `at` on a bendable wall being written: on one of its bends it
-/// takes that bend off, and elsewhere on the wall it adds one there. True
-/// when it did either.
 fn bend(draft: &mut super::Draft, scale: Option<f32>, square: Square, at: Pos2) -> bool {
     if !matches!(
         draft.lineup.ability.as_deref().and_then(areas::reach),
@@ -1725,7 +1527,6 @@ fn bend(draft: &mut super::Draft, scale: Option<f32>, square: Square, at: Pos2) 
     }
 }
 
-/// The game's scale on `map`, map widths to a game unit, once it is known.
 fn scale_of(atlas: &Atlas, map: &str) -> Option<f32> {
     atlas
         .maps
@@ -1734,8 +1535,6 @@ fn scale_of(atlas: &Atlas, map: &str) -> Option<f32> {
         .and_then(|p| p.scale)
 }
 
-/// Where among a bendable wall's bends a new one at `at` goes, when `at` is
-/// on the wall it draws: after every bend before it along the wall.
 fn on_wall(lineup: &Lineup, square: Square, scale: Option<f32>, at: Pos2) -> Option<usize> {
     let Some(Reach::Bent(length)) = lineup.ability.as_deref().and_then(areas::reach) else {
         return None;
@@ -1761,17 +1560,10 @@ fn on_wall(lineup: &Lineup, square: Square, scale: Option<f32>, at: Pos2) -> Opt
     .map(|(_, stretch)| stretch)
 }
 
-/// The most points a bendable wall can be bent through.
 const BENDS: usize = 8;
 
-/// How far a trip's two dots sit from it, in game units.
 const TRIP_DOT: f32 = 300.0;
 
-/// Keeps a lineup's points to what its ability allows, at `scale` map
-/// widths to a game unit. Smokes put down from afar stay within reach of
-/// where you stand, and no more of them than it has. A trip gets two dots
-/// `TRIP_DOT` either side of it, across the throw at first, and turns to
-/// follow the one `held`. A bent wall ends at the most it can be. Any other ability has none.
 fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
     let ability = lineup.ability.clone();
     let reach = ability.as_deref().and_then(areas::reach);
@@ -1794,9 +1586,6 @@ fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
                 return;
             };
             let at = |p: [f32; 2]| pos2(p[0], p[1]);
-            // The dot held sets which way it runs, and the other mirrors it
-            // through the trip. Otherwise it keeps its way as the trip moves,
-            // and before it has one, it runs across the throw.
             let way = match (lineup.points.as_slice(), held) {
                 (&[a, _], Some(0)) => land - at(a),
                 (&[_, b], Some(1)) => at(b) - land,
@@ -1813,8 +1602,6 @@ fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
         }
         Some(Reach::Bent(length)) => {
             lineup.points.truncate(BENDS);
-            // Moving the end changes the curve, so it takes a few goes to
-            // land on the most it can be. Bends past the end go with it.
             for _ in 0..4 {
                 let (Some(stand), Some(land)) = (lineup.stand, lineup.land) else {
                     break;
@@ -1839,8 +1626,6 @@ fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
             if let (true, Some(land)) = (lineup.points.is_empty(), lineup.land) {
                 let at = pos2(land[0], land[1]);
                 let from = lineup.stand.map_or(at - Vec2::X, |s| pos2(s[0], s[1]));
-                // A turret points on the way it was thrown, ten metres out,
-                // and a bolt bounces halfway.
                 let start = if matches!(reach, Some(Reach::Aim(..))) {
                     at + (at - from).normalized() * (1000.0 * scale)
                 } else {
@@ -1853,7 +1638,6 @@ fn settle(lineup: &mut Lineup, scale: Option<f32>, held: Option<usize>) {
     }
 }
 
-/// `p` moved toward `from` until it is no further than `most`.
 fn within(from: [f32; 2], p: [f32; 2], most: f32) -> [f32; 2] {
     let way = pos2(p[0], p[1]) - pos2(from[0], from[1]);
     if way.length() <= most {
@@ -1863,10 +1647,6 @@ fn within(from: [f32; 2], p: [f32; 2], most: f32) -> [f32; 2] {
     [at.x, at.y]
 }
 
-/// `spot` moved onto the nearest pin of the same kind on another lineup on
-/// the same map within `SAME_SPOT`: any lineup's landing spot, so two lineups
-/// for one spot share one ring, or where a lineup for the same agent is
-/// thrown from, so one corner is one agent pin.
 fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32; 2] {
     let Some(scale) = scale_of(atlas, &lineup.map) else {
         return spot;
@@ -1887,8 +1667,6 @@ fn snapped(atlas: &Atlas, lineup: &Lineup, spot: [f32; 2], place: Place) -> [f32
         .map_or(spot, |(_, p)| p)
 }
 
-/// Every lineup on the map with a pin in reach of `at`, nearest first. More
-/// than one when lineups are stacked on one spot.
 fn under<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Vec<&'a Lineup> {
     let mut found: Vec<(f32, &Lineup)> = view
         .shown(atlas)
@@ -1907,8 +1685,6 @@ fn under<'a>(atlas: &'a Atlas, view: &View, square: Square, at: Pos2) -> Vec<&'a
     found.into_iter().map(|(_, l)| l).collect()
 }
 
-/// The notes of every lineup in `found` beside the pointer, one under
-/// another, and when there are several, that a click goes to the next.
 fn notes(response: &Response, atlas: &Atlas, found: &[&Lineup]) {
     let _shown = response.clone().on_hover_ui_at_pointer(|ui| {
         for (index, lineup) in found.iter().enumerate() {
@@ -1929,8 +1705,6 @@ fn notes(response: &Response, atlas: &Atlas, found: &[&Lineup]) {
     });
 }
 
-/// What shows beside the pointer resting on a lineup's pin: its name, what
-/// it is, and its notes on how to throw it.
 fn note(ui: &mut Ui, atlas: &Atlas, lineup: &Lineup) {
     ui.set_max_width(300.0);
     ui.label(overseer_ui::caps(
@@ -1961,8 +1735,6 @@ fn note(ui: &mut Ui, atlas: &Atlas, lineup: &Lineup) {
     }
 }
 
-/// A click on the map: a place for the lineup being written, or else the
-/// lineup under the pointer, or else nothing picked.
 fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
     let spot = shapes::spot(square, at);
     if let Mode::Edit(draft) = &mut view.mode
@@ -1998,9 +1770,6 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         return;
     }
     view.confirm = None;
-    // The nearest lineup there is picked, and a click on one of several
-    // stacked on one spot goes to the next of them, round and round in an
-    // order that doesn't depend on where the click was.
     let ids: Vec<String> = under(atlas, view, square, at)
         .iter()
         .filter_map(|l| l.id.clone())
@@ -2016,7 +1785,6 @@ fn click(atlas: &Atlas, view: &mut View, square: Square, at: Pos2) {
         );
 }
 
-/// The way an arrow key steps through the lineups on the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Way {
     Up,
@@ -2025,13 +1793,6 @@ pub(super) enum Way {
     Right,
 }
 
-/// The lineup an arrow key goes to: the next one along that arrow's side of
-/// the map as it is drawn. Up and Down go by height and Left and Right by
-/// width, so either pair alone reaches every lineup and the two mix freely.
-/// A lineup is where it lands, which is what it is for and where its name
-/// goes, and lineups landing on one spot go by where you stand. With
-/// nothing picked the first press starts from the edge it moves away from,
-/// and past the last one there is nothing.
 pub(super) fn stepped(atlas: &Atlas, view: &View, way: Way) -> Option<String> {
     let plan = atlas
         .maps
@@ -2051,7 +1812,6 @@ pub(super) fn stepped(atlas: &Atlas, view: &View, way: Way) -> Option<String> {
     let mut places: Vec<([f32; 4], &str)> =
         view.shown(atlas).into_iter().filter_map(place).collect();
     places.sort_by(order);
-    // Where the picked one is, whether the filter lists it or not.
     let from = atlas
         .lineups
         .iter()
@@ -2067,8 +1827,6 @@ pub(super) fn stepped(atlas: &Atlas, view: &View, way: Way) -> Option<String> {
     next.map(|(_, id)| (*id).to_owned())
 }
 
-/// Where `lineup` is along an arrow's side of the map turned `turn`, by
-/// where it lands and then where you stand, with its id.
 fn place_of(lineup: &Lineup, turn: u8, across: bool) -> Option<([f32; 4], &str)> {
     let id = lineup.id.as_deref()?;
     let land = shapes::turned(lineup.land.or(lineup.stand)?, turn);
@@ -2092,8 +1850,6 @@ mod tests {
     use overseer_core::Plan;
     use overseer_core::{Atlas, Lineup};
 
-    /// The olive the game tints plantable ground in is picked, and the grey
-    /// of the floor, the white of the walls and a clear pixel are not.
     #[test]
     fn only_the_plantable_olive_is_picked() {
         assert!(plantable(Color32::from_rgb(152, 152, 118)));
@@ -2107,9 +1863,6 @@ mod tests {
         }
     }
 
-    /// Browsing, a drag starts nothing. Adding one, a drag from an empty spot
-    /// is the whole lineup, from where you stand to where it lands, and a
-    /// drag on either of its pins moves just that pin.
     #[test]
     fn a_drag_places_a_lineup_and_moves_its_pins() {
         let square = Square {
@@ -2180,9 +1933,6 @@ mod tests {
         );
     }
 
-    /// A landing spot a few centimetres from another lineup's lands on
-    /// exactly that spot, and one a couple of metres away stays where it was
-    /// put. A lineup being edited doesn't snap onto where it already lands.
     #[test]
     fn a_landing_spot_snaps_onto_one_a_metre_away() {
         let square = Square {
@@ -2190,7 +1940,6 @@ mod tests {
             turn: 0,
         };
         let atlas = Atlas {
-            // A thousandth of the map is ten game units here.
             maps: vec![Plan {
                 name: "Ascent".to_owned(),
                 scale: Some(0.0001),
@@ -2231,10 +1980,6 @@ mod tests {
         assert_eq!(land(&view), Some([0.505, 0.5]), "not onto itself");
     }
 
-    /// Up and Down alone go through every lineup by where it lands, top to
-    /// bottom, and Left and Right alone do the same across. The two mix
-    /// from wherever the pick is, two landing on one spot go by where you
-    /// stand, the ends stay put, and a turned map turns the arrows with it.
     #[test]
     fn the_arrows_step_through_every_lineup_either_way_and_mix() {
         let lineup = |id: Option<&str>, map: &str, land: [f32; 2], stand: [f32; 2]| Lineup {
@@ -2298,9 +2043,6 @@ mod tests {
         );
     }
 
-    /// Names on one spot stack upwards with a gap between them, one that
-    /// would run off the screen is pulled back onto it, and one over a face
-    /// moves off it.
     #[test]
     fn names_keep_apart_and_stay_on_the_map() {
         let map = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0));
@@ -2315,11 +2057,9 @@ mod tests {
         let off = Rect::from_center_size(pos2(395.0, 5.0), vec2(80.0, 18.0));
         let kept = clear_of(&[], off, map);
         assert!(map.contains_rect(kept), "{kept:?}");
-        // A name over an agent's face moves off it.
         let face = Rect::from_center_size(pos2(200.0, 200.0), vec2(26.0, 26.0));
         let moved = clear_of(&[face], name, map);
         assert!(!moved.intersects(face), "{moved:?} still covers the face");
-        // Boxed in above and below, it goes beside rather than far up.
         let column = Rect::from_min_max(pos2(150.0, 60.0), pos2(250.0, 340.0));
         let beside = clear_of(&[column], name, map);
         assert!(!beside.intersects(column), "{beside:?}");
@@ -2329,9 +2069,6 @@ mod tests {
         );
     }
 
-    /// A trip's two dots sit three metres either side of it, across the
-    /// throw at first, and dragging one turns the trip round it while both
-    /// keep their distance. Moving the trip brings them along.
     #[test]
     fn a_trips_dots_turn_it_and_keep_their_distance() {
         let near =
@@ -2368,8 +2105,6 @@ mod tests {
         assert!(lineup.points.is_empty(), "a molly has no points of its own");
     }
 
-    /// The Spike put down just off plantable ground moves onto it, and one
-    /// put down further off or already on it stays where it is.
     #[test]
     fn the_spike_sticks_to_plantable_ground_nearby() {
         let olive = Color32::from_rgb(152, 152, 118);

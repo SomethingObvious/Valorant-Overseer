@@ -13,9 +13,6 @@ function Deny([string]$Reason, [string[]]$Detail) {
     exit 1
 }
 
-# These two run before the skip below, because a commit under the wrong name or
-# with a local file in it is public the moment it's pushed and can only be
-# taken back by rewriting history.
 $email = (& git config --file (Join-Path $root ".githooks\policy") --get overseer.email).Trim()
 foreach ($who in "GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT") {
     $ident = (& git var $who)
@@ -27,8 +24,6 @@ foreach ($who in "GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT") {
     }
 }
 
-# Anything the excludes match is meant to stay on this machine, so a tracked
-# copy of it got there with git add -f.
 $local = @(& git -C $root ls-files --cached --ignored --exclude-standard)
 if ($local.Count -gt 0) {
     Deny "files that are excluded from the repository are staged" (

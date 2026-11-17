@@ -18,7 +18,7 @@ use crate::header;
 use crate::history::History;
 use crate::hotkey::{self, Listener};
 use crate::lineups::Lineups;
-use crate::notes::{self, Notes};
+use crate::notes::{self, About, Notes};
 use crate::offline::Offline;
 use crate::panel;
 use crate::settings::{self, Quality, Settings};
@@ -32,61 +32,58 @@ mod frame;
 mod screens;
 mod waiting;
 
-/// Under this width there is no room for the panel beside the board.
 pub(crate) const COMPACT: f32 = 720.0;
-/// Above this the panel can afford its full width.
 pub(crate) const WIDE: f32 = 1100.0;
-/// The panel's width between those two.
 const PANEL_NARROW: f32 = 280.0;
-/// The panel's width above [`WIDE`], at least.
 const PANEL_WIDE: f32 = 340.0;
-/// The most the panel takes: two columns at a comfortable width.
 const PANEL_MOST: f32 = 680.0;
-/// The least a dragged panel leaves the board, which is what the board has
-/// beside the narrowest panel in the narrowest window that has one.
 const BOARD_LEAST: f32 = COMPACT - PANEL_NARROW;
-/// How long a press of the hotkey shows the overlay for, in seconds.
 const PEEK: f64 = 15.0;
-/// Seconds the pointer rests on a row before its history is asked for, so
-/// crossing the board asks nothing.
+const BACK_UP: f64 = 8.0;
+const KEEP: f64 = 3600.0;
+const RESTARTS: usize = 3;
+const RESTART_SPAN: f64 = 600.0;
 const DWELL: f64 = 0.25;
 /// A frame over this many seconds is a frame that missed, at 60Hz with room
 /// to spare for the compositor.
 const SLOW_FRAME: f32 = 1.0 / 45.0;
-/// This many missed frames in a row and the window stops trying to be rich.
 const SLOW_STREAK: u32 = 3;
-/// This many frames inside the budget, after a drop, and it tries again.
-/// Long enough that a busy moment cannot make the tier flicker.
 const FAST_STREAK: u32 = 600;
 /// How long to let the window settle before believing anything its frame
 /// clock says.
 const WARMUP: f64 = 1.5;
-/// Seconds the window takes to fade in when it opens.
 const APPEAR: f32 = 0.45;
-/// Seconds the window has to keep one size and scale before it fades in.
 const STEADY: f64 = 0.15;
-/// The longest the fade waits for that, in seconds from the first frame.
 const STEADY_AT_MOST: f64 = 1.0;
-/// Seconds the waiting plate's words take to fade in after they change.
 const RESTATE: f32 = 0.3;
 
 /// How the frames are keeping to their budget, behind the automatic quality
 /// drop and the frame trace.
 #[derive(Debug, Default)]
 struct Budget {
-    /// Consecutive frames over budget.
     slow: u32,
-    /// Consecutive frames inside budget, for earning the tier back.
     fast: u32,
-    /// Set when the window dropped its own quality, so it can say so.
     dropped: bool,
-    /// Set by `OVERSEER_TRACE_FRAMES`, to print what each frame cost.
     trace: bool,
-    /// Why the window holds still, if it does.
     calm: Calm,
 }
 
-/// What keeps the window on Efficient besides lag.
+impl Budget {
+    fn starting(software: bool) -> Self {
+        Self {
+            trace: std::env::var_os("OVERSEER_TRACE_FRAMES").is_some(),
+            calm: if software {
+                Calm::Software
+            } else if overseer_native::animations() {
+                Calm::No
+            } else {
+                Calm::Animations
+            },
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum Calm {
     #[default]
@@ -94,58 +91,37 @@ enum Calm {
     /// Windows' animation effects are off, which auto takes as a wish for no
     /// motion.
     Animations,
-    /// The window is drawn in software, which holds Efficient whatever the
-    /// setting. A frame there costs most of a second of processor time, and
-    /// the frame timings can't see it, since the drawing happens after they
-    /// stop.
     Software,
 }
 
-/// The window's state.
 pub(crate) struct Overseer {
     bridge: Bridge,
     root: PathBuf,
     settings: Settings,
     board: Board,
-    /// Each row's tags as the backend gave them, before Settings hid any.
     tags_given: Vec<Vec<overseer_core::AutoTag>>,
     status: Status,
     /// Why the bridge gave up, if it has. Unlike a disconnect, a bad token
     /// never fixes itself, so the window says so.
     stopped: Option<String>,
-    /// Why the backend couldn't be started at all, found before it was tried.
     broken: Option<String>,
-    /// Who the panel is about. Kept by account id rather than by position,
-    /// because the backend reorders the board between frames.
     selected: Option<String>,
-    /// Which screen is showing.
     screen: Screen,
-    /// Which screen is drawn, which lags the one above by half a fade.
     screen_showing: Screen,
-    /// How many boards have arrived, the cheapest proof that the socket is
-    /// alive and the frame on screen isn't stale.
     boards: u64,
-    /// How the frames are keeping to their budget, for the automatic
-    /// quality drop.
     budget: Budget,
-    /// When the window started fading in, once it had settled.
     opened_at: Option<f64>,
-    /// The window's size and scale, and when the first frame and the last
-    /// change to them were, while it settles.
     settling: Option<((egui::Vec2, f32), f64, f64)>,
-    /// Whether the bridge has ever been live since the window opened.
     ever_live: bool,
-    /// When the backend went after the board was live, so the board can say
-    /// how old it is.
-    lost_at: Option<f64>,
-    /// What an empty board shows, until a board with players on it comes.
+    lost_at: Option<(f64, bool)>,
+    /// When a board with players on it was last read live, in seconds
+    /// since 1970, for how old a board held through a gap is.
+    read_at: f64,
+    /// When the window started the backend again lately, in egui's clock.
+    restarts: Vec<f64>,
     empty: Empty,
-    /// How the board is ordered, if a heading has been clicked.
     sort: Sort,
-    /// What you have written about the accounts you have met.
     notes: Notes,
-    /// What listens for the overlay's button while the game is in front, or
-    /// why nothing can. None where it was never asked for, as in the tests.
     hotkey: Option<Result<Listener, String>>,
     /// Until when the window's own shortcuts are left alone, after a press
     /// was caught for the overlay's button, since the window sees that
@@ -153,98 +129,53 @@ pub(crate) struct Overseer {
     keys_quiet_until: f64,
     /// The icon beside the clock, or why there isn't one.
     tray: Result<Tray, String>,
-    /// The selected player's history, or where the request for it has got to.
     career: Career,
-    /// Your own past games, for the History screen.
     history: History,
-    /// Your lineups and the maps they are on, for the Lineups screen.
     lineups: Lineups,
-    /// Offline chat's switch in Settings.
     offline: Offline,
-    /// The daily look for a newer release.
     update: crate::update::Update,
-    /// Questions out for the art of agents and maps newer than this build.
     art_asks: Vec<u64>,
-    /// The account under the pointer. The panel follows it without a click,
-    /// so reading five enemies takes five glances.
     hovered: Option<String>,
-    /// When the pointer arrived on it, so a history is only fetched for an
-    /// account somebody actually stopped on.
     hovered_at: f64,
-    /// The mouse wheel's last notch, for the speed the next one goes at.
     wheel: Wheel,
-    /// The enemy accounts on the last board, sorted. The rows land when this
-    /// changes, once a match, and not on every board, which comes each second.
     roster: Vec<String>,
-    /// When the roster last changed, which is when the rows start landing.
     roster_at: f64,
-    /// How tall the overlay's contents actually came out last time they
-    /// were drawn, so the window can be exactly that tall.
     overlay_drew: Option<f32>,
-    /// What decides whether the overlay is up, apart from the setting that
-    /// lets it show itself.
     shown: Shown,
-    /// Who the panel is currently faded in on, which lags the pointer by
-    /// half the length of the fade.
     panel_showing: Option<String>,
-    /// Frames from the bridge this build could not read, and the last reason.
-    /// A board that will not parse otherwise looks exactly like an empty lobby.
     unreadable: (u64, Option<String>),
-    /// Raised when a second launch asked this window to show itself.
     knocked: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Set when the keyboard last moved the selection, until the pointer
-    /// moves. The pointer otherwise wins, and the panel would stay on the row
-    /// under it.
     keyboard_owns: bool,
-    /// Whether the detail panel was on screen last frame, which decides
-    /// whether a history is worth asking for at all.
     panel_visible: bool,
     /// Histories already fetched in this lobby, because each fetch is a match
     /// history call to Riot. Cleared with the lobby, so it holds ten at most.
     histories: HashMap<String, Box<Profile>>,
-    /// A few words for the footer and when they were said, for an action
-    /// that would otherwise look like it did nothing.
     said: Option<(String, f64)>,
-    /// When Never Show Again was first pressed, for the few seconds a second
-    /// press stops the daily look.
     quieting: Option<f64>,
-    /// Where the window last was on screen, for a save made minimized.
     place: Place,
-    /// What this PC has, which decides whether it counts as slow.
     machine: crate::machine::Machine,
 }
 
-/// How long the footer keeps something it was told to say, in seconds.
 const SAID: f64 = 2.5;
 
-/// The key eframe keeps the window's place under.
+const UNSAVED: &str = "Couldn't save your notes. Check the drive has room";
+
 const WINDOW_KEY: &str = "window";
 
-/// What decides whether the overlay is up, apart from the setting that lets
-/// it show itself.
 #[derive(Debug, Default)]
 struct Shown {
     /// Until when a press of the hotkey keeps it up, on egui's clock.
     peek_until: Option<f64>,
-    /// Whether it is showing itself, which it does through agent select.
     by_itself: bool,
-    /// The match whose agent select it last showed itself for, so hiding
-    /// it by hand keeps it hidden until the next one.
     armed_for: Option<String>,
 }
 
 impl Shown {
-    /// Whether the overlay is up at `now`: asked for in the last `PEEK`
-    /// seconds, or, when it may show itself and there are `players` to
-    /// show, in agent select.
     fn up(&self, auto: bool, players: bool, now: f64) -> bool {
         let peeking = self.peek_until.is_some_and(|until| now < until);
         peeking || (auto && players && self.by_itself)
     }
 
-    /// Follows the game's `state` in the match `game`: up by itself once
-    /// each agent select, and gone when that ends, as the match loads or
-    /// somebody dodges.
     fn follow(&mut self, state: Option<&str>, game: Option<&str>) {
         let game = game.unwrap_or_default();
         if state != Some("PREGAME") {
@@ -256,15 +187,10 @@ impl Shown {
     }
 }
 
-/// Where the window last was on screen, as eframe saved it.
 #[derive(Debug, Default)]
 struct Place {
-    /// Whether the window was minimized on the last frame.
     minimized: bool,
-    /// eframe's last save of the window while it was on screen.
     kept: Option<String>,
-    /// Whether it was saved maximized and is still to be maximized again,
-    /// which waits for its first frame. See `main`.
     maximize: bool,
 }
 
@@ -287,21 +213,15 @@ impl Place {
 /// right edge is where the scroll bars are, and keeps it narrow for them.
 const EDGE: f32 = 8.0;
 
-/// See [`EDGE`].
 const EDGE_RIGHT: f32 = 5.0;
 
-/// What the footer's hints do, each the same as its key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hint {
-    /// Jump to the next account worth a look.
     Worth,
-    /// Move the selection down a row.
     Pick,
-    /// Write about whoever is selected.
     Note,
     /// Copy their Riot ID.
     Copy,
-    /// Switch the overlay.
     Overlay,
     /// Open or close the settings.
     Settings,
@@ -309,20 +229,12 @@ enum Hint {
     History,
     /// Open or close your lineups.
     Lineups,
-    /// Open the page of a newer release.
     Release,
-    /// Stop saying when a newer release is out.
     Quiet,
-    /// Open Settings at what the marks on the board mean.
     Help,
-    /// Open Settings at the overlay, to pick another key.
     OverlayKey,
 }
 
-/// How wide the detail panel is in a window this wide. Dragged to a width,
-/// it keeps it as far as the board can spare. Otherwise, above `WIDE`,
-/// whatever the board's full width leaves over goes to the panel, not to
-/// margins, and from `panel::TWO_COLUMNS` it lays out in two columns.
 pub(crate) fn panel_width(width: f32, chosen: Option<f32>) -> f32 {
     if let Some(chosen) = chosen {
         let widest = (width - BOARD_LEAST).clamp(PANEL_NARROW, PANEL_MOST);
@@ -335,10 +247,6 @@ pub(crate) fn panel_width(width: f32, chosen: Option<f32>) -> f32 {
     }
 }
 
-/// The detail panel's left edge, which drags to make the panel wider or
-/// narrower and fits it to the window again on a double click. True when
-/// `chosen` changed for good and wants saving. Run after the board, so
-/// nothing on the board takes the press first.
 pub(crate) fn panel_grip(ui: &Ui, panel: Rect, width: f32, chosen: &mut Option<f32>) -> bool {
     let grip = Rect::from_x_y_ranges(panel.left() - 3.0..=panel.left() + 5.0, panel.y_range());
     let response = ui
@@ -360,12 +268,10 @@ pub(crate) fn panel_grip(ui: &Ui, panel: Rect, width: f32, chosen: &mut Option<f
     response.drag_stopped()
 }
 
-/// Whether the board just went from agent select into the match.
 fn match_began(was: Option<&str>, now: Option<&str>) -> bool {
     was == Some("PREGAME") && now == Some("INGAME")
 }
 
-/// Whether the window fills the screen.
 fn maximized(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.viewport().maximized.unwrap_or(false))
 }
@@ -394,7 +300,6 @@ fn edge(ctx: &egui::Context) -> Option<egui::ResizeDirection> {
     })
 }
 
-/// The pointer that says which way an edge resizes.
 const fn resize_cursor(to: egui::ResizeDirection) -> egui::CursorIcon {
     use egui::{CursorIcon, ResizeDirection as To};
     match to {
@@ -405,51 +310,36 @@ const fn resize_cursor(to: egui::ResizeDirection) -> egui::CursorIcon {
     }
 }
 
-/// What the middle of the window is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
-    /// The board.
     Board,
-    /// Every switch there is.
     Settings,
-    /// Your past games and their scoreboards.
     History,
-    /// Your lineups, map by map.
     Lineups,
-    /// What the board's marks mean, and every key.
     Help,
 }
 
-/// What the board shows while nobody is on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Empty {
     /// How far the backend, the Riot client and VALORANT have got.
     Plate,
-    /// Your row off the last board that had it, after Show My Last Stats.
     LastStats,
 }
 
-/// How far the mouse wheel goes, notch by notch.
 #[derive(Debug, Default)]
 struct Wheel {
     /// When the last notch came, in egui's seconds.
     at: f64,
-    /// What quick notches in a row have built up to.
     boost: f32,
 }
 
 impl Wheel {
     /// Times egui's forty points a notch.
     const BASE: f32 = 1.6;
-    /// Notches closer than this are one flick of the wheel.
     const FLICK: f64 = 0.12;
-    /// What each notch in a flick adds.
     const STEP: f32 = 0.15;
-    /// The most a flick builds up to, so a quick spin goes only a bit further
-    /// than a careful notch.
     const MOST: f32 = 1.6;
 
-    /// The multiplier for a notch arriving at `now`.
     fn notch(&mut self, now: f64) -> f32 {
         self.boost = if now - self.at < Self::FLICK {
             (self.boost + Self::STEP).min(Self::MOST)
@@ -473,24 +363,73 @@ impl std::fmt::Debug for Overseer {
 }
 
 impl Overseer {
-    /// Takes a board from the backend, its tags through Settings.
     fn take(&mut self, board: Board) {
+        let now = now_secs();
+        let board = if board.held_since.is_some_and(|at| now - at >= KEEP) {
+            gone(board.you)
+        } else {
+            board
+        };
+        if self.holds_through(&board, now) {
+            self.board.held_since = Some(self.board.held_since.unwrap_or(self.read_at));
+            self.board.reading = None;
+            if board.you.is_some() {
+                self.board.you = board.you;
+            }
+            return;
+        }
+        if !board.players.is_empty() && board.held_since.is_none() {
+            self.read_at = now;
+        }
         self.tags_given = board.players.iter().map(|p| p.auto_tags.clone()).collect();
         self.board = board;
         self.retag();
     }
 
-    /// Puts each row's tags through Settings again, from what the backend
-    /// gave, so a tag switched back on comes back without a new board.
+    /// Whether `incoming` is a gap in the match on screen rather than its
+    /// end: a backend that was started again and is still looking the
+    /// match up, or one that couldn't read the game this time. Either says
+    /// nothing about the match, so the board stays up for [`KEEP`] seconds
+    /// from its last good read. VALORANT or the Riot Client closing, or
+    /// another match, is real news and clears it.
+    fn holds_through(&self, incoming: &Board, now: f64) -> bool {
+        let on = &self.board;
+        let gap = incoming.waiting.as_deref() == Some("match")
+            || (incoming.state.as_deref() == Some("OFFLINE") && incoming.waiting.is_none());
+        incoming.players.is_empty()
+            && gap
+            && !on.players.is_empty()
+            && matches!(on.state.as_deref(), Some("PREGAME" | "INGAME"))
+            && incoming
+                .match_id
+                .as_ref()
+                .is_none_or(|id| on.match_id.as_ref() == Some(id))
+            && now - on.held_since.unwrap_or(self.read_at) < KEEP
+    }
+
+    fn expire(&mut self, ctx: &egui::Context) {
+        if self.board.players.is_empty() {
+            return;
+        }
+        let since_lost = self.lost_at.map(|(since, _)| ctx.input(|i| i.time) - since);
+        let since_read = self.board.held_since.map(|at| now_secs() - at);
+        let Some(up) = since_lost.into_iter().chain(since_read).reduce(f64::max) else {
+            return;
+        };
+        if up < KEEP {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(KEEP - up));
+            return;
+        }
+        self.tags_given.clear();
+        self.board = gone(self.board.you.take());
+    }
+
     fn retag(&mut self) {
         for (player, given) in self.board.players.iter_mut().zip(&self.tags_given) {
             player.auto_tags = self.settings.tags.applied(given);
         }
     }
 
-    /// Fonts, art, style and zoom for the window, and its handle for the
-    /// clips that play inside it. Says whether the window is drawn in
-    /// software.
     fn dress(cc: &CreationContext<'_>, root: &Path) -> bool {
         overseer_ui::install_fonts(&cc.egui_ctx);
         overseer_ui::art::warm(&cc.egui_ctx);
@@ -507,8 +446,6 @@ impl Overseer {
         cc.egui_ctx.set_zoom_factor(overseer_native::text_scale());
         cc.egui_ctx
             .set_style_of(egui::Theme::Dark, overseer_ui::style());
-        // The adapter the request really got decides whether the game keeps
-        // the discrete GPU, and this is the only place it can be known.
         let software = match cc.wgpu_render_state.as_ref() {
             Some(state) => {
                 let adapter = state.adapter.get_info();
@@ -524,15 +461,12 @@ impl Overseer {
             None => false,
         };
         if software {
-            // Again for a renderer that turned out to be software, which the
-            // one tried last was pinned before it started.
             overseer_native::one_core();
             overseer_native::step_back();
         }
         software
     }
 
-    /// Starts the bridge, installs the fonts and takes the style.
     pub(crate) fn new(
         cc: &CreationContext<'_>,
         root: &Path,
@@ -554,39 +488,28 @@ impl Overseer {
             bridge,
             root: root.to_path_buf(),
             settings,
-            // Read here too, so Show My Last Stats is offered while the
-            // backend is still starting or can't be reached.
             board: Board {
                 you: waiting::kept(root),
                 ..Board::default()
             },
             tags_given: Vec::new(),
             status: Status::Connecting(String::new()),
-            // It never fixes itself, so the light shows it from the start.
             stopped: broken.clone(),
             broken,
             selected: None,
             screen: Screen::Board,
             screen_showing: Screen::Board,
             boards: 0,
-            budget: Budget {
-                trace: std::env::var_os("OVERSEER_TRACE_FRAMES").is_some(),
-                calm: if software {
-                    Calm::Software
-                } else if overseer_native::animations() {
-                    Calm::No
-                } else {
-                    Calm::Animations
-                },
-                ..Budget::default()
-            },
+            budget: Budget::starting(software),
             opened_at: None,
             settling: None,
             ever_live: false,
             lost_at: None,
+            read_at: 0.0,
+            restarts: Vec::new(),
             empty: Empty::Plate,
             sort: Sort::default(),
-            notes: notes::load(root),
+            notes: notes::load(root, About::Players),
             hotkey: Some(report(
                 "overlay key",
                 hotkey::start(key, waker(&cc.egui_ctx)),
@@ -596,7 +519,7 @@ impl Overseer {
             // made it, and this is the message loop's thread.
             tray: report("tray", tray::start(root, waker(&cc.egui_ctx))),
             career: Career::default(),
-            history: History::default(),
+            history: History::new(notes::load(root, About::Games)),
             lineups: Lineups::default(),
             offline: Offline::default(),
             update: crate::update::Update::default(),
@@ -625,7 +548,6 @@ impl Overseer {
         }
     }
 
-    /// Hands an answer to whichever screen asked.
     fn answer(&mut self, id: u64, result: Result<serde_json::Value, String>) {
         if self.history.waiting_on(id) {
             self.history.answered(result);
@@ -634,7 +556,6 @@ impl Overseer {
         } else if self.offline.waiting_on(id) {
             self.offline.answered(result);
         } else if let Some(at) = self.art_asks.iter().position(|asked| *asked == id) {
-            // Whatever came back is on disk now, and the art looks for it.
             self.art_asks.swap_remove(at);
         } else if self.update.waiting_on(id) {
             let now = crate::update::now();
@@ -646,19 +567,12 @@ impl Overseer {
         }
     }
 
-    /// Takes everything the hotkey, the tray, a second launch and the bridge
-    /// queued since the last frame.
     fn pump(&mut self, ctx: &egui::Context) {
-        // Pressed mid-round, so it only switches the overlay. Showing or
-        // focusing the window would take the focus from the game, and the
-        // tray is how the window comes back.
         self.overlay_key(ctx.input(|i| i.time));
         self.reach(ctx);
         for event in self.bridge.drain() {
             match event {
                 Event::Status(status) => {
-                    // A socket that has just come back cannot answer a
-                    // question asked down the one before it.
                     if status == Status::Live {
                         self.career.reconnected();
                         self.history.reconnected();
@@ -682,12 +596,9 @@ impl Overseer {
                     self.unreadable.1 = Some(why);
                 }
                 Event::Board(board) => {
-                    let was = self.board.state.take();
-                    let was_on = self.board.map.take();
+                    let was = self.board.state.clone();
+                    let was_on = self.board.map.clone();
                     self.take(*board);
-                    // A match that starts with Lineups open moves it to the
-                    // match's map. Only on a change, so a map picked by hand
-                    // stays picked.
                     if let Some(map) = self.board.map.as_deref()
                         && was_on.as_deref() != Some(map)
                     {
@@ -696,16 +607,12 @@ impl Overseer {
                     self.shown
                         .follow(self.board.state.as_deref(), self.board.match_id.as_deref());
                     let began = match_began(was.as_deref(), self.board.state.as_deref());
-                    // Only when it isn't in use. Somebody reading it as the
-                    // match loads wants it where it is.
                     if self.settings.minimize_in_matches
                         && began
                         && !ctx.input(|i| i.viewport().focused.unwrap_or(false))
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
-                    // A face for every script in the lobby's names, loaded
-                    // the first time one turns up.
                     let names: String = self
                         .board
                         .players
@@ -715,9 +622,6 @@ impl Overseer {
                     overseer_ui::cover(ctx, &names);
                     self.boards = self.boards.saturating_add(1);
                     self.keep_selection();
-                    // Sorted, so a reorder is not a new lobby, and enemies
-                    // only, so the rows land once when the other five are
-                    // revealed and not again when the game starts.
                     let mut roster: Vec<String> = self
                         .board
                         .players
@@ -727,15 +631,11 @@ impl Overseer {
                         .collect();
                     roster.sort_unstable();
                     if roster != self.roster {
-                        // An empty board has no rows to land, so the match
-                        // ending costs no frames.
                         if !roster.is_empty() {
                             self.roster_at = ctx.input(|i| i.time);
                         }
                         self.roster = roster;
                         self.histories.clear();
-                        // A new lobby opens on the account most worth
-                        // reading, so the common case costs no input at all.
                         if let Some(first) = self.opening_pick() {
                             self.selected = Some(first);
                         }
@@ -748,6 +648,7 @@ impl Overseer {
             }
         }
         self.mark_lost(ctx);
+        self.expire(ctx);
     }
 
     /// Notes when the connection went. Held through the retries in between
@@ -756,13 +657,41 @@ impl Overseer {
     fn mark_lost(&mut self, ctx: &egui::Context) {
         self.lost_at = match self.status {
             Status::Live => None,
-            Status::Lost(_) => Some(self.lost_at.unwrap_or_else(|| ctx.input(|i| i.time))),
+            Status::Lost(_) => Some(
+                self.lost_at
+                    .unwrap_or_else(|| (ctx.input(|i| i.time), false)),
+            ),
             Status::Connecting(_) => self.lost_at,
         };
+        let Some((since, false)) = self.lost_at else {
+            return;
+        };
+        if self.stopped.is_some() || self.broken.is_some() {
+            return;
+        }
+        let gone = ctx.input(|i| i.time) - since;
+        if gone < BACK_UP {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(BACK_UP - gone));
+            return;
+        }
+        if installing(&self.root) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(BACK_UP));
+            return;
+        }
+        self.lost_at = Some((since, true));
+        let now = ctx.input(|i| i.time);
+        self.restarts.retain(|at| now - at < RESTART_SPAN);
+        if self.restarts.len() >= RESTARTS {
+            self.stopped = Some(format!(
+                "Overseer's backend stopped {RESTARTS} times in {} minutes, so it isn't being started again. Reconnect Now tries once more, and .overseer\\launcher.log says what went wrong.",
+                RESTART_SPAN / 60.0
+            ));
+            return;
+        }
+        self.restarts.push(now);
+        self.broken = crate::serve(&self.root);
     }
 
-    /// Moves the selection to you, or else the first player, when the
-    /// selected account has left the board.
     fn keep_selection(&mut self) {
         let still_here = self.selected.as_ref().is_some_and(|id| {
             self.board
@@ -782,8 +711,6 @@ impl Overseer {
             .and_then(|p| p.puuid.clone());
     }
 
-    /// Who the panel is about: whoever is under the pointer, or else the
-    /// selection.
     fn current(&self) -> Option<&Player> {
         let id = self.hovered.as_ref().or(self.selected.as_ref())?;
         self.board
@@ -792,8 +719,6 @@ impl Overseer {
             .find(|p| p.puuid.as_ref() == Some(id))
     }
 
-    /// Selects the next flagged account in screen order, wrapping round. With
-    /// a `team` it stays on that side, which is what the team band's chip does.
     fn next_flagged(&mut self, team: Option<&str>) {
         let flagged: Vec<String> = self
             .visible_order()
@@ -810,14 +735,10 @@ impl Overseer {
             return;
         };
         self.selected = Some(next);
-        // The pointer otherwise outranks the selection, and the jump would
-        // not show until it moved.
         self.hovered = None;
         self.keyboard_owns = true;
     }
 
-    /// Picks the first player on the other team from the one selected, so a
-    /// long board is crossed in one key.
     fn other_team(&mut self) {
         let team_of = |id: &str| {
             self.board
@@ -839,10 +760,7 @@ impl Overseer {
         self.keyboard_owns = true;
     }
 
-    /// Whose history to ask for: the hovered account once the pointer has
-    /// rested there, or else the selection. Passing over rows asks nothing.
     fn career_subject(&self, now: f64) -> Option<&str> {
-        // Show My Last Stats is about you, with no board to select you on.
         if self.showing_kept() {
             return self.board.you.as_ref()?.player.puuid.as_deref();
         }
@@ -855,8 +773,6 @@ impl Overseer {
 
     /// The keyboard shortcuts.
     fn keys(&mut self, ui: &Ui) {
-        // Only Escape works while a text box has the keyboard, so typing a
-        // name never changes screens.
         let typing = ui.memory(egui::Memory::focused).is_some();
         if hotkey::catching() || ui.input(|i| i.time) < self.keys_quiet_until {
             return;
@@ -883,7 +799,6 @@ impl Overseer {
             return;
         }
         if escape {
-            // Leaves the screen, or your last stats for what Overseer waits on.
             if self.screen == Screen::Board {
                 self.empty = Empty::Plate;
             }
@@ -899,8 +814,6 @@ impl Overseer {
             self.perform(ctx, Hint::Overlay);
         }
         if note && self.selected.is_some() {
-            // The n is still in this frame's input, and the note box about
-            // to take the keyboard would type it.
             ctx.input_mut(|i| {
                 i.events
                     .retain(|e| !matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case("n")));
@@ -919,7 +832,6 @@ impl Overseer {
                 self.perform(ctx, hint);
             }
         }
-        // On Lineups the arrows step through the lineups on the map instead.
         if (up || down) && self.screen != Screen::Lineups {
             self.screen = Screen::Board;
             self.step(down);
@@ -927,8 +839,6 @@ impl Overseer {
         self.ends(ui);
     }
 
-    /// Help, and Home and End, which go to the first and last row on the
-    /// board. Only once nothing is being typed, like the rest.
     fn ends(&mut self, ui: &Ui) {
         let (top, bottom, help, cross) = ui.input(|i| {
             (
@@ -953,12 +863,8 @@ impl Overseer {
         }
     }
 
-    /// Does what a key or a footer hint asks. Both come here, so a click
-    /// on the hint does exactly what its key does.
     fn perform(&mut self, ctx: &egui::Context, hint: Hint) {
         match hint {
-            // These act on the board, so they bring it back first rather than
-            // change a selection nobody can see.
             Hint::Worth => {
                 self.screen = Screen::Board;
                 if !self.board.players.iter().any(|p| p.smurf) {
@@ -972,7 +878,6 @@ impl Overseer {
                 self.step(true);
             }
             Hint::Note => self.note(ctx),
-            // For looking the name up somewhere else.
             Hint::Copy => {
                 if let Some(name) = self.current().and_then(|p| p.name.clone()) {
                     panel::copy(ctx, name);
@@ -990,8 +895,6 @@ impl Overseer {
                 if self.screen == Screen::History {
                     self.screen = Screen::Board;
                 } else {
-                    // Asked each time it opens, so a game that just
-                    // finished is there. The ones before it are on disk.
                     self.screen = Screen::History;
                     self.history.ask(
                         &self.bridge,
@@ -1001,8 +904,6 @@ impl Overseer {
                 }
             }
             Hint::Lineups => self.flip_lineups(),
-            // Only ever the release's page, built from its version's
-            // numbers, in the browser.
             Hint::Release => {
                 if let Some(page) = crate::update::newer(&self.settings.updates, VERSION)
                     .and_then(crate::update::page)
@@ -1021,8 +922,6 @@ impl Overseer {
                 if self.screen == Screen::Help {
                     self.screen = Screen::Board;
                 } else {
-                    // Help on Lineups starts at its keys, since the board's
-                    // marks aren't there.
                     if self.screen == Screen::Lineups {
                         crate::view::open_at(ctx, "Keyboard Shortcuts");
                     }
@@ -1032,9 +931,7 @@ impl Overseer {
         }
     }
 
-    /// Moves the selection a row down, or up.
     fn step(&mut self, down: bool) {
-        // The board's own order, which a sort changes from the backend's.
         let order = self.visible_order();
         if let Some(next) = board::step(&order, self.selected.as_deref(), down) {
             self.selected = Some(next);
@@ -1042,16 +939,12 @@ impl Overseer {
         }
     }
 
-    /// Opens Lineups on the map being played, when there is one, or goes back
-    /// to the board from it.
     fn flip_lineups(&mut self) {
         if self.screen == Screen::Lineups {
             self.screen = Screen::Board;
             return;
         }
         self.screen = Screen::Lineups;
-        // The blacked-out figure is cut from the agent you've played most
-        // lately.
         let main = self
             .board
             .players
@@ -1067,12 +960,10 @@ impl Overseer {
         );
     }
 
-    /// The overlay's listener, when it started.
     fn listener(&self) -> Option<&Listener> {
         self.hotkey.as_ref().and_then(|k| k.as_ref().ok())
     }
 
-    /// Acts on what the overlay's listener heard at `now`.
     fn overlay_key(&mut self, now: f64) {
         let heard = self.listener().map(Listener::heard).unwrap_or_default();
         if heard.presses % 2 == 1 {
@@ -1085,7 +976,6 @@ impl Overseer {
             self.settings.overlay.key = caught;
             settings::save(&self.root, &self.settings);
         }
-        // Waiting for a press is something Settings shows, so it ends with it.
         if hotkey::catching()
             && self.screen != Screen::Settings
             && let Some(listener) = self.listener()
@@ -1094,8 +984,6 @@ impl Overseer {
         }
     }
 
-    /// Opens the note box on the selected player, which lives in the detail
-    /// panel, or says how to get the panel when it is hidden.
     fn note(&mut self, ctx: &egui::Context) {
         let Some(id) = self.selected.clone() else {
             return;
@@ -1111,8 +999,6 @@ impl Overseer {
         }
     }
 
-    /// Never Show Again: the first press arms it for a few seconds, and the
-    /// second stops the daily look for updates.
     fn quiet(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         if self
@@ -1129,21 +1015,15 @@ impl Overseer {
         }
     }
 
-    /// Puts a few words in the footer for a moment, for an action that would
-    /// otherwise look like it did nothing.
     fn say(&mut self, ctx: &egui::Context, words: &str) {
         self.said = Some((words.to_owned(), ctx.input(|i| i.time)));
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(SAID));
     }
 
-    /// Every account on screen, in the order they are drawn. The keys use it
-    /// too, so they always agree with the board.
     fn visible_order(&self) -> Vec<String> {
         board::order(&self.board, &self.sort, self.settings.enemies_first)
     }
 
-    /// The enemy a new lobby opens on: the first worth a look, or else the
-    /// first enemy, in the order the board shows them.
     fn opening_pick(&self) -> Option<String> {
         let ours = self.board.self_team.as_deref();
         let enemy = |id: &&String, flagged: bool| {
@@ -1161,9 +1041,6 @@ impl Overseer {
             .cloned()
     }
 
-    /// Why there is no board, when "nothing in progress" would be wrong, with
-    /// a title: the backend couldn't start, the bridge stopped, or nothing it
-    /// sent could be read.
     fn reason(&self) -> Option<(&'static str, &str)> {
         if let Some(why) = &self.broken {
             return Some(("Overseer Can't Start", why));
@@ -1200,17 +1077,19 @@ impl Overseer {
     pub(super) fn reconnect(&mut self, ctx: &egui::Context) {
         self.bridge = Bridge::start(&self.root, board_waker(ctx));
         self.stopped = None;
+        // Checked again, since install.bat may have repaired it meanwhile.
+        self.broken = self.broken.take().and_then(|_| crate::serve(&self.root));
         self.status = Status::Connecting(String::new());
+        self.restarts.clear();
+        self.lost_at = self.lost_at.map(|(since, _)| (since, false));
     }
 
-    /// What the tray and a second launch asked of the window.
     fn reach(&mut self, ctx: &egui::Context) {
         let actions: Vec<Action> = self
             .tray
             .as_ref()
             .map(|t| t.actions().collect())
             .unwrap_or_default();
-        // A second launch: back on screen and in front, even from the tray.
         if self
             .knocked
             .swap(false, std::sync::atomic::Ordering::Relaxed)
@@ -1233,8 +1112,6 @@ impl Overseer {
         }
     }
 
-    /// Puts the window back on screen, and takes the keyboard only with
-    /// `focus`, which a peek at the overlay mid-game must not.
     fn reveal(ctx: &egui::Context, focus: bool) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         if focus {
@@ -1244,19 +1121,16 @@ impl Overseer {
         }
     }
 
-    /// Saves everything on the way out when the window is closed. The close
-    /// goes ahead, and the backend this window started ends with it.
     fn closing(&mut self, ctx: &egui::Context) {
         if !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
         self.lineups.leave();
         settings::save(&self.root, &self.settings);
-        notes::save(&self.root, &self.notes);
+        notes::save(&self.root, About::Players, &self.notes);
+        notes::save(&self.root, About::Games, &self.history.notes);
     }
 
-    /// Hides the overlay if it is up, and otherwise shows it for `PEEK`
-    /// seconds. The hotkey, O and the footer's hint all come here.
     pub(crate) fn flip_overlay(&mut self, now: f64) {
         if self.overlay_up(now) {
             self.hide_overlay();
@@ -1265,7 +1139,6 @@ impl Overseer {
         }
     }
 
-    /// Shows the overlay for `PEEK` seconds.
     fn peek_overlay(&mut self, now: f64) {
         self.shown.peek_until = Some(now + PEEK);
         // The overlay draws the window's board, and a settings screen behind
@@ -1273,14 +1146,11 @@ impl Overseer {
         self.screen = Screen::Board;
     }
 
-    /// Hides the overlay until it next shows itself or is asked for.
     pub(super) const fn hide_overlay(&mut self) {
         self.shown.peek_until = None;
         self.shown.by_itself = false;
     }
 
-    /// Whether the overlay is up: asked for in the last `PEEK` seconds, or
-    /// showing itself in agent select, unless it was hidden by hand since.
     pub(super) fn overlay_up(&self, now: f64) -> bool {
         self.shown.up(
             self.settings.overlay.auto,
@@ -1289,7 +1159,6 @@ impl Overseer {
         )
     }
 
-    /// How long an animation is allowed to take, given the tier.
     fn pace(&self, base: f32) -> f32 {
         if self.quality() == Quality::Efficient {
             motion::EFFICIENT
@@ -1298,7 +1167,6 @@ impl Overseer {
         }
     }
 
-    /// Whether to hold back for a slow PC, as set or as detected.
     fn slow_pc(&self) -> bool {
         match self.settings.pc {
             settings::Pc::Auto => !self.machine.slow_because().is_empty(),
@@ -1307,7 +1175,6 @@ impl Overseer {
         }
     }
 
-    /// The tier in force, once auto has made up its mind.
     const fn quality(&self) -> Quality {
         match self.settings.quality {
             _ if matches!(self.budget.calm, Calm::Software) => Quality::Efficient,
@@ -1321,9 +1188,6 @@ impl Overseer {
         }
     }
 
-    /// Under auto, drops the rich tier after `SLOW_STREAK` slow frames in a
-    /// row, because one slow frame is just a window dragged to another
-    /// monitor. `FAST_STREAK` good frames earn it back.
     fn watch_frames(&mut self, ctx: &egui::Context, frame: &Frame) {
         if self.budget.trace
             && let Some(dt) = frame.info().cpu_usage
@@ -1339,10 +1203,6 @@ impl Overseer {
         if self.settings.quality != Quality::Auto {
             return;
         }
-        // Startup builds a font atlas, a shader and a swapchain, and misses
-        // every budget there is. The measure is the time the last frame took
-        // to build, not the gap since the one before, because the window
-        // sleeps between boards.
         let since = ctx.input(|i| i.time);
         let Some(dt) = frame.info().cpu_usage else {
             return;
@@ -1359,7 +1219,6 @@ impl Overseer {
             return;
         }
         self.budget.slow = 0;
-        // A machine that was busy for a moment is not a slow machine.
         self.budget.fast = self.budget.fast.saturating_add(1);
         if self.budget.dropped && self.budget.fast >= FAST_STREAK {
             self.budget.dropped = false;
@@ -1367,10 +1226,6 @@ impl Overseer {
         }
     }
 
-    /// Fades the window in when it opens, rather than letting it pop in a
-    /// piece at a time. The fade waits for the window to settle, since it
-    /// opens on the main screen and may move to one at another scale, and
-    /// the frames before that are drawn at the wrong size.
     fn appear(&mut self, ui: &mut Ui, now: f64) {
         let appear = self.pace(APPEAR);
         if appear <= 0.0 {
@@ -1404,7 +1259,7 @@ impl Overseer {
             ui,
             &header::Masthead {
                 board: &self.board,
-                light: self.connection(),
+                light: self.connection(ui.input(|i| i.time)),
                 still: self.quality() == Quality::Efficient,
                 maximized: maximized(ui.ctx()),
                 open: match self.screen {
@@ -1418,7 +1273,6 @@ impl Overseer {
         )
     }
 
-    /// What a button in the masthead asked for.
     fn chrome(&mut self, ctx: &egui::Context, pressed: header::Chrome) {
         use egui::ViewportCommand;
         match pressed {
@@ -1434,11 +1288,38 @@ impl Overseer {
     }
 
     /// The connection light. The masthead says it in a word, or nothing
-    /// while all is well, and the exact reason is on its hover.
-    fn connection(&self) -> header::Light {
+    /// while all is well, and the exact reason is on its hover. It is the
+    /// only sign that a board isn't live, so the board itself reads as it
+    /// was. `now` is egui's clock.
+    fn connection(&self, now: f64) -> header::Light {
         let (radius, tint, word, why) = match (&self.stopped, &self.status) {
             (Some(why), _) => (3.0, colour::ENEMY, "Stopped", why.clone()),
-            (None, Status::Lost(why)) => (3.0, colour::ENEMY, "Reconnecting", why.clone()),
+            (None, Status::Lost(why)) => {
+                let gone = self.lost_at.map_or_else(
+                    || "just now".to_owned(),
+                    |(since, _)| format!("{} ago", waiting::since_text(now - since, true)),
+                );
+                let kept = if self.board.players.is_empty() {
+                    String::new()
+                } else {
+                    " The board is from then, and it stays up for an hour or until Overseer is back.".to_owned()
+                };
+                (
+                    3.0,
+                    colour::ENEMY,
+                    "Reconnecting",
+                    format!("Lost the connection {gone}, and Overseer is reconnecting by itself.{kept} {why}"),
+                )
+            }
+            (None, Status::Live) if !self.board.players.is_empty() && self.board.held_since.is_some() => (
+                3.0,
+                colour::WARN,
+                "Not Live",
+                format!(
+                    "Can't reach VALORANT right now, so this board is from {}. It stays up until the match is seen to end, for an hour at most.",
+                    crate::history::kept_ago((now_secs() * 1000.0) as i64, self.board.held_since)
+                ),
+            ),
             (None, Status::Live) if self.board.state.as_deref() == Some("OFFLINE") => (
                 3.0,
                 colour::TEXT_FAINT,
@@ -1476,11 +1357,9 @@ impl App for Overseer {
         }
     }
 
-    /// Called by eframe on the way out and every so often before. Notes save
-    /// when their box loses the keyboard, and this catches a window closed
-    /// with the caret still in one.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        notes::save(&self.root, &self.notes);
+        notes::save(&self.root, About::Players, &self.notes);
+        notes::save(&self.root, About::Games, &self.history.notes);
         self.place.keep(storage);
     }
 
@@ -1505,7 +1384,6 @@ impl Overseer {
     /// skips `ui`: the bridge, the hotkey, the tray and the close button.
     fn tick(&mut self, ctx: &egui::Context, frame: &Frame) {
         self.place.minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
-        // The second pass, once the first frame is on screen.
         if self.place.maximize {
             if ctx.cumulative_pass_nr() > 0 {
                 self.place.maximize = false;
@@ -1518,8 +1396,6 @@ impl Overseer {
         if self.status == Status::Live {
             self.update
                 .ask(&self.bridge, &self.settings.updates, crate::update::now());
-            // An agent or map newer than this build, drawn as soon as its art
-            // is fetched.
             for (kind, name) in overseer_ui::art::wanted() {
                 let asked = serde_json::json!({ "kind": kind.label(), "name": name });
                 self.art_asks.push(self.bridge.ask("art", asked));
@@ -1528,16 +1404,10 @@ impl Overseer {
         self.closing(ctx);
         self.watch_frames(ctx, frame);
         let now = ctx.input(|i| i.time);
-        // Here and not in `ui`, which eframe skips while the window is
-        // minimized, and Minimize in Matches minimizes it just as the
-        // match loads.
         self.overlay(ctx, now);
-        // A history is only worth fetching for a panel somebody can see.
         if !self.panel_visible {
             return;
         }
-        // Copied out because the follow needs the bridge and the career at
-        // once, and the subject is borrowed from the same struct as both.
         let subject = self.career_subject(now).map(ToOwned::to_owned);
         if let Some(subject) = subject {
             self.career.follow(
@@ -1549,11 +1419,8 @@ impl Overseer {
         }
     }
 
-    /// The whole window, a frame at a time.
     fn draw(&mut self, ui: &mut Ui) {
         motion::set_still(ui.ctx(), self.quality() == Quality::Efficient);
-        // A press on the window's edge resizes it, before anything under the
-        // pointer takes the press.
         let edge = edge(ui.ctx());
         if let Some(to) = edge
             && ui.input(|i| i.pointer.primary_pressed())
@@ -1562,7 +1429,6 @@ impl Overseer {
                 .send_viewport_cmd(egui::ViewportCommand::BeginResize(to));
         }
         self.window(ui, edge.is_some());
-        // Set last, so no widget under the edge can put its own pointer back.
         if let Some(to) = edge {
             ui.ctx().set_cursor_icon(resize_cursor(to));
         }
@@ -1571,8 +1437,6 @@ impl Overseer {
     }
 }
 
-/// Prints whether the hotkey or the tray started, and hands the result back.
-/// Another program can take either from us without a sign on screen.
 fn report<T, E: std::fmt::Display>(what: &str, outcome: Result<T, E>) -> Result<T, E> {
     match outcome.as_ref() {
         Ok(_) => println!("{what} ok"),
@@ -1588,6 +1452,11 @@ fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<> {
     move || ctx.request_repaint()
 }
 
+fn installing(root: &Path) -> bool {
+    std::fs::File::open(root.join(".overseer").join("install.lock"))
+        .is_err_and(|e| e.kind() != std::io::ErrorKind::NotFound)
+}
+
 /// Like `waker`, but for a new board, which needs one frame where egui gives
 /// a plain repaint two. On Windows' software renderer each frame costs most
 /// of a second.
@@ -1596,7 +1465,21 @@ fn board_waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static + use<>
     move || ctx.request_repaint_after(std::time::Duration::from_millis(1))
 }
 
-/// The empty state, drawn for the snapshot test.
+/// The time now, in seconds since 1970.
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+fn gone(you: Option<overseer_core::Saved>) -> Board {
+    Board {
+        state: Some("OFFLINE".to_owned()),
+        you,
+        ..Board::default()
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn snapshot_empty(ui: &mut Ui, shown: &Board) {
     let board = Board {
@@ -1604,7 +1487,6 @@ pub(crate) fn snapshot_empty(ui: &mut Ui, shown: &Board) {
         you: shown.you.clone(),
         ..Board::default()
     };
-    // Still, the way the efficient tier draws it, so the picture holds.
     let _pressed = waiting::empty(
         ui,
         (&Status::Live, &board),
@@ -1614,13 +1496,11 @@ pub(crate) fn snapshot_empty(ui: &mut Ui, shown: &Board) {
     );
 }
 
-/// A board of just your kept row, for the snapshot test.
 #[cfg(test)]
 pub(crate) fn snapshot_kept(you: &overseer_core::Saved) -> Board {
     waiting::kept_board(you)
 }
 
-/// The window as a test drives it, on `board`, with no backend behind it.
 #[cfg(test)]
 pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overseer {
     Overseer {
@@ -1641,6 +1521,8 @@ pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overse
         settling: None,
         ever_live: true,
         lost_at: None,
+        read_at: 0.0,
+        restarts: Vec::new(),
         empty: Empty::Plate,
         sort: Sort::default(),
         notes: Notes::default(),
@@ -1679,8 +1561,6 @@ pub(crate) fn testing(board: &Board, boards: u64, settings: &Settings) -> Overse
     }
 }
 
-/// The header and the footer, drawn for the snapshot test without a window
-/// behind them.
 #[cfg(test)]
 pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings: &Settings) {
     let shown = testing(board, boards, settings);
@@ -1696,17 +1576,197 @@ pub(crate) fn snapshot_chrome(ui: &mut Ui, board: &Board, boards: u64, settings:
 
 #[cfg(test)]
 mod tests {
-    use super::{Place, Shown, panel_grip};
+    use super::{BACK_UP, Place, Shown, panel_grip};
+    use overseer_core::Status;
 
-    /// The real window on the sample lobby, you carrying the Odin and
-    /// `name` picked, with the pointer resting at `at`. Says whether a card
-    /// opened. `TAG_OUT` saves what it looked like.
+    #[test]
+    fn a_backend_that_went_is_started_again_once() {
+        let settings = crate::settings::Settings::default();
+        let mut app = super::testing(&overseer_core::Board::default(), 0, &settings);
+        let ctx = egui::Context::default();
+        let lost = || Status::Lost("gone".to_owned());
+
+        let long_ago = -BACK_UP - 1.0;
+        app.status = lost();
+        app.mark_lost(&ctx);
+        assert_eq!(
+            app.lost_at,
+            Some((0.0, false)),
+            "a dropped socket gets time"
+        );
+        app.lost_at = Some((long_ago, false));
+        app.mark_lost(&ctx);
+        assert_eq!(app.lost_at, Some((long_ago, true)));
+        assert!(app.broken.is_none());
+
+        app.status = Status::Live;
+        app.mark_lost(&ctx);
+        assert!(app.lost_at.is_none(), "the next time gets its own");
+
+        app.root = std::env::temp_dir().join("overseer-revive-test");
+        let held = app.root.join(".overseer");
+        std::fs::create_dir_all(&held).unwrap();
+        let lock = std::os::windows::fs::OpenOptionsExt::share_mode(
+            std::fs::OpenOptions::new().write(true).create(true),
+            0,
+        )
+        .open(held.join("install.lock"))
+        .unwrap();
+        app.status = lost();
+        app.lost_at = Some((long_ago, false));
+        app.mark_lost(&ctx);
+        assert_eq!(
+            app.lost_at,
+            Some((long_ago, false)),
+            "an install is running"
+        );
+        drop(lock);
+        app.mark_lost(&ctx);
+        assert_eq!(app.lost_at, Some((long_ago, true)));
+        assert!(
+            app.broken
+                .as_deref()
+                .is_some_and(|why| why.contains("Run the setup again")),
+            "an install with no backend says so"
+        );
+        drop(std::fs::remove_dir_all(&app.root));
+        app.broken = None;
+
+        app.status = lost();
+        app.lost_at = Some((long_ago, false));
+        app.stopped = Some("a build it won't talk to".to_owned());
+        app.mark_lost(&ctx);
+        assert_eq!(
+            app.lost_at,
+            Some((long_ago, false)),
+            "starting it again fixes nothing"
+        );
+    }
+
+    #[test]
+    fn a_backend_that_keeps_dying_is_left_alone() {
+        let settings = crate::settings::Settings::default();
+        let mut app = super::testing(&overseer_core::Board::default(), 0, &settings);
+        let ctx = egui::Context::default();
+        for n in 0..=super::RESTARTS {
+            app.status = Status::Lost("gone".to_owned());
+            app.lost_at = Some((-BACK_UP - 1.0, false));
+            app.mark_lost(&ctx);
+            assert_eq!(app.stopped.is_some(), n == super::RESTARTS, "after {n}");
+        }
+        assert_eq!(app.restarts.len(), super::RESTARTS);
+        assert!(app.connection(0.0).why.contains("launcher.log"));
+
+        // Run after install.bat repaired a missing Python, it checks again.
+        app.broken = Some("Its Python is gone".to_owned());
+        app.reconnect(&ctx);
+        assert!(app.stopped.is_none() && app.broken.is_none() && app.restarts.is_empty());
+        app.status = Status::Lost("gone".to_owned());
+        app.mark_lost(&ctx);
+        assert_eq!(app.restarts.len(), 1, "started again straight away");
+    }
+
+    fn in_match() -> super::Overseer {
+        let mut board = crate::shot::sample();
+        board.state = Some("INGAME".to_owned());
+        board.match_id = Some("m1".to_owned());
+        let mut app = super::testing(
+            &overseer_core::Board::default(),
+            0,
+            &crate::settings::Settings::default(),
+        );
+        app.take(board);
+        app
+    }
+
+    #[test]
+    fn a_match_stays_up_through_a_gap() {
+        use overseer_core::Board;
+        let looking = Board {
+            state: Some("MENUS".to_owned()),
+            waiting: Some("match".to_owned()),
+            ..Board::default()
+        };
+        let unread = Board {
+            state: Some("OFFLINE".to_owned()),
+            ..Board::default()
+        };
+        for gap in [looking.clone(), unread] {
+            let mut app = in_match();
+            app.take(gap);
+            assert_eq!(app.board.players.len(), 10, "the match stays up");
+            assert_eq!(app.board.state.as_deref(), Some("INGAME"));
+            assert!(app.board.held_since.is_some(), "and the light can say so");
+        }
+
+        let closed = Board {
+            state: Some("OFFLINE".to_owned()),
+            waiting: Some("riot".to_owned()),
+            ..Board::default()
+        };
+        let next = Board {
+            match_id: Some("m2".to_owned()),
+            ..looking.clone()
+        };
+        for news in [closed, next] {
+            let mut app = in_match();
+            app.take(news);
+            assert!(app.board.players.is_empty(), "real news clears it");
+        }
+
+        let mut app = in_match();
+        app.read_at -= super::KEEP;
+        app.take(looking);
+        assert!(app.board.players.is_empty(), "not past an hour");
+    }
+
+    #[test]
+    fn a_board_comes_off_after_an_hour() {
+        let ctx = egui::Context::default();
+        let you = overseer_core::Saved::default();
+
+        let mut app = in_match();
+        app.board.you = Some(you);
+        app.status = Status::Lost("gone".to_owned());
+        app.lost_at = Some((1.0 - super::KEEP, true));
+        app.expire(&ctx);
+        assert_eq!(app.board.players.len(), 10, "not an hour yet");
+        app.lost_at = Some((-super::KEEP, true));
+        app.expire(&ctx);
+        assert!(app.board.players.is_empty());
+        assert!(app.board.you.is_some(), "your row stays");
+
+        let mut app = in_match();
+        app.board.held_since = Some(super::now_secs() - super::KEEP);
+        app.expire(&ctx);
+        assert!(app.board.players.is_empty(), "held by the backend an hour");
+
+        let mut stale = crate::shot::sample();
+        stale.held_since = Some(super::now_secs() - super::KEEP);
+        app.take(stale);
+        assert!(app.board.players.is_empty());
+    }
+
+    #[test]
+    fn the_light_says_a_board_is_not_live() {
+        let mut app = in_match();
+        assert_eq!(app.connection(0.0).word, "");
+        app.board.held_since = Some(super::now_secs() - 120.0);
+        let held = app.connection(0.0);
+        assert_eq!(held.word, "Not Live");
+        assert!(held.why.contains("2 minutes ago"), "{}", held.why);
+        app.status = Status::Lost("refused".to_owned());
+        app.lost_at = Some((0.0, true));
+        let lost = app.connection(90.0);
+        assert_eq!(lost.word, "Reconnecting");
+        assert!(lost.why.contains("1 min ago"), "{}", lost.why);
+        assert!(lost.why.contains("stays up for an hour"), "{}", lost.why);
+    }
+
     fn rests_on(name: &str, at: egui::Pos2) -> bool {
         moves_off(name, at, None)
     }
 
-    /// [`rests_on`], then the pointer moving `off` to a spot and staying
-    /// there for some frames.
     fn moves_off(name: &str, at: egui::Pos2, off: Option<(egui::Pos2, usize)>) -> bool {
         let mut board = crate::shot::sample();
         for player in &mut board.players {
@@ -1733,7 +1793,6 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1200.0, 900.0))
             .with_step_dt(1.0 / 60.0)
-            // Nothing on the first frame, before the fonts are bound.
             .build_ui_state(
                 |ui, app: &mut Option<super::Overseer>| {
                     if let Some(app) = app {
@@ -1748,7 +1807,6 @@ mod tests {
             .set_style_of(egui::Theme::Dark, overseer_ui::style());
         harness.run();
         *harness.state_mut() = Some(app);
-        // It keeps asking for frames while the bridge has nothing behind it.
         for _frame in 0..30 {
             harness.step();
         }
@@ -1773,8 +1831,6 @@ mod tests {
         })
     }
 
-    /// Resting on a tag opens the card that says what it means: on an
-    /// enemy's row, on your own, and in the panel.
     #[test]
     fn a_tag_explains_itself_wherever_it_is() {
         let spots = std::env::var("TAG_AT").ok().and_then(|v| {
@@ -1798,8 +1854,6 @@ mod tests {
             !rests_on("Day#9932", egui::pos2(700.0, 860.0)),
             "a card opened over nothing"
         );
-        // Off the Odin into the row beside it, the card holds for a frame
-        // or two, long enough to reach the next read, and then goes.
         let odin = egui::pos2(191.0, 601.0);
         let beside = egui::pos2(260.0, 601.0);
         assert!(
@@ -1842,7 +1896,6 @@ mod tests {
         assert!(!shown.up(true, true, 147.0), "and only for a while");
     }
 
-    /// A store in memory, standing in for eframe's file.
     #[derive(Debug, Default)]
     struct Disk(std::collections::HashMap<String, String>);
 
@@ -1862,8 +1915,6 @@ mod tests {
         fn flush(&mut self) {}
     }
 
-    /// A save while minimized puts back the place the window last had on
-    /// screen, and a save on screen is the new place to keep.
     #[test]
     fn a_minimized_window_keeps_its_last_place_on_screen() {
         use eframe::Storage as _;
@@ -1887,7 +1938,6 @@ mod tests {
     #[test]
     fn the_panel_edge_drags() {
         let panel = egui::Rect::from_min_max(egui::pos2(860.0, 0.0), egui::pos2(1200.0, 600.0));
-        // A frame a sixtieth of a second, so two clicks fit in a double click.
         let mut shot = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1200.0, 600.0))
             .with_step_dt(1.0 / 60.0)

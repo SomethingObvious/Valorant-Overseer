@@ -90,14 +90,41 @@ def _queue_state() -> dict[str, Any]:
 
 
 def _weapons(rng: random.Random) -> list[dict[str, Any]]:
-    out = []
-    for w in _WEAPONS:
-        choices = valapi.skins_for_weapon(w)
-        if choices:
-            out.append({"weapon": w, "skin": rng.choice(choices)})
-        else:
-            out.append({"weapon": w, "skin": {"name": rng.choice(_SKINS), "icon": None}})
-    return out
+    weapons = []
+    for weapon in _WEAPONS:
+        skins = valapi.skins_for_weapon(weapon)
+        skin = rng.choice(skins) if skins else {"name": rng.choice(_SKINS), "icon": None}
+        weapons.append({"weapon": weapon, "skin": skin})
+    return weapons
+
+
+def _form(rng: random.Random, *, hot: bool) -> list[str]:
+    won = ["W"] * rng.randint(3, 4) if hot else []
+    return won + [rng.choice("WL") for _ in range(5 - len(won))]
+
+
+def _habits(rng: random.Random) -> dict[str, Any]:
+    rounds = rng.randint(90, 120)
+    carried = {"Vandal": rounds // 3, "Phantom": rounds // 4}
+    carried[rng.choice(["Operator", "Outlaw", "Judge", "Marshal", "Spectre"])] = rng.choice(
+        [2, rounds // 4]
+    )
+    pistols = rng.randint(2, 5)
+    return {
+        "matches": 5,
+        "rounds": rounds,
+        "carried": carried,
+        "kills": rng.randint(60, 100),
+        "killsWith": {},
+        "lostPistols": pistols,
+        "forced": rng.choice([0, 1, pistols - 1, pistols]),
+        "firstBloods": rng.randint(6, 12) + (14 if rng.random() < 0.2 else 0),
+        "firstDeaths": rng.randint(6, 12),
+        "clutches": rng.choice([0, 1, 1, 2, 3]),
+        "aces": rng.choice([0, 0, 0, 1]),
+        "plants": rng.randint(4, 14),
+        "asked": 20,
+    }
 
 
 def _intel(
@@ -107,152 +134,128 @@ def _intel(
     *,
     hot: bool = False,
 ) -> dict[str, Any]:
-    others = [a for a in rng.sample(sample_data.AGENT_NAMES, 4) if a != main_agent][:2]
-    main = main_agent or others.pop(0)
-    played = [(main, rng.randint(3, 6))] + [(a, rng.randint(1, 3)) for a in others]
-    top = [
-        {"agent": a, "games": n, "role": (resolve_agent(a) or {}).get("role")} for a, n in played
-    ]
-    if hot:
-        form = ["W"] * rng.randint(3, 4)
-        form += [rng.choice(["W", "L"]) for _ in range(5 - len(form))]
-    else:
-        form = [rng.choice(["W", "L"]) for _ in range(5)]
-    map_wins = {}
+    picks = [a for a in rng.sample(sample_data.AGENT_NAMES, 4) if a != main_agent][:2]
+    main = main_agent or picks.pop(0)
+    played = [(main, rng.randint(3, 6)), *((a, rng.randint(1, 3)) for a in picks)]
+    form = _form(rng, hot=hot)
+    wins = {}
     if map_name:
-        g = rng.randint(2, 6)
-        map_wins[map_name] = [rng.randint(0, g), g]
-    rounds = rng.randint(90, 120)
-    carried = {"Vandal": rounds // 3, "Phantom": rounds // 4}
-    carried[rng.choice(["Operator", "Outlaw", "Judge", "Marshal", "Spectre"])] = rng.choice(
-        [2, rounds // 4]
-    )
-    lost = rng.randint(2, 5)
-    habits = {
-        "matches": 5,
-        "rounds": rounds,
-        "carried": carried,
-        "kills": rng.randint(60, 100),
-        "killsWith": {},
-        "lostPistols": lost,
-        "forced": rng.choice([0, 1, lost - 1, lost]),
-        # Two players of ten are in each round's first fight, so a tenth of
-        # those fights each is ordinary. One player in five takes far more.
-        "firstBloods": rng.randint(6, 12) + (14 if rng.random() < 0.2 else 0),
-        "firstDeaths": rng.randint(6, 12),
-        "clutches": rng.choice([0, 1, 1, 2, 3]),
-        "aces": rng.choice([0, 0, 0, 1]),
-        "plants": rng.randint(4, 14),
-    }
+        games = rng.randint(2, 6)
+        wins[map_name] = [rng.randint(0, games), games]
     return {
-        "topAgents": top,
+        "topAgents": [
+            {"agent": a, "games": n, "role": (resolve_agent(a) or {}).get("role")}
+            for a, n in played
+        ],
         "form": form,
         "streak": form_streak(form),
-        "mapWins": map_wins,
-        "habits": {**habits, "asked": 20},
+        "mapWins": wins,
+        "habits": _habits(rng),
     }
+
+
+def _figures(rng: random.Random, around: int, *, smurf: bool) -> dict[str, Any]:
+    tier = max(3, min(27, around + rng.randint(-3, 3)))
+    figures = {
+        "tier": tier,
+        "peak": min(27, tier + rng.randint(0, 4)),
+        "games": rng.randint(20, 400),
+        "winRate": rng.randint(38, 64),
+        "kd": round(rng.uniform(0.6, 1.8), 2),
+        "level": rng.randint(20, 480),
+        "hs": rng.randint(12, 28),
+    }
+    if smurf:
+        figures.update(
+            tier=max(tier, 20),
+            peak=max(figures["peak"], 22),
+            kd=round(rng.uniform(1.4, 2.1), 2),
+            winRate=max(figures["winRate"], 64),
+            level=rng.randint(18, 55),
+            hs=rng.randint(30, 38),
+        )
+    figures["lb"] = rng.randint(1, 500) if figures["tier"] >= 24 else 0
+    return figures
+
+
+def _row(rng: random.Random, figures: dict[str, Any], **known: Any) -> dict[str, Any]:
+    smurf, why = compute_smurf(
+        level=figures["level"],
+        peak_tier=figures["peak"],
+        rank_tier=figures["tier"],
+        kd=figures["kd"],
+        win_rate=figures["winRate"],
+        games=figures["games"],
+        kd_matches=5,
+        hs=float(figures["hs"]),
+    )
+    return assemble_player(
+        rank_tier=figures["tier"],
+        rr=rng.randint(0, 99),
+        leaderboard=figures["lb"],
+        peak_tier=figures["peak"],
+        prev_tier=max(0, figures["tier"] - rng.randint(0, 3)),
+        win_rate=figures["winRate"],
+        games=figures["games"],
+        kd=figures["kd"],
+        hs=figures["hs"],
+        level=figures["level"],
+        peak_act=f"V{rng.randint(25, 26)} Act {rng.randint(1, 5)}",
+        title=rng.choice(_TITLES),
+        player_card=valapi.player_card(rng.choice(_CARDS)),
+        smurf=smurf,
+        smurf_reasons=why,
+        **known,
+    )
 
 
 def generate(seed: int = 7) -> dict[str, Any]:
     """Return a made-up board for a match in progress."""
     rng = random.Random(seed)
-
     agents = rng.sample(sample_data.AGENT_NAMES, 10)
-    lobby_tier = rng.randint(11, 24)
+    around = rng.randint(11, 24)
     map_name = rng.choice(MAPS)
-
-    party_specs = [("Blue", [0, 1, 2]), ("Red", [0, 1])]
-    party_lookup = {}
-    parties_out = []
-
-    raw: dict[str, list[Any]] = {"Blue": [], "Red": []}
-    for team in ("Blue", "Red"):
-        for _ in range(5):
-            raw[team].append(
-                {
-                    "puuid": sample_data.fake_puuid(rng),
-                    "name": sample_data.make_name(rng),
-                    "agent": agents.pop(),
-                    "hiddenName": rng.random() < 0.35,
-                    "hiddenLevel": rng.random() < 0.2,
-                }
-            )
-
-    self_puuid = raw["Blue"][0]["puuid"]
-
-    for idx, (team, members) in enumerate(party_specs):
-        color = party_color(0, ours=team == "Blue")
-        pid = sample_data.fake_puuid(rng)
-        puuids = [raw[team][i]["puuid"] for i in members]
-        parties_out.append(
-            {"id": pid, "color": color, "number": idx + 1, "size": len(puuids), "members": puuids}
-        )
-        for pu in puuids:
-            party_lookup[pu] = {"id": pid, "color": color, "number": idx + 1}
-
-    smurf_slots = {("Blue", 1), ("Red", 1)}
-
+    seats = [(team, n) for team in ("Blue", "Red") for n in range(5)]
+    people: dict[tuple[str, int], dict[str, Any]] = {
+        seat: {
+            "puuid": sample_data.fake_puuid(rng),
+            "name": sample_data.make_name(rng),
+            "agent": agents.pop(),
+            "hiddenName": rng.random() < 0.35,
+            "hiddenLevel": rng.random() < 0.2,
+        }
+        for seat in seats
+    }
+    me = people["Blue", 0]["puuid"]
+    parties: dict[str, dict[str, Any]] = {}
+    for number, (team, members) in enumerate((("Blue", (0, 1, 2)), ("Red", (0, 1))), 1):
+        tag = {"id": sample_data.fake_puuid(rng), "color": party_color(0, ours=team == "Blue")}
+        for n in members:
+            parties[people[team, n]["puuid"]] = {**tag, "number": number}
+    smurfs = {("Blue", 1), ("Red", 1)}
     players = []
-    for team in ("Blue", "Red"):
-        for i, slot in enumerate(raw[team]):
-            tier = max(3, min(27, lobby_tier + rng.randint(-3, 3)))
-            peak = min(27, tier + rng.randint(0, 4))
-            lb = rng.randint(1, 500) if tier >= 24 else 0
-            games = rng.randint(20, 400)
-            win_rate = rng.randint(38, 64)
-            kd = round(rng.uniform(0.6, 1.8), 2)
-            level = rng.randint(20, 480)
-            hs = rng.randint(12, 28)
-            if (team, i) in smurf_slots:
-                peak = max(peak, 22)
-                tier = max(tier, 20)
-                kd = round(rng.uniform(1.4, 2.1), 2)
-                win_rate = max(win_rate, 64)
-                level = rng.randint(18, 55)
-                hs = rng.randint(30, 38)
-            weapons = _weapons(rng)
-            smurf, smurf_reasons = compute_smurf(
-                level=level,
-                peak_tier=peak,
-                rank_tier=tier,
-                kd=kd,
-                win_rate=win_rate,
-                games=games,
-                kd_matches=5,
-                hs=float(hs),
+    for seat in seats:
+        person = people[seat]
+        figures = _figures(rng, around, smurf=seat in smurfs)
+        weapons = _weapons(rng)
+        players.append(
+            _row(
+                rng,
+                figures,
+                puuid=person["puuid"],
+                name=person["name"],
+                name_hidden=person["hiddenName"],
+                team=seat[0],
+                is_self=person["puuid"] == me,
+                agent_id=person["agent"],
+                level_hidden=person["hiddenLevel"],
+                party=parties.get(person["puuid"]),
+                skin=next(w["skin"] for w in weapons if w["weapon"] == "Vandal"),
+                weapons=weapons,
+                rr_earned=rng.randint(-24, 28),
+                intel=_intel(rng, person["agent"], map_name, hot=seat in smurfs),
             )
-            players.append(
-                assemble_player(
-                    puuid=slot["puuid"],
-                    name=slot["name"],
-                    name_hidden=slot["hiddenName"],
-                    team=team,
-                    is_self=(slot["puuid"] == self_puuid),
-                    agent_id=slot["agent"],
-                    rank_tier=tier,
-                    rr=rng.randint(0, 99),
-                    leaderboard=lb,
-                    peak_tier=peak,
-                    prev_tier=max(0, tier - rng.randint(0, 3)),
-                    win_rate=win_rate,
-                    games=games,
-                    kd=kd,
-                    hs=hs,
-                    level=level,
-                    level_hidden=slot["hiddenLevel"],
-                    party=party_lookup.get(slot["puuid"]),
-                    skin=next(w["skin"] for w in weapons if w["weapon"] == "Vandal"),
-                    weapons=weapons,
-                    peak_act=f"V{rng.randint(25, 26)} Act {rng.randint(1, 5)}",
-                    rr_earned=rng.randint(-24, 28),
-                    title=rng.choice(_TITLES),
-                    player_card=valapi.player_card(rng.choice(_CARDS)),
-                    smurf=smurf,
-                    smurf_reasons=smurf_reasons,
-                    intel=_intel(rng, slot["agent"], map_name, hot=(team, i) in smurf_slots),
-                )
-            )
-
+        )
     ally, enemy = sorted([rng.randint(0, 13), rng.randint(0, 13)], reverse=True)
     board = finalize(
         players,
@@ -299,64 +302,24 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
     """Return a made-up lobby board for a party in menus."""
     rng = random.Random(seed * 31 + 5)
     size = rng.randint(2, 5)
-    tier = rng.randint(11, 24)
-    puuids = [sample_data.fake_puuid(rng) for _ in range(size)]
+    around = rng.randint(11, 24)
     party = {"id": "lobby", "color": party_color(0, ours=True), "number": 1, "size": size}
-
-    players = []
-    for i in range(size):
-        t = max(3, min(27, tier + rng.randint(-3, 3)))
-        peak = min(27, t + rng.randint(0, 4))
-        win_rate = rng.randint(38, 64)
-        games = rng.randint(20, 400)
-        kd = round(rng.uniform(0.6, 1.8), 2)
-        level = rng.randint(20, 480)
-        hs = rng.randint(12, 28)
-        if i == 1:
-            peak = max(peak, 22)
-            t = max(t, 20)
-            kd = round(rng.uniform(1.4, 2.1), 2)
-            level = rng.randint(18, 55)
-            hs = rng.randint(30, 38)
-        smurf, smurf_reasons = compute_smurf(
-            level=level,
-            peak_tier=peak,
-            rank_tier=t,
-            kd=kd,
-            win_rate=win_rate,
-            games=games,
-            kd_matches=5,
-            hs=float(hs),
+    players = [
+        _row(
+            rng,
+            _figures(rng, around, smurf=n == 1),
+            puuid=sample_data.fake_puuid(rng),
+            name=sample_data.make_name(rng),
+            name_hidden=False,
+            team="Blue",
+            is_self=n == 0,
+            agent_id="",
+            level_hidden=False,
+            party=party,
+            intel=_intel(rng, hot=n == 1),
         )
-        players.append(
-            assemble_player(
-                puuid=puuids[i],
-                name=sample_data.make_name(rng),
-                name_hidden=False,
-                team="Blue",
-                is_self=(i == 0),
-                agent_id="",
-                rank_tier=t,
-                rr=rng.randint(0, 99),
-                leaderboard=0,
-                peak_tier=peak,
-                prev_tier=max(0, t - rng.randint(0, 3)),
-                win_rate=win_rate,
-                games=games,
-                kd=kd,
-                hs=hs,
-                level=level,
-                level_hidden=False,
-                party=party if size > 1 else None,
-                peak_act=f"V{rng.randint(25, 26)} Act {rng.randint(1, 5)}",
-                title=rng.choice(_TITLES),
-                player_card=valapi.player_card(rng.choice(_CARDS)),
-                smurf=smurf,
-                smurf_reasons=smurf_reasons,
-                intel=_intel(rng, hot=(i == 1)),
-            )
-        )
-
+        for n in range(size)
+    ]
     board = finalize(
         players,
         state="MENUS",
@@ -375,28 +338,22 @@ def generate_lobby(seed: int = 7) -> dict[str, Any]:
 def session(seed: int = 7) -> dict[str, Any]:
     """Return a made-up play session with its rating points."""
     rng = random.Random(seed * 13 + 1)
-    n = rng.randint(5, 9)
+    games = rng.randint(5, 9)
     now = int(time.time())
-    rr, tier = rng.randint(20, 80), rng.randint(11, 24)
+    rating = rng.randint(11, 24) * 100 + rng.randint(20, 80)
     points = []
-    for i in range(n):
+    for n in range(games):
         delta = rng.choice([1, 1, -1]) * rng.randint(12, 28)
-        rr += delta
-        if rr >= 100:
-            rr -= 100
-            tier = min(27, tier + 1)
-        elif rr < 0:
-            rr += 100
-            tier = max(3, tier - 1)
+        rating += delta
         points.append(
             {
-                "matchId": f"demo-s{i}",
-                "ts": now - (n - i) * 2400,
+                "matchId": f"demo-s{n}",
+                "ts": now - (games - n) * 2400,
                 "map": rng.choice(MAPS),
                 "result": "Victory" if delta > 0 else "Defeat",
                 "delta": delta,
-                "tier": tier,
-                "rr": rr,
+                "tier": max(3, min(27, rating // 100)),
+                "rr": rating % 100,
             }
         )
     return {"startedAt": points[0]["ts"], "net": sum(p["delta"] for p in points), "points": points}
@@ -526,4 +483,6 @@ def history(count: int) -> dict[str, Any]:
         }
         delta = rng.randint(14, 24) if won else -rng.randint(10, 21)
         games.append(past_games.view(board, "demo-self", {match_id: delta}))
+    for game in games:
+        game["usual"] = past_games.usual(game, games, "demo-self")
     return {"games": games, "asked": count}

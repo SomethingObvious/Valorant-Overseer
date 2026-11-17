@@ -1,8 +1,5 @@
 # Copyright 2026 SomethingObvious. PolyForm Strict 1.0.0, see LICENSE.md.
-"""Everyone you have played with or against, and how those games went.
-
-Logged from live boards and backfilled from past games, per signed-in account.
-"""
+"""Everyone you have played with or against, and how those games went."""
 
 from __future__ import annotations
 
@@ -19,7 +16,6 @@ _PATH = data_path("encounters.json")
 # A timeline entry stores the word in lowercase, though backfilled entries
 # already on disk may say win or loss, so anything reading them takes both.
 _OUTCOMES = {"victory": "wins", "defeat": "losses", "draw": "draws"}
-# The fields a board or a career row can refresh on a stored player.
 _PROFILE_FIELDS = (
     "name",
     "rank",
@@ -33,9 +29,10 @@ _PROFILE_FIELDS = (
     "level",
 )
 
-# Two hundred lobbies is a few months of play and about a hundred kilobytes.
-# Older ones say little, because people stop queueing together.
 _ROSTER_LIMIT = 200
+# Most players are met once and never again, at about 560 bytes each, and the
+# whole store is rewritten every match. Those go after a month.
+_STRANGER_DAYS = 30
 _ROSTER_MIN = 4
 _LOCK = threading.RLock()
 
@@ -47,8 +44,27 @@ def _empty_store() -> dict[str, Any]:
 def _load() -> dict[str, Any]:
     raw = read_json(_PATH, None)
     if isinstance(raw, dict) and raw.get("version") == 2 and isinstance(raw.get("accounts"), dict):
+        _forget_strangers(raw, time.time())
         return raw
     return _empty_store()
+
+
+def _forget_strangers(store: dict[str, Any], now: float) -> None:
+    cutoff = now - _STRANGER_DAYS * 86400
+    for account in store["accounts"].values():
+        players = account.get("players") if isinstance(account, dict) else None
+        if not isinstance(players, dict):
+            continue
+        for puuid, entry in list(players.items()):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                met = int(entry.get("withCount") or 0) + int(entry.get("againstCount") or 0)
+                seen = float(entry.get("lastSeen") or 0)
+            except (TypeError, ValueError):
+                continue
+            if met <= 1 and seen < cutoff:
+                del players[puuid]
 
 
 def _save() -> None:
@@ -56,8 +72,6 @@ def _save() -> None:
 
 
 _STORE = _load()
-# Only when there is no file yet. Saving unconditionally would write over a
-# store that could not be moved aside.
 if not Path(_PATH).exists():
     _save()
 
@@ -86,9 +100,6 @@ def _players(owner: str) -> dict[str, Any]:
 
 
 def _record_roster(owner: str, match_id: str, board: dict[str, Any], now: int) -> bool:
-    """Remember who was on which side, which is what a stack is guessed from."""
-    # The per-player counts are all relative to me. Telling that two other
-    # people queue together needs the sides as they really were.
     account = _account(owner)
     rosters = account.setdefault("rosters", [])
     if any(r.get("matchId") == match_id for r in rosters):
@@ -98,12 +109,8 @@ def _record_roster(owner: str, match_id: str, board: dict[str, Any], now: int) -
         for p in board.get("players") or []
         if isinstance(p, dict) and p.get("puuid") and p.get("team")
     }
-    # A half read lobby says nothing about who queued with whom.
     if len(teams) < _ROSTER_MIN:
         return False
-    # Both sides or none. Agent select shows only the ally team, so every pair
-    # on a pregame board shares a side whoever they are, and storing that
-    # would turn four strangers into a five stack.
     if len(set(teams.values())) < 2:
         return False
     rosters.append({"matchId": match_id, "at": now, "teams": teams})
@@ -119,59 +126,86 @@ def rosters_for(owner: str | None) -> list[dict[str, Any]]:
         return [dict(r) for r in _account(str(owner)).get("rosters") or []]
 
 
-# When the store was last written by record_board, and how often a board that
-# only moved everyone's last seen writes it.
+_REGULAR_OVER = 3
+_MONTH = 30 * 86400
+
+
+def regulars(owner: str | None, now: float | None = None) -> set[str]:
+    """Return who `owner` keeps meeting: over three lobbies in a month, the last within one."""
+    if not owner:
+        return set()
+    now = time.time() if now is None else now
+    met: dict[str, list[float]] = {}
+    with _LOCK:
+        for roster in _account(str(owner)).get("rosters") or []:
+            for puuid in roster.get("teams") or {}:
+                met.setdefault(puuid, []).append(float(roster.get("at") or 0))
+    met.pop(str(owner), None)
+    return {
+        puuid
+        for puuid, times in met.items()
+        if now - max(times) <= _MONTH
+        and any(
+            later - first <= _MONTH
+            for first, later in zip(sorted(times), sorted(times)[_REGULAR_OVER:], strict=False)
+        )
+    }
+
+
 _SAVED = {"at": 0}
 _SEEN_EVERY = 60
 
 
+def _others(board: Any) -> tuple[str, str, Any, list[dict[str, Any]]] | None:
+    if not isinstance(board, dict) or board.get("source") != "local":
+        return None
+    owner, match_id, listed = board.get("selfPuuid"), board.get("matchId"), board.get("players")
+    if not owner or not match_id or not isinstance(listed, list):
+        return None
+    others = [p for p in listed if isinstance(p, dict) and p.get("puuid") and not p.get("isSelf")]
+    return owner, match_id, board.get("selfTeam"), others
+
+
+def _side(player: dict[str, Any], ours: Any) -> str:
+    return "With" if ours is not None and player.get("team") == ours else "Against"
+
+
+def _bump(entry: dict[str, Any], key: str) -> None:
+    entry[key] = int(entry.get(key) or 0) + 1
+
+
+def _ids(entry: dict[str, Any], key: str, older: str) -> list[str]:
+    ids = entry.setdefault(key, [])
+    if entry.get(older) and entry[older] not in ids:
+        ids.append(entry[older])
+    return ids
+
+
 def record_board(board: dict[str, Any] | None) -> None:
     """Log everyone on a live board as a teammate or an opponent of its owner."""
-    if not isinstance(board, dict) or board.get("source") != "local":
+    seen = _others(board)
+    if seen is None or board is None:
         return
-    owner = board.get("selfPuuid")
-    match_id = board.get("matchId")
-    if not owner or not match_id or not isinstance(board.get("players"), list):
-        return
-    self_team = board.get("selfTeam")
+    owner, match_id, ours, players = seen
     now = int(time.time())
-    changed = False
     with _LOCK:
         store = _players(owner)
-        for player in board["players"]:
-            if not isinstance(player, dict) or player.get("isSelf") or not player.get("puuid"):
-                continue
-            puuid = player["puuid"]
-            entry = store.setdefault(puuid, _blank_entry(puuid))
-            match_ids = entry.setdefault("matchIds", [])
-            legacy_match_id = entry.get("lastMatchId")
-            if legacy_match_id and legacy_match_id not in match_ids:
-                match_ids.append(legacy_match_id)
-            # The party lobby's board is no match, so it counts nobody as
-            # played with.
-            if match_id != "lobby" and match_id not in match_ids:
-                same_team = self_team is not None and player.get("team") == self_team
-                key = "withCount" if same_team else "againstCount"
-                entry[key] = int(entry.get(key) or 0) + 1
-                match_ids.append(match_id)
-                entry["matchIds"] = match_ids[-80:]
+        counted = False
+        for player in players:
+            entry = store.setdefault(player["puuid"], _blank_entry(player["puuid"]))
+            played = _ids(entry, "matchIds", "lastMatchId")
+            if match_id != "lobby" and match_id not in played:
+                _bump(entry, f"{_side(player, ours).lower()}Count")
+                entry["matchIds"] = [*played, match_id][-80:]
                 entry["lastMatchId"] = match_id
-                changed = True
-            for key in _PROFILE_FIELDS:
-                if player.get(key) is not None and entry.get(key) != player.get(key):
-                    entry[key] = player.get(key)
-                    changed = True
+                counted = True
+            entry.update({k: player[k] for k in _PROFILE_FIELDS if player.get(k) is not None})
             entry["lastSeen"] = now
             agent = player.get("agent")
             if agent and agent != "Unknown" and agent not in entry.setdefault("agents", []):
-                entry["agents"].append(agent)
-                entry["agents"] = entry["agents"][-8:]
-                changed = True
-        if _record_roster(owner, match_id, board, now):
-            changed = True
-        # A board comes every few seconds and only moves when someone is seen
-        # again, so that alone is written once a minute, not each time.
-        if changed or now - _SAVED["at"] >= _SEEN_EVERY:
+                entry["agents"] = [*entry["agents"], agent][-8:]
+        counted = _record_roster(owner, match_id, board, now) or counted
+        if counted or now - _SAVED["at"] >= _SEEN_EVERY:
             _save()
             _SAVED["at"] = now
 
@@ -179,57 +213,39 @@ def record_board(board: dict[str, Any] | None) -> None:
 def record_result(board: dict[str, Any] | None, result: str | None) -> None:
     """Record how a lobby ended for everyone in it, from Riot's Victory, Defeat or Draw."""
     outcome = (result or "").strip().lower()
-    if outcome not in _OUTCOMES or not isinstance(board, dict) or board.get("source") != "local":
+    seen = _others(board) if outcome in _OUTCOMES else None
+    if seen is None:
         return
-    owner = board.get("selfPuuid")
-    match_id = board.get("matchId")
-    if not owner or not match_id:
-        return
-    self_team = board.get("selfTeam")
-    changed = False
+    owner, match_id, ours, players = seen
     with _LOCK:
         store = _players(owner)
-        for player in board.get("players") or []:
-            if not isinstance(player, dict) or player.get("isSelf") or not player.get("puuid"):
-                continue
+        counted = False
+        for player in players:
             entry = store.get(player["puuid"])
             if not entry:
                 continue
-            result_ids = entry.setdefault("resultMatchIds", [])
-            legacy_result_id = entry.get("lastResultMatchId")
-            if legacy_result_id and legacy_result_id not in result_ids:
-                result_ids.append(legacy_result_id)
-            if match_id in result_ids:
+            settled = _ids(entry, "resultMatchIds", "lastResultMatchId")
+            if match_id in settled:
                 continue
-            same_team = self_team is not None and player.get("team") == self_team
-            key = f"{_OUTCOMES[outcome]}{'With' if same_team else 'Against'}"
-            entry[key] = int(entry.get(key) or 0) + 1
-            result_ids.append(match_id)
-            entry["resultMatchIds"] = result_ids[-80:]
+            side = _side(player, ours)
+            _bump(entry, _OUTCOMES[outcome] + side)
+            entry["resultMatchIds"] = [*settled, match_id][-80:]
             entry["lastResultMatchId"] = match_id
-            timeline = entry.setdefault("timeline", [])
-            timeline.append(
-                {
-                    "matchId": match_id,
-                    "at": int(time.time()),
-                    "side": "with" if same_team else "against",
-                    "result": outcome,
-                    "agent": player.get("agent"),
-                }
-            )
-            entry["timeline"] = timeline[-40:]
-            changed = True
-        if changed:
+            moment = {
+                "matchId": match_id,
+                "at": int(time.time()),
+                "side": side.lower(),
+                "result": outcome,
+                "agent": player.get("agent"),
+            }
+            entry["timeline"] = [*entry.get("timeline", []), moment][-40:]
+            counted = True
+        if counted:
             _save()
 
 
 def record_games(owner: str | None, games: list[dict[str, Any]] | None) -> int:
-    """Log everybody in past games from the History screen.
-
-    Each goes in as a teammate or an opponent. A match already logged, live or
-    from an earlier look, is left alone. Returns how many accounts gained a
-    match.
-    """
+    """Log everybody in past games from the History screen."""
     if not owner or not isinstance(games, list):
         return 0
     changed = 0
@@ -283,15 +299,11 @@ def record_games(owner: str | None, games: list[dict[str, Any]] | None) -> int:
 
 
 def teammates(owner: str | None) -> list[dict[str, Any]]:
-    """Return the accounts most often on your side, for a career's Played With.
-
-    Every lobby on record counts, at two lobbies or more, since one is a random.
-    """
+    """Return the accounts most often on your side, for a career's Played With."""
     if not owner:
         return []
 
     def rate(entry: dict[str, Any]) -> int | None:
-        # Out of the games that finished, as a lobby logged live may not have.
         wins = int(entry.get("winsWith") or 0)
         done = wins + int(entry.get("lossesWith") or 0) + int(entry.get("drawsWith") or 0)
         return round(100 * wins / done) if done else None
@@ -340,20 +352,12 @@ def encounter_for(owner: str | None, puuid: str | None) -> dict[str, Any] | None
 
 
 def _self_check() -> None:
-    # The "seen before" number is the one thing this file exists to get right,
-    # and it is easy to get wrong in two directions: counting the same lobby
-    # twice because a board is polled every few seconds, and counting a player
-    # on the wrong side when they change teams between matches.
-    # It must never write over the real encounter history, so the store, the
-    # writer and the path are all swapped out while it runs.
     import tempfile
     from unittest import mock
 
     mock.patch(f"{__name__}._STORE", _empty_store()).start()
     mock.patch(f"{__name__}._save").start()
     try:
-        # A store that will not parse goes aside under a new name, and the
-        # load starts empty, so the next save cannot write over it.
         with tempfile.TemporaryDirectory() as tmp:
             mock.patch(f"{__name__}._PATH", str(Path(tmp) / "encounters.json")).start()
             Path(_PATH).write_text('{"version": 2, "accou', encoding="utf-8")
@@ -361,6 +365,12 @@ def _self_check() -> None:
             check(not Path(_PATH).exists())
             kept = list(Path(tmp).glob("encounters.json.unreadable-*"))
             check([k.read_text(encoding="utf-8") for k in kept] == ['{"version": 2, "accou'], kept)
+
+        day = 86400
+        old = {"withCount": 1, "lastSeen": 0}
+        aged = {"accounts": {"a": {"players": {"once": old, "twice": {**old, "againstCount": 1}}}}}
+        _forget_strangers(aged, _STRANGER_DAYS * day + day)
+        check(list(aged["accounts"]["a"]["players"]) == ["twice"], aged)
 
         me, mate, foe = "self-1", "mate-1", "foe-1"
 
@@ -379,8 +389,6 @@ def _self_check() -> None:
 
         first = board("m1", "Blue")
         record_board(first)
-        # A board is rebuilt every few seconds. The same lobby must not count
-        # again each time it is polled.
         record_board(first)
         record_board(first)
 
@@ -398,7 +406,6 @@ def _self_check() -> None:
         check(foe_seen["winsAgainst"] == 1, foe_seen)
         check(foe_seen["withCount"] == 0, foe_seen)
 
-        # A draw is a result like any other and is recorded for everyone in it.
         drawn = board("m3", "Blue")
         record_board(drawn)
         record_result(drawn, "Draw")
@@ -406,15 +413,11 @@ def _self_check() -> None:
         check(after_draw["drawsWith"] == 1, after_draw)
         check(after_draw["winsWith"] == 1, after_draw)
 
-        # Same account, other side of the map. The two tallies are separate:
-        # two lobbies alongside by now, and this one against.
         record_board(board("m4", "Red"))
         swapped = present(encounter_for(me, mate))
         check(swapped["withCount"] == 2, swapped)
         check(swapped["againstCount"] == 1, swapped)
 
-        # Past games from History log teammates and opponents once, however
-        # many times the screen is opened, and never the owner.
         game = {
             "matchId": "hist-1",
             "yourTeam": "Blue",
@@ -432,6 +435,24 @@ def _self_check() -> None:
         check((mate["withCount"], mate["winsWith"], mate["name"]) == (1, 1, "Mate#1"), mate)
         check((foe["againstCount"], foe["winsAgainst"], foe["agents"]) == (1, 1, ["Jett"]), foe)
         check("owner-h" not in _players("owner-h"))
+
+        day = 86400
+
+        def lobbies(owner: str, who: str, days: list[int]) -> None:
+            _account(owner)["rosters"] = [
+                {"matchId": f"r{at}", "at": at * day, "teams": {owner: "Blue", who: "Red"}}
+                for at in days
+            ]
+
+        lobbies("owner-r", "often", [1, 9, 20, 29])
+        check(regulars("owner-r", now=40 * day) == {"often"})
+        check(regulars("owner-r", now=58 * day) == {"often"}, "a month from the last time")
+        check(regulars("owner-r", now=60 * day) == set(), "kept past a month")
+        lobbies("owner-r", "thrice", [1, 9, 20])
+        check(regulars("owner-r", now=21 * day) == set(), "three is not more than three")
+        lobbies("owner-r", "rarely", [1, 20, 40, 60])
+        check(regulars("owner-r", now=61 * day) == set(), "four over two months")
+        check(regulars(None) == set())
 
         print("encounter_log self-check OK (one count per lobby, sides kept apart)")
     finally:

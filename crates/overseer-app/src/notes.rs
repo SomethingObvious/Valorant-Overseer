@@ -1,35 +1,29 @@
-//! Notes on players, the things no API knows, like "instalocks Reyna".
+//! Notes on players, the things no API knows, like "instalocks Reyna", and
+//! on your own games.
 //!
-//! They are kept by account id because names change and repeat, and in plain
-//! JSON in the install's own directory so they can be read and deleted by
-//! hand.
+//! A player's are kept by account id because names change and repeat, a
+//! game's by its match id, and both in plain JSON in the install's own
+//! directory so they can be read and deleted by hand.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// What you wrote about one account.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Note {
-    /// The note itself, in your words.
     pub(crate) text: String,
-    /// Short labels, for the things you write about more than one person.
     pub(crate) tags: Vec<String>,
-    /// Their name when you wrote it, so the file makes sense to a person.
-    /// Lookups never use it.
     pub(crate) name: String,
 }
 
 impl Note {
-    /// Whether there is anything here worth keeping.
     pub(crate) fn is_empty(&self) -> bool {
         self.text.trim().is_empty() && self.tags.is_empty()
     }
 }
 
-/// Every note, by account id.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct Notes {
@@ -37,12 +31,10 @@ pub(crate) struct Notes {
 }
 
 impl Notes {
-    /// The note for an account, or an empty one.
     pub(crate) fn get(&self, puuid: &str) -> Note {
         self.entries.get(puuid).cloned().unwrap_or_default()
     }
 
-    /// What you wrote about this account, if anything.
     pub(crate) fn text(&self, puuid: &str) -> Option<&str> {
         self.entries
             .get(puuid)
@@ -50,7 +42,6 @@ impl Notes {
             .filter(|t| !t.is_empty())
     }
 
-    /// The first tag given to this account, if any.
     pub(crate) fn tag(&self, puuid: &str) -> Option<&str> {
         self.entries
             .get(puuid)
@@ -58,13 +49,11 @@ impl Notes {
             .map(String::as_str)
     }
 
-    /// The tags you have used most, most first, ties alphabetical.
     pub(crate) fn common_tags(&self, limit: usize) -> Vec<String> {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for tag in self.entries.values().flat_map(|n| n.tags.iter()) {
             *counts.entry(tag.as_str()).or_default() += 1;
         }
-        // The map is alphabetical and the sort is stable, which breaks ties.
         let mut counts: Vec<_> = counts.into_iter().collect();
         counts.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
         counts
@@ -74,13 +63,10 @@ impl Notes {
             .collect()
     }
 
-    /// Whether anything is written about them.
     pub(crate) fn has(&self, puuid: &str) -> bool {
         self.entries.get(puuid).is_some_and(|n| !n.is_empty())
     }
 
-    /// Writes a note, or removes it once it is empty so the file keeps no
-    /// blanks.
     pub(crate) fn set(&mut self, puuid: &str, note: Note) {
         if note.is_empty() {
             self.entries.remove(puuid);
@@ -89,26 +75,31 @@ impl Notes {
         }
     }
 
-    /// How many accounts have a note.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 }
 
-/// `.overseer/notes.json`.
-fn path(root: &Path) -> PathBuf {
-    root.join(".overseer").join("notes.json")
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum About {
+    Players,
+    Games,
 }
 
-/// Reads the notes, or none when the file is missing or broken.
-pub(crate) fn load(root: &Path) -> Notes {
-    crate::settings::read_or_set_aside(&path(root))
+fn path(root: &Path, about: About) -> PathBuf {
+    root.join(".overseer").join(match about {
+        About::Players => "notes.json",
+        About::Games => "game-notes.json",
+    })
 }
 
-/// Writes the notes, and says whether that worked.
-pub(crate) fn save(root: &Path, notes: &Notes) -> bool {
-    let file = path(root);
+pub(crate) fn load(root: &Path, about: About) -> Notes {
+    crate::settings::read_or_set_aside(&path(root, about))
+}
+
+pub(crate) fn save(root: &Path, about: About, notes: &Notes) -> bool {
+    let file = path(root, about);
     if !crate::settings::may_write(&file) {
         return false;
     }
@@ -120,15 +111,10 @@ pub(crate) fn save(root: &Path, notes: &Notes) -> bool {
     let Ok(text) = serde_json::to_string_pretty(notes) else {
         return false;
     };
-    // The window saves every half minute, and the notes rarely change.
     if std::fs::read_to_string(&file).is_ok_and(|old| old == text) {
         return true;
     }
-    // Through a file beside it, so a write cut short never leaves the notes
-    // half written.
-    let mut fresh = file.clone().into_os_string();
-    fresh.push(".new");
-    std::fs::write(&fresh, text).is_ok() && std::fs::rename(&fresh, &file).is_ok()
+    crate::settings::write_whole(&file, &text)
 }
 
 /// Splits a line of comma separated tags, lowercased and trimmed so
@@ -148,8 +134,6 @@ pub(crate) fn parse_tags(line: &str) -> Vec<String> {
     out
 }
 
-/// The tags, as they are typed back into the box. They are kept in lower
-/// case so a match ignores case, and shown with each word capitalized.
 pub(crate) fn tags_line(tags: &[String]) -> String {
     tags.iter()
         .map(|tag| shown_tag(tag))
@@ -157,9 +141,6 @@ pub(crate) fn tags_line(tags: &[String]) -> String {
         .join(", ")
 }
 
-/// A kept tag with each word capitalized. A letter whose capital lowers to
-/// something else, like the dotless i, stays as it is, so the box reads back
-/// to the same tag.
 pub(crate) fn shown_tag(tag: &str) -> String {
     tag.split(' ')
         .map(|word| {
@@ -179,9 +160,8 @@ pub(crate) fn shown_tag(tag: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Note, Notes, load, parse_tags, save, tags_line};
+    use super::{About, Note, Notes, load, parse_tags, save, tags_line};
 
-    /// Tags show capitalized in the box and read back as they were kept.
     #[test]
     fn tags_show_capitalized() {
         let kept = vec!["odin".to_owned(), "one tap".to_owned()];
@@ -191,7 +171,6 @@ mod tests {
         assert_eq!(parse_tags(&tags_line(&odd)), odd);
     }
 
-    /// A note with only tags is still a note.
     #[test]
     fn tags_alone_are_worth_keeping() {
         let mut notes = Notes::default();
@@ -205,8 +184,6 @@ mod tests {
         assert!(notes.has("p1"));
     }
 
-    /// Notes survive the disk, and a broken file reads as none but is kept
-    /// aside, so the save that follows cannot write over it.
     #[test]
     fn notes_survive_the_disk_and_a_broken_file_does_not_bite() {
         let root = std::env::temp_dir().join("overseer-notes-test");
@@ -223,16 +200,18 @@ mod tests {
                 name: "Day#9932".to_owned(),
             },
         );
-        assert!(save(&root, &notes));
-        let read = load(&root);
+        assert!(save(&root, About::Players, &notes));
+        assert!(save(&root, About::Games, &Notes::default()));
+        assert!(!load(&root, About::Games).has("p1"));
+        let read = load(&root, About::Players);
         assert_eq!(read.get("p1").text, "instalocks Reyna");
         assert_eq!(read.get("p1").tags, vec!["instalock"]);
         assert!(!read.has("nobody"));
 
         std::fs::write(dir.join("notes.json"), "{ not json").unwrap();
-        let empty = load(&root);
+        let empty = load(&root, About::Players);
         assert_eq!(empty.len(), 0);
-        assert!(save(&root, &empty));
+        assert!(save(&root, About::Players, &empty));
         let kept: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())

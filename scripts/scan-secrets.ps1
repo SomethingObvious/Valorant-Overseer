@@ -17,26 +17,19 @@ $Scans = @(
     # genpkey, cryptography and ssh-keygen -m PKCS8 emit. Split so this file does
     # not match its own pattern, the same trick the canary below uses.
     @{ Name = "private key"; Pattern = ('BEGIN [A-Z0-9 ]*PRIVATE' + ' KEY') },
-    @{ Name = "Ably root key"; Pattern = '\b[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}:[A-Za-z0-9_\-]{16,}\b' },
+    @{ Name = "API key and secret pair"; Pattern = '\b[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}:[A-Za-z0-9_\-]{16,}\b' },
     @{ Name = "Supabase service key"; Pattern = 'eyJ[A-Za-z0-9_\-]{30,}\.[A-Za-z0-9_\-]{30,}' },
     @{ Name = "Riot API key"; Pattern = 'RGAPI-[0-9a-fA-F-]{20,}' },
     @{ Name = "developer absolute path"; Pattern = '[A-Za-z]:\\Users\\(?!Public)[A-Za-z0-9._ -]+\\' },
 
-    # Split so this file does not match itself. build-release plants the joined
-    # string in a scratch file to prove the scan is actually running.
     @{ Name = "canary marker"; Pattern = ('VG-CANARY' + '-SECRET') }
 )
 
-# Extension list rather than "every text file": the scanned trees contain
-# release zips and screenshots, and a PNG trips a high-entropy pattern
-# eventually. Anything that can carry a credential in this repository is here.
 $TextExt = @(".py", ".ps1", ".psd1", ".bat", ".cmd", ".md", ".txt", ".json",
     ".example", ".yaml", ".yml", ".cfg", ".toml", ".env", ".pem", ".svg")
 $TextName = @(".gitignore", ".gitattributes", "VERSION", "policy")
 
 $bad = 0
-# This file necessarily contains the patterns it looks for, the way
-# the attribution scanner does. It is the one exemption.
 $SelfExempt = 'scan-secrets\.ps1$'
 
 foreach ($file in (Get-ChildItem -LiteralPath $Path -Recurse -File -Force)) {

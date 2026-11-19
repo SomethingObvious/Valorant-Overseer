@@ -126,7 +126,7 @@ $ConfigNames = @("ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg", "tox.
     "mypy.ini", ".mypy.ini", ".gitleaks.toml", ".typos.toml", "_typos.toml",
     ".yamllint.yml", ".yamllint.yaml")
 # The few that sit with what they configure instead: the Rust ones at the
-# workspace root in crates, and PowerShell's beside the scripts.
+# workspace root in crates, and the ones this script passes by path beside it.
 $ConfigHomes = @{
     "clippy.toml"                   = "crates"
     ".clippy.toml"                  = "crates"
@@ -134,6 +134,9 @@ $ConfigHomes = @{
     ".rustfmt.toml"                 = "crates"
     "deny.toml"                     = "crates"
     "PSScriptAnalyzerSettings.psd1" = "scripts"
+    ".markdownlint-cli2.yaml"       = "scripts"
+    ".yamllint.yml"                 = "scripts"
+    ".gitleaks.toml"                = "scripts"
 }
 
 function Test-NoNestedConfig {
@@ -423,7 +426,7 @@ function Invoke-ScriptAnalyzerCheck {
 function Invoke-Markdownlint {
     if (-not (Test-Tool "markdownlint-cli2")) { return $false }
     Push-Location $Root
-    try { return (Invoke-Native "markdownlint-cli2" @()) } finally { Pop-Location }
+    try { return (Invoke-Native "markdownlint-cli2" @("--config", "scripts\.markdownlint-cli2.yaml")) } finally { Pop-Location }
 }
 
 # pyproject.toml says how far mypy is turned up and why. It reads that config
@@ -462,7 +465,7 @@ function Invoke-Yamllint {
     $target = @($TrackedFiles | Where-Object { $_ -match '\.ya?ml$' } |
             ForEach-Object { Get-FullPath $_ })
     if ($target.Count -eq 0) { Write-Host "  + no YAML in scope" -ForegroundColor Green; return $true }
-    return (Invoke-Native "yamllint" (@("-s", "-c", (Join-Path $Root ".yamllint.yml")) + $target))
+    return (Invoke-Native "yamllint" (@("-s", "-c", (Join-Path $PSScriptRoot ".yamllint.yml")) + $target))
 }
 
 function Invoke-Typos {
@@ -478,7 +481,7 @@ function Invoke-Typos {
 # way to know about: this project's canary and a developer's home directory.
 function Invoke-Gitleaks {
     if (-not (Test-Tool "gitleaks")) { return $false }
-    $cfg = Join-Path $Root ".gitleaks.toml"
+    $cfg = Join-Path $PSScriptRoot ".gitleaks.toml"
     $ok = Invoke-Native "gitleaks" @("dir", "--no-banner", "--redact", "--exit-code", "1",
         "-c", $cfg, $Root)
     return (Invoke-Native "gitleaks" @("git", "--no-banner", "--redact", "--exit-code", "1",

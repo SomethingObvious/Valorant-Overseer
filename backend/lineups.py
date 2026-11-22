@@ -136,18 +136,37 @@ def _pixels(path: Path) -> bytes:
         return data
 
 
+def _redrawn(url: str, path: Path) -> bool:
+    # valorant-api can redraw a minimap without the game's build changing, so
+    # a saved one is asked about again hourly. The file's time is when it was
+    # last known to be current.
+    saved = path.stat().st_mtime
+    if time.time() - saved < _FRESH:
+        return False
+    before = _pixels(path)
+    try:
+        if not save_png(url, path, since=saved):
+            path.touch()
+            return False
+    except (OSError, ValueError) as e:
+        LOG.warning("could not check %s for a redrawn %s: %r", url, path, e)
+        return False
+    return _pixels(path) != before
+
+
 def _minimap(url: str | None, name: str, build: str | None) -> tuple[str | None, bool]:
     file = f"{slug(name)}.png"
     if not build:
         return _image(url, _MINIMAPS / file), False
     wanted = _MINIMAPS / slug(build) / file
     new = not wanted.exists()
+    redrawn = not new and bool(url) and _redrawn(str(url), wanted)
     copies = sorted(_MINIMAPS.glob(f"**/{file}"), key=lambda p: p.stat().st_mtime)
     got = _image(url, wanted)
     if not got:
         return (str(copies[-1]) if copies else None), False
     before = [c for c in copies if c != wanted]
-    changed = new and bool(before) and _pixels(before[-1]) != _pixels(wanted)
+    changed = redrawn or (new and bool(before) and _pixels(before[-1]) != _pixels(wanted))
     for old in before:
         old.unlink(missing_ok=True)
         if old.parent != _MINIMAPS:
@@ -1320,12 +1339,15 @@ def _self_check() -> None:
         served = {"a": png(b"old map", 9), "b": png(b"new map"), "c": png(b"newer map")}
         asked: list[str] = []
 
-        def fake_png(url: str, path: Path) -> None:
+        def fake_png(url: str, path: Path, since: float | None = None) -> bool:
             if url == "down":
                 raise OSError(url)
             asked.append(url)
+            if since and url == "same":
+                return False
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(served[url])
+            return True
 
         with (
             mock.patch(f"{__name__}._MINIMAPS", kept),
@@ -1340,7 +1362,16 @@ def _self_check() -> None:
             check(changed and Path(second or "").read_bytes() == served["b"], "a redrawn map")
             check(not Path(first or "").parent.exists())
             check(_minimap("c", "Corrode", "13.09.00.2") == (second, False))
-            check(asked == ["a", "b"])
+            check(asked == ["a", "b"], "a minimap saved this hour isn't asked about")
+            hour_ago = time.time() - _FRESH - 1
+            os.utime(second or "", (hour_ago, hour_ago))
+            check(_minimap("same", "Corrode", "13.09.00.2") == (second, False))
+            touched = Path(second or "").stat().st_mtime
+            check(touched > hour_ago + 1, "unchanged, so asked again later")
+            os.utime(second or "", (hour_ago, hour_ago))
+            third, changed = _minimap("c", "Corrode", "13.09.00.2")
+            check(changed and third == second, "redrawn within one build")
+            check(Path(third or "").read_bytes() == served["c"])
 
     with (
         tempfile.TemporaryDirectory() as tmp,

@@ -11,6 +11,7 @@ mod pick;
 mod pictures;
 mod plan;
 mod player;
+mod ruler;
 mod shapes;
 mod side;
 mod sight;
@@ -494,6 +495,7 @@ struct View {
     redraws: RedrawSettings,
     redraw_seen: Option<String>,
     new_looping: Option<bool>,
+    ruler: ruler::Ruler,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -696,6 +698,11 @@ impl Lineups {
             }
             Ok(value) => self.done(job, &value),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn ruled(&self) -> Option<[[f32; 2]; 2]> {
+        self.view.ruler.line()
     }
 
     #[cfg(test)]
@@ -950,12 +957,7 @@ impl Lineups {
         }
         self.dropped(ui);
         if ui.memory(|m| m.focused().is_none()) {
-            if ui.input(|i| i.key_pressed(egui::Key::T)) {
-                self.view.names = Some(!self.view.naming());
-            }
-            if ui.input(|i| i.key_pressed(egui::Key::R)) {
-                self.view.turned = (self.view.turned + 1) % 4;
-            }
+            self.view.letters(ui);
             self.arrows(ui);
         }
         self.poll(ui, bridge, live);
@@ -983,8 +985,9 @@ impl Lineups {
             asked = side::show(ui, atlas, &mut self.view);
         });
         let mut retry = false;
+        // Black like the minimap's own ground, so the map has no edge.
         CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(colour::BG))
+            .frame(egui::Frame::NONE.fill(colour::VOID))
             .show(ui, |ui| {
                 ui.multiply_opacity(opacity);
                 retry = plan::show(ui, atlas, &mut self.view);
@@ -1172,6 +1175,26 @@ impl Lineups {
 }
 
 impl View {
+    /// T for names, R to turn the map and M for the ruler.
+    fn letters(&mut self, ui: &Ui) {
+        let (names, turn, ruler) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::T),
+                i.key_pressed(egui::Key::R),
+                i.key_pressed(egui::Key::M),
+            )
+        });
+        if names {
+            self.names = Some(!self.naming());
+        }
+        if turn {
+            self.turned = (self.turned + 1) % 4;
+        }
+        if ruler {
+            self.ruler.toggle();
+        }
+    }
+
     fn marked(&self, atlas: &Atlas, lineup: &Lineup) -> bool {
         self.redraws.mark_redrawn && from_before(atlas, lineup)
     }

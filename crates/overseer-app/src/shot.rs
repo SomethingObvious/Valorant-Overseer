@@ -688,12 +688,24 @@ const fn machine() -> crate::machine::Machine {
 }
 
 fn past_games() -> serde_json::Value {
+    const RANKS: [&str; 6] = [
+        "Gold 1",
+        "Gold 2",
+        "Gold 3",
+        "Platinum 1",
+        "Platinum 2",
+        "Platinum 3",
+    ];
     let line = |name: &str, team: &str, agent: &str, k: u32, d: u32, a: u32, acs: u32| {
+        let at = (k + a) as usize % RANKS.len();
+        let peak = (at + (d as usize % 3)).min(RANKS.len() - 1);
         serde_json::json!({
             "puuid": name, "name": name, "team": team, "agent": agent,
             "kills": k, "deaths": d, "assists": a, "acs": acs,
             "adr": (f64::from(acs) * 0.6).round(), "hsPct": 18 + k.rem_euclid(9), "kast": 64 + a.rem_euclid(30),
             "firstBloods": k.rem_euclid(5), "isSubject": name == "SaltiSmySugar#OBAMA",
+            "tier": 12 + at, "rank": RANKS.get(at), "peak": 12 + peak, "peakRank": RANKS.get(peak),
+            "met": (k + d) % 3,
         })
     };
     serde_json::json!({
@@ -703,6 +715,7 @@ fn past_games() -> serde_json::Value {
                 "matchId": "m1", "map": "Haven", "mode": "Competitive",
                 "startedAt": NOW_MS - 3 * 3_600_000, "lengthMs": 2_280_000,
                 "score": [13, 11], "result": "Victory", "rrDelta": 27, "yourTeam": "Blue",
+                "rrAfter": 14, "tierAfter": 15, "rankAfter": "Platinum 1", "tierBefore": 14,
                 "usual": {"games": 20, "kd": 1.12, "acs": 214.6, "adr": 139.2, "hsPct": 23.1, "kast": 74.0},
                 "players": [
                     line("SaltiSmySugar#OBAMA", "Blue", "Brimstone", 21, 15, 15, 242),
@@ -721,6 +734,7 @@ fn past_games() -> serde_json::Value {
                 "matchId": "m2", "map": "Abyss", "mode": "Competitive",
                 "startedAt": NOW_MS - 26 * 3_600_000, "lengthMs": 2_040_000,
                 "score": [10, 13], "result": "Defeat", "rrDelta": -22, "yourTeam": "Blue",
+                "rrAfter": 87, "tierAfter": 14, "rankAfter": "Gold 3", "tierBefore": 15,
                 "players": [line("SaltiSmySugar#OBAMA", "Blue", "Brimstone", 14, 15, 9, 206)],
             },
             {
@@ -754,7 +768,7 @@ fn history_shot() -> egui_kittest::SnapshotResults {
         .build_ui_state(
             |ui, state: &mut (bool, History)| {
                 if state.0 {
-                    let _shown = state.1.show(ui, 5, NOW_MS, true);
+                    let _noted = state.1.show(ui, NOW_MS, true);
                 }
             },
             (false, noted_history()),
@@ -806,7 +820,7 @@ fn an_atlas() -> serde_json::Value {
         ]})
     };
     serde_json::json!({
-        "maps": [{ "name": "Ascent", "sites": ["A", "B"], "callouts": callouts }],
+        "maps": [{ "name": "Ascent", "sites": ["A", "B"], "callouts": callouts, "scale": 0.000_07 }],
         "agents": [
             kit("Brimstone", ["Stim Beacon", "Incendiary", "Sky Smoke", "Orbital Strike"]),
             kit("Viper", ["Snake Bite", "Poison Cloud", "Toxic Screen", "Viper's Pit"]),
@@ -903,6 +917,7 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
         ("lineup-any", "any", full),
         ("lineup-note", "note", full),
         ("lineup-redrawn", "redrawn", full),
+        ("lineup-ruler", "ruler", full),
         ("lineups-small", "browse", small),
         ("lineup-edit-small", "write", small),
     ] {
@@ -914,11 +929,14 @@ fn lineups_shot() -> egui_kittest::SnapshotResults {
             },
             (mode == "browse").then_some("brim-a"),
             match mode {
-                "note" | "redrawn" => "browse",
+                "note" | "redrawn" | "ruler" => "browse",
                 other => other,
             },
         );
         let mut shot = lineups_harness(size, screen, MapTurn::Drawn);
+        if mode == "ruler" {
+            measure(&mut shot);
+        }
         if mode == "note" {
             shot.hover_at(egui::pos2(425.0, 220.0));
             for _ in 0..8 {
@@ -943,6 +961,27 @@ fn drag(shot: &mut Harness<'_, (bool, Lineups, Bridge)>, from: egui::Pos2, to: e
     }
     shot.drop_at(to);
     shot.run();
+}
+
+/// Turns the ruler on and measures from B Main across to the right.
+fn measure(shot: &mut Harness<'_, (bool, Lineups, Bridge)>) {
+    shot.key_press(egui::Key::M);
+    shot.run();
+    drag(shot, egui::pos2(300.0, 640.0), egui::pos2(560.0, 640.0));
+}
+
+#[test]
+fn the_ruler_measures_without_touching_the_lineups() {
+    let mut shot = screen("browse");
+    measure(&mut shot);
+    let Some([a, b]) = shot.state().1.ruled() else {
+        panic!("a drag with the ruler on laid nothing down");
+    };
+    assert!(b[0] > a[0] && (b[1] - a[1]).abs() < 0.001, "{a:?} to {b:?}");
+    assert!(
+        shot.state().1.placed().is_none(),
+        "measuring started a lineup"
+    );
 }
 
 fn screen(mode: &str) -> Harness<'static, (bool, Lineups, Bridge)> {

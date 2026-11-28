@@ -268,6 +268,18 @@ pub(crate) fn panel_grip(ui: &Ui, panel: Rect, width: f32, chosen: &mut Option<f
     response.drag_stopped()
 }
 
+/// Every character past ASCII in an answer's strings, so the faces for
+/// players' names in other scripts load before History or a profile draws
+/// them, as they already do for the live board.
+fn foreign(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.chars().filter(|c| !c.is_ascii()).collect(),
+        serde_json::Value::Array(items) => items.iter().map(foreign).collect(),
+        serde_json::Value::Object(fields) => fields.values().map(foreign).collect(),
+        _ => String::new(),
+    }
+}
+
 fn match_began(was: Option<&str>, now: Option<&str>) -> bool {
     was == Some("PREGAME") && now == Some("INGAME")
 }
@@ -548,7 +560,10 @@ impl Overseer {
         }
     }
 
-    fn answer(&mut self, id: u64, result: Result<serde_json::Value, String>) {
+    fn answer(&mut self, ctx: &egui::Context, id: u64, result: Result<serde_json::Value, String>) {
+        if let Ok(value) = &result {
+            overseer_ui::cover(ctx, &foreign(value));
+        }
         if self.history.waiting_on(id) {
             self.history.answered(result);
         } else if self.lineups.waiting_on(id) {
@@ -590,7 +605,7 @@ impl Overseer {
                         other => other,
                     };
                 }
-                Event::Answer { id, result } => self.answer(id, result),
+                Event::Answer { id, result } => self.answer(ctx, id, result),
                 Event::Unreadable(why) => {
                     self.unreadable.0 = self.unreadable.0.saturating_add(1);
                     self.unreadable.1 = Some(why);
@@ -896,11 +911,7 @@ impl Overseer {
                     self.screen = Screen::Board;
                 } else {
                     self.screen = Screen::History;
-                    self.history.ask(
-                        &self.bridge,
-                        self.settings.history_games,
-                        self.status == Status::Live,
-                    );
+                    self.history.ask(&self.bridge, self.status == Status::Live);
                 }
             }
             Hint::Lineups => self.flip_lineups(),

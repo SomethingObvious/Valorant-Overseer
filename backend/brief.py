@@ -10,7 +10,7 @@ from collections import Counter
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
-from statistics import median
+from statistics import NormalDist, median
 from typing import TYPE_CHECKING, Any
 
 import overseerlog
@@ -490,10 +490,24 @@ def position(z: float, read: str, band_name: str | None, matches: int) -> float:
     found = curve_for(read, band_name)
     if found:
         return min(max(z, float(found["lo"])), float(found["hi"]))
-    n = norms()
-    r = float((n.get("persistence") or {}).get(read, {}).get(band_name or "", 0.6))
+    return z / _spread(read, band_name, matches)
+
+
+def z_at(pct: float, read: str, band_name: str | None, matches: int) -> float:
+    """Return the mean z of the peer at this percentile, the inverse of `percentile`."""
+    found = curve_for(read, band_name)
+    if found:
+        q = [float(v) for v in found["quantiles"]]
+        x = min(max(pct, 0.0), 1.0) * (len(q) - 1)
+        i = min(int(x), len(q) - 2)
+        return q[i] + (x - i) * (q[i + 1] - q[i])
+    return NormalDist().inv_cdf(min(max(pct, 1e-6), 1 - 1e-6)) * _spread(read, band_name, matches)
+
+
+def _spread(read: str, band_name: str | None, matches: int) -> float:
+    r = float((norms().get("persistence") or {}).get(read, {}).get(band_name or "", 0.6))
     r = min(max(r, 0.2), 0.95)
-    return z / math.sqrt(r + (1 - r) / max(1, matches))
+    return math.sqrt(r + (1 - r) / max(1, matches))
 
 
 @cache
@@ -600,7 +614,7 @@ def lines_for(
         if read in POSITIONAL or read.startswith("at_plant"):
             continue
         zs: list[float] = []
-        num = den = peer_num = peer_den = 0.0
+        num = den = peer_num = peer_den = peer_sd = 0.0
         for r in reads:
             pair = _pair(r, read, weapons)
             if not pair or pair[1] <= 0:
@@ -613,6 +627,7 @@ def lines_for(
                 zs.append((value - stat[0]) / stat[1])
                 per_match.setdefault(read, {})[str(r.get("match_id"))] = zs[-1]
                 peer_num += stat[0] * pair[1]
+                peer_sd += stat[1] * pair[1]
                 peer_den += pair[1]
         if den <= 0 or (read.startswith("carry_") and num <= 0):
             continue
@@ -633,6 +648,11 @@ def lines_for(
             continue
         z = sum(zs) / len(zs)
         flag = _flag(z, len(zs))
+        peer_mean = peer_num / peer_den
+        ends = [
+            _bounded(read, peer_mean + z_at(p, read, band_name, len(zs)) * peer_sd / peer_den)
+            for p in LADDER_ENDS
+        ]
         line(
             "tendency",
             read,
@@ -641,7 +661,9 @@ def lines_for(
             count=count,
             contributing=len(zs),
             positive=sum(1 for v in zs if v > 0),
-            peers=round(peer_num / peer_den, 4),
+            peers=round(peer_mean, 4),
+            sd=round(peer_sd / peer_den, 4),
+            ends=[round(v, 4) for v in ends],
             z=round(z, 2),
             pct=round(percentile(z, read, band_name, len(zs)), 3),
             pos=round(position(z, read, band_name, len(zs)), 3),
@@ -1216,6 +1238,9 @@ def _present(
                 + (f" vs peers' {_figure(read, float(peers))}" if peers is not None else "")
                 + f" · {row['count']} {unit}"
             )
+            if row.get("ends"):
+                row["low"], row["high"] = (_figure(read, v) for v in row["ends"])
+                row["own"] = _figure(read, float(row["value"]))
         elif kind == "positional":
             row["headline"] = _label(read)
             row["evidence"] = f"{row['count']} games · {row['on_map']} on {map_name}"
@@ -1356,12 +1381,42 @@ def _buy_text(
     return text
 
 
+# The percentiles whose figures the ladder prints at its ends. The 0th and
+# 100th are single outliers, so the ends say what the 1st and 99th average.
+LADDER_ENDS = (0.01, 0.99)
+
+
+def _bounded(read: str, value: float) -> float:
+    value = max(value, 0.0)
+    return value if read in _TIMED or read == "kill_dist_mean" else min(value, 1.0)
+
+
+_TIMED = ("first_lethal_attack", "first_lethal_defense", "death_t")
+
+
 def _figure(read: str, value: float) -> str:
-    if read in ("first_lethal_attack", "first_lethal_defense", "death_t"):
+    if read in _TIMED:
         return f"{value / 1000:.0f}s"
     if read == "kill_dist_mean":
-        return f"{value:,.0f} map units"
+        # The game measures in centimetres, as Unreal does.
+        return f"{value / 100:.0f} m"
     return f"{value:.0%}"
+
+
+def _curve_figures(row: dict[str, Any]) -> dict[str, str]:
+    """Return the figures at a habit curve's two ends and at its mark."""
+    if row["kind"] != "tendency" or row.get("sd") is None or row.get("peers") is None:
+        return {"low": "", "high": "", "own": ""}
+    read, band_name = row["read"], row.get("band")
+    shape = _shape(read, band_name)
+    # A measured curve is drawn in mean z, a normal one in mean z over the spread.
+    scale = 1.0 if shape["curve"] else _spread(read, band_name, int(row["contributing"]))
+    peers, sd = float(row["peers"]), float(row["sd"])
+    low, high = (
+        _figure(read, _bounded(read, peers + end * scale * sd))
+        for end in (shape["lo"], shape["hi"])
+    )
+    return {"low": low, "high": high, "own": _figure(read, float(row["value"]))}
 
 
 def _tendency_text(
@@ -1783,7 +1838,7 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         if forms
         else f"{share} of peers {'below' if z > 0 else 'above'}"
     )
-    if row["kind"] == "tendency" and row.get("peers") is not None and read != "kill_dist_mean":
+    if row["kind"] == "tendency" and row.get("peers") is not None:
         evidence += (
             f" · {_figure(read, float(row['value']))} vs {_figure(read, float(row['peers']))}"
         )
@@ -1795,7 +1850,7 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         "headline": words,
         "evidence": evidence,
         "suggest": suggest,
-        "own": "",
+        **_curve_figures(row),
         "peers": "",
         "share": _ordinal(float(row.get("pct") or 0.5)),
         "pct": float(row.get("pct") or 0.5),
@@ -1803,6 +1858,49 @@ def _habit_line(row: dict[str, Any], *, other: bool, is_self: bool) -> dict[str,
         "left": AXIS_ENDS.get(key, ("below peers", "above peers"))[0],
         "right": AXIS_ENDS.get(key, ("below peers", "above peers"))[1],
         **_shape(read, row.get("band")),
+    }
+
+
+_FIRST_FIGHT = ("first_lethal_attack", "first_lethal_defense")
+
+
+def _pace_figures(rows: list[dict[str, Any]], pace: dict[str, Any]) -> dict[str, str]:
+    """Return how soon peers at a pace curve's two ends, and they, first fight in a round.
+
+    Pace is a blend of reads with no unit of its own, and the time to a first
+    kill or death is the part of it a player can picture.
+    """
+    sides = [
+        r
+        for r in rows
+        if r["kind"] == "tendency" and r["read"] in _FIRST_FIGHT and r.get("sd") is not None
+    ]
+    if not sides:
+        return {"low": "", "high": "", "own": "", "peers": ""}
+    band_name, n = pace.get("band"), int(pace["count"])
+    key = "pace" if curve_for("pace", band_name) else next(iter(AXES["pace"]))
+    shape = _shape("pace", band_name)
+    scale = 1.0 if shape["curve"] else _spread(key, band_name, n)
+
+    def at(end: float) -> float:
+        # A sooner first fight is the aggressive side, so the share turns over.
+        share = 1 - percentile(end * scale, key, band_name, n)
+        times = [
+            float(r["peers"])
+            + z_at(share, r["read"], r.get("band"), int(r["contributing"])) * float(r["sd"])
+            for r in sides
+        ]
+        return _bounded(sides[0]["read"], sum(times) / len(times))
+
+    def mean_of(field: str) -> float:
+        return sum(float(r[field]) for r in sides) / len(sides)
+
+    read = sides[0]["read"]
+    return {
+        "low": _figure(read, at(shape["lo"])),
+        "high": _figure(read, at(shape["hi"])),
+        "own": _figure(read, mean_of("value")),
+        "peers": _figure(read, mean_of("peers")),
     }
 
 
@@ -1823,12 +1921,17 @@ def _tag(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             if pct >= 0.5
             else f"More passive than {1 - pct:.0%} of peers"
         )
+    figures = _pace_figures(rows, pace)
+    if figures["own"]:
+        where += f" · first fight {figures['own']} vs {figures['peers']}"
     return {
         "word": word.lower() if word != "Even pace" else "",
         "headline": word,
         "evidence": f"{where} · {n} games",
         "suggest": "",
-        "own": "",
+        "low": figures["low"],
+        "high": figures["high"],
+        "own": figures["own"],
         "peers": "",
         "share": _ordinal(pct),
         "pct": pct,
@@ -2260,7 +2363,7 @@ def _self_check() -> None:
             **reads,
             "match_id": f"m{i}",
             "map": "Bind",
-            "sums": {"open_all": [8.0, 20.0]},
+            "sums": {"open_all": [8.0, 20.0], "first_lethal_attack": [324000.0, 12.0]},
             "buys": unknown_only,
         }
         for i in range(6)
@@ -2280,6 +2383,11 @@ def _self_check() -> None:
     check(all("reads" not in p for p in players.values()), "raw measurements dropped")
     check(players["p6"]["brief"] == [] and players["p7"]["brief"] == [], "too few, no lines")
     check(players["p0"]["brief"] and players["p5"]["brief"], "lines for the readable players")
+    laddered = [r for r in players["p0"]["brief"] if r["kind"] == "tendency"]
+    check(
+        bool(laddered) and all(r.get("low") and r.get("high") and r.get("own") for r in laddered),
+        "every tendency row has its ladder figures",
+    )
     check(
         all(row["headline"] and row["evidence"] is not None for row in players["p0"]["brief"]),
         "every line has a headline and its evidence",
@@ -2343,6 +2451,7 @@ def _self_check() -> None:
         all(0 < h["pct"] < 1 and (h["pos"] > 0) == (h["pct"] > 0.5) for h in sc["habits"]), "curve"
     )
     check(all(h["left"] and h["right"] for h in sc["habits"]), "curve ends named")
+    check(all(h["low"] and h["high"] and h["own"] for h in sc["habits"]), "curve figures")
     check(all(h["curve"] and h["lo"] <= h["pos"] <= h["hi"] for h in sc["habits"]), "real curves")
     check(all(h["share"][-2:] in {"st", "nd", "rd", "th"} for h in sc["habits"]), "chart number")
     check(
@@ -2352,8 +2461,13 @@ def _self_check() -> None:
     check(percentile(0.0, "open_all", "silver-gold", 10) > 0.4, "the median sits near the middle")
     check(percentile(9.0, "open_all", "silver-gold", 10) == 1.0, "beyond every peer")
     check(sc["tag"] and sc["tag"]["headline"] in ("Aggressive", "Passive", "Even pace"), sc["tag"])
+    check(all(sc["tag"][k].endswith("s") for k in ("low", "own", "high")), "pace in seconds")
+    check("first fight" in sc["tag"]["evidence"], sc["tag"]["evidence"])
     check(abs(percentile(0.0, "no_such_read", "silver-gold", 10) - 0.5) < 1e-9, "normal median")
     check(percentile(1.0, "no_such_read", "silver-gold", 10) > 0.85, "a sd above is well up")
+    for read in ("open_all", "no_such_read"):
+        back = percentile(z_at(0.3, read, "silver-gold", 10), read, "silver-gold", 10)
+        check(abs(back - 0.3) < 0.01, f"z_at inverts percentile for {read}: {back}")
     check(all(h["headline"] and not h["suggest"] for h in sc["habits"]), sc["habits"])
     tie_lost = dict(tie)
     tie_lost["after_lost_pistol"] = {

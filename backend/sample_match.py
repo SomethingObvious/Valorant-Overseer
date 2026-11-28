@@ -444,6 +444,7 @@ def history(count: int) -> dict[str, Any]:
     rng = random.Random(29)
     now = int(time.time() * 1000)
     games = []
+    tier, rr = 14, 37
     for n in range(max(1, min(past_games.MOST, count))):
         agents = rng.sample(sample_data.AGENT_NAMES, 10)
         won = rng.random() < 0.55
@@ -463,9 +464,13 @@ def history(count: int) -> dict[str, Any]:
                 "hsPct": rng.randint(10, 38),
                 "kast": rng.randint(55, 88),
                 "firstBloods": rng.randint(0, 6),
+                "tier": rng.randint(11, 15),
             }
             for i in range(10)
         ]
+        for player in players:
+            player["peak"] = player["tier"] + rng.choice((0, 0, 1, 2, 4))
+            player["met"] = rng.choice((0, 0, 0, 0, 1, 2, 5))
         players.sort(key=lambda p: -p["acs"])
         match_id = f"demo-{n:04d}"
         board = {
@@ -482,7 +487,14 @@ def history(count: int) -> dict[str, Any]:
             "players": players,
         }
         delta = rng.randint(14, 24) if won else -rng.randint(10, 21)
-        games.append(past_games.view(board, "demo-self", {match_id: delta}))
+        before, rr_before = tier, rr - delta
+        if rr_before < 0:
+            before, rr_before = tier - 1, rr_before + 100
+        elif rr_before > 99:
+            before, rr_before = tier + 1, rr_before - 100
+        rated = {match_id: {"delta": delta, "tier": tier, "rr": rr, "tierBefore": before}}
+        games.append(past_games.view(board, "demo-self", rated))
+        tier, rr = before, rr_before
     for game in games:
         game["usual"] = past_games.usual(game, games, "demo-self")
     return {"games": games, "asked": count}

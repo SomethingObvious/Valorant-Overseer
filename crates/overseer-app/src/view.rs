@@ -1010,8 +1010,8 @@ pub(crate) fn title(ui: &mut Ui, text: &str, about: &str) {
             pos2(rect.left() + space::XL, rect.center().y),
             Align2::LEFT_CENTER,
             about,
-            Face::Body.at(size::BODY),
-            colour::TEXT_FAINT,
+            Face::Display.at(size::TITLE),
+            colour::TEXT_DIM,
         );
     }
 }
@@ -1107,10 +1107,14 @@ fn switch(ui: &mut Ui, name: &str, about: &str, on: bool, one_of: bool, still: b
 }
 
 pub(crate) fn note(ui: &mut Ui, text: &str) {
+    note_in(ui, text, colour::TEXT_DIM);
+}
+
+pub(crate) fn note_in(ui: &mut Ui, text: &str, tint: egui::Color32) {
     let galley = ui.painter().layout(
         text.to_owned(),
         Face::Body.at(size::MICRO),
-        colour::TEXT_DIM,
+        tint,
         2.0f32.mul_add(-space::XL, ui.available_width()).max(120.0),
     );
     let tall = galley.size().y.max(space::ROW - space::MD) + space::MD;
@@ -1121,7 +1125,7 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
     }
     let top = rect.center().y - galley.size().y / 2.0;
     ui.painter()
-        .galley(pos2(rect.left() + space::XL, top), galley, colour::TEXT_DIM);
+        .galley(pos2(rect.left() + space::XL, top), galley, tint);
 }
 
 pub(crate) fn welcome(ui: &mut Ui) -> bool {

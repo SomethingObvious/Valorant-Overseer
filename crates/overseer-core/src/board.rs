@@ -319,6 +319,10 @@ pub struct TendencyFinding {
     pub hi: Option<f32>,
     /// Their figure, for the chart, empty when the chart prints none.
     pub own: Option<String>,
+    /// The figure a peer at the curve's left end has, empty when unknown.
+    pub low: Option<String>,
+    /// The figure a peer at the curve's right end has, empty when unknown.
+    pub high: Option<String>,
     /// The peers' figure, for the chart, empty when the chart prints none.
     pub peers: Option<String>,
     /// The percentile at the mark, read left to right.
@@ -364,6 +368,12 @@ pub struct BriefLine {
     /// The share of peers below them, from 0 to 1, for a line measured
     /// against peers.
     pub pct: Option<f32>,
+    /// The figure a peer at the ladder's left end has.
+    pub low: Option<String>,
+    /// The figure a peer at the ladder's right end has.
+    pub high: Option<String>,
+    /// Their own figure, for the ladder.
+    pub own: Option<String>,
     /// Whether the read stands out from the player's peers.
     pub flag: bool,
 }

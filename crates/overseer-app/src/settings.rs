@@ -123,7 +123,6 @@ pub(crate) struct Settings {
     #[serde(flatten)]
     pub(crate) overlay: OverlaySettings,
     pub(crate) enemies_first: bool,
-    pub(crate) history_games: u32,
     pub(crate) games_read: u16,
     pub(crate) games_within: u16,
     pub(crate) party_kept: u16,
@@ -384,7 +383,6 @@ impl Default for Settings {
             overlay: OverlaySettings::default(),
             enemies_first: true,
             // Two sessions' worth, and one page of Riot's history.
-            history_games: 10,
             games_read: 20,
             games_within: 30,
             party_kept: 14,

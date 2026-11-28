@@ -29,7 +29,9 @@ _MAX_POINTS = 40
 _REFRESH = 120
 _AFTER_MATCH = (15, 45, 120)
 # Retries for a match's details, which Riot is slow to post too.
-_DETAIL_WAITS = (0, 20, 60)
+# Riot has taken over five minutes to post a match's details, and a match
+# that gives up first never reaches History.
+_DETAIL_WAITS = (0, 20, 60, 180, 420)
 
 _STATE: dict[str, Any] = {
     "prev_state": None,
@@ -218,7 +220,7 @@ def _record(lm: Any, board: dict[str, Any]) -> None:
                     _STANDING[str(point["puuid"])] = (at, time.time())
         # Last, since it asks Riot again and can wait on the minute's budget,
         # and a scoreboard that won't save must not cost the session its game.
-        past_games.keep(lm.auth, str(point["matchId"]))
+        past_games.keep(lm.auth, str(point["matchId"]), seen=board.get("players"))
     except Exception:
         LOG.exception("recording match %s failed", board.get("matchId"))
 

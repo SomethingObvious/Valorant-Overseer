@@ -148,12 +148,13 @@ pub mod motion {
         add: impl FnOnce(&mut egui::Ui) -> R,
     ) -> R {
         let t = enter(ui.ctx(), id, delay);
-        if t >= 1.0 {
-            return add(ui);
-        }
+        // Always in a scope, even once it has arrived, so the ids of what is
+        // inside stay the same and a nested arrival doesn't play twice.
         ui.scope(|ui| {
-            ui.multiply_opacity(t);
-            ui.add_space(RISE * (1.0 - t));
+            if t < 1.0 {
+                ui.multiply_opacity(t);
+                ui.add_space(RISE * (1.0 - t));
+            }
             add(ui)
         })
         .inner
@@ -719,48 +720,93 @@ const BOLD_FALLBACK: &str = "overseer-bold-fallback";
 /// Windows' own bold faces for scripts Inter lacks, read from its font folder
 /// because bundling them would add fifty megabytes to the binary. Segoe UI
 /// covers Arabic, Hebrew, Armenian, Georgian and the small caps letters name
-/// generators use, Nirmala the Indic scripts, Gadugi Cherokee, and Segoe UI
-/// Symbol the script and double struck letters.
-const SCRIPTS: [Script; 8] = [
+/// generators use, Nirmala the Indic scripts, Gadugi Cherokee, Segoe UI
+/// Symbol the script and double struck letters, and the rest one script each.
+/// A Riot ID can hold a letter of any script, so every script Windows ships a
+/// face for is here, as the code point ranges each face is asked for.
+const SCRIPTS: [Script; 15] = [
     (
         "malgunbd.ttf",
         0,
-        |c| matches!(c, '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}'),
+        &[
+            (0x1100, 0x11FF),
+            (0x3130, 0x318F),
+            (0xA960, 0xA97F),
+            (0xAC00, 0xD7FF),
+            (0xFFA0, 0xFFDC),
+        ],
     ),
     (
         "YuGothB.ttc",
         0,
-        |c| matches!(c, '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}'),
+        &[
+            (0x3000, 0x30FF),
+            (0x31F0, 0x31FF),
+            (0xFF00, 0xFF9F),
+            (0xFFE0, 0xFFEF),
+        ],
     ),
     (
         "msyhbd.ttc",
         0,
-        |c| matches!(c, '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}'),
+        &[
+            (0x2E80, 0x2FDF),
+            (0x3100, 0x312F),
+            (0x31A0, 0x31EF),
+            (0x3200, 0x4DBF),
+            (0x4E00, 0x9FFF),
+            (0xF900, 0xFAFF),
+        ],
     ),
-    ("LeelawUI.ttf", 0, |c| matches!(c, '\u{0E00}'..='\u{0E7F}')),
-    ("segoeuib.ttf", 0, |c| {
-        matches!(
-            c,
-            '\u{0530}'..='\u{08FF}'
-                | '\u{10A0}'..='\u{10FF}'
-                | '\u{1D00}'..='\u{1DBF}'
-                | '\u{A720}'..='\u{A7FF}'
-                | '\u{FB00}'..='\u{FDFC}'
-                | '\u{FE70}'..='\u{FEFF}'
-        )
-    }),
-    ("Nirmala.ttc", 1, |c| matches!(c, '\u{0900}'..='\u{0DFF}')),
+    ("simsunb.ttf", 0, &[(0x2_0000, 0x2_A6DF)]),
+    ("SimsunExtG.ttf", 0, &[(0x2_A700, 0x3_134F)]),
     (
-        "gadugib.ttf",
+        "LeelawUI.ttf",
         0,
-        |c| matches!(c, '\u{13A0}'..='\u{167F}' | '\u{AB70}'..='\u{ABBF}'),
+        &[(0x0E00, 0x0EFF), (0x1780, 0x17FF), (0x19E0, 0x19FF)],
     ),
-    ("seguisym.ttf", 0, |c| {
-        matches!(c, '\u{1D400}'..='\u{1D7FF}')
-    }),
+    (
+        "mmrtextb.ttf",
+        0,
+        &[(0x1000, 0x109F), (0xA9E0, 0xA9FF), (0xAA60, 0xAA7F)],
+    ),
+    (
+        "ebrimabd.ttf",
+        0,
+        &[
+            (0x07C0, 0x07FF),
+            (0x1200, 0x139F),
+            (0x2D30, 0x2DDF),
+            (0xA500, 0xA63F),
+            (0xAB00, 0xAB2F),
+        ],
+    ),
+    ("himalaya.ttf", 0, &[(0x0F00, 0x0FFF)]),
+    ("monbaiti.ttf", 0, &[(0x1800, 0x18AF)]),
+    ("msyi.ttf", 0, &[(0xA000, 0xA4CF)]),
+    (
+        "segoeuib.ttf",
+        0,
+        &[
+            (0x0530, 0x08FF),
+            (0x10A0, 0x10FF),
+            (0x1D00, 0x1DBF),
+            (0xA720, 0xA7FF),
+            (0xFB00, 0xFDFC),
+            (0xFE70, 0xFEFF),
+        ],
+    ),
+    ("Nirmala.ttc", 1, &[(0x0900, 0x0DFF)]),
+    ("gadugib.ttf", 0, &[(0x13A0, 0x167F), (0xAB70, 0xABBF)]),
+    ("seguisym.ttf", 0, &[(0x1_D400, 0x1_D7FF)]),
 ];
 
-type Script = (&'static str, u32, fn(char) -> bool);
+type Script = (&'static str, u32, &'static [(u32, u32)]);
+
+fn needs(ranges: &[(u32, u32)], c: char) -> bool {
+    let c = u32::from(c);
+    ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&c))
+}
 
 /// Loads the system face for any script in `text` that has none yet, on its
 /// own thread because the files are tens of megabytes.
@@ -787,8 +833,8 @@ pub fn cover_now(ctx: &egui::Context, text: &str) {
 fn wanted(ctx: &egui::Context, text: &str) -> Vec<(&'static str, u32)> {
     let asked = egui::Id::new("overseer-scripts");
     let mut out = Vec::new();
-    for (file, index, needs) in SCRIPTS {
-        if !text.chars().any(needs) {
+    for (file, index, ranges) in SCRIPTS {
+        if !text.chars().any(|c| needs(ranges, c)) {
             continue;
         }
         let key = asked.with(file);
@@ -926,7 +972,7 @@ fn set(upper: &str, font: FontId, tint: Color32) -> egui::text::LayoutJob {
 }
 
 fn unspaced(c: char) -> bool {
-    SCRIPTS.iter().any(|(_, _, needs)| needs(c))
+    SCRIPTS.iter().any(|(_, _, ranges)| needs(ranges, c))
 }
 
 fn trailing(text: &str, points: f32) -> f32 {
@@ -1078,16 +1124,39 @@ mod tests {
             "\u{FF2B}\u{FF29}\u{FF2E}\u{FF27}",
             "\u{2020}\u{029A}\u{029E}\u{00D8}",
             "\u{13B7}\u{13A1}\u{13D2}",
+            "\u{6DDA}\u{6C34}\u{6D41}\u{904E}\u{751F}\u{547D}",
+            "\u{FF33}\u{FF41}\u{FF47}\u{FF45}",
+            "\u{3010}\u{738B}\u{3011}",
+            "\u{0EA5}\u{0EB2}\u{0EA7}",
+            "\u{1781}\u{17D2}\u{1798}\u{17C2}\u{179A}",
+            "\u{1019}\u{103C}\u{1014}\u{103A}\u{1019}\u{102C}",
+            "\u{12A0}\u{121B}\u{122D}\u{129B}",
+            "\u{0F56}\u{0F7C}\u{0F51}",
+            "\u{182E}\u{1823}\u{1829}",
+            "\u{A188}\u{A320}",
+            "\u{20B9F}\u{2A6A5}",
+            "\u{2B820}\u{30000}",
         ];
         let ctx = egui::Context::default();
         install_fonts(&ctx);
         let mut missing = Vec::new();
-        for frame in 0..3 {
+        for frame in 0..4 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                if frame == 0 {
+                if frame == 1 {
+                    // Each name has to bring its own face in, so a character
+                    // the bundled faces lack must name one by itself.
+                    for c in names.concat().chars() {
+                        if !super::unspaced(c)
+                            && !ui
+                                .ctx()
+                                .fonts_mut(|f| f.has_glyph(&Face::Body.at(size::BODY), c))
+                        {
+                            missing.push(format!("no face asked for U+{:04X}", u32::from(c)));
+                        }
+                    }
                     cover_now(ui.ctx(), &names.concat());
                 }
-                if frame < 2 {
+                if frame < 3 {
                     return;
                 }
                 for face in [Face::Display, Face::Body] {

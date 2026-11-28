@@ -73,8 +73,10 @@ pub(super) fn show(ui: &mut Ui, atlas: &Atlas, view: &mut View) -> bool {
     } else {
         prompt(&painter, square, view);
     }
-    if response.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    let response = response.on_hover_cursor(egui::CursorIcon::Crosshair);
+    let scale = plan.scale.filter(|_| view.export.is_none());
+    if view.ruler.over(ui, (&painter, square), &response, scale) {
+        return retry;
     }
     if matches!(view.mode, Mode::Draw(_)) {
         draw(ui, &painter, square, &response, view);
@@ -627,6 +629,7 @@ impl Floor {
 fn prompt(painter: &egui::Painter, square: Square, view: &View) {
     let drawing;
     let words = match &view.mode {
+        _ if view.ruler.on => "Drag across the map to measure, or click to clear it",
         Mode::Browse => "Click a lineup to see it, or rest on one for its notes",
         Mode::Edit(draft) => {
             let reach = draft.lineup.ability.as_deref().and_then(areas::reach);
@@ -668,7 +671,7 @@ fn prompt(painter: &egui::Painter, square: Square, view: &View) {
                 .x;
             (font, space::XL.mul_add(2.0, shown))
         })
-        .find(|(_, wide)| *wide <= square.width())
+        .find(|(_, wide)| *wide <= 2.0f32.mul_add(-super::ruler::ROOM, square.width()))
     else {
         return;
     };

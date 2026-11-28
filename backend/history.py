@@ -125,6 +125,7 @@ def _point_from_update(update: dict[str, Any]) -> dict[str, Any] | None:
         "resultExact": False,
         "delta": earned,
         "tier": update.get("TierAfterUpdate"),
+        "tierBefore": update.get("TierBeforeUpdate"),
         "rr": update.get("RankedRatingAfterUpdate"),
     }
 
@@ -182,15 +183,33 @@ def _competitive_updates(auth: Any, puuid: str) -> list[dict[str, Any]]:
     return matches
 
 
-def deltas(puuid: str) -> dict[str, int]:
-    """Return the RR each recorded competitive match gave or took, by match id."""
+def outcomes(puuid: str) -> dict[str, dict[str, Any]]:
+    """Return what each recorded competitive match did to the rating, by match id.
+
+    Each has the RR it gave or took, the tier and RR it left, and the tier
+    before it, from Riot's update or else from the match before.
+    """
     with _LOCK:
         points = ((_STORE.get("accounts") or {}).get(puuid) or {}).get("points") or []
-        return {
-            p["matchId"]: int(p["delta"])
-            for p in points
-            if p.get("matchId") and isinstance(p.get("delta"), (int, float))
-        }
+        ranked = sorted(
+            (p for p in points if p.get("matchId") and isinstance(p.get("tier"), int)),
+            key=lambda p: p.get("ts") or 0,
+        )
+        out: dict[str, dict[str, Any]] = {}
+        before: int | None = None
+        for p in ranked:
+            delta = p.get("delta")
+            out[p["matchId"]] = {
+                "delta": int(delta) if isinstance(delta, (int, float)) else None,
+                "tier": p["tier"],
+                "rr": p.get("rr"),
+                "tierBefore": p.get("tierBefore") if p.get("tierBefore") is not None else before,
+            }
+            before = p["tier"]
+        for p in points:
+            if p.get("matchId") not in out and isinstance(p.get("delta"), (int, float)):
+                out[p["matchId"]] = {"delta": int(p["delta"])}
+        return out
 
 
 def _main(points: list[dict[str, Any]]) -> str | None:

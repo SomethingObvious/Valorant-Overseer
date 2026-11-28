@@ -637,11 +637,9 @@ fn games_of(player: &Player) -> (String, Color32) {
 }
 
 pub(super) fn level_of(player: &Player) -> (String, Color32) {
-    match player.level {
-        Some(l) if player.hidden.level => (
-            if l > 0 { l.to_string() } else { "-".to_owned() },
-            colour::TEXT_FAINT,
-        ),
+    // Riot sends 0 for a level it won't share, and no ranked player is really 0.
+    match player.level.filter(|&l| l > 0) {
+        Some(l) if player.hidden.level => (l.to_string(), colour::TEXT_FAINT),
         Some(l) if l < 60 && player.rank_tier.unwrap_or(0) >= 3 => {
             (l.to_string(), colour::TEXT_STRONG)
         }

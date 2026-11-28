@@ -450,14 +450,11 @@ fn card_words(painter: &egui::Painter, card: Rect, player: &Player) {
     if !tag.is_empty() {
         about.push(format!("#{tag}"));
     }
-    if let Some(level) = player.level {
-        about.push(if player.hidden.level && level > 0 {
-            format!("Hidden level {level}")
-        } else if player.hidden.level {
-            "Level hidden".to_owned()
-        } else {
-            format!("Level {level}")
-        });
+    match player.level.filter(|&l| l > 0) {
+        Some(level) if player.hidden.level => about.push(format!("Hidden level {level}")),
+        Some(level) => about.push(format!("Level {level}")),
+        None if player.hidden.level => about.push("Level hidden".to_owned()),
+        None => {}
     }
     about.extend(player.agent.iter().cloned());
     about.extend(player.role.iter().cloned());
@@ -1050,7 +1047,14 @@ fn figure_ladder(ui: &mut Ui, rows: &[&overseer_core::BriefLine]) {
         }
     }
     for row in rows {
-        let (rect, response) = ui.allocate_exact_size(vec2(width, space::XL), Sense::hover());
+        let figured = row.pct.is_some() && (row.low.is_some() || row.own.is_some());
+        let tall = if figured {
+            space::XL + size::MICRO + space::SM
+        } else {
+            space::XL
+        };
+        let (rect, response) = ui.allocate_exact_size(vec2(width, tall), Sense::hover());
+        let y = rect.top() + space::XL / 2.0;
         let tint = if row.flag {
             colour::TEXT_STRONG
         } else {
@@ -1068,35 +1072,68 @@ fn figure_ladder(ui: &mut Ui, rows: &[&overseer_core::BriefLine]) {
                 words_end - left,
             );
             let galley = painter.layout_job(job);
-            painter.galley(
-                pos2(left, rect.center().y - galley.size().y / 2.0),
-                galley,
-                tint,
-            );
+            painter.galley(pos2(left, y - galley.size().y / 2.0), galley, tint);
             if let Some(pct) = row.pct {
-                let track = Rect::from_x_y_ranges(
-                    track_x.clone(),
-                    (rect.center().y - 1.0)..=(rect.center().y + 1.0),
-                );
+                let track = Rect::from_x_y_ranges(track_x.clone(), (y - 1.0)..=(y + 1.0));
                 rail(painter, track);
-                let at = pos2(along(track, pct), rect.center().y);
+                let at = pos2(along(track, pct), y);
                 if row.flag {
                     painter.circle_filled(at, 4.5, colour::TEXT_STRONG);
                 } else {
                     painter.circle_stroke(at, 3.5, (1.5, colour::TEXT_DIM));
                 }
                 let _place = painter.text(
-                    pos2(right, rect.center().y),
+                    pos2(right, y),
                     Align2::RIGHT_CENTER,
                     ordinal(pct),
                     Face::Heavy.at(size::MICRO + 1.0),
                     tint,
                 );
+                if figured {
+                    ladder_figures(painter, row, track, at.x, tint);
+                }
             }
         }
         if let Some(evidence) = row.evidence.as_deref().filter(|s| !s.is_empty()) {
             let _shown = response.on_hover_text(evidence);
         }
+    }
+}
+
+/// Under a ladder row's rail: the figure at each end, and their own figure
+/// under their mark. An end that their figure would touch is left out.
+fn ladder_figures(
+    painter: &egui::Painter,
+    row: &overseer_core::BriefLine,
+    track: Rect,
+    mark: f32,
+    tint: Color32,
+) {
+    let top = track.bottom() + space::SM;
+    let font = Face::Number.at(size::MICRO);
+    let own = row.own.as_deref().map(|own| {
+        let galley = painter.layout_no_wrap(own.to_owned(), font.clone(), tint);
+        let half = galley.size().x / 2.0;
+        let x = mark.clamp(
+            track.left() + half,
+            (track.right() - half).max(track.left() + half),
+        );
+        let drawn = Rect::from_min_size(pos2(x - half, top), galley.size());
+        painter.galley(drawn.min, galley, tint);
+        drawn.expand2(vec2(space::MD, 0.0))
+    });
+    let ends = [
+        (row.low.as_deref(), track.left(), Align2::LEFT_TOP),
+        (row.high.as_deref(), track.right(), Align2::RIGHT_TOP),
+    ];
+    for (said, x, align) in ends {
+        let Some(said) = said else { continue };
+        let galley = painter.layout_no_wrap(said.to_owned(), font.clone(), colour::TEXT_FAINT);
+        let drawn = align.anchor_size(pos2(x, top), galley.size());
+        if own.is_some_and(|own| own.intersects(drawn)) {
+            continue;
+        }
+        painter.galley(drawn.min, galley, colour::TEXT_FAINT);
     }
 }
 
@@ -1155,6 +1192,8 @@ fn placed(ui: &mut Ui, found: &overseer_core::TendencyFinding) {
                     pos,
                     at_mark: &at_mark,
                     at_middle: found.peers.as_deref().unwrap_or(""),
+                    low_figure: found.low.as_deref().unwrap_or(""),
+                    high_figure: found.high.as_deref().unwrap_or(""),
                     left_word: found.left.as_deref().unwrap_or(""),
                     right_word: found.right.as_deref().unwrap_or(""),
                     named: found.headline.as_deref().unwrap_or(""),
@@ -1174,6 +1213,30 @@ const BELL_H: f32 = 24.0;
 const BELL_ENDS: f32 = 16.0;
 const BELL_TOP: f32 = 16.0;
 const BELL_SPAN: f32 = 2.6;
+/// The row under the curve's ends for the figures there, above the words.
+const BELL_FIGURES: f32 = size::MICRO + 3.0;
+
+impl Bell<'_> {
+    fn spoken(&self) -> String {
+        format!(
+            "{}: {}, between {} {} and {} {}",
+            self.named,
+            self.at_mark,
+            self.left_word,
+            self.low_figure,
+            self.right_word,
+            self.high_figure
+        )
+    }
+
+    const fn figures(&self) -> f32 {
+        if self.low_figure.is_empty() && self.high_figure.is_empty() {
+            0.0
+        } else {
+            BELL_FIGURES
+        }
+    }
+}
 
 struct Bell<'a> {
     shape: &'a [f32],
@@ -1182,6 +1245,8 @@ struct Bell<'a> {
     pos: f32,
     at_mark: &'a str,
     at_middle: &'a str,
+    low_figure: &'a str,
+    high_figure: &'a str,
     left_word: &'a str,
     right_word: &'a str,
     named: &'a str,
@@ -1229,18 +1294,10 @@ fn shape_at(shape: &[f32], peak: f32, t: f32) -> f32 {
 fn bell(ui: &mut Ui, bell: &Bell<'_>) {
     let width = ui.available_width();
     let frame_width = 2.0f32.mul_add(-space::LG, width).max(BELL_MIN_W);
-    let height = BELL_TOP + BELL_H + BELL_ENDS;
+    let height = BELL_TOP + BELL_H + BELL_ENDS + bell.figures();
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Label,
-            true,
-            format!(
-                "{}: {}, between {} and {}",
-                bell.named, bell.at_mark, bell.left_word, bell.right_word
-            ),
-        )
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, bell.spoken()));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1325,10 +1382,26 @@ fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32
             colour::TEXT_STRONG,
         );
     }
+    let figure = Face::Number.at(size::MICRO);
+    painter.text(
+        pos2(frame.left, frame.base + 2.0),
+        Align2::LEFT_TOP,
+        bell.low_figure,
+        figure.clone(),
+        colour::TEXT_DIM,
+    );
+    painter.text(
+        pos2(frame.left + frame.width, frame.base + 2.0),
+        Align2::RIGHT_TOP,
+        bell.high_figure,
+        figure,
+        colour::TEXT_DIM,
+    );
+    let words = frame.base + 2.0 + bell.figures();
     let ends = Face::Display.at(size::MICRO);
     let _left = caps_text(
         painter,
-        pos2(frame.left, frame.base + 2.0),
+        pos2(frame.left, words),
         Align2::LEFT_TOP,
         bell.left_word,
         ends.clone(),
@@ -1336,7 +1409,7 @@ fn bell_words(painter: &egui::Painter, bell: &Bell<'_>, frame: &Frame, mark: f32
     );
     let _right = caps_text(
         painter,
-        pos2(frame.left + frame.width, frame.base + 2.0),
+        pos2(frame.left + frame.width, words),
         Align2::RIGHT_TOP,
         bell.right_word,
         ends.clone(),
@@ -1576,11 +1649,12 @@ fn pips(ui: &Ui, player: &Player, rect: Rect, side: Side) {
         return;
     }
     let won = streak.kind.as_deref() == Some("W");
-    painter.text(
+    let _said = caps_text(
+        &painter,
         pos2(x + space::MD, rect.center().y),
         Align2::LEFT_CENTER,
-        format!("{count} {} in a row", if won { "won" } else { "lost" }),
-        Face::Body.at(size::LABEL + 1.0),
+        &format!("{count} {} in a row", if won { "won" } else { "lost" }),
+        Face::Display.at(size::LABEL + 1.0),
         if won {
             board::paint::win(side)
         } else {

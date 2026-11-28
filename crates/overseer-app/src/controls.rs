@@ -323,11 +323,15 @@ pub(crate) fn field_named(
 }
 
 pub(crate) fn notes(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
+    let id = ui.make_persistent_id(("notes", hint));
+    notes_named(ui, text, hint, id)
+}
+
+pub(crate) fn notes_named(ui: &mut Ui, text: &mut String, hint: &str, id: egui::Id) -> Response {
     let (rect, _response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT * 3.0), Sense::hover());
     ui.painter()
         .add(paint::slant(rect, false, true, colour::BG_INSET));
-    let id = ui.make_persistent_id(("notes", hint));
     let response = ui.put(
         rect.shrink2(vec2(space::MD, space::SM)),
         egui::TextEdit::multiline(text)

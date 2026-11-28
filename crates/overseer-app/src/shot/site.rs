@@ -349,13 +349,15 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             "Opening kill/death involvement",
             "24% vs peers' 15% · 412 rounds",
             Some(0.89),
+            Some(("6%", "38%", "24%")),
         ),
         (
             "tendency",
             true,
             "Gun-kill range",
-            "2,140 vs peers' 1,630 map units · 211 kills",
+            "21 m vs peers' 16 m · 211 kills",
             Some(0.81),
+            Some(("13 m", "21 m", "21 m")),
         ),
         (
             "tendency",
@@ -363,6 +365,7 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             "Rounds with Operator",
             "14% vs peers' 4% · 412 rounds",
             Some(0.93),
+            Some(("0%", "15%", "14%")),
         ),
         (
             "tendency",
@@ -370,6 +373,7 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             "Death timing",
             "31s vs peers' 38s · 284 deaths",
             Some(0.27),
+            Some(("25s", "42s", "31s")),
         ),
         (
             "tendency",
@@ -377,12 +381,14 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             "Spike plants",
             "19% vs peers' 21% · 206 attack rounds",
             Some(0.42),
+            Some(("0%", "31%", "19%")),
         ),
         (
             "buy",
             false,
             "Pistol: Ghost 22/36 · light armor 25/36",
             "Avg spend 780 vs 690",
+            None,
             None,
         ),
         (
@@ -391,16 +397,20 @@ fn all_figures() -> Vec<overseer_core::BriefLine> {
             "Recent agents: Clove 15/18, Omen 3/18",
             "",
             None,
+            None,
         ),
     ]
     .into_iter()
     .map(
-        |(kind, flag, headline, evidence, pct)| overseer_core::BriefLine {
+        |(kind, flag, headline, evidence, pct, figures)| overseer_core::BriefLine {
             kind: Some(kind.to_owned()),
             flag,
             headline: Some(headline.to_owned()),
             evidence: Some(evidence.to_owned()),
             pct,
+            low: figures.map(|(low, _, _): (&str, &str, &str)| low.to_owned()),
+            high: figures.map(|(_, high, _)| high.to_owned()),
+            own: figures.map(|(_, _, own)| own.to_owned()),
             ..overseer_core::BriefLine::default()
         },
     )
@@ -422,28 +432,43 @@ fn tendencies() -> overseer_core::Tendencies {
     };
     overseer_core::Tendencies {
         title: Some("Tendencies".to_owned()),
-        tag: Some(finding(
-            "Aggressive",
-            "More aggressive than 86% of peers · 18 games",
-            "",
-            0.86,
-            ("passive", "aggressive"),
-        )),
+        tag: Some(overseer_core::TendencyFinding {
+            own: Some("19s".to_owned()),
+            low: Some("38s".to_owned()),
+            high: Some("8s".to_owned()),
+            ..finding(
+                "Aggressive",
+                "More aggressive than 86% of peers · first fight 19s vs 25s · 18 games",
+                "",
+                0.86,
+                ("passive", "aggressive"),
+            )
+        }),
         habits: vec![
-            finding(
-                "Takes the first fight",
-                "In the opening fight more than 89% of peers · 24% vs 15% · 18 games",
-                "Set up a trade for the opening.",
-                0.89,
-                ("stays out", "takes fights"),
-            ),
-            finding(
-                "Fights at long range",
-                "Kills from further than 81% of peers · 16/18 games",
-                "Use utility before a long peek.",
-                0.81,
-                ("close", "long range"),
-            ),
+            overseer_core::TendencyFinding {
+                own: Some("24%".to_owned()),
+                low: Some("4%".to_owned()),
+                high: Some("31%".to_owned()),
+                ..finding(
+                    "Takes the first fight",
+                    "In the opening fight more than 89% of peers · 24% vs 15% · 18 games",
+                    "Set up a trade for the opening.",
+                    0.89,
+                    ("stays out", "takes fights"),
+                )
+            },
+            overseer_core::TendencyFinding {
+                own: Some("21 m".to_owned()),
+                low: Some("11 m".to_owned()),
+                high: Some("26 m".to_owned()),
+                ..finding(
+                    "Fights at long range",
+                    "Kills from further than 81% of peers · 21 m vs 17 m · 16/18 games",
+                    "Use utility before a long peek.",
+                    0.81,
+                    ("close", "long range"),
+                )
+            },
         ],
         buy: Some(overseer_core::TendencyBuy {
             label: Some("Pistol · 36 past rounds".to_owned()),
@@ -619,7 +644,7 @@ fn paint(ui: &mut Ui, shot: &mut Shot) {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(design::colour::BG))
                 .show(ui, |ui| {
-                    let _picked = history.show(ui, 5, NOW_MS, true);
+                    let _noted = history.show(ui, NOW_MS, true);
                 });
         }
         Shot::Settings(settings) => {

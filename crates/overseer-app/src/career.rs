@@ -267,7 +267,9 @@ const TIER_LABELS: f32 = 64.0;
 const BREATHE: f32 = 4.0;
 
 /// The rating chart's scale: a dashed line at every tier's edge, each tier
-/// named down the left in its own colour, and a barely there 0 and 100.
+/// named down the left in its own colour, and a barely there 0 and 100 when
+/// it holds one tier. Over two, an edge is one tier's 100 and the next one's
+/// 0 at once, so the names say it instead.
 fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32, f32)) {
     let y_of = |v: f32| inner.bottom() - inner.height() * (v - low) / (high - low);
     let tiers = ((high - low) / 100.0).round() as u32;
@@ -284,6 +286,7 @@ fn scale(painter: &egui::Painter, (rect, inner): (Rect, Rect), (low, high): (f32
             k if k == tiers => (-BREATHE, Some("100")),
             _ => (0.0, None),
         };
+        let edge = edge.filter(|_| tiers == 1);
         painter.extend(egui::Shape::dashed_line(
             &[
                 pos2(inner.left(), y + nudge),

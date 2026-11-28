@@ -482,6 +482,18 @@ def _note_state(state: str) -> None:
     riot_client.keep_for_first_reads(0 if state == "INGAME" else 5)
 
 
+def _unread(puuid: str, count: int) -> int:
+    """Return how many of a player's newest `count` games aren't on hand yet."""
+    listed = _MIDS_CACHE.get(puuid)
+    if not listed:
+        return count
+    return sum(
+        1
+        for mid in _recent(listed[0])[:count]
+        if mid not in _MATCH_DETAIL_CACHE and _kept_file(mid) is None
+    )
+
+
 def _next_rung(have: int) -> int:
     want = _DEPTH["games"]
     return next((g for g in GAMES_READ if have < g < want), want)
@@ -825,6 +837,27 @@ def _remember(mid: str, md: dict[str, Any]) -> dict[str, Any]:
     return lean
 
 
+def riot_names(auth: Any, asked: list[str], *, again: bool = False) -> dict[str, str]:
+    """Return the Riot IDs Riot's name service gives for `asked`, in one request."""
+    try:
+        rows = auth.pd_put("/name-service/v2/players", asked)
+        if again and isinstance(rows, dict) and rows.get("errorCode"):
+            rows = auth.pd_put("/name-service/v2/players", asked, refresh=True)
+    except Exception as e:
+        _log(f"name lookup failed for {len(asked)} players: {type(e).__name__}: {e}")
+        return {}
+    if isinstance(rows, dict) and rows.get("errorCode"):
+        _log(f"name service answered {rows.get('errorCode')} for {len(asked)} players")
+    found: dict[str, str] = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        game, tag = row.get("GameName") or "", row.get("TagLine") or ""
+        if row.get("Subject") and game.strip():
+            found[row["Subject"]] = f"{game}#{tag}" if tag else game
+    return found
+
+
 def played(auth: Any, mid: str, *, retries: int = 0) -> Any:
     """Return a finished match's details, from the ones in hand before Riot's."""
     with _fetching(mid):
@@ -1063,23 +1096,7 @@ class LiveMatch:
         return [{"puuid": p, "level": n, "incognito": False} for p, n in levels.items()] or alone
 
     def _names(self, asked: list[str], *, again: bool = False) -> dict[str, str]:
-        try:
-            rows = self.auth.pd_put("/name-service/v2/players", asked)
-            if again and isinstance(rows, dict) and rows.get("errorCode"):
-                rows = self.auth.pd_put("/name-service/v2/players", asked, refresh=True)
-        except Exception as e:
-            _log(f"name lookup failed for {len(asked)} players: {type(e).__name__}: {e}")
-            return {}
-        if isinstance(rows, dict) and rows.get("errorCode"):
-            _log(f"name service answered {rows.get('errorCode')} for {len(asked)} players")
-        found: dict[str, str] = {}
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            game, tag = row.get("GameName") or "", row.get("TagLine") or ""
-            if row.get("Subject") and game.strip():
-                found[row["Subject"]] = f"{game}#{tag}" if tag else game
-        return found
+        return riot_names(self.auth, asked, again=again)
 
     def reveal_names(self, puuids: list[str]) -> dict[str, Any]:
         """Return the Riot IDs Riot's name service gives for `puuids`, kept once known."""
@@ -1543,7 +1560,10 @@ class LiveMatch:
             entry["deep"] = count
             return False
 
-        def _owed() -> list[tuple[int, str]]:
+        def _owed() -> list[tuple[int, int, str]]:
+            # The rows still short of the depth, by how far each has got and
+            # then by how many games its next step has to fetch, so a row
+            # whose games a stackmate already brought in goes first.
             with _KD_FILL_LOCK:
                 rows = sorted(_KD_FILLING.get(match_id, ()))
             owed = []
@@ -1552,7 +1572,7 @@ class LiveMatch:
                 if entry and entry.get("kd_full") and entry.get("kd") is not None:
                     deep = entry.get("deep", 5)
                     if deep != _DEPTH["games"]:
-                        owed.append((deep, puuid))
+                        owed.append((deep, _unread(puuid, _next_rung(deep)), puuid))
             return owed
 
         def _run() -> None:
@@ -1570,10 +1590,10 @@ class LiveMatch:
                 held: dict[str, int] = {}
                 while match_id not in _ENDED:
                     with _DEEPEN_LOCK:
-                        owed = [row for row in _owed() if held.get(row[1], 0) < _DEEP_TRIES]
+                        owed = [row for row in _owed() if held.get(row[2], 0) < _DEEP_TRIES]
                         if not owed:
                             return
-                        puuid = min(owed)[1]
+                        puuid = min(owed)[2]
                         if not _deepen(puuid):
                             continue
                     held[puuid] = held.get(puuid, 0) + 1
@@ -2323,6 +2343,12 @@ def _self_check() -> None:
         fetch.join()
     check(most[0] == 1 and not _FETCHING, (most, _FETCHING))
     check(_due(time.time() - 1) and not _due(time.time() + 60) and _due(time.time() + 3600))
+    # A row whose games a stackmate already brought in costs less to deepen.
+    check(_unread("nobody", 10) == 10)
+    _MIDS_CACHE["stacked"] = (["u-1", "u-2", "u-3"], False, time.time())
+    _MATCH_DETAIL_CACHE.put("u-2", {"players": []})
+    check(_unread("stacked", 2) == 1 and _unread("stacked", 10) == 2)
+    _MIDS_CACHE.pop("stacked")
 
     check(side_now("PREGAME", "Red", "competitive", None) == "Attack")
     check(side_now("PREGAME", "Blue", "competitive", None) == "Defense")

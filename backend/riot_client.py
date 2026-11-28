@@ -177,6 +177,14 @@ def held_secs(endpoint: str) -> float:
         return max(0.0, _HOLD_UNTIL[_family(endpoint)] - time.monotonic())
 
 
+def mmr_spare() -> int:
+    """Return how many rank lookups could go now without waiting."""
+    with _RIOT_RATE_LOCK:
+        now = time.monotonic()
+        since = now - (_MMR_BUCKET["at"] or now)
+        return int(min(_MMR_BURST, _MMR_BUCKET["tokens"] + since * _MMR_RPS))
+
+
 def _set_hold(endpoint: str, seconds: float) -> None:
     fam = _family(endpoint)
     with _RIOT_RATE_LOCK:
@@ -318,10 +326,12 @@ def budget_eta(lookups: int) -> float:
 def _budget_lockout(retry_after: float) -> None:
     # Riot counted more than this side did, so the limit drops to a little
     # under what got through, by 2 at least and 8 at most, and is kept for
-    # next time. The game itself spends the same allowance, so what this side
-    # counted can be well short of Riot's limit, and a deep cut on that takes
-    # hours to climb back. The lookups in flight all come back 429 together,
-    # and that is one lockout.
+    # next time. The game itself spends the same allowance, at a match's end
+    # and on its career pages, so what this side counted can be well short of
+    # Riot's limit. Under half of it says the game spent the minute, and only
+    # the hold Riot asked for applies, since a cut on that takes hours to
+    # climb back. The lookups in flight all come back 429 together, and that
+    # is one lockout.
     with _RIOT_RATE_LOCK:
         _budget_load()
         now = time.monotonic()
@@ -330,6 +340,9 @@ def _budget_lockout(retry_after: float) -> None:
         _BUDGET_SEEN["locked_at"] = now
         limit = int(_BUDGET["limit"])
         got = len(_SENT)
+        if got < limit // 2:
+            _log(f"held back after {got} lookups in a minute, the game spent the rest")
+            return
         new = max(_BUDGET_MIN, min(limit, max(got, limit - 6)) - 2)
         window = min(300.0, max(float(_BUDGET["window"]), retry_after))
         _BUDGET.update(limit=new, window=window)
@@ -832,8 +845,9 @@ def _self_check() -> None:
         check(_budget_take(background=False, urgent=True) == 0)
         _BUDGET_SEEN["urgent"] = 0
         _SENT.clear()
-        # A lockout after 18 of 20 lowers the limit to 16 and keeps it, and
-        # one after only 5 lowers it by 8, not to 3.
+        # A lockout after 18 of 20 lowers the limit to 16 and keeps it, one
+        # after 12 of 20 lowers it by 8 at most, and one after only 5 of 30
+        # leaves it, as the game spent that minute.
         _SENT.extend([now] * 18)
         _budget_lockout(60.0)
         _budget_lockout(60.0)
@@ -844,11 +858,16 @@ def _self_check() -> None:
         _budget_load()
         check(_BUDGET["limit"] == 16, "a saved limit wasn't read back")
         _SENT.clear()
-        _SENT.extend([now] * 5)
+        _SENT.extend([now] * 15)
         _BUDGET_SEEN["locked_at"] = 0.0
         _BUDGET.update(limit=30)
         _budget_lockout(60.0)
         check(_BUDGET["limit"] == 22, _BUDGET)
+        _SENT.clear()
+        _SENT.extend([now] * 5)
+        _BUDGET_SEEN["locked_at"] = 0.0
+        _budget_lockout(60.0)
+        check(_BUDGET["limit"] == 22, "the game's minute cut the limit")
         # Under where it started, a minute held at it without a lockout
         # raises it by one. Above, it takes ten.
         _SENT.clear()

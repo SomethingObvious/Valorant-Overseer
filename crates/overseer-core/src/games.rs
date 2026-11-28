@@ -45,6 +45,17 @@ pub struct Game {
     /// What it did to your rating. Absent outside competitive.
     #[serde(deserialize_with = "number::signed")]
     pub rr_delta: Option<i64>,
+    /// The RR it left you on, in the rank it left you at.
+    #[serde(deserialize_with = "number::signed")]
+    pub rr_after: Option<i64>,
+    /// The rank it left you at, as a tier.
+    #[serde(deserialize_with = "number::whole")]
+    pub tier_after: Option<u32>,
+    /// The rank it left you at, by name.
+    pub rank_after: Option<String>,
+    /// The rank you went into it at, as a tier.
+    #[serde(deserialize_with = "number::whole")]
+    pub tier_before: Option<u32>,
     /// Your side's id, which the players carry too.
     pub your_team: Option<String>,
     /// Everybody, best combat score first.
@@ -107,6 +118,20 @@ pub struct Line {
     /// Rounds they got the first kill of.
     #[serde(deserialize_with = "number::whole")]
     pub first_bloods: Option<u32>,
+    /// Their rank in that game, as a tier.
+    #[serde(deserialize_with = "number::whole")]
+    pub tier: Option<u32>,
+    /// Their rank in that game, by name.
+    pub rank: Option<String>,
+    /// Their peak as a tier, from the lobby or asked of Riot later, and 0
+    /// for an account that never won a ranked game.
+    #[serde(deserialize_with = "number::whole")]
+    pub peak: Option<u32>,
+    /// That peak by name.
+    pub peak_rank: Option<String>,
+    /// How many other games you have had with or against them.
+    #[serde(deserialize_with = "number::whole")]
+    pub met: Option<u32>,
     /// Whether this is you.
     pub is_subject: bool,
 }

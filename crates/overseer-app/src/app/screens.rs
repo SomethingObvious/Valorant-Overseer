@@ -187,20 +187,13 @@ impl Overseer {
     fn history_screen(&mut self, ui: &mut Ui, chrome: egui::Frame, turning: f32) {
         let now_ms = now_ms();
         let live = self.status == Status::Live;
-        let (mut picked, mut noted) = (None, false);
+        let mut noted = false;
         CentralPanel::default().frame(chrome).show(ui, |ui| {
             ui.multiply_opacity(0.90f32.mul_add(turning, 0.10));
-            (picked, noted) = self
-                .history
-                .show(ui, self.settings.history_games, now_ms, live);
+            noted = self.history.show(ui, now_ms, live);
         });
         if noted && !notes::save(&self.root, notes::About::Games, &self.history.notes) {
             self.said = Some((super::UNSAVED.to_owned(), ui.input(|i| i.time)));
-        }
-        if let Some(count) = picked {
-            self.settings.history_games = count;
-            settings::save(&self.root, &self.settings);
-            self.history.ask(&self.bridge, count, live);
         }
     }
 
@@ -307,6 +300,7 @@ impl Overseer {
 
     fn rows(&self, ui: &mut Ui, place: Place) -> board::Touched {
         let kept;
+        let mut said = None;
         let shown = if self.board.players.is_empty() {
             let asked = self.showing_kept() && place == Place::Window;
             let Some(you) = self.board.you.as_ref().filter(|_| asked) else {
@@ -323,13 +317,10 @@ impl Overseer {
                     ..board::Touched::default()
                 };
             };
-            view::note(
-                ui,
-                &format!(
-                    "Your stats from {}. They're from the last match Overseer read, and the board comes back once you're in a lobby. Press Esc to go back.",
-                    crate::history::kept_ago(now_ms(), you.at)
-                ),
-            );
+            said = Some(format!(
+                "Your stats from {}. They're from the last match Overseer read, and the board comes back once you're in a lobby. Press Esc to go back.",
+                crate::history::kept_ago(now_ms(), you.at)
+            ));
             kept = super::waiting::kept_board(you);
             &kept
         } else {
@@ -348,7 +339,19 @@ impl Overseer {
             since: (now - self.roster_at) as f32,
             lost: self.lost_at.is_some(),
         };
-        board::draw(ui, &scene)
+        let Some(said) = said else {
+            return board::draw(ui, &scene);
+        };
+        // The note goes in first from the bottom, since the board's scroll
+        // area takes all the height it is given.
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            view::note_in(ui, &said, colour::HINT);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                board::draw(ui, &scene)
+            })
+            .inner
+        })
+        .inner
     }
 }
 

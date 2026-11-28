@@ -333,6 +333,22 @@ def get_one(owner: str | None, puuid: str | None) -> dict[str, Any] | None:
         return dict(entry) if entry else None
 
 
+def met_elsewhere(owner: str | None, match_id: str, puuids: list[str]) -> dict[str, int]:
+    """Return how many games besides `match_id` each player shared with `owner`."""
+    if not owner:
+        return {}
+    out: dict[str, int] = {}
+    with _LOCK:
+        store = _players(owner)
+        for puuid in puuids:
+            entry = store.get(puuid)
+            if not entry or puuid == owner:
+                continue
+            total = int(entry.get("withCount") or 0) + int(entry.get("againstCount") or 0)
+            out[puuid] = max(0, total - (match_id in (entry.get("matchIds") or [])))
+    return out
+
+
 def encounter_for(owner: str | None, puuid: str | None) -> dict[str, Any] | None:
     """Return a player's with and against counts and results, for their row."""
     entry = get_one(owner, puuid)
@@ -431,6 +447,10 @@ def _self_check() -> None:
         }
         check(record_games("owner-h", [game]) == 2)
         check(record_games("owner-h", [game]) == 0)
+        check(met_elsewhere("owner-h", str(game["matchId"]), ["owner-h"]) == {}, "not yourself")
+        some = "mate-h"
+        check(met_elsewhere("owner-h", str(game["matchId"]), [some]) == {some: 0}, "this one game")
+        check(met_elsewhere("owner-h", "another", [some]) == {some: 1}, "met once elsewhere")
         mate, foe = _players("owner-h")["mate-h"], _players("owner-h")["foe-h"]
         check((mate["withCount"], mate["winsWith"], mate["name"]) == (1, 1, "Mate#1"), mate)
         check((foe["againstCount"], foe["winsAgainst"], foe["agents"]) == (1, 1, ["Jett"]), foe)
